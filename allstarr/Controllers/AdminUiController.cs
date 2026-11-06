@@ -1424,6 +1424,51 @@ public class AdminUiController : ControllerBase
         },
         new()
         {
+            Id = "amll",
+            Name = "AMLL TTML DB",
+            Icon = "lyrics",
+            Status = "available",
+            Categories = ["lyrics"],
+            Notes = ["Community word-synced TTML; ISRC and platform identifiers"]
+        },
+        new()
+        {
+            Id = "neteaselyrics",
+            Name = "NetEase Lyrics",
+            Icon = "lyrics",
+            Status = "available",
+            Categories = ["lyrics"],
+            Notes = ["Public word-synced YRC; strict recording matching"]
+        },
+        new()
+        {
+            Id = "qqlyrics",
+            Name = "QQ Music Lyrics",
+            Icon = "lyrics",
+            Status = "available",
+            Categories = ["lyrics"],
+            Notes = ["Public word-synced QRC; strict recording matching"]
+        },
+        new()
+        {
+            Id = "kugoulyrics",
+            Name = "Kugou Lyrics",
+            Icon = "lyrics",
+            Status = "available",
+            Categories = ["lyrics"],
+            Notes = ["Public word-synced KRC; strict recording matching"]
+        },
+        new()
+        {
+            Id = "lrcmux",
+            Name = "LRCMux",
+            Icon = "lyrics",
+            Status = "available",
+            Categories = ["lyrics"],
+            Notes = ["Public lyrics with word timing; strict recording matching"]
+        },
+        new()
+        {
             Id = "lrcred",
             Name = "lrc.red",
             Icon = "lyrics",

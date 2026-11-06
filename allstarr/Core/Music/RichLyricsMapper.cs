@@ -103,6 +103,11 @@ public static class RichLyricsMapper
     internal static string SourceName(string id) => LyricsVersions.ProviderId(id) switch
     {
         "lyricsplus" => "LyricsPlus",
+        "amll" => "AMLL TTML DB",
+        "neteaselyrics" => "NetEase",
+        "qqlyrics" => "QQ Music",
+        "kugoulyrics" => "Kugou",
+        "lrcmux" => "LRCMux",
         "musixmatch" => "Musixmatch",
         "spicylyrics" => "SpicyLyrics",
         "lrclib" => "LRCLIB",

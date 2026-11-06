@@ -338,6 +338,19 @@ def test_song_lyrics_use_gamdl_artifact_and_cache(client):
     assert client[2].calls == [("https://music.apple.com/us/song/103", "lyrics")]
 
 
+def test_song_lyrics_return_ttml_without_flattening(client):
+    ttml = "<tt><body><p begin='1'><span begin='1' end='2'>Synthetic</span></p></body></tt>"
+
+    async def lyrics(song_id, **kwargs):
+        return ttml
+
+    client[2].lyrics = lyrics
+    response = client[0].get("/api/lyrics/104")
+    assert response.status_code == 200
+    assert response.json()["format"] == "TTML"
+    assert response.json()["content"] == ttml
+
+
 @pytest.mark.asyncio
 async def test_gamdl_command_targets_separate_wrapper_decrypt_socket(settings: Settings, tmp_path: Path):
     class CapturingRunner(BoundedProcessRunner):

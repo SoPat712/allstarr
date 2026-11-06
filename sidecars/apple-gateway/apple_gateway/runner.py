@@ -386,7 +386,7 @@ class BoundedProcessRunner:
         if ceiling:
             argv += ["--allstarr-alac-ceiling", ceiling]
         if lyrics_only:
-            argv.append("--synced-lyrics-only")
+            argv += ["--synced-lyrics-only", "--synced-lyrics-format", "ttml"]
         argv.append(url)
         try:
             with os.fdopen(cookie_fd, "w", encoding="utf-8") as cookie:
@@ -413,7 +413,7 @@ class BoundedProcessRunner:
         if result.return_code != 0:
             raise failure("gamdl_failed")
         _log_preparation(result.stdout, quality, elapsed_ms)
-        artifacts = safe_files(output, {".lrc"} if lyrics_only else {
+        artifacts = safe_files(output, {".lrc", ".ttml"} if lyrics_only else {
             ".m4a", ".flac", ".mp4", ".m4v", ".lrc", ".srt", ".ttml", ".jpg", ".png"
         })
         if not artifacts:

@@ -9,6 +9,7 @@ namespace allstarr.Core.Providers.Lyrics;
 public sealed partial class GeniusCapabilityAdapter : MetadataLyricsCapabilityAdapter
 {
     public const string HttpClientName = "GeniusLyrics";
+    private readonly LyricsRequestCoordinator _requests;
     private static readonly MetadataLyricsFailureCache Failures = new(TimeProvider.System);
     private protected override LyricsSpeculationMode Speculation => LyricsSpeculationMode.RecentHealthy;
     public override string ProviderId => "genius";
@@ -21,9 +22,13 @@ public sealed partial class GeniusCapabilityAdapter : MetadataLyricsCapabilityAd
 
     internal GeniusCapabilityAdapter(HttpClient http, IApplicationCache? cache, TimeProvider clock,
         MetadataLyricsFailureCache failures, ILogger? logger = null, Func<TimeSpan>? lyricsTtl = null)
-        : base(http, cache, clock, failures, logger, lyricsTtl) { }
+        : base(http, cache, clock, failures, logger, lyricsTtl) => _requests = failures.Requests;
 
-    protected override async Task<ProviderOutcome<ProviderLyricsResult>> ReadLyricsAsync(ProviderLyricsRequest request, CancellationToken token)
+    protected override Task<ProviderOutcome<ProviderLyricsResult>> ReadLyricsAsync(ProviderLyricsRequest request, CancellationToken token) =>
+        _requests.RunAsync(Hash(JsonSerializer.Serialize(new { request.Isrc, request.TrackTitle, request.ArtistNames, request.AlbumTitle, request.DurationSeconds })),
+            ct => ReadWorkerAsync(request, ct), token);
+
+    private async Task<ProviderOutcome<ProviderLyricsResult>> ReadWorkerAsync(ProviderLyricsRequest request, CancellationToken token)
     {
         if (string.IsNullOrWhiteSpace(request.TrackTitle) || request.ArtistNames.Count == 0) return Unavailable();
         var response = await GetAsync(new("https://fetch-genius.samidy.workers.dev/?title=" + Uri.EscapeDataString(request.TrackTitle.Trim()) +

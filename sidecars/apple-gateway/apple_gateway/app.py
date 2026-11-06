@@ -604,7 +604,7 @@ def create_app(
         song_id: str, quality: str = "aac-he", account: MediaAccount = Depends(_account)
     ) -> dict[str, str]:
         url = _song_request(account, song_id, quality)
-        key = _cache_key(account, song_id, quality)
+        key = _cache_key(account, song_id, quality) + "-ttml"
         cached = lyrics_path(key)
 
         async def prepare_lyrics() -> Path:
@@ -648,7 +648,7 @@ def create_app(
             raise HTTPException(status_code=502, detail="lyrics_unreadable") from None
         if not content.strip():
             raise HTTPException(status_code=404, detail="lyrics_not_found")
-        return {"source": "GAMDL", "format": "LineTimed", "content": content}
+        return {"source": "GAMDL", "format": "TTML" if content.lstrip().startswith("<") else "LineTimed", "content": content}
 
     @application.head("/api/lyrics/{song_id}")
     async def head_lyrics(

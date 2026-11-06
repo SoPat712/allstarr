@@ -603,10 +603,21 @@ public sealed partial class ProtocolLyricsResolver(
                     string.Equals(sourceProvider, "spicylyrics", StringComparison.OrdinalIgnoreCase)) && SpotifyTrackReference.TryNormalize(sourceExternalId, out var selected)
                 ? selected : null;
         }
+        if (providerId == "amll")
+        {
+            var prefix = sourceProvider switch
+            {
+                "spotify" or "spicylyrics" => "spotify", "applemusic" or "apple-musickit" or "apple-download" => "apple",
+                "netease" or "neteaselyrics" => "netease", "qq" or "qqlyrics" => "qq", _ => null
+            };
+            if (prefix == "spotify" && SpotifyTrackReference.TryNormalize(sourceExternalId, out var sourceSpotify)) return "spotify:" + sourceSpotify;
+            if (prefix is "apple" or "netease" or "qq" && !string.IsNullOrWhiteSpace(sourceExternalId)) return prefix + ":" + sourceExternalId;
+            if (SpotifyTrackReference.TryNormalize(spotifyTrackId, out var knownSpotify)) return "spotify:" + knownSpotify;
+        }
         if (providerId.Equals(sourceProvider, StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(sourceExternalId))
             return sourceExternalId;
         if (providerId == "spotify") return string.IsNullOrWhiteSpace(spotifyTrackId) ? null : spotifyTrackId;
-        if (providerId is "lrclib" or "lyricsplus" or "musixmatch" or "lrcred" or "unison" or "paxsenix" or "genius")
+        if (providerId is "lrclib" or "lyricsplus" or "musixmatch" or "lrcred" or "amll" or "neteaselyrics" or "qqlyrics" or "kugoulyrics" or "lrcmux" or "unison" or "paxsenix" or "genius")
             return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(resourceKey))).ToLowerInvariant();
         if (providerId.Equals(sourceProvider, StringComparison.OrdinalIgnoreCase)) return sourceExternalId;
         var sourceIsApple = sourceProvider is not null &&

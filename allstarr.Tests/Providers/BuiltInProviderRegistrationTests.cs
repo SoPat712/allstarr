@@ -36,7 +36,7 @@ public sealed class BuiltInProviderRegistrationTests
         Assert.Equal("apiKey", setting.Key);
         Assert.Contains("apiKey", source.Permissions.SecretSettingKeys);
         Assert.Equal("{}", ProviderAccountSettings.Project(source, System.Text.Encoding.UTF8.GetBytes("{\"apiKey\":\"sl_sk_fixture_key\"}")));
-        Assert.Equal("spicylyrics", allstarr.Core.Settings.ProviderOrderPolicyCatalog.Find(ProviderCapabilityKind.Lyrics)!.DefaultValue.Split(',').Last());
+        Assert.Equal("paxsenix", allstarr.Core.Settings.ProviderOrderPolicyCatalog.Find(ProviderCapabilityKind.Lyrics)!.DefaultValue.Split(',').Last());
     }
 
     [Fact]
@@ -52,7 +52,7 @@ public sealed class BuiltInProviderRegistrationTests
         services.AddBuiltInLyricsCapabilities();
         using var provider = services.BuildServiceProvider();
         var registry = new ProviderRegistry(provider.GetServices<ProviderRegistration>());
-        foreach (var id in new[] { "lrcred", "unison", "paxsenix", "genius" })
+        foreach (var id in new[] { "lrcred", "unison", "paxsenix", "genius", "amll", "neteaselyrics", "qqlyrics", "kugoulyrics", "lrcmux" })
         {
             var descriptor = registry.GetRequired(id);
             Assert.Equal(ProviderOrigin.BuiltIn, descriptor.Origin);

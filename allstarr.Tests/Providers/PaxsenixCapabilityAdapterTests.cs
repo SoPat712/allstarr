@@ -435,8 +435,8 @@ public sealed partial class PaxsenixCapabilityAdapterTests
         var adapter = new PaxsenixCapabilityAdapter(new HttpClient(lyrics), null,
             new PaxsenixRequestPacer(clock), clock, apple);
         var pending = adapter.FetchLyricsAsync(Context(clock: clock), Request());
-        await clock.WaitForTimersAsync(TimeSpan.FromSeconds(6));
-        clock.Advance(TimeSpan.FromSeconds(6));
+        await clock.WaitForTimersAsync(PaxsenixCapabilityAdapter.OverallLookupBudget);
+        clock.Advance(PaxsenixCapabilityAdapter.OverallLookupBudget);
         Assert.Equal(ProviderErrorKind.TransientFailure, (await pending).Error!.Kind);
         Assert.Equal(1, slow.Calls);
         Assert.Empty(lyrics.Requests);
@@ -581,8 +581,8 @@ public sealed partial class PaxsenixCapabilityAdapterTests
         var adapter = new PaxsenixCapabilityAdapter(new HttpClient(handler), null,
             new PaxsenixRequestPacer(clock, TimeSpan.Zero), clock, Catalog());
         var pending = adapter.FetchLyricsAsync(Context(clock: clock), Request());
-        await clock.WaitForTimersAsync(TimeSpan.FromSeconds(4));
-        clock.Advance(TimeSpan.FromSeconds(4));
+        await clock.WaitForTimersAsync(PaxsenixCapabilityAdapter.PerRequestTimeout);
+        clock.Advance(PaxsenixCapabilityAdapter.PerRequestTimeout);
         Assert.Equal(ProviderErrorKind.TransientFailure, (await pending).Error!.Kind);
         Assert.Equal(1, handler.Calls);
 
@@ -592,7 +592,7 @@ public sealed partial class PaxsenixCapabilityAdapterTests
         await adapter.FetchLyricsAsync(Context(clock: clock), Request());
         pending = adapter.FetchLyricsAsync(Context(clock: clock), Request());
         await clock.WaitForTimersAsync(TimeSpan.FromSeconds(20));
-        clock.Advance(TimeSpan.FromSeconds(6));
+        clock.Advance(PaxsenixCapabilityAdapter.OverallLookupBudget);
         Assert.Equal(ProviderErrorKind.TransientFailure, (await pending).Error!.Kind);
         Assert.Single(paced.Requests);
     }
@@ -607,15 +607,15 @@ public sealed partial class PaxsenixCapabilityAdapterTests
             new PaxsenixRequestPacer(clock, TimeSpan.Zero), clock, apple);
 
         var pending = adapter.FetchLyricsAsync(Context(clock: clock), Request());
-        await clock.WaitForTimersAsync(TimeSpan.FromSeconds(4));
-        clock.Advance(TimeSpan.FromSeconds(4));
+        await clock.WaitForTimersAsync(PaxsenixCapabilityAdapter.PerRequestTimeout);
+        clock.Advance(PaxsenixCapabilityAdapter.PerRequestTimeout);
         Assert.Equal(ProviderLyricsAvailabilityState.Available, (await pending).RequireValue().Availability);
         await adapter.FetchLyricsAsync(Context(clock: clock), Request());
         Assert.Equal(["?id=1", "?id=2", "?id=2"], handler.Requests.Select(uri => uri.Query));
     }
 
     [Fact]
-    public async Task MultipleHangingIdsCannotExceedSixSecondsAndBothAreSkippedOnRetry()
+    public async Task MultipleHangingIdsCannotExceedLookupBudgetAndBothAreSkippedOnRetry()
     {
         var clock = new ManualTimeProvider(DateTimeOffset.UtcNow);
         var handler = new WaitingHandler();
@@ -626,9 +626,9 @@ public sealed partial class PaxsenixCapabilityAdapterTests
             new PaxsenixRequestPacer(clock, TimeSpan.Zero), clock, apple);
 
         var pending = adapter.FetchLyricsAsync(Context(clock: clock), Request());
-        await clock.WaitForTimersAsync(TimeSpan.FromSeconds(4));
-        clock.Advance(TimeSpan.FromSeconds(4));
-        await clock.WaitForTimersAsync(TimeSpan.FromSeconds(4));
+        await clock.WaitForTimersAsync(PaxsenixCapabilityAdapter.PerRequestTimeout);
+        clock.Advance(PaxsenixCapabilityAdapter.PerRequestTimeout);
+        await clock.WaitForTimersAsync(PaxsenixCapabilityAdapter.PerRequestTimeout);
         await handler.SecondStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
         Assert.Equal(2, handler.Calls);
         clock.Advance(TimeSpan.FromSeconds(2));
@@ -684,7 +684,7 @@ public sealed partial class PaxsenixCapabilityAdapterTests
             new PaxsenixRequestPacer(clock, TimeSpan.Zero), clock, Catalog());
         using var cancellation = new CancellationTokenSource();
         var pending = adapter.FetchLyricsAsync(Context(cancellation.Token, clock: clock), Request());
-        await clock.WaitForTimersAsync(TimeSpan.FromSeconds(4));
+        await clock.WaitForTimersAsync(PaxsenixCapabilityAdapter.PerRequestTimeout);
         cancellation.Cancel();
         Assert.Equal(ProviderErrorKind.Canceled, (await pending).Error!.Kind);
         Assert.Equal(ProviderLyricsAvailabilityState.Available,

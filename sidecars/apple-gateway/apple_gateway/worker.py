@@ -13,7 +13,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 from gamdl.interface import AppleMusicSongInterface
-from gamdl.interface.enums import SongCodec
+from gamdl.interface.enums import SongCodec, SyncedLyricsFormat
 from gamdl.interface.exceptions import GamdlInterfaceFormatNotAvailableError
 from gamdl.interface.types import AppleMusicMedia
 
@@ -142,7 +142,12 @@ async def prepare(sessions, request):
 async def prepare_lyrics(sessions, request):
     async def operation(session):
         metadata = (await session.base.apple_music_api.get_song(request["song_id"]))["data"][0]
-        lyrics = await AppleMusicSongInterface(session.base).get_lyrics(metadata)
+        entries = metadata.get("relationships", {}).get("lyrics", {}).get("data", [])
+        for entry in entries:
+            ttml = entry.get("attributes", {}).get("ttml")
+            if isinstance(ttml, str) and ttml.strip():
+                return ttml
+        lyrics = await AppleMusicSongInterface(session.base, synced_lyrics_format=SyncedLyricsFormat.TTML).get_lyrics(metadata)
         return lyrics.synced if lyrics else None
 
     return await sessions.prepare(request["token"], request["storefront"], operation)

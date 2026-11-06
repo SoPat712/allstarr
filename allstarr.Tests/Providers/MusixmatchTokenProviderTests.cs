@@ -8,13 +8,15 @@ namespace allstarr.Tests;
 public sealed class MusixmatchTokenProviderTests
 {
     [Theory]
-    [InlineData(true)]
-    [InlineData(false)]
-    public async Task TokenRejectionBacksOffThenAllowsAnotherAttempt(bool httpFailure)
+    [InlineData(401, true)]
+    [InlineData(401, false)]
+    [InlineData(429, true)]
+    [InlineData(429, false)]
+    public async Task TokenRejectionBacksOffThenAllowsAnotherAttempt(int status, bool httpFailure)
     {
         var time = new ManualTime();
-        var handler = new TokenHandler(httpFailure ? HttpStatusCode.Unauthorized : HttpStatusCode.OK,
-            """{"message":{"header":{"status_code":401},"body":{}}}""");
+        var handler = new TokenHandler(httpFailure ? (HttpStatusCode)status : HttpStatusCode.OK,
+            System.Text.Json.JsonSerializer.Serialize(new { message = new { header = new { status_code = status }, body = new { } } }));
         var tokens = new MusixmatchTokenProvider(new HttpClient(handler), time);
 
         for (var attempt = 0; attempt < 3; attempt++)

@@ -242,7 +242,7 @@ public sealed class LyricsSearchIndex(StorageOptions options, IProviderRouter? r
             Open();
             var ids = _documents.Values.Where(document => document.Owner == context.Principal?.UserId &&
                 document.Backend == context.BackendInstanceId && document.ItemId == itemId && !sources.Contains(document.Source) &&
-                (LyricsVersions.ProviderId(document.Source) is "kept" or "lrclib" or "lrcred" or "unison" or "genius" or "paxsenix" or "lyricsplus" or "musixmatch" or "spicylyrics" or "spotify") &&
+                (LyricsVersions.ProviderId(document.Source) is "kept" or "lrclib" or "lrcred" or "amll" or "neteaselyrics" or "qqlyrics" or "kugoulyrics" or "lrcmux" or "unison" or "genius" or "paxsenix" or "lyricsplus" or "musixmatch" or "spicylyrics" or "spotify") &&
                 (unavailableSources == null || document.Source == "kept" || unavailableSources.Contains(LyricsVersions.ProviderId(document.Source))))
                 .Select(document => document.Id).ToArray();
             using var transaction = _connection!.BeginTransaction();

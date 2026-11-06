@@ -350,6 +350,26 @@ public sealed class AppleDownloadCapabilityAdapterTests : IDisposable
     }
 
     [Fact]
+    public async Task Lyrics_PreservesTtmlWordSpansFromGateway()
+    {
+        var gateway = new GatewayHandler([], "audio/flac")
+        {
+            AdvertiseLyrics = true,
+            LyricsPayload = System.Text.Json.JsonSerializer.Serialize(new { source = "GAMDL", format = "TTML",
+                content = "<tt xmlns='http://www.w3.org/ns/ttml'><body><div><p begin='1' end='2'><span begin='1' end='1.5'>Synthetic </span><span begin='1.5' end='2'>words</span></p></div></body></tt>" })
+        };
+        var settings = new AppleDownloadSettings { BaseUrl = "https://gateway.test/" };
+        using var client = new HttpClient(gateway);
+        var adapter = new AppleDownloadLyricsCapabilityAdapter(client, settings,
+            new AppleDownloadEndpointDiscovery(new StaticClientFactory(client), Options.Create(settings)), AppleProviderTestFactory.Client());
+        var value = (await adapter.FetchLyricsAsync(Context(Guid.CreateVersion7()), new(Guid.CreateVersion7(),
+            new(AppleDownloadCapabilityAdapter.StableProviderId, ProviderResourceKind.Track, "103")))).RequireValue();
+        Assert.Equal("GAMDL", value.Source);
+        Assert.Equal(2, Assert.Single(value.TimedLines!).Segments!.Count);
+        Assert.Equal(TimeSpan.FromMilliseconds(1500), value.TimedLines![0].Segments![1].Start);
+    }
+
+    [Fact]
     public async Task Lyrics_MissingCachedArtifactDoesNotTriggerMediaDownload()
     {
         var gateway = new GatewayHandler([], "audio/flac")
@@ -511,6 +531,7 @@ public sealed class AppleDownloadCapabilityAdapterTests : IDisposable
         public string? AudioRange { get; private set; }
         public bool AdvertiseLyrics { get; init; }
         public bool MissingLyrics { get; init; }
+        public string? LyricsPayload { get; init; }
         public List<Uri> Requests { get; } = [];
 
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
@@ -536,7 +557,7 @@ public sealed class AppleDownloadCapabilityAdapterTests : IDisposable
                 _ when path.StartsWith("/api/audio/", StringComparison.Ordinal) => AudioFile(request),
                 _ when path.StartsWith("/api/lyrics/", StringComparison.Ordinal) => MissingLyrics
                     ? new(HttpStatusCode.NotFound)
-                    : Json("{\"source\":\"GAMDL\",\"format\":\"LineTimed\",\"content\":\"[00:01.00]Fixture lyrics\\n\"}"),
+                    : Json(LyricsPayload ?? "{\"source\":\"GAMDL\",\"format\":\"LineTimed\",\"content\":\"[00:01.00]Fixture lyrics\\n\"}"),
                 _ => new(HttpStatusCode.NotFound)
             };
             response.RequestMessage = request;

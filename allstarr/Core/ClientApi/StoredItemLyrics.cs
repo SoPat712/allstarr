@@ -64,7 +64,7 @@ internal static class StoredItemLyrics
                 if (ConsiderProvider(await KeptLyricsReader.ReadStoredSidecarAsync(song, audioPath, token), provider)) return best;
                 continue;
             }
-            if (provider is not ("lrclib" or "lrcred" or "unison" or "genius" or "paxsenix" or "lyricsplus" or "musixmatch" or "spicylyrics" or "spotify")) continue;
+            if (provider is not ("lrclib" or "lrcred" or "amll" or "neteaselyrics" or "qqlyrics" or "kugoulyrics" or "lrcmux" or "unison" or "genius" or "paxsenix" or "lyricsplus" or "musixmatch" or "spicylyrics" or "spotify")) continue;
             if (provider == "lrclib")
             {
                 try
@@ -80,7 +80,8 @@ internal static class StoredItemLyrics
                 continue;
             }
             if (provider == "paxsenix" && recordingId == null) continue;
-            var scope = provider == "paxsenix" ? $"apple:{recordingId:N}:" : provider == "genius" ? "html-decoded:v1:" : "";
+            var scope = provider == "paxsenix" ? $"apple:{recordingId:N}:" : provider == "genius" ? "html-decoded:v1:" :
+                provider is "neteaselyrics" or "qqlyrics" or "kugoulyrics" ? "native-words:v1:" : "";
             var key = $"lyrics:v3:{provider}:" + scope + CanonicalCatalogKeys.Hash(JsonSerializer.Serialize(new
             {
                 lookup.Isrc,

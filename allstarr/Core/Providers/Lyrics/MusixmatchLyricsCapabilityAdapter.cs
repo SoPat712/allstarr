@@ -21,6 +21,8 @@ public sealed class MusixmatchLyricsCapabilityAdapter : IProviderLyricsCapabilit
     private const long MaximumTimestampMilliseconds = 24L * 60 * 60 * 1000;
     private static readonly Encoding StrictUtf8 = new UTF8Encoding(false, true);
 
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<HttpClient,
+        System.Collections.Concurrent.ConcurrentDictionary<string, LyricsRequestCoordinator>> Requests = new();
     private readonly HttpClient _http;
     private readonly IProviderAccountSecretAccessor _secrets;
     private readonly IApplicationCache _cache;
@@ -158,7 +160,7 @@ public sealed class MusixmatchLyricsCapabilityAdapter : IProviderLyricsCapabilit
                             credential,
                             request,
                             operation.Token,
-                            _logger)
+                            _logger, cacheKey)
                         : Task.FromResult(Failure<ProviderLyricsResult>(
                             ProviderErrorKind.AccountNeedsConfiguration));
                 },
@@ -245,8 +247,20 @@ public sealed class MusixmatchLyricsCapabilityAdapter : IProviderLyricsCapabilit
 
     private static Task<ProviderOutcome<ProviderLyricsResult>> ReadLyricsFromTokenCoreAsync(
         HttpClient http, MusixmatchCredential credential, ProviderLyricsRequest request,
-        CancellationToken cancellationToken, ILogger logger) =>
-        ReadLookupAsync(http, credential, request, cancellationToken, logger, new LookupDiagnostics());
+        CancellationToken cancellationToken, ILogger logger, string cacheScope = "") =>
+        CoordinatedLookupAsync(http, credential, request, cancellationToken, logger, cacheScope);
+
+    private static Task<ProviderOutcome<ProviderLyricsResult>> CoordinatedLookupAsync(HttpClient http,
+        MusixmatchCredential credential, ProviderLyricsRequest request, CancellationToken token, ILogger logger, string cacheScope)
+    {
+        if (request.ProviderTrackId.ProviderId != StableProviderId || request.ProviderTrackId.ResourceKind != ProviderResourceKind.Track)
+            return Task.FromResult(Failure<ProviderLyricsResult>(ProviderErrorKind.Forbidden));
+        var scopes = Requests.GetOrCreateValue(http);
+        var credentialKey = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(credential.UserToken)));
+        var coordinator = scopes.GetOrAdd(credentialKey, _ => new(TimeProvider.System, TimeSpan.FromSeconds(1)));
+        var key = cacheScope + JsonSerializer.Serialize(new { request.Isrc, request.TrackTitle, request.ArtistNames, request.AlbumTitle, request.DurationSeconds, request.PreferredFormat });
+        return coordinator.RunAsync(key, ct => ReadLookupAsync(http, credential, request, ct, logger, new LookupDiagnostics()), token);
+    }
 
     private static async Task<ProviderOutcome<ProviderLyricsResult>> ReadLookupAsync(
         HttpClient http,

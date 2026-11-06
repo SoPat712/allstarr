@@ -71,6 +71,31 @@ public static class CurrentProviderSupportCatalog
             Capability("lyrics", Supported, "Native account-bound Spotify lyrics reuse expiring tokens and preserve plain/timed content, source and stable revisions through shared Jellyfin/Subsonic routing.", "SpotifyPlaylistCapabilityAdapterTests; ProtocolLyricsResolverTests"),
             Capability("health", Partial, "Playlist and native lyrics probes remain independently sampled, so one lane does not mask the other.", "ProviderStatusManagerTests; ConfigControllerAuthorizationTests")),
         Provider(
+            "amll", "amll", "AMLL TTML DB", "none",
+            "Public word timing with strict recording identity checks; no account required.",
+            Capability("lyrics", Supported, "Word timing, shared caching and lookup budgets.", "CommunityWordLyricsTests; ChineseWordLyricsCapabilityAdapterTests"),
+            Capability("health", Supported, "Bounded public lyrics probe.", "ProviderStatusManagerTests")),
+        Provider(
+            "neteaselyrics", "neteaselyrics", "NetEase Lyrics", "none",
+            "Public word timing with strict recording identity checks; no account required.",
+            Capability("lyrics", Supported, "Word timing, shared caching and lookup budgets.", "CommunityWordLyricsTests; ChineseWordLyricsCapabilityAdapterTests"),
+            Capability("health", Supported, "Bounded public lyrics probe.", "ProviderStatusManagerTests")),
+        Provider(
+            "qqlyrics", "qqlyrics", "QQ Music Lyrics", "none",
+            "Public word timing with strict recording identity checks; no account required.",
+            Capability("lyrics", Supported, "Word timing, shared caching and lookup budgets.", "CommunityWordLyricsTests; ChineseWordLyricsCapabilityAdapterTests"),
+            Capability("health", Supported, "Bounded public lyrics probe.", "ProviderStatusManagerTests")),
+        Provider(
+            "kugoulyrics", "kugoulyrics", "Kugou Lyrics", "none",
+            "Public word timing with strict recording identity checks; no account required.",
+            Capability("lyrics", Supported, "Word timing, shared caching and lookup budgets.", "CommunityWordLyricsTests; ChineseWordLyricsCapabilityAdapterTests"),
+            Capability("health", Supported, "Bounded public lyrics probe.", "ProviderStatusManagerTests")),
+        Provider(
+            "lrcmux", "lrcmux", "LRCMux", "none",
+            "Public word timing with strict recording identity checks; no account required.",
+            Capability("lyrics", Supported, "Word timing, shared caching and lookup budgets.", "CommunityWordLyricsTests; ChineseWordLyricsCapabilityAdapterTests"),
+            Capability("health", Supported, "Bounded public lyrics probe.", "ProviderStatusManagerTests")),
+        Provider(
             "lrcred", "lrcred", "lrc.red", "none",
             "Public ISRC and metadata matching; no account or token required.",
             Capability("lyrics", Supported, "TTML lookup preserves word timing and background vocals.", "LrcRedCapabilityAdapterTests; ProtocolLyricsResolverTests"),

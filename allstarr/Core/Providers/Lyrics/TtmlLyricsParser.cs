@@ -139,7 +139,7 @@ internal static partial class TtmlLyricsParser
         }
     }
 
-    private static TimeSpan? ReadTime(XElement element, string name)
+    internal static TimeSpan? ReadTime(XElement element, string name)
     {
         var value = element.Attribute(name)?.Value;
         if (value == null) return null;

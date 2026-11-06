@@ -96,11 +96,23 @@ public sealed class LyricsPlusCapabilityAdapterTests
     }
 
     [Fact]
+    public async Task IsrcIsSentAndConflictingRecordingIsRejected()
+    {
+        var handler = new Handler((_, _) => Response(HttpStatusCode.OK,
+            Timed.Replace("\"title\":\"Fixture\"", "\"isrc\":\"USXXX0000001\",\"title\":\"Fixture\"")));
+        var request = new ProviderLyricsRequest(Guid.CreateVersion7(), new("lyricsplus", ProviderResourceKind.Track, "lookup"),
+            trackTitle: "Fixture", artistNames: ["Artist"], isrc: "USXXX0000002");
+        var result = await Adapter(handler, endpoint: "http://lyrics:3000").FetchLyricsAsync(Context(), request);
+        Assert.Equal(ProviderLyricsAvailabilityState.Unavailable, result.RequireValue().Availability);
+        Assert.Contains("isrc=USXXX0000002", Assert.Single(handler.Requests).Query);
+    }
+
+    [Fact]
     public async Task PublicMirrorOrderMatchesTheReference()
     {
         var handler = new Handler((_, _) => Response(HttpStatusCode.ServiceUnavailable));
         await Adapter(handler).FetchLyricsAsync(Context(), Request());
-        Assert.Equal(new[] { "lyricsplus.binimum.org", "lyricsplus-seven.vercel.app", "lyricsplus.prjktla.workers.dev", "lyrics-plus-backend.vercel.app" },
+        Assert.Equal(new[] { "lyricsplus.binimum.org", "lyricsplus.prjktla.my.id" },
             handler.Requests.Select(uri => uri.Host));
     }
 
@@ -290,7 +302,7 @@ public sealed class LyricsPlusCapabilityAdapterTests
         Assert.True(content.IsSuccess, content.Error?.SafeMessage);
         Assert.NotNull(content.RequireValue().TimedLines);
         Assert.Single(handler.Requests);
-        Assert.Single(cache.GetKeysByPattern("lyrics:v3:lyricsplus:*"));
+        Assert.Single(cache.GetKeysByPattern("lyrics:v4:lyricsplus:*"));
         Assert.Empty(cache.GetKeysByPattern("lyrics:v2:lyricsplus:*"));
     }
 

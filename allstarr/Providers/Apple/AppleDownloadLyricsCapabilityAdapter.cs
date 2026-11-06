@@ -74,7 +74,7 @@ public sealed class AppleDownloadLyricsCapabilityAdapter : IProviderLyricsCapabi
 
             if (!OutboundRequestGuard.TryCreateConfiguredServiceUri(configuredUrl, out var baseUri, out _))
                 return Failure(ProviderErrorKind.AccountNeedsConfiguration);
-            var cacheKey = "lyrics:v3:apple-musickit:" + Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(
+            var cacheKey = "lyrics:v4:apple-musickit:" + Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(
                 JsonSerializer.SerializeToUtf8Bytes(new { context.Actor, context.Account, request, configuredUrl })));
             try
             {
@@ -126,7 +126,17 @@ public sealed class AppleDownloadLyricsCapabilityAdapter : IProviderLyricsCapabi
                          Enum.TryParse<ProviderLyricsFormat>(formatValue.GetString(), true, out var parsed)
                 ? parsed
                 : ProviderLyricsFormat.LineTimed;
-            var result = new ProviderLyricsResult(ProviderLyricsAvailabilityState.Available, source, format, content);
+            ProviderLyricsResult result;
+            if (content.TrimStart().StartsWith('<'))
+            {
+                var parsedTtml = TtmlLyricsParser.Parse(content, source);
+                if (!parsedTtml.IsSuccess) return parsedTtml;
+                result = parsedTtml.RequireValue();
+                if (request.PreferredFormat == ProviderLyricsFormat.PlainText && result.TimedLines != null)
+                    result = new(result.Availability, source, ProviderLyricsFormat.PlainText,
+                        string.Join('\n', result.TimedLines.Select(line => line.Text)), result.Revision);
+            }
+            else result = new(ProviderLyricsAvailabilityState.Available, source, format, content);
             try
             {
                 if (cache != null)
@@ -139,7 +149,7 @@ public sealed class AppleDownloadLyricsCapabilityAdapter : IProviderLyricsCapabi
         {
             return Failure(ProviderErrorKind.Canceled);
         }
-        catch (Exception exception) when (exception is HttpRequestException or IOException or JsonException)
+        catch (Exception exception) when (exception is HttpRequestException or IOException or JsonException or System.Xml.XmlException or ArgumentException)
         {
             return Failure(ProviderErrorKind.TransientFailure);
         }

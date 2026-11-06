@@ -126,7 +126,7 @@ public sealed partial class MusixmatchLyricsCapabilityAdapterTests
             Assert.Equal(ProviderLyricsAvailabilityState.Unavailable,
                 (await adapter.FetchLyricsAsync(Context(), LyricsRequest())).RequireValue().Availability);
 
-        Assert.Equal(2, handler.Requests);
+        Assert.Equal(1, handler.Requests);
         Assert.All(handler.RequestUris, uri =>
         {
             Assert.Equal("apic-appmobile.musixmatch.com", uri.Host);
@@ -1191,7 +1191,7 @@ public sealed partial class MusixmatchLyricsCapabilityAdapterTests
     }
 
     [Fact]
-    public async Task UnavailableResultsAreNotCached()
+    public async Task UnavailableResultsAreBrieflyCached()
     {
         EnsureCacheSettings();
         var handler = new FixtureHttpHandler { StatusCode = HttpStatusCode.NotFound };
@@ -1204,8 +1204,8 @@ public sealed partial class MusixmatchLyricsCapabilityAdapterTests
         var second = await adapter.FetchLyricsAsync(Context(AccountA), LyricsRequest());
 
         Assert.Equal(ProviderLyricsAvailabilityState.Unavailable, first.RequireValue().Availability);
-        Assert.Equal(ProviderLyricsAvailabilityState.Available, second.RequireValue().Availability);
-        Assert.Equal(2, handler.Requests);
+        Assert.Equal(ProviderLyricsAvailabilityState.Unavailable, second.RequireValue().Availability);
+        Assert.Equal(1, handler.Requests);
     }
 
     [Fact]

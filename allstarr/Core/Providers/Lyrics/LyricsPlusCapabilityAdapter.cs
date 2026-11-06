@@ -18,8 +18,7 @@ public sealed class LyricsPlusCapabilityAdapter(
     public const string HttpClientName = "LyricsPlus";
     private const int MaximumBytes = 2_000_000;
     private static readonly string[] PublicEndpoints =
-        ["https://lyricsplus.binimum.org/", "https://lyricsplus-seven.vercel.app/",
-         "https://lyricsplus.prjktla.workers.dev/", "https://lyrics-plus-backend.vercel.app/"];
+        ["https://lyricsplus.binimum.org/", "https://lyricsplus.prjktla.my.id/"];
     public string ProviderId => "lyricsplus";
     public ProviderCapabilityKind Capability => ProviderCapabilityKind.Lyrics;
     internal sealed record EndpointConfiguration(string Endpoint, string Binding, long Revision);
@@ -38,9 +37,10 @@ public sealed class LyricsPlusCapabilityAdapter(
                 ? uri! : throw new ArgumentException("Lyrics endpoint is unavailable.")).ToArray(), request);
 
     private static string CacheKey(IReadOnlyList<Uri> endpoints, ProviderLyricsRequest request) =>
-        "lyrics:v3:lyricsplus:" + Hash(JsonSerializer.Serialize(new
+        "lyrics:v4:lyricsplus:" + Hash(JsonSerializer.Serialize(new
         {
             Endpoints = endpoints.Select(uri => uri.AbsoluteUri),
+            request.Isrc,
             request.TrackTitle,
             request.ArtistNames,
             request.AlbumTitle,
@@ -136,6 +136,7 @@ public sealed class LyricsPlusCapabilityAdapter(
         var query = $"title={Uri.EscapeDataString(request.TrackTitle!)}&artist={Uri.EscapeDataString(string.Join(", ", request.ArtistNames))}" +
             $"&album={Uri.EscapeDataString(request.AlbumTitle ?? "")}" +
             (request.DurationSeconds.HasValue ? $"&duration={request.DurationSeconds.Value.ToString(CultureInfo.InvariantCulture)}" : "");
+        if (!string.IsNullOrWhiteSpace(request.Isrc)) query += "&isrc=" + Uri.EscapeDataString(request.Isrc);
         var endpoint = new Uri(baseUri, "v2/lyrics/get?" + query);
         using var outbound = new HttpRequestMessage(HttpMethod.Get, endpoint);
         if (configuration != null && CanSolve(baseUri)) outbound.Options.Set(CloudflareChallengeSolver.ExpectedConfiguration, configuration);
@@ -175,6 +176,9 @@ public sealed class LyricsPlusCapabilityAdapter(
         if (!timed && typeName != "None") return ContractFailure();
         if (root.TryGetProperty("metadata", out var metadata) && metadata.ValueKind == JsonValueKind.Object)
         {
+            if (!string.IsNullOrWhiteSpace(request.Isrc) && metadata.TryGetProperty("isrc", out var isrc) &&
+                isrc.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(isrc.GetString()) &&
+                !string.Equals(request.Isrc.Trim(), isrc.GetString()!.Trim(), StringComparison.OrdinalIgnoreCase)) return Unavailable();
             foreach (var (key, expected) in new[] { ("title", request.TrackTitle!), ("artist", string.Join(", ", request.ArtistNames)) })
                 if (metadata.TryGetProperty(key, out var value) && value.ValueKind == JsonValueKind.String &&
                     !string.IsNullOrWhiteSpace(value.GetString()) && FuzzyMatcher.CalculateSimilarity(expected, value.GetString()!) < 90)

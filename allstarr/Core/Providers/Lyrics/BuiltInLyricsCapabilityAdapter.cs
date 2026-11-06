@@ -205,6 +205,51 @@ public static class BuiltInLyricsCapabilityRegistration
         services.AddSingleton<ProviderRegistration>(provider => PublicRegistration(
             "genius", "Genius", "Public plain lyrics through the Genius worker; no account required.",
             provider.GetRequiredService<GeniusCapabilityAdapter>()));
+        services.AddHttpClient(AmllLyricsCapabilityAdapter.HttpClientName)
+            .RemoveAllLoggers()
+            .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { UseCookies = false, AllowAutoRedirect = false });
+        services.AddSingleton(provider => new AmllLyricsCapabilityAdapter(
+            provider.GetRequiredService<IHttpClientFactory>().CreateClient(AmllLyricsCapabilityAdapter.HttpClientName),
+            provider.GetRequiredService<IApplicationCache>(),
+            () => provider.GetRequiredService<Microsoft.Extensions.Options.IOptions<allstarr.Models.Settings.CacheSettings>>().Value.LyricsTTL));
+        services.AddSingleton<ProviderRegistration>(provider => PublicRegistration(
+            "amll", "AMLL TTML DB", "Community word-synced TTML from https://github.com/amll-dev/amll-ttml-db.", provider.GetRequiredService<AmllLyricsCapabilityAdapter>()));
+        services.AddHttpClient(NetEaseWordLyricsCapabilityAdapter.HttpClientName)
+            .RemoveAllLoggers()
+            .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { UseCookies = false, AllowAutoRedirect = false });
+        services.AddSingleton(provider => new NetEaseWordLyricsCapabilityAdapter(
+            provider.GetRequiredService<IHttpClientFactory>().CreateClient(NetEaseWordLyricsCapabilityAdapter.HttpClientName),
+            provider.GetRequiredService<IApplicationCache>(),
+            () => provider.GetRequiredService<Microsoft.Extensions.Options.IOptions<allstarr.Models.Settings.CacheSettings>>().Value.LyricsTTL));
+        services.AddSingleton<ProviderRegistration>(provider => PublicRegistration(
+            "neteaselyrics", "NetEase Lyrics", "Public NetEase word-synced YRC lyrics.", provider.GetRequiredService<NetEaseWordLyricsCapabilityAdapter>()));
+        services.AddHttpClient(QqWordLyricsCapabilityAdapter.HttpClientName)
+            .RemoveAllLoggers()
+            .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { UseCookies = false, AllowAutoRedirect = false });
+        services.AddSingleton(provider => new QqWordLyricsCapabilityAdapter(
+            provider.GetRequiredService<IHttpClientFactory>().CreateClient(QqWordLyricsCapabilityAdapter.HttpClientName),
+            provider.GetRequiredService<IApplicationCache>(),
+            () => provider.GetRequiredService<Microsoft.Extensions.Options.IOptions<allstarr.Models.Settings.CacheSettings>>().Value.LyricsTTL));
+        services.AddSingleton<ProviderRegistration>(provider => PublicRegistration(
+            "qqlyrics", "QQ Music Lyrics", "Public QQ Music word-synced QRC lyrics.", provider.GetRequiredService<QqWordLyricsCapabilityAdapter>()));
+        services.AddHttpClient(KugouWordLyricsCapabilityAdapter.HttpClientName)
+            .RemoveAllLoggers()
+            .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { UseCookies = false, AllowAutoRedirect = false });
+        services.AddSingleton(provider => new KugouWordLyricsCapabilityAdapter(
+            provider.GetRequiredService<IHttpClientFactory>().CreateClient(KugouWordLyricsCapabilityAdapter.HttpClientName),
+            provider.GetRequiredService<IApplicationCache>(),
+            () => provider.GetRequiredService<Microsoft.Extensions.Options.IOptions<allstarr.Models.Settings.CacheSettings>>().Value.LyricsTTL));
+        services.AddSingleton<ProviderRegistration>(provider => PublicRegistration(
+            "kugoulyrics", "Kugou Lyrics", "Public Kugou word-synced KRC lyrics.", provider.GetRequiredService<KugouWordLyricsCapabilityAdapter>()));
+        services.AddHttpClient(LrcMuxLyricsCapabilityAdapter.HttpClientName)
+            .RemoveAllLoggers()
+            .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { UseCookies = false, AllowAutoRedirect = false });
+        services.AddSingleton(provider => new LrcMuxLyricsCapabilityAdapter(
+            provider.GetRequiredService<IHttpClientFactory>().CreateClient(LrcMuxLyricsCapabilityAdapter.HttpClientName),
+            provider.GetRequiredService<IApplicationCache>(),
+            () => provider.GetRequiredService<Microsoft.Extensions.Options.IOptions<allstarr.Models.Settings.CacheSettings>>().Value.LyricsTTL));
+        services.AddSingleton<ProviderRegistration>(provider => PublicRegistration(
+            "lrcmux", "LRCMux", "Public lyrics with word timing from LRCMux.", provider.GetRequiredService<LrcMuxLyricsCapabilityAdapter>()));
         return services;
     }
 

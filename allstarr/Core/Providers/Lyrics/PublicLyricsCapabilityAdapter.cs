@@ -11,7 +11,7 @@ namespace allstarr.Core.Providers.Lyrics;
 public abstract class PublicLyricsCapabilityAdapter(
     HttpClient http, IApplicationCache? cache, Func<TimeSpan>? lyricsTtl) : IProviderLyricsCapability, IInternalLyricsCapability
 {
-    private const int MaximumBytes = 2_000_000;
+    protected virtual int MaximumResponseBytes => 2_000_000;
     protected virtual TimeProvider Clock => TimeProvider.System;
     protected virtual bool RequiresArtist => false;
     protected virtual string CacheScope(ProviderLyricsRequest request) => string.Empty;
@@ -128,8 +128,8 @@ public abstract class PublicLyricsCapabilityAdapter(
             if (!response.IsSuccessStatusCode || response.Headers.Location != null)
                 return (null, new((int)response.StatusCode >= 500 || response.StatusCode == HttpStatusCode.RequestTimeout
                     ? ProviderErrorKind.TransientFailure : ProviderErrorKind.PermanentFailure), response.StatusCode);
-            if (response.Content.Headers.ContentLength > MaximumBytes) return (null, ProviderError.CompatibilityContractChanged(), response.StatusCode);
-            try { await response.Content.LoadIntoBufferAsync(MaximumBytes, attempt.Token); }
+            if (response.Content.Headers.ContentLength > MaximumResponseBytes) return (null, ProviderError.CompatibilityContractChanged(), response.StatusCode);
+            try { await response.Content.LoadIntoBufferAsync(MaximumResponseBytes, attempt.Token); }
             catch (HttpRequestException) { return (null, ProviderError.CompatibilityContractChanged(), response.StatusCode); }
             return (await response.Content.ReadAsStringAsync(attempt.Token), null, response.StatusCode);
         }

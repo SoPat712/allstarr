@@ -64,3 +64,19 @@ async def test_preparation_reuses_account_clients_and_keeps_song_state_separate(
         assert report["phases"][0]["phase"] == "setup"
         assert {phase["phase"] for phase in report["phases"]} >= {"catalog", "playback", "artwork", "manifest"}
         await sessions.close()
+
+
+@pytest.mark.asyncio
+async def test_lyrics_preserve_raw_ttml_word_spans():
+    from apple_gateway.worker import prepare_lyrics
+
+    ttml = "<tt><body><p begin='1'><span begin='1' end='2'>Synthetic</span></p></body></tt>"
+    apple = SimpleNamespace(get_song=AsyncMock(return_value={"data": [{
+        "relationships": {"lyrics": {"data": [{"attributes": {"ttml": ttml}}]}}
+    }]}))
+
+    class Sessions:
+        async def prepare(self, token, storefront, operation):
+            return await operation(SimpleNamespace(base=SimpleNamespace(apple_music_api=apple)))
+
+    assert await prepare_lyrics(Sessions(), {"song_id": "103", "token": "fixture", "storefront": "us"}) == ttml

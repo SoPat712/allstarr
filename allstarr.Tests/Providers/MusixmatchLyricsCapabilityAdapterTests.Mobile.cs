@@ -42,11 +42,23 @@ public sealed partial class MusixmatchLyricsCapabilityAdapterTests
             Assert.True((await adapter.FetchLyricsAsync(MissingAccountContext(), LyricsRequest())).IsSuccess);
 
         Assert.Empty(secrets.Accounts);
-        Assert.Equal(3, handler.Requests);
+        Assert.Equal(2, handler.Requests);
         Assert.Equal("/ws/1.1/token.get", handler.RequestUris[0].AbsolutePath);
         Assert.Equal("mac-ios-v2.0", ParseQuery(handler.RequestUris[0])["app_id"]);
         Assert.False(ParseQuery(handler.RequestUris[0]).ContainsKey("usertoken"));
         Assert.All(handler.RequestUris.Skip(1), uri => Assert.Equal("automatic-fixture-token", ParseQuery(uri)["usertoken"]));
+    }
+
+    [Fact]
+    public async Task CachedLookupKeepsEachRequestedFormat()
+    {
+        var handler = new FixtureHttpHandler();
+        var adapter = CreateAdapter(handler, new FixtureSecretAccessor());
+        var timed = (await adapter.FetchLyricsAsync(Context(), LyricsRequest())).RequireValue();
+        var plain = (await adapter.FetchLyricsAsync(Context(), LyricsRequest(preferredFormat: ProviderLyricsFormat.PlainText))).RequireValue();
+        Assert.Equal(ProviderLyricsFormat.LineTimed, timed.Format);
+        Assert.Equal(ProviderLyricsFormat.PlainText, plain.Format);
+        Assert.Equal("First\nSecond", plain.Content);
     }
 
     [Fact]
@@ -98,7 +110,7 @@ public sealed partial class MusixmatchLyricsCapabilityAdapterTests
             Assert.Equal(ProviderErrorKind.RateLimited,
                 (await adapter.FetchLyricsAsync(MissingAccountContext(), LyricsRequest())).Error?.Kind);
 
-        Assert.Equal(4, handler.Requests);
+        Assert.Equal(3, handler.Requests);
     }
 
     [Theory]
@@ -162,7 +174,7 @@ public sealed partial class MusixmatchLyricsCapabilityAdapterTests
 
         Assert.All(await Task.WhenAll(others), result => Assert.True(result.IsSuccess));
         Assert.Equal(1, handler.TokenRequests);
-        Assert.Equal(12, handler.LookupRequests);
+        Assert.Equal(1, handler.LookupRequests);
     }
 
     [Fact]

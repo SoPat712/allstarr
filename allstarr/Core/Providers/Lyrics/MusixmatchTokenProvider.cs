@@ -56,7 +56,8 @@ internal sealed class MusixmatchTokenProvider(HttpClient http, TimeProvider? tim
             if ((int)response.StatusCode is 401 or 429)
             {
                 delay = TimeSpan.FromMinutes(5);
-                if (response.Headers.RetryAfter?.Delta is { } retry && retry > delay)
+                var retryDelay = response.Headers.RetryAfter?.Delta ?? response.Headers.RetryAfter?.Date - _time.GetUtcNow();
+                if (retryDelay is { } retry && retry > delay)
                     delay = retry > TimeSpan.FromHours(1) ? TimeSpan.FromHours(1) : retry;
             }
             else if (response.IsSuccessStatusCode)
@@ -70,7 +71,7 @@ internal sealed class MusixmatchTokenProvider(HttpClient http, TimeProvider? tim
                         message.TryGetProperty("header", out var header) && header.ValueKind == JsonValueKind.Object &&
                         header.TryGetProperty("status_code", out var status) && status.TryGetInt32(out var code))
                     {
-                        if (code == 401) delay = TimeSpan.FromMinutes(5);
+                        if (code is 401 or 429) delay = TimeSpan.FromMinutes(5);
                         if (code == 200 && message.TryGetProperty("body", out var tokenBody) && tokenBody.ValueKind == JsonValueKind.Object &&
                             tokenBody.TryGetProperty("user_token", out var token) && token.ValueKind == JsonValueKind.String &&
                             MusixmatchCredential.TryParse(token.GetString(), out var credential))

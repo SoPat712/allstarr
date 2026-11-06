@@ -602,7 +602,7 @@ public sealed class ProviderAccountCheckRunnerTests
         var all = new[] { "apple-musickit", "qobuz", "deezer", "spotify", "lrcred", "unison", "lrclib", "lyricsplus", "musixmatch", "lastfm", "listenbrainz", "multi-scrobbler", "koito", "audiomuse-ai" };
         return new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
-            ["MULTI_PROVIDER_DISABLED_PROVIDERS"] = string.Join(',', all.Concat(new[] { "paxsenix", "genius" }).Except(enabled.Split(','))),
+            ["MULTI_PROVIDER_DISABLED_PROVIDERS"] = string.Join(',', all.Concat(new[] { "paxsenix", "genius", "amll", "neteaselyrics", "qqlyrics", "kugoulyrics", "lrcmux" }).Except(enabled.Split(','))),
             ["ProviderChecks:PauseMilliseconds"] = "0"
         }).Build();
     }

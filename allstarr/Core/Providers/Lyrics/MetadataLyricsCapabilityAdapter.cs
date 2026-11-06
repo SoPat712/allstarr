@@ -98,6 +98,7 @@ public abstract class MetadataLyricsCapabilityAdapter : PublicLyricsCapabilityAd
 
 internal sealed class MetadataLyricsFailureCache(TimeProvider clock, int capacity = 1024)
 {
+    internal LyricsRequestCoordinator Requests { get; } = new(clock, TimeSpan.FromSeconds(1));
     private readonly Dictionary<string, (ProviderError Error, DateTimeOffset Expires)> _entries = new(StringComparer.Ordinal);
     private readonly Queue<string> _order = new();
     private readonly object _gate = new();

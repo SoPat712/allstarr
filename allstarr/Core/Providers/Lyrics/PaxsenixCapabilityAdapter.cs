@@ -13,8 +13,8 @@ namespace allstarr.Core.Providers.Lyrics;
 public sealed class PaxsenixCapabilityAdapter : PublicLyricsCapabilityAdapter
 {
     public const string HttpClientName = "PaxsenixLyrics";
-    public static readonly TimeSpan OverallLookupBudget = TimeSpan.FromSeconds(6);
-    public static readonly TimeSpan PerRequestTimeout = TimeSpan.FromSeconds(4);
+    public static readonly TimeSpan OverallLookupBudget = TimeSpan.FromMilliseconds(2500);
+    public static readonly TimeSpan PerRequestTimeout = TimeSpan.FromSeconds(1);
     public static readonly TimeSpan DiagnosticLookupBudget = TimeSpan.FromSeconds(20);
     private static readonly TimeSpan DiagnosticRequestTimeout = TimeSpan.FromSeconds(8);
     private readonly PaxsenixRequestPacer _pacer;
