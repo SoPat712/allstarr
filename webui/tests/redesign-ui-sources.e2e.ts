@@ -226,7 +226,7 @@ for (const count of [1, 2, 32]) {
       capturedAt: "2026-11-03T12:00:00Z", counts: { passed: 0, failed: count, neutral: 0 }, checks,
     } }));
     await page.goto("#/sources/services/qobuz");
-    const strip = page.getByRole("region", { name: "Last 30 checks", exact: true }).getByRole("img");
+    const strip = page.getByRole("region", { name: "Last 30 checks", exact: true }).getByRole("group");
     await expect(strip).toBeVisible();
     const shown = Math.min(count, 30), slow = checks.slice(0, 30).filter(check => check.latencyMs >= 1000).length;
     const failed = checks.slice(0, 30).filter(check => check.outcome === "failed").length;
@@ -250,6 +250,103 @@ test("Sources check counts use singular in rows and the panel", async ({ page })
   await page.getByRole("link", { name: "Open Qobuz", exact: true }).click();
   await expect(page.locator(".source-summary")).toContainText("0 of 1 check passed");
 });
+
+for (const width of [1280, 390]) {
+  test(`Sources check card hover, keyboard and edge placement at ${width}`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await fixture(page);
+    await page.clock.install({ time: new Date("2026-11-03T12:05:00Z") });
+    await page.route("**/health-history?*", route => route.fulfill({ json: {
+      capturedAt: "2026-11-03T12:05:00Z", counts: { passed: 1, failed: 1, neutral: 1 }, checks: [
+        { outcome: "failed", capability: "streaming", accountLabel: "Household", accountScope: "shared", reasonCode: "timeout", latencyMs: 1250, testedAt: "2026-11-03T12:00:00Z" },
+        { outcome: "passed", capability: "lyrics", accountLabel: "Public", accountScope: "public", latencyMs: 42, testedAt: "2026-11-03T11:59:00Z" },
+        { outcome: "neutral", capability: "streaming", accountLabel: "Public", accountScope: "public", reasonCode: "probe_not_available", latencyMs: null, testedAt: "2026-11-03T11:58:00Z" },
+      ],
+    } }));
+    await page.goto("#/sources/services/qobuz");
+    const panel = page.getByRole("dialog", { name: "Qobuz", exact: true });
+    const strip = panel.getByRole("region", { name: "Last 30 checks", exact: true }).getByRole("group");
+    const bars = strip.locator("[data-outcome]");
+    const card = panel.getByRole("tooltip");
+    await bars.last().hover();
+    await expect(card).toBeVisible();
+    await expect(card).toContainText("Streaming");
+    await expect(card).toContainText("Household");
+    await expect(card).toContainText("Failed");
+    await expect(card).toContainText("Timed out");
+    await expect(card).toContainText("1250 ms");
+    await expect(card).toContainText("5 minutes ago");
+    await expect(card.locator("time")).toHaveAttribute("datetime", "2026-11-03T12:00:00Z");
+    await expect(card.locator("time")).toContainText("2026");
+    await expect(bars.last()).toHaveAttribute("data-active", "true");
+    await expect(strip).not.toBeFocused();
+    await expect(card).toHaveAttribute("data-align", "end");
+    const contained = async () => {
+      expect(await card.evaluate(element => {
+        const bounds = element.getBoundingClientRect();
+        const panel = element.closest("[data-side-panel]")!.getBoundingClientRect();
+        return bounds.left >= panel.left && bounds.right <= panel.right && bounds.top >= panel.top && bounds.bottom <= panel.bottom;
+      })).toBe(true);
+    };
+    await contained();
+    await card.hover();
+    await expect(card).toBeVisible();
+    await panel.getByRole("heading", { name: "Last 30 checks", exact: true }).hover();
+    await expect(card).toBeHidden();
+    await strip.focus();
+    await expect(card).toContainText("Failed");
+    await strip.press("ArrowLeft");
+    await expect(card).toContainText("Lyrics");
+    await expect(card).toContainText("Passed");
+    await expect(card).toContainText("42 ms");
+    await strip.press("ArrowLeft");
+    await expect(card).toContainText("Neutral");
+    await strip.press("Home");
+    await expect(card).toHaveText("No check");
+    await strip.press("ArrowLeft");
+    await expect(bars.first()).toHaveAttribute("data-active", "true");
+    await strip.press("End");
+    await strip.press("ArrowRight");
+    await expect(bars.last()).toHaveAttribute("data-active", "true");
+    await strip.press("Escape");
+    await expect(card).toBeHidden();
+    await expect(panel).toBeVisible();
+    await expect(strip).toBeFocused();
+    await strip.press("ArrowLeft");
+    await expect(card).toBeVisible();
+    await strip.press("Tab");
+    await expect(card).toBeHidden();
+    await page.setViewportSize({ width, height: 500 });
+    await bars.last().evaluate(element => element.scrollIntoView({ block: "end" }));
+    await bars.last().hover();
+    await expect(card).toHaveAttribute("data-side", "above");
+    await contained();
+    expect(await page.pageErrors()).toEqual([]);
+  });
+
+  test.describe(`Sources check card touch at ${width}`, () => {
+    test.use({ hasTouch: true, viewport: { width, height: 900 } });
+    test("opens and dismisses check details with taps", async ({ page }) => {
+      await fixture(page);
+      await page.goto("#/sources/services/qobuz");
+      const panel = page.getByRole("dialog", { name: "Qobuz", exact: true });
+      const strip = panel.getByRole("region", { name: "Last 30 checks", exact: true }).getByRole("group");
+      const bars = strip.locator("[data-outcome]");
+      const card = panel.getByRole("tooltip");
+      await bars.last().tap();
+      await expect(card).toContainText("Failed");
+      await bars.first().tap();
+      await expect(card).toHaveText("No check");
+      await bars.first().tap();
+      await expect(card).toBeHidden();
+      await bars.last().tap();
+      await expect(card).toBeVisible();
+      await panel.getByRole("heading", { name: "Last 30 checks", exact: true }).tap();
+      await expect(card).toBeHidden();
+      expect(await page.pageErrors()).toEqual([]);
+    });
+  });
+}
 
 for (const width of [320, 1280]) {
   test(`Sources latest checks disclosure aligns with panel sections at ${width}px`, async ({ page }) => {

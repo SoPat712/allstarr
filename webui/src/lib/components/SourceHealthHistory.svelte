@@ -1,12 +1,13 @@
 <script lang="ts">
   import { countLabel } from "$lib/count-label";
-  import { untrack } from "svelte";
+  import { tick, untrack } from "svelte";
   import { sources, type ProviderCheckHistory, type ProviderHealth } from "$lib/api";
   import { checkGuide, humanize } from "$lib/sources";
   import { Badge } from "$lib/components/ui/badge";
   import RowsSkeleton from "$lib/components/patterns/RowsSkeleton.svelte";
   import ErrorState from "$lib/components/patterns/ErrorState.svelte";
   import { Button } from "$lib/components/ui/button";
+  import { sourceCheckCard } from "$lib/source-check-card";
 
   let { providerId, statuses, refreshKey, onRetryWindow, automatic = true, checksSupported = true }: {
     providerId: string;
@@ -28,6 +29,104 @@
   let now = $state(0);
   let request = 0;
   let controller: AbortController | undefined;
+  const componentId = $props.id();
+  const cardId = `${componentId}-check-card`;
+  let strip = $state<HTMLDivElement>();
+  let card = $state<HTMLDivElement>();
+  let activeSlot = $state<number | null>(null);
+  let keyboardSlot = 29;
+  let focused = false;
+  let touched = false;
+  let closeTimer: ReturnType<typeof setTimeout> | undefined;
+  let placement = $state({ left: 0, top: 0, side: "below", align: "center" });
+
+  function positionCard() {
+    if (!strip || !card || activeSlot === null) return;
+    const bar = strip.children[activeSlot].getBoundingClientRect();
+    const bounds = strip.getBoundingClientRect();
+    const panel = strip.closest(".panel-body")?.getBoundingClientRect() ?? bounds;
+    const height = card.offsetHeight;
+    const width = card.offsetWidth;
+    const preferred = bar.left + bar.width / 2 - bounds.left - width / 2;
+    const left = Math.max(0, Math.min(preferred, bounds.width - width));
+    const bottom = Math.min(panel.bottom, window.innerHeight) - 8;
+    const top = Math.max(panel.top, 0) + 8;
+    const below = bounds.bottom + 8;
+    const above = below + height > bottom;
+    placement = { left, top: Math.max(top, Math.min(above ? bounds.top - height - 8 : below, bottom - height)) - bounds.top,
+      side: above ? "above" : "below", align: preferred > left ? "end" : preferred < left ? "start" : "center" };
+  }
+
+  async function showSlot(index: number) {
+    clearTimeout(closeTimer);
+    activeSlot = index;
+    await tick();
+    positionCard();
+  }
+
+  function closeCard() {
+    clearTimeout(closeTimer);
+    activeSlot = null;
+  }
+
+  function pointerSlot(event: PointerEvent | MouseEvent) {
+    const target = event.target instanceof Element ? event.target.closest<HTMLElement>("[data-check-slot]") : null;
+    return target ? Number(target.dataset.checkSlot) : null;
+  }
+
+  function hoverSlot(event: PointerEvent) {
+    if (event.pointerType === "touch") return;
+    touched = false;
+    const index = pointerSlot(event);
+    if (index !== null) void showSlot(index);
+  }
+
+  function leaveCard() {
+    if (!focused && !touched) closeTimer = setTimeout(closeCard, 150);
+  }
+
+  function navigateStrip(event: KeyboardEvent) {
+    if (event.key === "Escape" && activeSlot !== null) {
+      event.preventDefault();
+      event.stopPropagation();
+      closeCard();
+      return;
+    }
+    const index = activeSlot ?? keyboardSlot;
+    const next = event.key === "Home" ? 0 : event.key === "End" ? 29 :
+      event.key === "ArrowLeft" || event.key === "ArrowDown" ? Math.max(0, index - 1) :
+      event.key === "ArrowRight" || event.key === "ArrowUp" ? Math.min(29, index + 1) : null;
+    if (next === null) return;
+    event.preventDefault();
+    keyboardSlot = next;
+    void showSlot(next);
+  }
+
+  $effect(() => {
+    void providerId;
+    untrack(closeCard);
+    return () => clearTimeout(closeTimer);
+  });
+
+  $effect(() => {
+    if (activeSlot === null) return;
+    const dismiss = (event: PointerEvent) => {
+      if (event.target instanceof Node && !strip?.contains(event.target) && !card?.contains(event.target)) closeCard();
+    };
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); closeCard(); }
+    };
+    document.addEventListener("pointerdown", dismiss, true);
+    document.addEventListener("keydown", escape, true);
+    window.addEventListener("resize", positionCard);
+    document.addEventListener("scroll", positionCard, true);
+    return () => {
+      document.removeEventListener("pointerdown", dismiss, true);
+      document.removeEventListener("keydown", escape, true);
+      window.removeEventListener("resize", positionCard);
+      document.removeEventListener("scroll", positionCard, true);
+    };
+  });
 
   function stripOutcome(check: ProviderCheckHistory["checks"][number]) {
     return check.outcome === "failed" ? "failed" : check.outcome === "neutral" ? "neutral"
@@ -38,6 +137,8 @@
   const empty = $derived(history !== null && history.checks.length === 0 && !loading && !error);
   const recentChecks = $derived(history?.checks.slice(0, 30) ?? []);
   const stripSlots = $derived([...Array<null>(30 - recentChecks.length).fill(null), ...recentChecks.toReversed()]);
+  const activeCheck = $derived(activeSlot === null ? null : stripSlots[activeSlot]);
+  const cardContent = $derived(sourceCheckCard(activeCheck ?? null));
   const stripSummary = $derived(`${countLabel(recentChecks.length, "recorded check")}, oldest to newest; ${recentChecks.filter(check => stripOutcome(check) === "failed").length} failed, ${recentChecks.filter(check => stripOutcome(check) === "slow").length} slow, ${recentChecks.filter(check => stripOutcome(check) === "ok").length} ok, ${recentChecks.filter(check => stripOutcome(check) === "neutral").length} not checked; ${countLabel(30 - recentChecks.length, "empty slot")}. Slow means 1 second or more.`);
 
   function dateValue(value?: string | null) {
@@ -136,10 +237,38 @@
   {#if loading}<RowsSkeleton count={1} />
   {:else if error}<ErrorState title="Checks could not be loaded" onretry={() => load(true)} />
   {:else}
-    <div class="check-strip" role="img" aria-label={stripSummary}>
-      {#each stripSlots as check}
-        <span aria-hidden="true" data-outcome={check ? stripOutcome(check) : "empty"} title={check ? `${humanize(check.outcome)}${stripOutcome(check) === "slow" ? " · Slow" : ""} · ${humanize(check.capability)} · ${check.accountLabel} · ${timeLabel(check.testedAt)}` : "No recorded check"}></span>
-      {/each}
+    <div class="check-strip-anchor">
+      <!-- One tab stop describes the current check while arrow keys explore the group. -->
+      <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
+      <div bind:this={strip} class="check-strip" role="group" tabindex="0" aria-label={stripSummary}
+        aria-describedby={activeSlot !== null ? cardId : `${cardId}-help`}
+        onfocus={() => { focused = true; void showSlot(keyboardSlot); }}
+        onblur={() => { focused = false; closeCard(); }} onkeydown={navigateStrip}
+        onpointerover={hoverSlot} onpointerleave={leaveCard}
+        onpointerdown={event => { touched = event.pointerType === "touch"; if (touched) event.preventDefault(); }}
+        onclick={event => {
+          const index = pointerSlot(event);
+          if (index !== null) { if (touched && activeSlot === index) closeCard(); else void showSlot(index); }
+        }}>
+        {#each stripSlots as check, index}
+          <span aria-hidden="true" data-check-slot={index} data-active={activeSlot === index} data-outcome={check ? stripOutcome(check) : "empty"}></span>
+        {/each}
+      </div>
+      <span id={`${cardId}-help`} class="sr-only">Use arrow keys to explore checks, Home or End to reach either end, and Escape to close check details.</span>
+      {#if activeSlot !== null}
+        <div bind:this={card} id={cardId} class="check-card" role="tooltip" aria-live="polite"
+          data-side={placement.side} data-align={placement.align} style:left={`${placement.left}px`} style:top={`${placement.top}px`}
+          onpointerenter={() => clearTimeout(closeTimer)} onpointerleave={leaveCard}>
+          {#if cardContent && activeCheck}
+            <div class="check-card-heading"><strong>{cardContent.capability}</strong><Badge tone={cardContent.tone}>{cardContent.outcome}</Badge></div>
+            <span>{cardContent.account}</span>
+            <span>{cardContent.relative}</span>
+            <time datetime={activeCheck.testedAt}>{cardContent.absolute}</time>
+            {#if cardContent.reason}<span>{cardContent.reason}</span>{/if}
+            <span>Latency: {cardContent.latency}</span>
+          {:else}<strong>No check</strong>{/if}
+        </div>
+      {/if}
     </div>
     {#if recentChecks.length}<div class="check-axis"><span>{timeLabel(recentChecks.at(-1)!.testedAt)}</span><span>Latest</span></div>{/if}
   {/if}
@@ -189,12 +318,17 @@
   .check-history { display: grid; min-width: 0; gap: var(--space-2); }
   .check-history h3 { margin: 0; color: var(--color-ink-muted); font-size: var(--text-xs); font-weight: 600; }
   .check-strip { display: flex; justify-content: flex-end; height: 26px; gap: 2px; }
+  .check-strip-anchor { position: relative; min-width: 0; }
+  .check-strip:focus-visible { outline: 2px solid var(--color-signal); outline-offset: 4px; border-radius: var(--radius-sm); }
   .check-strip span { flex: 0 0 5px; border-radius: calc(var(--radius-sm) / 3); background: var(--color-ink-muted); }
+  .check-strip [data-active="true"] { outline: 2px solid var(--color-ink); outline-offset: 1px; opacity: 1; }
   .check-strip [data-outcome="empty"] { opacity: 0.18; }
   .check-strip [data-outcome="neutral"] { opacity: 0.55; }
   .check-strip [data-outcome="ok"] { background: var(--success); }
   .check-strip [data-outcome="slow"] { background: var(--warning); }
   .check-strip [data-outcome="failed"] { background: var(--danger); }
+  .check-card { position: absolute; z-index: 2; display: grid; gap: var(--space-1); width: min(264px, 100%); box-sizing: border-box; padding: var(--space-3); border: 1px solid var(--color-edge); border-radius: var(--radius-md); background: var(--color-popover); color: var(--color-ink-muted); box-shadow: var(--shadow-lg); font-size: var(--text-xs); overflow-wrap: anywhere; }
+  .check-card-heading { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); color: var(--color-ink); }
   .settings-card.check-details > summary.settings-row { padding-inline: 0; }
   .check-axis { display: flex; justify-content: space-between; gap: var(--space-2); }
   .check-axis, .check-empty { margin: 0; color: var(--color-ink-muted); font-size: var(--text-xs); }
