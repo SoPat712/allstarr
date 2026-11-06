@@ -410,13 +410,14 @@ public class ProviderStatusManager
             IsEnabled = true,
             Configuration = ProviderConfigurationState.Configured,
             Health = ProviderHealthState.Unknown
-        }, context.Account?.Revision).Health;
+        }, context.Account?.Revision, includeTryResult: false).Health;
     }
 
     private ProviderRuntimeStatus GetStatusCore(
         ProviderRuntimeStatusKey key,
         ProviderRuntimeStatus baseline,
-        long? accountRevision = null)
+        long? accountRevision = null,
+        bool includeTryResult = true)
     {
         if (key.Provider == "apple-musickit" &&
             key.Capability is ProviderCapabilities.Streaming or ProviderCapabilities.Download or ProviderCapabilities.Lyrics &&
@@ -440,31 +441,37 @@ public class ProviderStatusManager
         if (!baseline.IsSupported) return baseline;
         // Display the newest evidence, with explicit checks winning completed ties; routing TTL cannot revive older checks.
         var observation = _health.GetForDisplay(key, accountRevision);
+        var tryHealth = includeTryResult ? observation?.TryHealth : null;
         var runtime = GetCurrentRuntimeEvidence(key, accountRevision, baseline);
         if (_recordedChecks.TryGetValue(key, out var recorded) && recorded.Revision == accountRevision &&
             (observation == null || recorded.Status.TestedAt > observation.ObservedAt ||
                 observation.Health != ProviderHealthState.Testing && recorded.Status.TestedAt == observation.ObservedAt))
+        {
+            var health = recorded.Status.TestedAt == observation?.ObservedAt && tryHealth.HasValue ? tryHealth.Value :
+                CurrentMediaHealth(key, observation, recorded.Status.Health);
             return baseline with
             {
-                Health = CurrentMediaHealth(key, observation, recorded.Status.Health),
+                Health = health,
                 TestedAt = recorded.Status.TestedAt,
                 LatencyMilliseconds = recorded.Status.LatencyMilliseconds,
                 VerificationMeasurementId = recorded.Status.VerificationMeasurementId,
                 VerificationMethod = recorded.Status.VerificationMethod,
                 CircuitOpen = runtime.CircuitOpen,
                 ReasonCode = BaselineReasonTakesPrecedence(baseline) ? baseline.ReasonCode :
-                    CurrentMediaHealth(key, observation, recorded.Status.Health) == ProviderHealthState.Healthy &&
+                    health == ProviderHealthState.Healthy &&
                         key.Capability is ProviderCapabilities.Streaming or ProviderCapabilities.Download ? null : recorded.Status.ReasonCode
             };
+        }
         if (observation == null) return baseline with { CircuitOpen = runtime.CircuitOpen };
+        var observedHealth = tryHealth ?? CurrentMediaHealth(key, observation, observation.Health);
         return baseline with
         {
-            Health = CurrentMediaHealth(key, observation, observation.Health),
+            Health = observedHealth,
             TestedAt = observation.Health == ProviderHealthState.Testing ? null : observation.ObservedAt,
             LatencyMilliseconds = observation.LatencyMilliseconds,
             CircuitOpen = runtime.CircuitOpen,
             ReasonCode = BaselineReasonTakesPrecedence(baseline) ? baseline.ReasonCode :
-                runtime.CircuitOpen && !observation.ReauthenticationRequired ? "circuit_open" : CurrentMediaHealth(key, observation, observation.Health) == ProviderHealthState.Healthy &&
+                runtime.CircuitOpen && !observation.ReauthenticationRequired && !tryHealth.HasValue ? "circuit_open" : observedHealth == ProviderHealthState.Healthy &&
                     key.Capability is ProviderCapabilities.Streaming or ProviderCapabilities.Download ? null : observation.ReasonCode
         };
     }
@@ -1101,7 +1108,7 @@ public class ProviderStatusManager
         var signatureText = string.Concat(parameters.Select(item => item.Key + item.Value)) + sharedSecret;
         parameters["api_sig"] = Convert.ToHexStringLower(MD5.HashData(Encoding.UTF8.GetBytes(signatureText)));
         parameters["format"] = "json";
-        using var client = _httpClientFactory.CreateClient();
+        using var client = _httpClientFactory.CreateClient("LastFm");
         using var response = await SendWithProbeTimeoutAsync(
             client,
             new HttpRequestMessage(HttpMethod.Post, "https://ws.audioscrobbler.com/2.0/")
@@ -1329,7 +1336,7 @@ public class ProviderStatusManager
         {
             return new ProbeOutcome(false, "account_needs_configuration");
         }
-        using var client = _httpClientFactory.CreateClient();
+        using var client = _httpClientFactory.CreateClient(allstarr.Core.Providers.Spotify.SpotifyPlaylistCapabilityAdapter.HttpClientName);
         var result = await allstarr.Core.Providers.Spotify.SpotifyWebTokenExchange.ExchangeAsync(client, sessionCookie, cancellationToken);
         return new ProbeOutcome(result.Success, result.ReasonCode);
     }
@@ -1493,7 +1500,7 @@ public class ProviderStatusManager
     private async Task<ProbeOutcome> TestQobuzMetadataAsync(string? userAuthToken, CancellationToken cancellationToken)
     {
         const string appId = "798273057";
-        using var client = _httpClientFactory.CreateClient();
+        using var client = _httpClientFactory.CreateClient("QobuzApi");
         var result = await _diagnosticSamples.CheckAsync("qobuz:metadata", ProviderDiagnosticSamples.Recordings("qobuz"),
             async (sample, token) =>
             {
@@ -1521,7 +1528,7 @@ public class ProviderStatusManager
         const string appId = "798273057";
         var apiUrl = $"https://www.qobuz.com/api.json/0.2/favorite/getUserFavorites?user_id={Uri.EscapeDataString(userId!)}&app_id={appId}";
 
-        using var client = _httpClientFactory.CreateClient();
+        using var client = _httpClientFactory.CreateClient("QobuzApi");
         using var request = new HttpRequestMessage(HttpMethod.Get, apiUrl);
         request.Headers.Add("X-App-Id", appId);
         request.Headers.Add("X-User-Auth-Token", userAuthToken);

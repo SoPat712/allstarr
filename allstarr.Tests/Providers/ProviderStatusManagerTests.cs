@@ -435,7 +435,7 @@ public sealed partial class ProviderStatusManagerTests
             return Json(HttpStatusCode.OK, "{\"tracks\":{\"items\":[{\"id\":42}]}}");
         });
         var manager = CreateManager(new Dictionary<string, string?>(),
-            httpClientFactory: new HandlerHttpClientFactory(handler),
+            httpClientFactory: new HandlerHttpClientFactory(handler, "QobuzApi"),
             qobuzSettings: new QobuzSettings { UserAuthToken = "other-token", UserId = "other-user" });
 
         var status = await manager.TestManagedProviderCapabilityAsync("qobuz", capability, Guid.NewGuid(),
@@ -1058,7 +1058,7 @@ public sealed partial class ProviderStatusManagerTests
         var manager = CreateManager(
             new Dictionary<string, string?>(),
             httpClientFactory: new HandlerHttpClientFactory(
-                new QueuedResponseHandler(Json(HttpStatusCode.OK, "{\"user\":{\"name\":\"listener\"}}"))));
+                new QueuedResponseHandler(Json(HttpStatusCode.OK, "{\"user\":{\"name\":\"listener\"}}")), "LastFm"));
         var accountId = Guid.CreateVersion7();
         var secrets = new Dictionary<string, string>
         {
@@ -1123,7 +1123,7 @@ public sealed partial class ProviderStatusManagerTests
             SpotifyTotpSecrets(), SpotifyTime(), Json(HttpStatusCode.OK, "{\"accessToken\":\"access-token\"}"),
             Json(HttpStatusCode.OK, "{\"lyrics\":{\"syncType\":\"UNSYNCED\",\"lines\":[{\"words\":\"Synthetic words\"}]}}"));
         var manager = CreateManager(new Dictionary<string, string?>(),
-            httpClientFactory: new HandlerHttpClientFactory(handler),
+            httpClientFactory: new HandlerHttpClientFactory(handler, allstarr.Core.Providers.Spotify.SpotifyPlaylistCapabilityAdapter.HttpClientName),
             spotifySettings: new SpotifyApiSettings { Enabled = true, SessionCookie = "deployment-cookie" });
         var accountId = Guid.CreateVersion7();
         var secrets = new Dictionary<string, string> { ["sessioncookie"] = "account-cookie" };
@@ -1423,9 +1423,13 @@ public sealed partial class ProviderStatusManagerTests
         }
     }
 
-    private sealed class HandlerHttpClientFactory(HttpMessageHandler handler) : IHttpClientFactory
+    private sealed class HandlerHttpClientFactory(HttpMessageHandler handler, string? expectedName = null) : IHttpClientFactory
     {
-        public HttpClient CreateClient(string name) => new(handler, disposeHandler: false);
+        public HttpClient CreateClient(string name)
+        {
+            if (expectedName != null) Assert.Equal(expectedName, name);
+            return new(handler, disposeHandler: false);
+        }
     }
 
     private sealed class BlockingHandler : HttpMessageHandler

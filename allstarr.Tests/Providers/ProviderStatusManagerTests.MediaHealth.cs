@@ -2,8 +2,10 @@ using System.Net;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Health;
 using allstarr.Core.Operations;
+using allstarr.Core.Storage;
 using allstarr.Services.Common;
 using Microsoft.Extensions.DependencyInjection;
+using Moq;
 
 namespace allstarr.Tests;
 
@@ -59,6 +61,40 @@ public sealed partial class ProviderStatusManagerTests
     [Theory]
     [InlineData("streaming")]
     [InlineData("download")]
+    public async Task DeezerProbeRetriesKeepTheSelectedAccountsCredentials(string capability)
+    {
+        var time = new ManualTimeProvider();
+        var cookies = new List<string>();
+        var handler = new AppleProviderTestFactory.Handler(request =>
+        {
+            Assert.Equal("www.deezer.com", request.RequestUri!.Host);
+            cookies.Add(Assert.Single(request.Headers.GetValues("Cookie")));
+            Assert.Null(request.Headers.Authorization);
+            return Json(HttpStatusCode.OK, cookies.Count % 2 == 1 ? "{}" : """{"results":{"USER":{"USER_ID":42}}}""");
+        });
+        using var services = new ServiceCollection().AddSingleton<TimeProvider>(time).BuildServiceProvider();
+        var manager = CreateManager(new Dictionary<string, string?>(), services: services,
+            deezerSettings: new() { Arl = "fixture-global-cookie" }, httpClientFactory: new HandlerHttpClientFactory(handler, "DeezerApi"));
+        foreach (var cookie in new[] { "fixture-cookie-first", "fixture-cookie-second" })
+        {
+            var check = manager.TestManagedProviderCapabilityAsync("deezer", capability, Guid.NewGuid(),
+                new Dictionary<string, string> { ["arl"] = cookie });
+            Assert.Equal(TimeSpan.FromSeconds(1), await time.NextTimerAsync());
+            time.Advance(TimeSpan.FromSeconds(1));
+            var result = await check;
+            Assert.Equal(capability == "streaming" ? ProviderHealthState.Healthy : ProviderHealthState.Unknown, result.Health);
+        }
+        Assert.Equal(new[] { "arl=fixture-cookie-first", "arl=fixture-cookie-first",
+            "arl=fixture-cookie-second", "arl=fixture-cookie-second" }, cookies);
+        var missing = await manager.TestManagedProviderCapabilityAsync("deezer", capability, Guid.NewGuid(),
+            new Dictionary<string, string>());
+        Assert.Equal(ProviderConfigurationState.NeedsConfiguration, missing.Configuration);
+        Assert.Equal(4, cookies.Count);
+    }
+
+    [Theory]
+    [InlineData("streaming")]
+    [InlineData("download")]
     public void MediaStatusRequiresThreeRecentFailuresAndSuccessfulActivityRecoversIt(string capability)
     {
         var clock = new FakeClock(DateTimeOffset.UtcNow);
@@ -109,6 +145,73 @@ public sealed partial class ProviderStatusManagerTests
             ReasonCode = "probe_failed"
         });
         Assert.Equal(ProviderHealthState.Unknown, manager.GetLatestCapabilityHealth(MediaContext(clock), ProviderCapabilityKind.Streaming));
+    }
+
+    [Theory]
+    [InlineData("streaming", false, false)]
+    [InlineData("streaming", false, true)]
+    [InlineData("streaming", true, false)]
+    [InlineData("streaming", true, true)]
+    [InlineData("download", false, false)]
+    [InlineData("download", false, true)]
+    [InlineData("download", true, false)]
+    [InlineData("download", true, true)]
+    public void ManualMediaTryReportsItsOutcomeWhileAutomaticHealthRequiresSustainedFailures(
+        string capability, bool managed, bool previouslyHealthy)
+    {
+        var clock = new FakeClock(DateTimeOffset.UtcNow);
+        var health = new ProviderRuntimeHealth(clock: clock);
+        var streaming = new Mock<IProviderStreamingCapability>();
+        streaming.SetupGet(item => item.ProviderId).Returns("fixture");
+        streaming.SetupGet(item => item.Capability).Returns(ProviderCapabilityKind.Streaming);
+        var download = new Mock<IProviderDownloadCapability>();
+        download.SetupGet(item => item.ProviderId).Returns("fixture");
+        download.SetupGet(item => item.Capability).Returns(ProviderCapabilityKind.Download);
+        var descriptor = new ProviderDescriptor("fixture", "Fixture", "Fixture", ProviderOrigin.Extension, "1", "1",
+            [new(ProviderCapabilityKind.Streaming, ProviderCapabilitySupportState.Supported, ProviderAccountRequirement.Optional,
+                "1", ["getStreamLease"], [ProviderAccountScope.Shared]),
+            new(ProviderCapabilityKind.Download, ProviderCapabilitySupportState.Supported, ProviderAccountRequirement.Optional,
+                "1", ["download", "checkAvailability"], [ProviderAccountScope.Shared])], new(), entryPoint: "index.js");
+        var registry = new ProviderRegistry([new(descriptor, [streaming.Object, download.Object])]);
+        var manager = CreateManager(new Dictionary<string, string?>(), clock: clock, health: health, providerRegistry: registry);
+        var account = managed ? new ProviderAccountContext(Guid.NewGuid(), "fixture", ProviderAccountScope.Shared, 7) : null;
+        var context = new ProviderExecutionContext(
+            new(ProviderActorKind.Administrator, Guid.NewGuid(), new("jellyfin", "fixture", "admin")), "fixture", account,
+            new(new(ProviderAudioQuality.Any, ProviderAudioQuality.HighResolution, true), ProviderExplicitContentPolicy.Allow,
+                true, true, true, ["fixture"]), "playback", "media-health-test", clock.UtcNow.AddMinutes(1), default);
+        var key = account == null ? ProviderRuntimeStatusKey.CreateAccountFree("fixture", capability) :
+            ProviderRuntimeStatusKey.CreateManaged("fixture", capability, account.AccountId);
+        var kind = capability == "streaming" ? ProviderCapabilityKind.Streaming : ProviderCapabilityKind.Download;
+        ProviderRuntimeStatus Display() => account == null ? manager.GetAccountFreeStatus("fixture", capability) :
+            manager.GetManagedStatus("fixture", capability, account.AccountId,
+                new Dictionary<string, string> { ["arl"] = "fixture-cookie" }, account.Revision);
+        if (previouslyHealthy)
+            manager.RestoreCheckResult(key, account?.Revision, Display() with
+            { Health = ProviderHealthState.Healthy, TestedAt = clock.UtcNow });
+
+        for (var count = 1; count <= 3; count++)
+        {
+            clock.UtcNow += TimeSpan.FromSeconds(1);
+            manager.RecordTryResult("fixture", capability, account?.AccountId, account?.Revision, false, 120, "TransientFailure");
+            var displayed = Display();
+            Assert.Equal(ProviderHealthState.Degraded, displayed.Health);
+            Assert.Equal("transient-failure", displayed.ReasonCode);
+            Assert.Equal(120, displayed.LatencyMilliseconds);
+            Assert.Equal(count, health.Get(key, account?.Revision)!.ConsecutiveFailures);
+            Assert.Equal(count == 3, displayed.CircuitOpen);
+            var automatic = count == 3 ? ProviderHealthState.Degraded :
+                previouslyHealthy ? ProviderHealthState.Healthy : ProviderHealthState.Unknown;
+            Assert.Equal(automatic, manager.GetLatestCapabilityHealth(context, kind));
+            Assert.Equal(automatic, manager.GetCurrentCheckHealth(new(key, account?.Revision, displayed)));
+            Assert.Equal(ProviderHealthState.Degraded, manager.RecentAttempts(key, account?.Revision)[0].Status.Health);
+        }
+
+        clock.UtcNow += TimeSpan.FromSeconds(1);
+        health.Observe(context, kind, null, TimeSpan.FromMilliseconds(80));
+        Assert.Equal(ProviderHealthState.Healthy, Display().Health);
+        Assert.Null(Display().ReasonCode);
+        Assert.False(Display().CircuitOpen);
+        Assert.Equal(ProviderHealthState.Healthy, manager.GetLatestCapabilityHealth(context, kind));
     }
 
     [Theory]

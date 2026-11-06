@@ -36,25 +36,51 @@ public sealed partial class EncryptedSecretStoreTests
         }
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
-            ["ProviderChecks:PauseMilliseconds"] = "0",
-            ["MULTI_PROVIDER_DISABLED_PROVIDERS"] = "apple-musickit,spotify,deezer,qobuz,lrcred,unison,lrclib,lyricsplus,musixmatch,lastfm,multi-scrobbler,koito,audiomuse-ai"
+            ["ProviderChecks:PauseMilliseconds"] = "0"
         }).Build();
-        configuration["MULTI_PROVIDER_DISABLED_PROVIDERS"] += ",paxsenix,genius";
         using var handler = new ProviderCheckCredentialHandler();
         var status = new ProviderStatusManager(configuration, new ProviderCheckHttpFactory(handler),
             NullLogger<ProviderStatusManager>.Instance, Options.Create(new SpotifyApiSettings()),
             Options.Create(new AppleDownloadSettings()), Options.Create(new DeezerSettings()), Options.Create(new QobuzSettings()));
+        configuration["MULTI_PROVIDER_DISABLED_PROVIDERS"] = string.Join(",", status.GetAllAccountFreeStatuses()
+            .Select(item => item.Provider).Where(provider => provider != "listenbrainz").Distinct());
         var history = new ProviderCheckHistory(_factory, TimeProvider.System);
         var runner = new ProviderAccountCheckRunner(_factory, status, history, configuration,
             TimeProvider.System, NullLogger<ProviderAccountCheckRunner>.Instance, store);
         Assert.True(await runner.SweepAsync(default));
-        Assert.Equal(new[] { "fixture-token-0", "fixture-token-1" }, handler.Tokens.Order().ToArray());
+        Assert.Equal(accountIds.Select((id, index) => (Id: id, Token: $"fixture-token-{index}"))
+            .OrderBy(item => item.Id).Select(item => item.Token), handler.Tokens);
         var results = await history.ReadLatestAsync(default);
         Assert.Equal(2, results.Count);
+        Assert.Equal(accountIds.Order(), results.Select(result => result.Key.ProviderAccountId!.Value).Order());
         Assert.All(results, result => Assert.True(result.Status.IsReady));
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var account = await db.ProviderAccounts.SingleAsync(row => row.Id == accountIds[0]);
+            account.SecretReferenceId = null;
+            account.Revision++;
+            await db.SaveChangesAsync();
+        }
+        handler.Tokens.Clear();
+        Assert.True(await runner.SweepAsync(default));
+        Assert.Equal(new[] { "fixture-token-1" }, handler.Tokens);
+        results = await history.ReadLatestAsync(default);
+        Assert.Equal(2, results.Count);
+        var unconfigured = Assert.Single(results, result => result.Key.ProviderAccountId == accountIds[0]);
+        Assert.Equal(ProviderConfigurationState.NeedsConfiguration, unconfigured.Status.Configuration);
+        Assert.Equal("missing_provider_account_secret", unconfigured.Status.ReasonCode);
+        Assert.True(Assert.Single(results, result => result.Key.ProviderAccountId == accountIds[1]).Status.IsReady);
         await using var context = await _factory.CreateDbContextAsync();
         Assert.All(await context.AuditEvents.Where(row => row.Category == ProviderCheckHistory.Category).ToListAsync(),
             row => Assert.DoesNotContain("fixture-token", row.DetailsJson));
+    }
+
+    [Fact]
+    public void ProviderChecks_ListeningClientsDoNotShareAuthenticationCookies()
+    {
+        using var handler = ListenBrainzServiceEndpoint.CreateHttpHandler();
+        Assert.False(handler.UseCookies);
+        Assert.False(handler.AllowAutoRedirect);
     }
 
     [Fact]

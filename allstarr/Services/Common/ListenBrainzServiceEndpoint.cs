@@ -53,6 +53,7 @@ public static class ListenBrainzServiceEndpoint
     public static SocketsHttpHandler CreateHttpHandler() => new()
     {
         AllowAutoRedirect = false,
+        UseCookies = false,
         UseProxy = false,
         ConnectCallback = async (context, token) =>
         {

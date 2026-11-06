@@ -57,6 +57,7 @@ public sealed record ProviderHealthObservation(
     internal DateTimeOffset? FailureWindowStartedAt { get; init; }
     internal LyricsConfigurationId? LyricsConfiguration { get; init; }
     internal ProviderHealthState? HealthBeforeProbe { get; init; }
+    internal ProviderHealthState? TryHealth { get; init; }
     internal bool IsRecordedCheck { get; init; }
 }
 
@@ -269,6 +270,7 @@ public sealed class ProviderRuntimeHealth : IProviderOutcomeObserver, ILyricsOut
                 now, latency, SafeReason(reason), failures, opens ? now.Add(cooldown) : null)
             {
                 IsRecordedCheck = observedAt.HasValue,
+                TryHealth = recordAttempt ? success ? ProviderHealthState.Healthy : ProviderHealthState.Degraded : null,
                 ReauthenticationRequired = loginExpired || reason is "unauthorized" or "account-needs-reauthentication" or "authentication-required",
                 LyricsConfiguration = configuration,
                 FailureWindowStartedAt = success ? null : withinWindow ? previous!.FailureWindowStartedAt : now,
