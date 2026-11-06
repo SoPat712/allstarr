@@ -36,8 +36,13 @@ public sealed class AdminUiActivityTests
             db.Users.Add(new() { Id = owner, DisplayName = "Listener", Enabled = true, BackendType = "jellyfin", BackendInstanceId = "fixture", BackendPrincipalId = owner.ToString("N") });
             db.AuditEvents.Add(new()
             {
-                Id = Guid.CreateVersion7(), ActorUserId = owner, Category = "playlist", Action = "source-empty-kept",
-                Outcome = "conflicted", SubjectType = "playlist-link", SubjectId = linkId.ToString("N"),
+                Id = Guid.CreateVersion7(),
+                ActorUserId = owner,
+                Category = "playlist",
+                Action = "source-empty-kept",
+                Outcome = "conflicted",
+                SubjectType = "playlist-link",
+                SubjectId = linkId.ToString("N"),
                 CreatedAt = DateTimeOffset.UtcNow,
                 DetailsJson = JsonSerializer.Serialize(new { message, providerId = "lastfm", playlistLinkId = linkId.ToString("N"), playlistName = "Similar to your top tracks" })
             });

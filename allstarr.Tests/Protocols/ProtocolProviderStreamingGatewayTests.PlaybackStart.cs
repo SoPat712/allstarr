@@ -196,9 +196,14 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         var key = ProviderRuntimeStatusKey.CreateManaged("deezer", "streaming", account);
         statuses.RestoreCheckResult(key, 1, new()
         {
-            Provider = "deezer", Capability = "streaming", IsSupported = true, IsEnabled = true,
-            Configuration = ProviderConfigurationState.Configured, Health = ProviderHealthState.Degraded,
-            ReasonCode = "http-403", TestedAt = DateTimeOffset.UtcNow.AddDays(-1)
+            Provider = "deezer",
+            Capability = "streaming",
+            IsSupported = true,
+            IsEnabled = true,
+            Configuration = ProviderConfigurationState.Configured,
+            Health = ProviderHealthState.Degraded,
+            ReasonCode = "http-403",
+            TestedAt = DateTimeOffset.UtcNow.AddDays(-1)
         });
 
         Assert.Equal(ProviderHealthState.Degraded, statuses.GetLatestCapabilityHealth(Execution(account, 1), ProviderCapabilityKind.Streaming));
@@ -396,10 +401,14 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         bool passed, DateTimeOffset at) => statuses.RestoreCheckResult(
         ProviderRuntimeStatusKey.CreateAccountFree(provider, capability), null, new()
         {
-            Provider = provider, Capability = capability, IsSupported = true, IsEnabled = true,
+            Provider = provider,
+            Capability = capability,
+            IsSupported = true,
+            IsEnabled = true,
             Configuration = ProviderConfigurationState.Configured,
             Health = passed ? ProviderHealthState.Healthy : ProviderHealthState.Degraded,
-            ReasonCode = passed ? null : "http-403", TestedAt = at
+            ReasonCode = passed ? null : "http-403",
+            TestedAt = at
         });
 
     private static ProtocolExecutionContext StartPreferenceContext(string mode, TimeProvider? clock = null,

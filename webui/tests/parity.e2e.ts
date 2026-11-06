@@ -85,6 +85,26 @@ const viewports = [
 ];
 
 
+async function clickWhenStable(control: Locator) {
+  await expect(control).toBeVisible();
+  await control.evaluate(element => element.scrollIntoView({ block: "center", inline: "nearest", behavior: "instant" }));
+  let previousBounds = "";
+  await expect.poll(async () => {
+    const current = await control.evaluate(element => {
+      const box = element.getBoundingClientRect();
+      return {
+        bounds: JSON.stringify([box.x, box.y, box.width, box.height]),
+        animating: document.getAnimations().some(animation => animation.playState === "running" &&
+          animation.effect?.getTiming().iterations !== Infinity),
+      };
+    });
+    const settled = !current.animating && current.bounds === previousBounds;
+    previousBounds = current.bounds;
+    return settled;
+  }, { message: "Control finishes moving before the click" }).toBe(true);
+  await control.click();
+}
+
 async function openSourceSettings(page: Page, name: string) {
   const panel = page.getByRole("dialog", { name, exact: true });
   await expect(panel).toBeVisible();
@@ -1247,8 +1267,16 @@ for (const viewport of viewports) {
       await expect.poll(() => page.evaluate(() =>
         document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
       await page.goto("#/settings/storage");
-      await page.getByText("Advanced: activity retention, cache durations, saved-file verification", { exact: true }).click();
-      await page.getByRole("button", { name: "Purge all cache" }).click();
+      const storage = page.locator(".settings-workspace");
+      await expect(storage.getByRole("heading", { name: "Storage", level: 2, exact: true })).toBeVisible();
+      await expect(storage).toHaveAttribute("aria-busy", "false");
+      const advanced = storage.locator("details").filter({ has: page.getByText(
+        "Advanced: activity retention, cache durations, saved-file verification", { exact: true }) });
+      await advanced.locator(":scope > summary").click();
+      // The verification card loads above the cache actions and changes their position.
+      await expect(storage.getByRole("article", { name: "Saved-file verification" })
+        .getByRole("button", { name: "Verify saved files", exact: true })).toBeEnabled();
+      await clickWhenStable(storage.locator(".cache-diagnostics-card").getByRole("button", { name: "Purge all cache", exact: true }));
       const dialog = page.getByRole("alertdialog", { name: "Remove cached files?" });
       await expect(dialog).toBeVisible();
       await expect(dialog.getByRole("button", { name: "Remove cache" })).toBeInViewport();
@@ -8902,6 +8930,13 @@ async function mockSpicySource(page: Page, configured = true) {
     contentType: "image/x-icon", body: await readFile("../allstarr/wwwroot/images/providers/spicylyrics.ico"),
   }));
   await page.route("**/api/admin/ui/schema", route => route.fulfill({ json: { ...schema, providers: [...schema.providers, spicyDefinition] } }));
+  await page.route("**/api/admin/providers/use", route => route.fulfill({ json: {
+    personalRevision: "source-use-personal", householdRevision: "source-use-household",
+    providers: [...schema.providers, spicyDefinition].map(provider => ({
+      providerId: provider.id, householdMode: "automatic", personalMode: null,
+      effectiveMode: "automatic", canChoosePersonal: true,
+    })),
+  } }));
   await page.route("**/api/admin/provider-accounts", route => route.fulfill({ json: {
     ...accountFixture, accounts: configured ? [{ ...accountFixture.accounts[0], id: "spicy-account", providerId: "spicylyrics",
       displayName: "Spicy key", configuration: {}, configuredFields: ["apiKey"] }] : [],
@@ -8961,9 +8996,14 @@ for (const width of [320, 390, 718, 1280]) for (const theme of ["light", "dark"]
       } } });
     });
     await page.goto("#/integrations/services/spicylyrics");
+    const sourcePanel = page.getByRole("dialog", { name: "SpicyLyrics", exact: true });
+    // Both sections load above the test opener; wait for their final layout before clicking.
+    await expect(sourcePanel.getByRole("region", { name: "Last 30 checks", exact: true }).getByRole("img")).toBeVisible();
+    await expect(sourcePanel.getByRole("radiogroup", { name: "Use this source for you", exact: true })).toBeVisible();
     await openSourceSettings(page, "SpicyLyrics");
-    await page.getByRole("button", { name: "Open Lyrics tests", exact: true }).click();
+    await clickWhenStable(sourcePanel.getByRole("button", { name: "Open Lyrics tests", exact: true }));
     const dialog = page.getByRole("dialog", { name: "Test SpicyLyrics" });
+    await expect(dialog).toBeVisible();
     const input = dialog.getByRole("textbox", { name: "Spotify track link or ID", exact: true });
     const selector = `https://open.spotify.com/track/${spicyTrack}?si=fixture-share`;
     await input.fill(selector);

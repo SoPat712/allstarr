@@ -147,10 +147,17 @@ public sealed partial class PlaylistOrchestrationIntegrationTests
         {
             db.PlaylistSourceSnapshots.Add(new PlaylistSourceSnapshotRecord
             {
-                Id = Guid.CreateVersion7(), OwnerUserId = _user, PlaylistLinkId = _link,
-                ProviderAccountId = _account, SnapshotVersion = previous.SnapshotVersion + 1,
-                ProviderRevision = "old-empty-read", Name = "Provider Mix", PayloadSha256 = Hash("old-empty-read"),
-                RetrievedAt = _now, PublishedAt = _now, CorrelationId = "old-empty-read"
+                Id = Guid.CreateVersion7(),
+                OwnerUserId = _user,
+                PlaylistLinkId = _link,
+                ProviderAccountId = _account,
+                SnapshotVersion = previous.SnapshotVersion + 1,
+                ProviderRevision = "old-empty-read",
+                Name = "Provider Mix",
+                PayloadSha256 = Hash("old-empty-read"),
+                RetrievedAt = _now,
+                PublishedAt = _now,
+                CorrelationId = "old-empty-read"
             });
             await db.SaveChangesAsync();
         }
@@ -225,8 +232,14 @@ public sealed partial class PlaylistOrchestrationIntegrationTests
         await using var db = await _factory.CreateDbContextAsync();
         var schedule = new JobScheduleRecord
         {
-            Id = Guid.CreateVersion7(), OwnerUserId = _user, JobType = DurableScheduleEngine.PlaylistSyncJobType,
-            CronExpression = cron, TimeZoneId = "UTC", Enabled = true, CreatedAt = _now, UpdatedAt = _now
+            Id = Guid.CreateVersion7(),
+            OwnerUserId = _user,
+            JobType = DurableScheduleEngine.PlaylistSyncJobType,
+            CronExpression = cron,
+            TimeZoneId = "UTC",
+            Enabled = true,
+            CreatedAt = _now,
+            UpdatedAt = _now
         };
         db.JobSchedules.Add(schedule);
         (await db.PlaylistLinks.SingleAsync(item => item.Id == _link)).ScheduleId = schedule.Id;

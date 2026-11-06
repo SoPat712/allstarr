@@ -162,6 +162,23 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
     }
 
     [Theory]
+    [InlineData(ProtocolKind.Jellyfin)]
+    [InlineData(ProtocolKind.Subsonic)]
+    public async Task SearchCombinesTheAlbumRecordingWithItsCrossProviderAlias(ProtocolKind protocol)
+    {
+        var (gateway, _) = SearchRankingGateway("deezer,qobuz", "deezer,qobuz",
+            RecordingSearchCapability("deezer", RecordingSearchTrack("deezer", "album", "Get Lucky",
+                "Daft Punk, Pharrell Williams & Nile Rodgers", 369, "Random Access Memories", "USQX91300105")),
+            RecordingSearchCapability("qobuz", RecordingSearchTrack("qobuz", "album-alias", "Get Lucky",
+                "Daft Punk", 369, "Random Access Memories", "USQX91300105")));
+
+        var song = Assert.Single((await gateway.SearchAsync(SearchRankingContext(protocol), "Get Lucky Daft Punk", 25, 0, 0)).Songs);
+
+        Assert.Equal("album", song.ExternalId);
+        Assert.Equal(["album", "album-alias"], song.SearchRoutes.Select(route => route.Value).Order());
+    }
+
+    [Theory]
     [InlineData(ProtocolKind.Jellyfin, "Get Lucky Daft Punk")]
     [InlineData(ProtocolKind.Subsonic, "Get Lucky Daft Punk")]
     [InlineData(ProtocolKind.Jellyfin, "Get Lucky")]
@@ -169,8 +186,8 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
     public async Task SearchPrefersTheAlbumRecordingToTitleCreditsAndDerivatives(ProtocolKind protocol, string query)
     {
         var capabilities = RecordingSearchCapabilities();
-        var (gateway, _) = SearchRankingGateway("deezer,soundcloud,youtube,qobuz",
-            "deezer,soundcloud,youtube,qobuz", capabilities);
+        var (gateway, _) = SearchRankingGateway("deezer,soundcloud,youtube",
+            "deezer,soundcloud,youtube", capabilities);
 
         var result = await gateway.SearchAsync(SearchRankingContext(protocol), query, 25, 0, 0);
 
@@ -180,7 +197,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         if (query.Contains("Daft Punk", StringComparison.Ordinal))
             Assert.All(result.Songs.Take(3), song => Assert.Contains(song.ExternalId, genuine));
         Assert.Equal(20, result.Songs.Count);
-        Assert.DoesNotContain(result.Songs, song => song.ExternalId == "album-alias");
+        Assert.Contains(result.Songs, song => song.ExternalId == "unknown-prefixed");
         Assert.DoesNotContain(result.Songs, song => song.ExternalId == "unknown");
         Assert.Contains(result.Songs[0].SearchRoutes, route => route.Value == "unknown");
 
@@ -203,8 +220,8 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
     [InlineData(ProtocolKind.Subsonic)]
     public async Task SearchForTheCoverArtistPrefersThatArtistsRecording(ProtocolKind protocol)
     {
-        var (gateway, _) = SearchRankingGateway("deezer,soundcloud,youtube,qobuz",
-            "deezer,soundcloud,youtube,qobuz", RecordingSearchCapabilities());
+        var (gateway, _) = SearchRankingGateway("deezer,soundcloud,youtube",
+            "deezer,soundcloud,youtube", RecordingSearchCapabilities());
 
         var result = await gateway.SearchAsync(SearchRankingContext(protocol), "Get Lucky Halestorm", 25, 0, 0);
 
@@ -216,8 +233,8 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
     [InlineData(ProtocolKind.Subsonic)]
     public async Task SearchForRadioEditPrefersTheGenuineRadioEdit(ProtocolKind protocol)
     {
-        var (gateway, _) = SearchRankingGateway("deezer,soundcloud,youtube,qobuz",
-            "deezer,soundcloud,youtube,qobuz", RecordingSearchCapabilities());
+        var (gateway, _) = SearchRankingGateway("deezer,soundcloud,youtube",
+            "deezer,soundcloud,youtube", RecordingSearchCapabilities());
 
         var result = await gateway.SearchAsync(SearchRankingContext(protocol), "Get Lucky Daft Punk radio edit", 25, 0, 0);
 
@@ -480,6 +497,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         };
     }
 
+    // Ranking needs all three sources; the alias is checked separately so an early answer cannot omit one.
     private static IProviderMetadataCapability[] RecordingSearchCapabilities() =>
     [
         RecordingSearchCapability("deezer",
@@ -506,10 +524,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
             RecordingSearchTrack("soundcloud", "teenage", "Get Lucky - Daft Punk", "Teenage Kicks.", 244)),
         RecordingSearchCapability("youtube",
             RecordingSearchTrack("youtube", "unknown", "Get Lucky", "Daft Punk", 0),
-            RecordingSearchTrack("youtube", "unknown-prefixed", "Daft Punk - Get Lucky", "Daft Punk", 0)),
-        RecordingSearchCapability("qobuz",
-            RecordingSearchTrack("qobuz", "album-alias", "Get Lucky", "Daft Punk", 369,
-                "Random Access Memories", "USQX91300105"))
+            RecordingSearchTrack("youtube", "unknown-prefixed", "Daft Punk - Get Lucky", "Daft Punk", 0))
     ];
 
     private static ProviderTrackMetadata RecordingSearchTrack(string provider, string id, string title,

@@ -19,8 +19,13 @@ public sealed partial class PlaybackSignalPipelineTests
         {
             db.PlaybackDeliveryCheckpoints.Add(new()
             {
-                Id = Guid.CreateVersion7(), OwnerUserId = user, SignalKey = ScopedPlaybackScrobbleDelivery.CheckpointKey(payload),
-                TargetId = target.ProviderId, State = ScopedPlaybackScrobbleOutcome.Ignored, ProviderCode = "dismissed", UpdatedAt = clock.UtcNow
+                Id = Guid.CreateVersion7(),
+                OwnerUserId = user,
+                SignalKey = ScopedPlaybackScrobbleDelivery.CheckpointKey(payload),
+                TargetId = target.ProviderId,
+                State = ScopedPlaybackScrobbleOutcome.Ignored,
+                ProviderCode = "dismissed",
+                UpdatedAt = clock.UtcNow
             });
             await db.SaveChangesAsync();
         }
@@ -73,10 +78,16 @@ public sealed partial class PlaybackSignalPipelineTests
         {
             db.PlaybackDeliveryCheckpoints.Add(new()
             {
-                Id = Guid.CreateVersion7(), OwnerUserId = user, SignalKey = "old-notice", TargetId = target,
-                Kind = PlaybackScrobbleDeliveryKind.NowPlaying, State = ScopedPlaybackScrobbleOutcome.PermanentFailure,
-                ProviderCode = code, SignalPayloadJson = payload ? JsonSerializer.Serialize(AcceptedScrobblePayload()) : null,
-                RequiresReauthentication = true, UpdatedAt = clock.UtcNow
+                Id = Guid.CreateVersion7(),
+                OwnerUserId = user,
+                SignalKey = "old-notice",
+                TargetId = target,
+                Kind = PlaybackScrobbleDeliveryKind.NowPlaying,
+                State = ScopedPlaybackScrobbleOutcome.PermanentFailure,
+                ProviderCode = code,
+                SignalPayloadJson = payload ? JsonSerializer.Serialize(AcceptedScrobblePayload()) : null,
+                RequiresReauthentication = true,
+                UpdatedAt = clock.UtcNow
             });
             await db.SaveChangesAsync();
         }
@@ -143,8 +154,13 @@ public sealed partial class PlaybackSignalPipelineTests
         var payload = AcceptedScrobblePayload() with { Transition = PlaybackTransition.Start };
         var row = new PlaybackDeliveryCheckpointEntity
         {
-            Id = Guid.CreateVersion7(), OwnerUserId = user, SignalKey = ScopedPlaybackScrobbleDelivery.CheckpointKey(payload),
-            TargetId = "lastfm", Kind = kind, State = ScopedPlaybackScrobbleOutcome.PermanentFailure, ProviderCode = "ambiguous",
+            Id = Guid.CreateVersion7(),
+            OwnerUserId = user,
+            SignalKey = ScopedPlaybackScrobbleDelivery.CheckpointKey(payload),
+            TargetId = "lastfm",
+            Kind = kind,
+            State = ScopedPlaybackScrobbleOutcome.PermanentFailure,
+            ProviderCode = "ambiguous",
             SignalPayloadJson = kind == PlaybackScrobbleDeliveryKind.NowPlaying ? JsonSerializer.Serialize(payload) : null,
             UpdatedAt = clock.UtcNow
         };
@@ -161,8 +177,13 @@ public sealed partial class PlaybackSignalPipelineTests
         await using var db = await factory.CreateDbContextAsync();
         var row = new PlaybackDeliveryCheckpointEntity
         {
-            Id = Guid.CreateVersion7(), OwnerUserId = user, SignalKey = "missing", TargetId = "lastfm",
-            State = ScopedPlaybackScrobbleOutcome.PermanentFailure, ProviderCode = "payload-unavailable", UpdatedAt = clock.UtcNow
+            Id = Guid.CreateVersion7(),
+            OwnerUserId = user,
+            SignalKey = "missing",
+            TargetId = "lastfm",
+            State = ScopedPlaybackScrobbleOutcome.PermanentFailure,
+            ProviderCode = "payload-unavailable",
+            UpdatedAt = clock.UtcNow
         };
         db.Add(row);
         await db.SaveChangesAsync();
@@ -171,8 +192,13 @@ public sealed partial class PlaybackSignalPipelineTests
         { ControllerContext = new() { HttpContext = new DefaultHttpContext() } };
         controller.HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] = new AdminAuthSession
         {
-            SessionId = "fixture", UserId = user.ToString(), UserName = "Listener", AllstarrUserId = user, IsAdministrator = false,
-            JellyfinAccessToken = "fixture", ExpiresAtUtc = DateTime.UtcNow.AddHours(1)
+            SessionId = "fixture",
+            UserId = user.ToString(),
+            UserName = "Listener",
+            AllstarrUserId = user,
+            IsAdministrator = false,
+            JellyfinAccessToken = "fixture",
+            ExpiresAtUtc = DateTime.UtcNow.AddHours(1)
         };
         var response = Assert.IsType<OkObjectResult>(await controller.List(attentionOnly: true));
         using var json = JsonDocument.Parse(JsonSerializer.Serialize(response.Value));
