@@ -8,20 +8,32 @@ from pathlib import Path
 from mutagen.flac import FLAC, SeekPoint, SeekTable
 from mutagen.mp4 import MP4
 
+from .runner import ProcessFailure
+
 
 @contextlib.asynccontextmanager
 async def _process(executable, *arguments):
     process = await asyncio.create_subprocess_exec("nice", "-n", "19", str(executable), *arguments,
-        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+    stderr = bytearray()
+
+    async def diagnostics():
+        while chunk := await process.stderr.read(8192):
+            stderr.extend(chunk)
+            del stderr[:-32768]
+
+    errors = asyncio.create_task(diagnostics())
     try:
         yield process
         if await process.wait() != 0:
-            raise ValueError("audio_finalization_failed")
+            await errors
+            raise ProcessFailure("transcode_failed", stderr=stderr.decode("utf-8", errors="replace"), stage="finalize")
     finally:
         if process.returncode is None:
             with contextlib.suppress(ProcessLookupError):
                 process.kill()
         await process.wait()
+        await errors
 
 
 async def finalize_audio(source: Path, target: Path, ffmpeg: str):

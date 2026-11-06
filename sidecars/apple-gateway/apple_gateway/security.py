@@ -23,9 +23,11 @@ def sanitize_json(value: Any) -> Any:
 def diagnostic_tail(value: str, token: str) -> str:
     value = value.replace(token, "[redacted]") if token else value
     value = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", value)
-    value = re.sub(r"(?im)^.*(?:cookie|music-user-token|media-user-token).*$", "[redacted]", value)
-    value = re.sub(r"https?://[^\s]+", "[redacted]", value, flags=re.IGNORECASE)
-    return "\n".join(value.splitlines()[-3:])
+    value = re.sub(r"[a-z][a-z0-9+.-]*://[^\s]+", "[redacted]", value, flags=re.IGNORECASE)
+    value = re.sub(r"(?im)^.*(?:authorization|cookie|password|secret|session|token|\b[\w-]*keys?\b).*$",
+        "[redacted]", value)
+    value = re.sub(r"(?i)\b[0-9a-f]{32,}\b|[A-Za-z0-9_+/=-]{64,}", "[redacted]", value)
+    return "\n".join(value.splitlines()[-3:])[-2048:]
 
 
 def song_url(storefront: str, song_id: str) -> str:

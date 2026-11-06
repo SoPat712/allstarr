@@ -102,14 +102,20 @@ class WorkerPool:
             async def receive():
                 kind, payload = await worker.frame(deadline)
                 if kind == b"F":
+                    failure = {}
                     try:
-                        code = json.loads(payload)["code"]
+                        failure = json.loads(payload)
+                        code = failure["code"]
                     except (ValueError, KeyError, TypeError):
                         code = "worker_failed"
                     allowed = {"account_mismatch", "account_unavailable", "audio_artifact_missing", "manifest_invalid",
                         "invalid_audio_fragment", "incompatible_audio_fragments", "segment_download_failed",
                         "decrypt_failed", "transcode_failed", "tagging_failed", "download_failed"}
-                    raise ProcessFailure(code if code in allowed else "worker_failed")
+                    detail = failure.get("stderr", "") if isinstance(failure, dict) else ""
+                    stage = failure.get("stage") if isinstance(failure, dict) else None
+                    raise ProcessFailure(code if isinstance(code, str) and code in allowed else "worker_failed",
+                        stderr=detail[-32768:] if isinstance(detail, str) else "",
+                        stage=stage if isinstance(stage, str) and stage in {"transcode", "decrypt", "validate"} else None)
                 return kind, payload
 
             async def chunks():

@@ -21,6 +21,7 @@ from .account_cli import AccountFailure, STREAM_NAME, lossless_playlist
 from .config import Settings
 from .progressive import audio_chunks
 from .runner import ProcessFailure
+from .security import diagnostic_tail
 from .sessions import AccountSessions, create_session
 
 
@@ -194,7 +195,8 @@ async def serve():
                         send(b"D", chunk)
                     send(b"E", {})
             except (ProcessFailure, AccountFailure) as exc:
-                send(b"F", {"code": exc.code})
+                send(b"F", {"code": exc.code, "stage": getattr(exc, "stage", None),
+                    "stderr": diagnostic_tail(getattr(exc, "stderr", ""), request.get("token", ""))})
             except Exception:
                 send(b"F", {"code": "download_failed"})
             finally:

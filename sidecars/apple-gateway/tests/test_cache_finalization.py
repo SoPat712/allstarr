@@ -149,3 +149,26 @@ async def test_disconnect_during_finalization_cancels_and_cleans_both_private_fi
     await entered.wait()
     await response.body_iterator.aclose()
     assert not list((settings.data_root / "prepared").glob("*"))
+
+
+@pytest.mark.asyncio
+async def test_full_decode_failure_never_publishes_even_when_finalization_could_be_skipped(settings, monkeypatch, caplog):
+    from apple_gateway.runner import ProcessFailure
+    from unittest.mock import Mock
+
+    runner = ProgressiveRunner()
+    runner.remember_file_retry = Mock()
+
+    async def validate(source):
+        raise ProcessFailure("transcode_failed", stderr="invalid final frame")
+
+    runner.validate_audio = validate
+    app = create_app(settings, FakeWrapper(), runner)
+    response = await endpoint(app)("101", "alac-16-44", ACCOUNT)
+    assert await anext(response.body_iterator)
+    runner.release.set()
+    with pytest.raises(ProcessFailure, match="transcode_failed"):
+        _ = [chunk async for chunk in response.body_iterator]
+    assert not list((settings.data_root / "prepared").glob("*"))
+    assert "invalid final frame" in caplog.text and "stage=validate" in caplog.text
+    runner.remember_file_retry.assert_called_once_with("101")

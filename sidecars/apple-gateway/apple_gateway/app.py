@@ -20,7 +20,7 @@ from starlette.background import BackgroundTask
 from .config import Settings
 from .delivery import AudioResponse, SharedAudio
 from .models import Login2faRequest, LoginRequest, MediaAccount
-from .runner import AudioCeiling, BoundedProcessRunner, ProcessFailure
+from .runner import AudioCeiling, BoundedProcessRunner, ProcessFailure, log_audio_failure
 from .security import diagnostic_tail, media_account, song_url
 from .wrapper import WrapperClient, WrapperResponse
 
@@ -295,6 +295,16 @@ def create_app(
                         found = path
         return found
 
+    async def validate_cached(source, account, song_id):
+        validate = getattr(process_runner, "validate_audio", None) or BoundedProcessRunner(config).validate_audio
+        try:
+            await asyncio.wait_for(validate(source), config.subprocess_timeout_seconds)
+        except ProcessFailure as exc:
+            log_audio_failure(song_id, exc, stage="validate", token=account.token)
+            if remember := getattr(process_runner, "remember_file_retry", None):
+                remember(song_id)
+            raise
+
     async def progressive_audio(account, song_id, quality, *, original_container=False, force_flac=False):
         from .finalization import finalize_audio
         key = _cache_key(account, song_id, quality)
@@ -322,6 +332,7 @@ def create_app(
                     media_user_token=account.token, storefront=account.storefront,
                     ceiling=AUDIO_CEILINGS.get(quality.lower()), original_container=original_container,
                     force_flac=force_flac), target, completed=completed, song_id=song_id, quality=quality,
+                    validate=lambda source: validate_cached(source, account, song_id),
                     finalize=lambda source, target: asyncio.wait_for(
                         finalize_audio(source, target, config.ffmpeg_path), config.subprocess_timeout_seconds))
                 audio_preparations[identity] = entry
@@ -389,6 +400,7 @@ def create_app(
                 partial = target.with_name(f"{target.name}.{uuid.uuid4().hex}.partial")
                 try:
                     shutil.copyfile(source, partial)
+                    await validate_cached(partial, account, song_id)
                     partial.replace(target)
                 finally:
                     partial.unlink(missing_ok=True)
@@ -463,6 +475,7 @@ def create_app(
                 else:
                     await process_runner.seekable_flac(source, partial, ceiling) if ceiling \
                         else await process_runner.seekable_flac(source, partial)
+                await validate_cached(partial, account, song_id)
                 partial.replace(target)
                 cached_source(key, audio_file=True, original_container=original_container)
                 conversion_seconds = time.monotonic() - started
@@ -482,8 +495,8 @@ def create_app(
                     conversion_seconds = time.monotonic() - started
                 used_quality = getattr(failure, "quality", None) or used_quality
                 tail = diagnostic_tail(getattr(failure, "stderr", ""), account.token).replace("\n", " | ")
-                logger.warning("Audio prepare song=%s quality=%s gamdl_seconds=%.3f conversion_seconds=%.3f bytes=0 failure=%s stderr=%s",
-                    song_id, used_quality, gamdl_seconds, conversion_seconds, code, tail)
+                logger.warning("Audio prepare song=%s quality=%s gamdl_seconds=%.3f conversion_seconds=%.3f bytes=0 stage=%s failure=%s stderr=%s",
+                    song_id, used_quality, gamdl_seconds, conversion_seconds, getattr(failure, "stage", None) or "prepare", code, tail)
                 if isinstance(exc, HTTPException):
                     raise
                 status = 504 if code == "process_timeout" else 403 if code == "account_mismatch" else 502
@@ -519,6 +532,7 @@ def create_app(
             shutil.rmtree(root, ignore_errors=True)
             raise
         except ProcessFailure as exc:
+            log_audio_failure(song_id, exc, token=account.token)
             shutil.rmtree(root, ignore_errors=True)
             status = 504 if exc.code == "process_timeout" else 502
             raise HTTPException(status_code=status, detail=exc.code) from None
@@ -559,8 +573,12 @@ def create_app(
                     await close_stream()
             else:
                 source = await prepare_song(account, song_id, quality, "aac-web")
-                async for chunk in process_runner.stream_flac(source):
-                    yield chunk
+                try:
+                    async for chunk in process_runner.stream_flac(source):
+                        yield chunk
+                except ProcessFailure as exc:
+                    log_audio_failure(song_id, exc, token=account.token)
+                    raise
 
         headers = {
             "Content-Disposition": f'inline; filename="{song_id}.flac"',

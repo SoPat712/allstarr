@@ -3,10 +3,8 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import io
-import os
 import struct
 from dataclasses import dataclass
-from pathlib import Path
 from urllib.parse import urljoin, urlsplit
 
 import httpx
@@ -265,12 +263,15 @@ async def _decrypt(init, moof, mdat, directory, media, base):
         header_size = 16 if mdat[:4] == b"\x00\x00\x00\x01" else 8
         payload = b"".join(payloads)
         if len(payload) != len(mdat) - header_size:
-            raise ProcessFailure("decrypt_failed")
+            raise ProcessFailure("decrypt_failed", stderr="decrypted fragment payload size mismatch", stage="decrypt")
         return mdat[:header_size] + payload
     except ProcessFailure:
         raise
-    except Exception:
-        raise ProcessFailure("decrypt_failed") from None
+    except Exception as exc:
+        detail = getattr(exc, "stderr", None) or str(exc)
+        if isinstance(detail, bytes):
+            detail = detail.decode("utf-8", errors="replace")
+        raise ProcessFailure("decrypt_failed", stderr=detail[-32768:], stage="decrypt") from None
     finally:
         encrypted.unlink(missing_ok=True)
         decrypted.unlink(missing_ok=True)
@@ -403,11 +404,10 @@ async def audio_chunks(media, base, settings, directory, *, ceiling=None, origin
     output = ["-c:a", "copy", "-movflags", "+empty_moov+frag_keyframe+default_base_moof",
         "-frag_duration", "200000", "-f", "mp4"] if copy else [
         *conversion, "-c:a", "flac", "-compression_level", "0", "-f", "flac"]
-    validation = ["-map", "0:a:0", "-threads", "1", "-f", "null", os.devnull] if copy else []
-    process = await asyncio.create_subprocess_exec(settings.ffmpeg_path, "-nostdin", "-v", "error", "-xerror",
-        "-err_detect", "explode", "-probesize", "32768", "-analyzeduration", "0", "-threads", "1",
+    process = await asyncio.create_subprocess_exec(settings.ffmpeg_path, "-nostdin", "-v", "error",
+        "-probesize", "32768", "-analyzeduration", "0", "-threads", "1",
         "-filter_threads", "1", "-f", "mp4", "-i", "pipe:0", "-map", "0:a:0", "-map_metadata", "-1",
-        "-threads", "1", *output, "-flush_packets", "1", "pipe:1", *validation,
+        "-threads", "1", *output, "-flush_packets", "1", "pipe:1",
         stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
     stderr = bytearray()
 
@@ -449,10 +449,14 @@ async def audio_chunks(media, base, settings, directory, *, ceiling=None, origin
             await errors
             raise ProcessFailure("transcode_failed", stderr=stderr.decode("utf-8", errors="replace"))
 
+    failure = None
     try:
         yield header
         async for chunk in _tagged_output(encoded(), header, media):
             yield bytes(chunk)
+    except ProcessFailure as exc:
+        failure = exc
+        raise
     finally:
         producer.cancel()
         if process.returncode is None:
@@ -460,5 +464,10 @@ async def audio_chunks(media, base, settings, directory, *, ceiling=None, origin
                 process.kill()
         await process.wait()
         await asyncio.gather(producer, errors, return_exceptions=True)
+        if failure is not None:
+            if not failure.stderr:
+                failure.stderr = stderr.decode("utf-8", errors="replace")
+            if failure.stage is None:
+                failure.stage = "decrypt" if failure.code == "decrypt_failed" else "transcode"
         if close := getattr(source, "aclose", None):
             await close()

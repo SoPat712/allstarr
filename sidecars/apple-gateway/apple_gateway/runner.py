@@ -16,9 +16,18 @@ from pathlib import Path
 from typing import AsyncIterator
 
 from .config import Settings
-from .security import safe_files, valid_media_token
+from .security import diagnostic_tail, safe_files, song_url, valid_media_token
 
 logger = logging.getLogger("uvicorn.error")
+FILE_RETRY_SECONDS = 1800
+FILE_RETRY_MAX_SONGS = 256
+
+
+def log_audio_failure(song_id, failure, *, stage=None, token=""):
+    stage = stage or failure.stage or ("decrypt" if failure.code == "decrypt_failed" else
+        "transcode" if failure.code == "transcode_failed" else "prepare")
+    logger.warning("Audio failure song=%s stage=%s failure=%s stderr=%s", song_id, stage, failure.code,
+        diagnostic_tail(failure.stderr, token).replace("\n", " | "))
 
 
 def _log_preparation(stdout: str, quality: str, elapsed_ms: float) -> None:
@@ -68,10 +77,11 @@ class AudioCeiling:
 
 
 class ProcessFailure(RuntimeError):
-    def __init__(self, code: str, *, stderr: str = ""):
+    def __init__(self, code: str, *, stderr: str = "", stage: str | None = None):
         super().__init__(code)
         self.code = code
         self.stderr = stderr
+        self.stage = stage
         self.quality: str | None = None
 
 
@@ -86,6 +96,7 @@ class BoundedProcessRunner:
         self._warm: asyncio.subprocess.Process | None = None
         self._warming: asyncio.Task | None = None
         self._probed: dict[str, dict[str, str]] = {}
+        self._file_retries: dict[str, float] = {}
         self._audio_warming: asyncio.Task | None = None
         from .workers import WorkerPool
         self._audio_workers = WorkerPool(settings, semaphore=self._semaphore)
@@ -113,6 +124,14 @@ class BoundedProcessRunner:
         if self._audio_warming is None or self._audio_warming.done():
             self._audio_warming = asyncio.create_task(self._audio_workers.warm_up())
 
+    def remember_file_retry(self, song_id):
+        now = time.monotonic()
+        self._file_retries = {song: expiry for song, expiry in self._file_retries.items() if expiry > now}
+        self._file_retries.pop(song_id, None)
+        while len(self._file_retries) >= FILE_RETRY_MAX_SONGS:
+            self._file_retries.pop(next(iter(self._file_retries)))
+        self._file_retries[song_id] = now + FILE_RETRY_SECONDS
+
     @contextlib.asynccontextmanager
     async def open_audio(self, song_id: str, quality: str, *, media_user_token: str, storefront: str,
             ceiling: AudioCeiling | None = None, original_container: bool = False, force_flac: bool = False):
@@ -124,15 +143,114 @@ class BoundedProcessRunner:
             "ceiling": None if ceiling is None else [ceiling.bit_depth, ceiling.sample_rate],
             "original_container": original_container, "force_flac": force_flac}
         started = time.monotonic()
-        async with self._audio_workers.open(request) as (payload, chunks):
-            media_type, suffix = payload.get("media_type"), payload.get("suffix")
-            if (media_type, suffix) not in {("audio/flac", ".flac"), ("audio/mp4", ".m4a")}:
-                raise ProcessFailure("worker_failed")
-            _log_preparation(json.dumps(payload.get("preparation")), quality, (time.monotonic() - started) * 1000)
+        self._file_retries = {song: expiry for song, expiry in self._file_retries.items() if expiry > started}
+
+        def failed(exc):
+            if exc.code in {"account_mismatch", "account_unavailable"}:
+                return False
+            self.remember_file_retry(song_id)
+            log_audio_failure(song_id, exc, token=media_user_token)
+            return True
+
+        async with contextlib.AsyncExitStack() as stack:
+            use_file = song_id in self._file_retries
+            if not use_file:
+                try:
+                    payload, chunks = await stack.enter_async_context(self._audio_workers.open(request))
+                    media_type, suffix = payload.get("media_type"), payload.get("suffix")
+                    if (media_type, suffix) not in {("audio/flac", ".flac"), ("audio/mp4", ".m4a")}:
+                        raise ProcessFailure("worker_failed")
+                    _log_preparation(json.dumps(payload.get("preparation")), quality,
+                        (time.monotonic() - started) * 1000)
+                    try:
+                        first = await anext(chunks)
+                    except StopAsyncIteration:
+                        raise ProcessFailure("audio_artifact_missing") from None
+                except ProcessFailure as exc:
+                    if not failed(exc):
+                        raise
+                    await stack.aclose()
+                    use_file = True
+            if use_file:
+                async with self._file_audio(request) as audio:
+                    yield audio
+                return
+
+            async def content():
+                yield first
+                try:
+                    async for chunk in chunks:
+                        yield chunk
+                except ProcessFailure as exc:
+                    failed(exc)
+                    raise
+
             duration = payload.get("duration_seconds")
             if type(duration) not in (float, int) or not math.isfinite(duration) or duration <= 0:
                 duration = None
-            yield AudioHeader(media_type, suffix, duration, payload.get("lyrics")), chunks
+            output = content()
+            try:
+                yield AudioHeader(media_type, suffix, duration, payload.get("lyrics")), output
+            finally:
+                await output.aclose()
+
+    @contextlib.asynccontextmanager
+    async def _file_audio(self, request):
+        from .progressive import AudioHeader
+
+        temporary = self._settings.data_root / "temporary"
+        temporary.mkdir(parents=True, exist_ok=True, mode=0o750)
+        with tempfile.TemporaryDirectory(prefix="audio-", dir=temporary) as work:
+            root = Path(work)
+            ceiling = AudioCeiling(*request["ceiling"]) if request["ceiling"] else None
+            try:
+                try:
+                    artifacts = await self.download(song_url(request["storefront"], request["song_id"]),
+                        request["quality"], root / "output", root / "download", media_user_token=request["token"],
+                        **({"ceiling": f"{ceiling.bit_depth}-{ceiling.sample_rate}"} if ceiling else {}))
+                except ProcessFailure as exc:
+                    if request["quality"] == "aac-web" or exc.code not in {
+                            "artifact_missing", "audio_artifact_missing", "gamdl_failed"}:
+                        raise
+                    artifacts = await self.download(song_url(request["storefront"], request["song_id"]),
+                        "aac-web", root / "fallback", root / "fallback-download", media_user_token=request["token"])
+                source = next((path for path in artifacts if path.suffix.lower() in {".m4a", ".flac"}), None)
+                if source is None:
+                    raise ProcessFailure("audio_artifact_missing")
+                lyrics = next((path.read_text() for path in artifacts if path.suffix.lower() == ".lrc"), None)
+                codec = await self.audio_codec(source)
+                if codec == "aac" or ceiling and not await self.exceeds_ceiling(source, ceiling):
+                    ceiling = None
+                copy = not request["force_flac"] and (codec == "aac" or
+                    request["original_container"] and codec == "alac" and ceiling is None)
+                target = source if copy or codec == "flac" and ceiling is None else root / "converted.flac"
+                if target != source:
+                    await self.seekable_flac(source, target, ceiling)
+                await self.validate_audio(target)
+                duration = await self.audio_duration(target)
+            except ProcessFailure as exc:
+                log_audio_failure(request["song_id"], exc, token=request["token"])
+                raise
+
+            async def content():
+                with target.open("rb") as stream:
+                    while chunk := stream.read(64 * 1024):
+                        yield chunk
+                        await asyncio.sleep(0)
+
+            output = content()
+            try:
+                yield AudioHeader("audio/mp4" if copy else "audio/flac", ".m4a" if copy else ".flac",
+                    duration, lyrics), output
+            finally:
+                await output.aclose()
+
+    async def validate_audio(self, source):
+        result = await self.execute([self._settings.ffmpeg_path, "-nostdin", "-v", "error", "-xerror",
+            "-err_detect", "explode", "-threads", "1", "-i", str(source), "-map", "0:a:0",
+            "-threads", "1", "-f", "null", os.devnull], source.parent)
+        if result.return_code != 0:
+            raise ProcessFailure("transcode_failed", stderr=result.stderr, stage="validate")
 
     async def lyrics(self, song_id: str, *, media_user_token: str, storefront: str) -> str | None:
         if not valid_media_token(media_user_token):
@@ -280,20 +398,28 @@ class BoundedProcessRunner:
             elapsed_ms = (time.monotonic() - started) * 1000
         finally:
             cookie_path.unlink(missing_ok=True)
+
+        def failure(code):
+            exc = ProcessFailure(code, stderr=result.stderr, stage="decrypt_mux")
+            song_id = url.rstrip("/").rsplit("/", 1)[-1]
+            log_audio_failure(song_id if re.fullmatch(r"[0-9]{1,24}", song_id) else "unknown", exc,
+                token=media_user_token)
+            return exc
+
         if result.return_code == 78:
-            raise ProcessFailure("account_mismatch", stderr=result.stderr)
+            raise failure("account_mismatch")
         if result.return_code == 79:
-            raise ProcessFailure("account_unavailable", stderr=result.stderr)
+            raise failure("account_unavailable")
         if result.return_code != 0:
-            raise ProcessFailure("gamdl_failed", stderr=result.stderr)
+            raise failure("gamdl_failed")
         _log_preparation(result.stdout, quality, elapsed_ms)
         artifacts = safe_files(output, {".lrc"} if lyrics_only else {
             ".m4a", ".flac", ".mp4", ".m4v", ".lrc", ".srt", ".ttml", ".jpg", ".png"
         })
         if not artifacts:
-            raise ProcessFailure("artifact_missing", stderr=result.stderr)
+            raise failure("artifact_missing")
         if not lyrics_only and not any(path.suffix.lower() in {".m4a", ".flac"} for path in artifacts):
-            raise ProcessFailure("audio_artifact_missing", stderr=result.stderr)
+            raise failure("audio_artifact_missing")
         return artifacts
 
     async def to_flac(self, source: Path, target: Path) -> Path:
@@ -305,7 +431,7 @@ class BoundedProcessRunner:
             "-c:a", "flac", "-compression_level", "0", str(target),
         ], target.parent)
         if result.return_code != 0 or not target.is_file():
-            raise ProcessFailure("transcode_failed")
+            raise ProcessFailure("transcode_failed", stderr=result.stderr, stage="transcode")
         return target.resolve()
 
     async def _probe(self, source: Path) -> dict[str, str]:
@@ -351,12 +477,12 @@ class BoundedProcessRunner:
             "-c:a", "flac", "-compression_level", "0", "-f", "flac", str(target),
         ], target.parent)
         if result.return_code != 0 or not target.is_file():
-            raise ProcessFailure("transcode_failed")
+            raise ProcessFailure("transcode_failed", stderr=result.stderr, stage="transcode")
         result = await self.execute([
             "metaflac", "--add-seekpoint=0", "--add-seekpoint=10s", str(target),
         ], target.parent)
         if result.return_code != 0:
-            raise ProcessFailure("transcode_failed")
+            raise ProcessFailure("transcode_failed", stderr=result.stderr, stage="transcode")
         return target.resolve()
 
     async def stream_flac(self, source: Path, chunk_size: int = 64 * 1024) -> AsyncIterator[bytes]:
@@ -407,7 +533,7 @@ class BoundedProcessRunner:
                     raise ProcessFailure("process_timeout") from exc
                 await stderr_task
                 if return_code != 0:
-                    raise ProcessFailure("transcode_failed")
+                    raise ProcessFailure("transcode_failed", stderr=stderr_task.result(), stage="transcode")
             finally:
                 if process.returncode is None:
                     os.killpg(process.pid, signal.SIGKILL)

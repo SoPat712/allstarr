@@ -30,6 +30,9 @@ for line in sys.stdin:
     if request["song_id"] == "failure":
         send(b"F", {"code": "segment_download_failed"})
         continue
+    if request["song_id"] == "decode":
+        send(b"F", {"code": "transcode_failed", "stage": "transcode", "stderr": "later frame failed"})
+        continue
     count += 1
     send(b"H", {"media_type": "audio/flac", "suffix": ".flac"})
     send(b"D", f"{os.getpid()}:{count}:{request['song_id']}".encode())
@@ -114,6 +117,18 @@ async def test_worker_reports_stage_failure_and_next_song_can_recover(settings, 
         with pytest.raises(ProcessFailure, match="segment_download_failed"):
             await consume(pool, "failure")
         assert (await consume(pool, "102"))[1:] == ["1", "102"]
+    finally:
+        await pool.close()
+
+
+@pytest.mark.asyncio
+async def test_worker_failure_frame_preserves_bounded_stage_diagnostics(settings, command):
+    pool = WorkerPool(settings, command=command)
+    try:
+        with pytest.raises(ProcessFailure) as failure:
+            await consume(pool, "decode")
+        assert failure.value.stderr == "later frame failed"
+        assert failure.value.stage == "transcode"
     finally:
         await pool.close()
 

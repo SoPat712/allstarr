@@ -45,6 +45,9 @@ class ProgressiveRunner:
         target.write_bytes(source.read_bytes())
         return target
 
+    async def validate_audio(self, source):
+        pass
+
 
 def endpoint(app, kind="audio"):
     return next(route.endpoint for route in app.routes if getattr(route, "path", "") == f"/api/{kind}/{{song_id}}")
@@ -271,7 +274,8 @@ async def test_encoder_pipe_failure_after_first_chunk_reports_transcode_failure(
 
     process = SimpleNamespace(returncode=None,
         stdin=SimpleNamespace(write=write, drain=AsyncMock(), close=lambda: None),
-        stdout=SimpleNamespace(read=output), stderr=SimpleNamespace(read=AsyncMock(return_value=b"")),
+        stdout=SimpleNamespace(read=output),
+        stderr=SimpleNamespace(read=AsyncMock(side_effect=[b"decoder stopped at later frame", b""])),
         wait=AsyncMock(return_value=1), kill=lambda: None)
     monkeypatch.setattr(asyncio, "create_subprocess_exec", AsyncMock(return_value=process))
     media = SimpleNamespace(tags=MediaTags(), cover_bytes=None,
@@ -280,8 +284,9 @@ async def test_encoder_pipe_failure_after_first_chunk_reports_transcode_failure(
     await anext(chunks)
     assert await anext(chunks)
     release.set()
-    with pytest.raises(ProcessFailure, match="transcode_failed"):
+    with pytest.raises(ProcessFailure, match="transcode_failed") as failure:
         await anext(chunks)
+    assert failure.value.stderr == "decoder stopped at later frame"
 
 
 def test_encrypted_initialization_keeps_alac_configuration_and_removes_protection():
@@ -342,7 +347,7 @@ async def test_aac_fallback_keeps_source_rate_when_lossless_ceiling_is_requested
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("codec", ["alac", "aac"])
-async def test_copied_audio_with_corrupt_final_samples_fails_after_first_output(settings, tmp_path, codec):
+async def test_copied_audio_with_corrupt_final_samples_fails_full_decode_validation(settings, tmp_path, codec):
     import shutil
     import subprocess
     from dataclasses import replace
@@ -376,10 +381,15 @@ async def test_copied_audio_with_corrupt_final_samples_fails_after_first_output(
     chunks = audio_chunks(media, None, replace(settings, ffmpeg_path=ffmpeg), tmp_path,
         source=fragments(), original_container=True)
     assert (await anext(chunks)).suffix == ".m4a"
-    assert await asyncio.wait_for(anext(chunks), 3)
+    first = await asyncio.wait_for(anext(chunks), 3)
+    assert first
     release.set()
+    artifact = tmp_path / "copied.m4a"
+    artifact.write_bytes(first + b"".join([chunk async for chunk in chunks]))
+    from apple_gateway.runner import BoundedProcessRunner
+    runner = BoundedProcessRunner(replace(settings, ffmpeg_path=ffmpeg))
     with pytest.raises(ProcessFailure, match="transcode_failed"):
-        _ = [chunk async for chunk in chunks]
+        await runner.validate_audio(artifact)
 
 
 @pytest.mark.asyncio

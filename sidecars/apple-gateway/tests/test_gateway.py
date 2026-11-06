@@ -100,6 +100,9 @@ class FakeRunner:
     async def audio_duration(self, source: Path):
         return 2.5
 
+    async def validate_audio(self, source: Path):
+        pass
+
     async def stream_flac(self, source: Path):
         self.transcodes.append("stream")
         yield b"fLaC"

@@ -8,15 +8,16 @@ from pathlib import Path
 
 from fastapi.responses import StreamingResponse
 
-from .runner import ProcessFailure
+from .runner import ProcessFailure, log_audio_failure
 
 logger = logging.getLogger("uvicorn.error")
 
 
 class SharedAudio:
-    def __init__(self, open_audio, target, *, completed, song_id, quality, finalize):
+    def __init__(self, open_audio, target, *, completed, song_id, quality, finalize, validate):
         self._open_audio, self._target, self._completed = open_audio, target, completed
         self._finalize = finalize
+        self._validate = validate
         self._song_id, self._quality = song_id, quality
         self._changed = asyncio.Condition()
         self.ready = asyncio.get_running_loop().create_future()
@@ -54,10 +55,13 @@ class SharedAudio:
                             self._changed.notify_all()
                 if not self.available:
                     raise ProcessFailure("audio_artifact_missing")
+            await self._validate(partial)
             finalized = target.with_name(f"{target.name}.{uuid.uuid4().hex}.partial")
             try:
                 await self._finalize(partial, finalized)
             except Exception as exc:
+                if isinstance(exc, ProcessFailure):
+                    log_audio_failure(self._song_id, exc, stage="finalize")
                 logger.warning("Audio cache finalization song=%s quality=%s failure=%s; retaining validated output",
                     self._song_id, self._quality, type(exc).__name__)
                 finalized.unlink(missing_ok=True)
