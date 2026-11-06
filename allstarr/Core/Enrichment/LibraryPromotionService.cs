@@ -15,7 +15,10 @@ using Microsoft.EntityFrameworkCore;
 namespace allstarr.Core.Enrichment;
 
 public sealed record PromoteSongRequest(Guid RecordingId, Guid ArtifactId, Guid RootId, string BackendLibraryId,
-    string RequestKey, Guid? CredentialReferenceId = null);
+    string RequestKey, Guid? CredentialReferenceId = null)
+{
+    public string? Unit { get; init; }
+}
 public sealed record PromotionPreview(string DestinationPath, string[] Steps, long Size);
 internal sealed record PromotionPlan(MetadataEnrichmentPlan Metadata, ManagedTrackPathValues Track,
     string Provider, string? ExternalId, string? QualityJson)
@@ -24,11 +27,13 @@ internal sealed record PromotionPlan(MetadataEnrichmentPlan Metadata, ManagedTra
     public Dictionary<string, string?>? NamingFields { get; init; }
 }
 
-public sealed class LibraryPromotionService(IDbContextFactory<AllstarrDbContext> factory, DurableJobQueue jobs,
+public sealed partial class LibraryPromotionService(IDbContextFactory<AllstarrDbContext> factory, DurableJobQueue jobs,
     PromotionRoots roots, ProviderDownloadArtifactResolver artifacts, ProviderDownloadWorkspaceOptions workspaces,
     IServiceScopeFactory scopes, IManagedMetadataWriter writer, AudioQualityAnalyzer analyzer,
     IBackendLibraryAccessResolver libraryAccess, ITrackIdentityService? identities = null,
-    IPlaybackMetadataResolver? artwork = null, PromotionProfiles? profiles = null) : IDurableJobHandler
+    IPlaybackMetadataResolver? artwork = null, PromotionProfiles? profiles = null,
+    IPromotionCatalog? promotionCatalog = null, IPromotionAcquisition? promotionAcquisition = null,
+    IProtocolLyricsResolver? lyrics = null, PromotionReplayGain? replayGain = null, MediaConversionGate? conversions = null) : IDurableJobHandler
 {
     public const string JobType = "library.promote";
     private static readonly string[] Steps = ["Copy complete original", "MusicBrainz tags and cover", "Quality screen", "Place in library", "Request library refresh"];
@@ -38,6 +43,7 @@ public sealed class LibraryPromotionService(IDbContextFactory<AllstarrDbContext>
     public async Task<PromotionPreview> PreviewAsync(ProtocolExecutionContext context, PromoteSongRequest request,
         CancellationToken token = default)
     {
+        if (promotionCatalog != null) return await PreviewAlbumAsync(context, request, token);
         await using var db = await factory.CreateDbContextAsync(token);
         await AuthorizeAsync(db, context, token);
         var root = await roots.RequireAsync(request.RootId, token);
@@ -52,6 +58,7 @@ public sealed class LibraryPromotionService(IDbContextFactory<AllstarrDbContext>
     public async Task<PromotionRunRecord> StartAsync(ProtocolExecutionContext context, PromoteSongRequest request,
         CancellationToken token = default)
     {
+        if (promotionCatalog != null) return await StartAlbumAsync(context, request, token);
         if (string.IsNullOrWhiteSpace(request.RequestKey) || request.RequestKey.Length > 100 ||
             request.RecordingId == Guid.Empty || request.ArtifactId == Guid.Empty || string.IsNullOrWhiteSpace(request.BackendLibraryId))
             throw new ArgumentException("A song, complete original, library and request key are required.");
@@ -110,12 +117,23 @@ public sealed class LibraryPromotionService(IDbContextFactory<AllstarrDbContext>
             run.Outcome = job.State == DurableJobState.Failed ? "Failed" : "Cancelled";
             run.Reason = job.LastErrorMessage ?? "The durable job stopped before placement completed.";
         }
+        HydrateTracks(run);
+        await ProjectHandoverAsync(db, run, token);
         return run;
     }
 
     public async Task<PromotionRunRecord> ApproveAsync(ProtocolExecutionContext context, Guid id, string reason,
         CancellationToken token = default)
     {
+        if (promotionCatalog != null)
+        {
+            var current = await GetAsync(context, id, token);
+            if (current.Tracks.Count > 0)
+            {
+                if (current.Tracks.Count != 1) throw new InvalidOperationException("Choose the song to review.");
+                return await ReviewAsync(context, id, current.Tracks[0].RecordingId, "add-anyway", reason, token);
+            }
+        }
         if (string.IsNullOrWhiteSpace(reason) || reason.Trim().Length > 500)
             throw new ArgumentException("Explain why this exact quality result is acceptable.");
         await gate.WaitAsync(token);
@@ -149,6 +167,16 @@ public sealed class LibraryPromotionService(IDbContextFactory<AllstarrDbContext>
         try
         {
             await db.Entry(run).ReloadAsync(token);
+            if (ReadAlbum(run) is { } album)
+            {
+                foreach (var track in album.Tracks)
+                {
+                    if (track.AcquisitionJobId is { } downloadJob) await jobs.RequestCancellationAsync(downloadJob, run.OwnerUserId, token);
+                    if (track.Outcome is not ("Placed" or "Skipped")) track.Outcome = "Cancelled";
+                }
+                run.PlanJson = JsonSerializer.Serialize(album);
+                run.Tracks = album.Tracks;
+            }
             Cleanup(run.Id);
             if (run.Outcome == "Placed") return run;
             run.Outcome = "Cancelled";
@@ -171,6 +199,7 @@ public sealed class LibraryPromotionService(IDbContextFactory<AllstarrDbContext>
                 item.OwnerUserId == execution.Claim.OwnerUserId && item.JobId == execution.Claim.JobId, token);
             if (run == null || run.Outcome == "Cancelled") return DurableJobCompletion.Cancelled();
             if (run.Outcome == "Placed") { Cleanup(id); return DurableJobCompletion.Success(); }
+            if (ReadAlbum(run) is { } album) return await ExecuteAlbumAsync(db, run, album, execution, token);
             var request = JsonSerializer.Deserialize<PromoteSongRequest>(run.RequestJson)!;
             var plan = JsonSerializer.Deserialize<PromotionPlan>(run.PlanJson)!;
             var completed = await db.Set<PromotionStepRecord>().Where(item => item.RunId == id).ToDictionaryAsync(item => item.Name, token);
@@ -467,7 +496,14 @@ public sealed class LibraryPromotionService(IDbContextFactory<AllstarrDbContext>
         foreach (var entry in Directory.EnumerateFileSystemEntries(path))
         {
             PromotionRoots.RejectLinks(entry);
-            if (Directory.Exists(entry)) throw new IOException("Unexpected directory in the private workspace.");
+            if (Directory.Exists(entry))
+            {
+                foreach (var child in Directory.EnumerateFileSystemEntries(entry))
+                {
+                    PromotionRoots.RejectLinks(child);
+                    if (Directory.Exists(child)) throw new IOException("Unexpected directory in the private workspace.");
+                }
+            }
         }
         Directory.Delete(path, true);
     }

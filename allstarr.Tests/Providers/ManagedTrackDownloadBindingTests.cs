@@ -12,6 +12,25 @@ namespace allstarr.Tests;
 public sealed class ManagedTrackDownloadBindingTests
 {
     [Fact]
+    public async Task Promotion_RejectsVerifiedArtifactBelowItsRequestedFloor()
+    {
+        await using var fixture = await ProviderDownloadArtifactBindingTests.BindingFixture.CreateAsync(accountBound: true);
+        var capability = new RecordingDownloadCapability(fixture.Resolver);
+        var track = Track(fixture.ProviderId, "promotion-track");
+        var plan = Plan(fixture, capability, track, track, Account(fixture, 0));
+        var service = Service(fixture, capability, plan);
+        var result = await service.ExecuteAsync(Command(fixture, "library-promotion", track.Value) with
+        {
+            RequestedQuality = ProviderAudioQuality.HighResolution,
+            ProviderPriority = [fixture.ProviderId],
+            AcceptArtifact = _ => false
+        });
+        Assert.False(result.Succeeded);
+        Assert.Null(result.Artifact);
+        Assert.Equal("managed_download_route_exhausted", result.ErrorCode);
+    }
+
+    [Fact]
     public async Task Execute_PersistsTheTranslatedCandidateTrackAndAccountRevision()
     {
         await using var fixture = await ProviderDownloadArtifactBindingTests.BindingFixture.CreateAsync(accountBound: true);

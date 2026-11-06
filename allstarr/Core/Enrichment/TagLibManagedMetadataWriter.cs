@@ -25,7 +25,7 @@ public sealed class TagLibManagedTagFileMutator : IManagedTagFileMutator
     public bool Matches(string path, IReadOnlyDictionary<string, string> tags)
     {
         using var file = TagLib.File.Create(path);
-        return tags.All(pair => ReadTag(file.Tag, pair.Key).Equals(pair.Value, StringComparison.Ordinal));
+        return tags.All(pair => TagMatches(file.Tag, pair.Key, pair.Value));
     }
 
     public static void ApplyTags(Tag tag, IReadOnlyDictionary<string, string> tags)
@@ -38,12 +38,24 @@ public sealed class TagLibManagedTagFileMutator : IManagedTagFileMutator
             StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         if (tags.TryGetValue("year", out var year) && uint.TryParse(year, out var parsedYear)) tag.Year = parsedYear;
         if (tags.TryGetValue("track", out var track) && uint.TryParse(track, out var parsedTrack)) tag.Track = parsedTrack;
+        if (tags.TryGetValue("totaltracks", out var tracks) && uint.TryParse(tracks, out var parsedTracks)) tag.TrackCount = parsedTracks;
+        if (tags.TryGetValue("disc", out var disc) && uint.TryParse(disc, out var parsedDisc)) tag.Disc = parsedDisc;
+        if (tags.TryGetValue("totaldiscs", out var discs) && uint.TryParse(discs, out var parsedDiscs)) tag.DiscCount = parsedDiscs;
+        if (tags.TryGetValue("comment", out var comment)) tag.Comment = comment;
+        if (tags.TryGetValue("isrc", out var isrc)) tag.ISRC = isrc;
+        if (tags.TryGetValue("date", out var date)) WriteDate(tag, date, original: false);
+        if (tags.TryGetValue("originaldate", out var originalDate)) WriteDate(tag, originalDate, original: true);
+        if (tags.TryGetValue("lyrics", out var lyrics)) WriteLyrics(tag, lyrics);
+        ApplyReplayGain(tag, tags, "REPLAYGAIN_TRACK_GAIN", value => tag.ReplayGainTrackGain = value);
+        ApplyReplayGain(tag, tags, "REPLAYGAIN_TRACK_PEAK", value => tag.ReplayGainTrackPeak = value);
+        ApplyReplayGain(tag, tags, "REPLAYGAIN_ALBUM_GAIN", value => tag.ReplayGainAlbumGain = value);
+        ApplyReplayGain(tag, tags, "REPLAYGAIN_ALBUM_PEAK", value => tag.ReplayGainAlbumPeak = value);
         if (tags.TryGetValue("musicbrainz_recordingid", out var recordingId)) tag.MusicBrainzTrackId = recordingId;
         if (tags.TryGetValue("musicbrainz_releaseid", out var releaseId)) tag.MusicBrainzReleaseId = releaseId;
         if (tags.TryGetValue("musicbrainz_releasegroupid", out var releaseGroupId)) tag.MusicBrainzReleaseGroupId = releaseGroupId;
         if (tags.TryGetValue("musicbrainz_artistid", out var artistId)) tag.MusicBrainzArtistId = artistId;
         if (tags.TryGetValue("cover", out var cover))
-            tag.Pictures = [new Picture(new ByteVector(Convert.FromBase64String(cover))) { Type = PictureType.FrontCover }];
+            tag.Pictures = cover.Length == 0 ? [] : [new Picture(new ByteVector(Convert.FromBase64String(cover))) { Type = PictureType.FrontCover }];
     }
 
     private static string ReadTag(Tag tag, string key) => key switch
@@ -55,6 +67,18 @@ public sealed class TagLibManagedTagFileMutator : IManagedTagFileMutator
         "genre" => string.Join("; ", tag.Genres),
         "year" => tag.Year == 0 ? string.Empty : tag.Year.ToString(System.Globalization.CultureInfo.InvariantCulture),
         "track" => tag.Track == 0 ? string.Empty : tag.Track.ToString(System.Globalization.CultureInfo.InvariantCulture),
+        "totaltracks" => tag.TrackCount == 0 ? string.Empty : tag.TrackCount.ToString(System.Globalization.CultureInfo.InvariantCulture),
+        "disc" => tag.Disc == 0 ? string.Empty : tag.Disc.ToString(System.Globalization.CultureInfo.InvariantCulture),
+        "totaldiscs" => tag.DiscCount == 0 ? string.Empty : tag.DiscCount.ToString(System.Globalization.CultureInfo.InvariantCulture),
+        "comment" => tag.Comment ?? string.Empty,
+        "isrc" => tag.ISRC ?? string.Empty,
+        "date" => ReadDate(tag, original: false),
+        "originaldate" => ReadDate(tag, original: true),
+        "lyrics" => tag.Lyrics ?? string.Empty,
+        "REPLAYGAIN_TRACK_GAIN" => PromotionReplayGain.FormatGain(tag.ReplayGainTrackGain),
+        "REPLAYGAIN_TRACK_PEAK" => PromotionReplayGain.FormatPeak(tag.ReplayGainTrackPeak),
+        "REPLAYGAIN_ALBUM_GAIN" => PromotionReplayGain.FormatGain(tag.ReplayGainAlbumGain),
+        "REPLAYGAIN_ALBUM_PEAK" => PromotionReplayGain.FormatPeak(tag.ReplayGainAlbumPeak),
         "musicbrainz_recordingid" => tag.MusicBrainzTrackId ?? string.Empty,
         "musicbrainz_releaseid" => tag.MusicBrainzReleaseId ?? string.Empty,
         "musicbrainz_releasegroupid" => tag.MusicBrainzReleaseGroupId ?? string.Empty,
@@ -62,6 +86,151 @@ public sealed class TagLibManagedTagFileMutator : IManagedTagFileMutator
         "cover" => tag.Pictures.FirstOrDefault() is { } picture ? Convert.ToBase64String(picture.Data.Data) : string.Empty,
         _ => string.Empty
     };
+
+    private static bool TagMatches(Tag tag, string key, string expected)
+    {
+        var actual = ReadTag(tag, key);
+        if (!key.StartsWith("REPLAYGAIN_", StringComparison.Ordinal))
+            return actual.Equals(expected, StringComparison.Ordinal);
+        return TryReplayGain(actual, key.EndsWith("_GAIN", StringComparison.Ordinal), out var actualNumber) &&
+            TryReplayGain(expected, key.EndsWith("_GAIN", StringComparison.Ordinal), out var expectedNumber) &&
+            Math.Abs(actualNumber - expectedNumber) <= (key.EndsWith("_GAIN", StringComparison.Ordinal) ? 0.005 : 0.00000001);
+    }
+
+    private static void ApplyReplayGain(Tag tag, IReadOnlyDictionary<string, string> tags, string key, Action<double> apply)
+    {
+        if (!tags.TryGetValue(key, out var text)) return;
+        var gain = key.EndsWith("_GAIN", StringComparison.Ordinal);
+        if (!TryReplayGain(text, gain, out var value)) throw new InvalidDataException("The ReplayGain tag is invalid.");
+        apply(value);
+        // Preserve full peak precision where the format offers text fields.
+        foreach (var component in Components(tag))
+            WriteText(component, key, gain ? PromotionReplayGain.FormatGain(value) : PromotionReplayGain.FormatPeak(value));
+    }
+
+    private static bool TryReplayGain(string text, bool gain, out double value)
+    {
+        text = text.Trim();
+        if (gain && text.EndsWith("dB", StringComparison.OrdinalIgnoreCase)) text = text[..^2].TrimEnd();
+        return double.TryParse(text, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out value) &&
+            double.IsFinite(value) && (gain || value >= 0);
+    }
+
+    private static IEnumerable<Tag> Components(Tag tag)
+    {
+        if (tag is CombinedTag combined)
+        {
+            foreach (var component in combined.Tags)
+                foreach (var nested in Components(component)) yield return nested;
+        }
+        else if (tag is TagLib.Ogg.GroupedComment grouped)
+        {
+            foreach (var component in grouped.Comments) yield return component;
+        }
+        else yield return tag;
+    }
+
+    private static void WriteText(Tag tag, string key, string value)
+    {
+        switch (tag)
+        {
+            case TagLib.Ogg.XiphComment xiph:
+                xiph.SetField(key, value);
+                break;
+            case TagLib.Id3v2.Tag id3:
+                TagLib.Id3v2.UserTextInformationFrame.Get(id3, key, true).Text = [value];
+                break;
+            case TagLib.Mpeg4.AppleTag apple:
+                apple.SetDashBox("com.apple.iTunes", key, value);
+                break;
+        }
+    }
+
+    private static readonly ByteVector Mp4Date = new(new byte[] { 0xa9, 0x64, 0x61, 0x79 });
+
+    private static void WriteDate(Tag tag, string value, bool original)
+    {
+        foreach (var component in Components(tag))
+        {
+            switch (component)
+            {
+                case TagLib.Ogg.XiphComment xiph:
+                    xiph.SetField(original ? "ORIGINALDATE" : "DATE", value);
+                    break;
+                case TagLib.Id3v2.Tag id3:
+                    TagLib.Id3v2.TextInformationFrame.Get(id3, original ? "TDOR" : "TDRC", true).Text = [value];
+                    WriteText(id3, original ? "ORIGINALDATE" : "DATE", value);
+                    break;
+                case TagLib.Mpeg4.AppleTag apple:
+                    if (original) apple.SetDashBox("com.apple.iTunes", "ORIGINALDATE", value);
+                    else apple.SetText(Mp4Date, value);
+                    break;
+            }
+        }
+    }
+
+    private static string ReadDate(Tag tag, bool original)
+    {
+        foreach (var component in Components(tag))
+        {
+            var value = component switch
+            {
+                TagLib.Ogg.XiphComment xiph => xiph.GetField(original ? "ORIGINALDATE" : "DATE").FirstOrDefault(),
+                TagLib.Id3v2.Tag id3 => TagLib.Id3v2.UserTextInformationFrame.Get(id3, original ? "ORIGINALDATE" : "DATE", false)?.Text.FirstOrDefault()
+                    ?? TagLib.Id3v2.TextInformationFrame.Get(id3, original ? "TDOR" : "TDRC", false)?.Text.FirstOrDefault(),
+                TagLib.Mpeg4.AppleTag apple when original => apple.GetDashBox("com.apple.iTunes", "ORIGINALDATE"),
+                TagLib.Mpeg4.AppleTag apple => apple.GetText(Mp4Date).FirstOrDefault(),
+                _ => null
+            };
+            if (value is not null) return value;
+        }
+        return string.Empty;
+    }
+
+    private static void WriteLyrics(Tag tag, string lyrics)
+    {
+        if (lyrics.Length > 1024 * 1024) throw new InvalidDataException("Embedded lyrics exceed their size limit.");
+        tag.Lyrics = lyrics;
+        foreach (var component in Components(tag).OfType<TagLib.Id3v2.Tag>())
+        {
+            var text = ParseSynchronizedLyrics(lyrics);
+            var frame = TagLib.Id3v2.SynchronisedLyricsFrame.Get(component, "", "eng", TagLib.Id3v2.SynchedTextType.Lyrics, text.Length > 0);
+            if (frame is null) continue;
+            if (text.Length == 0) component.RemoveFrame(frame);
+            else
+            {
+                frame.Format = TagLib.Id3v2.TimestampFormat.AbsoluteMilliseconds;
+                frame.Text = text;
+            }
+        }
+    }
+
+    internal static TagLib.Id3v2.SynchedText[] ParseSynchronizedLyrics(string lyrics)
+    {
+        if (lyrics.Length > 1024 * 1024) throw new InvalidDataException("Embedded lyrics exceed their size limit.");
+        var timestamps = new System.Text.RegularExpressions.Regex(@"\[(?<minutes>\d{1,4}):(?<seconds>[0-5]\d)(?:[.:](?<fraction>\d{1,3}))?\]",
+            System.Text.RegularExpressions.RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+        var offsetMatch = System.Text.RegularExpressions.Regex.Match(lyrics, @"\[offset:(?<offset>[+-]?\d{1,8})\]",
+            System.Text.RegularExpressions.RegexOptions.CultureInvariant | System.Text.RegularExpressions.RegexOptions.IgnoreCase,
+            TimeSpan.FromSeconds(1));
+        var offset = offsetMatch.Success ? long.Parse(offsetMatch.Groups["offset"].Value, System.Globalization.CultureInfo.InvariantCulture) : 0;
+        var text = new List<TagLib.Id3v2.SynchedText>();
+        foreach (var line in lyrics.Split('\n'))
+        {
+            var matches = timestamps.Matches(line);
+            if (matches.Count == 0 || matches[0].Index != 0) continue;
+            var content = line[(matches[^1].Index + matches[^1].Length)..].TrimEnd('\r');
+            foreach (System.Text.RegularExpressions.Match match in matches)
+            {
+                var minutes = long.Parse(match.Groups["minutes"].Value, System.Globalization.CultureInfo.InvariantCulture);
+                var seconds = long.Parse(match.Groups["seconds"].Value, System.Globalization.CultureInfo.InvariantCulture);
+                var fraction = match.Groups["fraction"].Value;
+                var millis = fraction.Length == 0 ? 0 : long.Parse(fraction.PadRight(3, '0'), System.Globalization.CultureInfo.InvariantCulture);
+                text.Add(new(Math.Max(0, minutes * 60000 + seconds * 1000 + millis - offset), content));
+            }
+        }
+        return text.OrderBy(item => item.Time).ToArray();
+    }
 }
 
 /// <summary>Stages tag changes beside the managed artifact, then atomically replaces it.</summary>

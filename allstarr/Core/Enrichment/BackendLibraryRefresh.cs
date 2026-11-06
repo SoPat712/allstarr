@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text.Json;
 using allstarr.Core.Identity;
+using allstarr.Core.Matching;
 using allstarr.Core.Jobs;
 using allstarr.Core.Operations;
 using allstarr.Core.Playlists.Targets;
@@ -106,7 +107,11 @@ public sealed class SubsonicLibraryRefresher : IBackendLibraryRefresher
 }
 
 public sealed record BackendLibraryRefreshJobPayload(string BackendLibraryId, string BackendInstanceId,
-    string BackendPrincipalId, Guid? CredentialReferenceId = null);
+    string BackendPrincipalId, Guid? CredentialReferenceId = null)
+{
+    public Guid[]? RecordingIds { get; init; }
+    public bool RemoveKeptCopy { get; init; }
+}
 
 public sealed class BackendLibraryRefreshOrchestrator(DurableJobQueue queue)
 {
@@ -119,7 +124,7 @@ public sealed class BackendLibraryRefreshOrchestrator(DurableJobQueue queue)
 
 public sealed class BackendLibraryRefreshJobHandler(IDbContextFactory<AllstarrDbContext> factory,
     BackendLibraryRefresherResolver refreshers, IPlatformClock clock,
-    IBackendLibraryAccessResolver libraryAccess) : IDurableJobHandler
+    IBackendLibraryAccessResolver libraryAccess, DurableJobQueue? jobs = null) : IDurableJobHandler
 {
     public string JobType => "library.refresh";
     public async Task<DurableJobCompletion> ExecuteAsync(DurableJobExecutionContext context, CancellationToken cancellationToken)
@@ -158,6 +163,14 @@ public sealed class BackendLibraryRefreshJobHandler(IDbContextFactory<AllstarrDb
                 CreatedAt = clock.UtcNow
             });
             await db.SaveChangesAsync(cancellationToken);
+            if (result.Accepted && payload.RecordingIds is { Length: > 0 } recordings && jobs != null)
+                await jobs.EnqueueAsync(new DurableJobEnqueueRequest<LibraryRecordingLinkPayload>(LibraryRecordingLinkQueue.JobType,
+                    $"promotion-refresh:{context.Claim.JobId:N}", new(user.Id)
+                    {
+                        RecordingIds = recordings,
+                        RemoveKeptCopy = payload.RemoveKeptCopy,
+                        BackendLibraryId = payload.BackendLibraryId
+                    }, user.Id, MaxAttempts: 3, MaxDeferrals: 10000), cancellationToken);
             return result.Accepted ? DurableJobCompletion.Success() : DurableJobCompletion.Failure("library_refresh_rejected", "The backend rejected its library refresh request.");
         }
         catch (HttpRequestException) { return DurableJobCompletion.Retry("library_refresh_backend_unavailable", "The backend library refresh is temporarily unavailable."); }

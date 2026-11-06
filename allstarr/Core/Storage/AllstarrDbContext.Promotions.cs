@@ -5,6 +5,8 @@ namespace allstarr.Core.Storage;
 
 public sealed class PromotionRunRecord
 {
+    [System.ComponentModel.DataAnnotations.Schema.NotMapped]
+    public IReadOnlyList<allstarr.Core.Enrichment.PromotionTrack> Tracks { get; set; } = [];
     public Guid Id { get; set; }
     public Guid OwnerUserId { get; set; }
     public Guid JobId { get; set; }

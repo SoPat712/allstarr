@@ -214,6 +214,15 @@ public static class PromotionNaming
         return builder.ToString().Normalize(NormalizationForm.FormC);
     }
 
+    internal static string AddCollisionSuffix(string relativePath, int collision)
+    {
+        if (collision < 2) throw new ArgumentOutOfRangeException(nameof(collision));
+        var segments = relativePath.Replace('\\', '/').Split('/');
+        var folder = segments.Length > 1 ? string.Join('/', segments[..^1]) + "/" : "";
+        var budget = Math.Min(MaxSegmentBytes, MaxPathBytes - Encoding.UTF8.GetByteCount(folder));
+        return folder + FitSegment(segments[^1], budget, $" ({collision.ToString(CultureInfo.InvariantCulture)})", true);
+    }
+
     private static string FitPath(string[] segments, string suffix)
     {
         var budgets = Enumerable.Repeat(MaxSegmentBytes, segments.Length).ToArray();

@@ -40,8 +40,12 @@ public sealed class LibraryPromotionsController(LibraryPromotionService promotio
     public Task<IActionResult> Cancel(Guid id, CancellationToken token) => ExecuteAsync(token,
         async (_, context) => Receipt(await promotions.CancelAsync(context, id, token)));
 
+    [HttpPost("{id:guid}/songs/{recordingId:guid}/review")]
+    public Task<IActionResult> Review(Guid id, Guid recordingId, [FromBody] PromotionSongReview request, CancellationToken token) => ExecuteAsync(token,
+        async (_, context) => Receipt(await promotions.ReviewAsync(context, id, recordingId, request.Action, request.Reason, token)), accepted: true);
+
     private static object Receipt(Core.Storage.PromotionRunRecord run) => new
-    { run.Id, run.JobId, run.Step, run.Outcome, run.Reason, run.ManagedFileId, run.ApprovedByUserId, run.ApprovalReason };
+    { run.Id, run.JobId, run.Step, run.Outcome, run.Reason, run.ManagedFileId, run.ApprovedByUserId, run.ApprovalReason, run.Tracks };
 
     private async Task<IActionResult> ExecuteAsync<T>(CancellationToken token,
         Func<AdminAuthSession, ProtocolExecutionContext, Task<T>> action, bool accepted = false)
@@ -64,3 +68,4 @@ public sealed class LibraryPromotionsController(LibraryPromotionService promotio
 }
 
 public sealed record PromotionApproval(string Reason);
+public sealed record PromotionSongReview(string Action, string? Reason = null);

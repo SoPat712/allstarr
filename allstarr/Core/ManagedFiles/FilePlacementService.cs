@@ -10,8 +10,8 @@ public sealed partial class FilePlacementService(IManagedFileOwnershipStore owne
         PlaceAsync(request, reuseExisting: true, cancellationToken);
 
     internal Task<ManagedFilePlacementResult> PlacePromotionAsync(ManagedFilePlacementRequest request, CancellationToken cancellationToken,
-        string? relativePath = null) =>
-        PlaceAsync(request, reuseExisting: true, cancellationToken, exactDestination: true, relativePath);
+        string? relativePath = null, bool collisionSafe = false) =>
+        PlaceAsync(request, reuseExisting: true, cancellationToken, exactDestination: !collisionSafe, relativePath, numberedCollisions: collisionSafe);
 
     internal Task<ManagedFilePlacementResult> PlaceFreshHouseholdAsync(
         ManagedFilePlacementRequest request, CancellationToken cancellationToken)
@@ -23,7 +23,7 @@ public sealed partial class FilePlacementService(IManagedFileOwnershipStore owne
 
     private async Task<ManagedFilePlacementResult> PlaceAsync(
         ManagedFilePlacementRequest request, bool reuseExisting, CancellationToken cancellationToken, bool exactDestination = false,
-        string? relativePath = null)
+        string? relativePath = null, bool numberedCollisions = false)
     {
         ArgumentNullException.ThrowIfNull(request);
         if (!StringComparer.Ordinal.Equals(
@@ -86,7 +86,7 @@ public sealed partial class FilePlacementService(IManagedFileOwnershipStore owne
         if (exactDestination && (File.Exists(requestedTarget) || Directory.Exists(requestedTarget) ||
             await ownership.IsPathReservedAsync(requestedTarget, cancellationToken)))
             throw new IOException("The promotion destination already exists; no existing file was overwritten.");
-        var target = exactDestination ? requestedTarget : await ResolveCollisionAsync(requestedTarget, fingerprint, cancellationToken);
+        var target = exactDestination ? requestedTarget : await ResolveCollisionAsync(requestedTarget, fingerprint, cancellationToken, numberedCollisions ? root : null);
         Directory.CreateDirectory(Path.GetDirectoryName(target)!);
         RejectSymlinksUnder(root, Path.GetDirectoryName(target)!);
 
@@ -273,7 +273,7 @@ public sealed partial class FilePlacementService(IManagedFileOwnershipStore owne
         return ManagedFilePlacementMethod.Copy;
     }
 
-    private async Task<string> ResolveCollisionAsync(string requested, string fingerprint, CancellationToken cancellationToken)
+    private async Task<string> ResolveCollisionAsync(string requested, string fingerprint, CancellationToken cancellationToken, string? numberedRoot = null)
     {
         if (!File.Exists(requested) && !Directory.Exists(requested) &&
             !await ownership.IsPathReservedAsync(requested, cancellationToken)) return requested;
@@ -283,7 +283,10 @@ public sealed partial class FilePlacementService(IManagedFileOwnershipStore owne
         for (var attempt = 0; attempt < 1000; attempt++)
         {
             var suffix = attempt == 0 ? fingerprint[..12] : $"{fingerprint[..12]}-{attempt}";
-            var candidate = Path.Combine(directory, $"{stem} [{suffix}]{extension}");
+            var candidate = numberedRoot != null
+                ? allstarr.Core.Enrichment.PromotionNaming.ContainedPath(numberedRoot,
+                    allstarr.Core.Enrichment.PromotionNaming.AddCollisionSuffix(Path.GetRelativePath(numberedRoot, requested), attempt + 2))
+                : Path.Combine(directory, $"{stem} [{suffix}]{extension}");
             if (!File.Exists(candidate) && !Directory.Exists(candidate) &&
                 !await ownership.IsPathReservedAsync(candidate, cancellationToken)) return candidate;
         }

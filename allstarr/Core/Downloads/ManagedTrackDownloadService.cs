@@ -21,7 +21,12 @@ public sealed record ManagedTrackDownloadCommand(
     string CorrelationId,
     string IdempotencyKey,
     int Attempt,
-    string RoutePurpose);
+    string RoutePurpose)
+{
+    public ProviderAudioQuality? RequestedQuality { get; init; }
+    public IReadOnlyList<string>? ProviderPriority { get; init; }
+    public Func<VerifiedProviderDownloadArtifact, bool>? AcceptArtifact { get; init; }
+}
 
 public sealed record ManagedTrackDownloadResult(
     bool Succeeded,
@@ -80,6 +85,7 @@ public sealed class ManagedTrackDownloadService(
                            ProviderCapabilityKind.Download,
                            availableProviders)
                        ?? availableProviders;
+        if (command.ProviderPriority != null) priority = command.ProviderPriority.Where(priority.Contains).ToArray();
         if (priority.Count == 0)
         {
             return ManagedTrackDownloadResult.Failure(
@@ -93,9 +99,9 @@ public sealed class ManagedTrackDownloadService(
             durableJobId: command.DurableJobId,
             actingForUserId: command.OwnerUserId);
         var quality = Enum.GetValues<ProviderAudioQuality>();
-        var requestedQuality = effectivePolicy == null
+        var requestedQuality = command.RequestedQuality ?? (effectivePolicy == null
             ? ProviderAudioQuality.Any
-            : AudioQualityPolicy.RequestedQuality(effectivePolicy.AudioQuality);
+            : AudioQualityPolicy.RequestedQuality(effectivePolicy.AudioQuality));
         ProviderRoutePlan<IProviderDownloadCapability> plan;
         try
         {
@@ -216,6 +222,7 @@ public sealed class ManagedTrackDownloadService(
                     ProviderRouteOutcomeStatus.Succeeded,
                     "verified-artifact-reused",
                     nextProviderId: null);
+                if (command.AcceptArtifact != null && !command.AcceptArtifact(verified!)) continue;
                 if (jobs != null) await jobs.EnqueueAsync(AudioQualityCheckJobHandler.Request(verified!.Id, command.OwnerUserId), cancellationToken);
                 return ManagedTrackDownloadResult.Success(verified);
             }
@@ -302,6 +309,7 @@ public sealed class ManagedTrackDownloadService(
                     ProviderRouteOutcomeStatus.Succeeded,
                     "download-verified",
                     nextProviderId: null);
+                if (command.AcceptArtifact != null && !command.AcceptArtifact(artifact)) continue;
                 if (jobs != null) await jobs.EnqueueAsync(AudioQualityCheckJobHandler.Request(artifact.Id, command.OwnerUserId), cancellationToken);
                 return ManagedTrackDownloadResult.Success(artifact);
             }

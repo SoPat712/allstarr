@@ -1,13 +1,19 @@
 using System.Text.Json;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Jobs;
+using allstarr.Core.ManagedFiles;
 using allstarr.Core.Operations;
 using allstarr.Core.Storage;
 using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Core.Matching;
 
-public sealed record LibraryRecordingLinkPayload(Guid UserId);
+public sealed record LibraryRecordingLinkPayload(Guid UserId)
+{
+    public Guid[]? RecordingIds { get; init; }
+    public string? BackendLibraryId { get; init; }
+    public bool RemoveKeptCopy { get; init; }
+}
 
 public sealed class LibraryRecordingLinkQueue(IDbContextFactory<AllstarrDbContext> factory, DurableJobQueue jobs)
 {
@@ -34,7 +40,7 @@ public sealed class LibraryRecordingLinkQueue(IDbContextFactory<AllstarrDbContex
 }
 
 public sealed class LibraryRecordingLinkJobHandler(ITrackIdentityService identities,
-    IDbContextFactory<AllstarrDbContext> factory, IPlatformClock clock) : IDurableJobHandler
+    IDbContextFactory<AllstarrDbContext> factory, IPlatformClock clock, RecordingKeptFiles? kept = null) : IDurableJobHandler
 {
     public string JobType => LibraryRecordingLinkQueue.JobType;
 
@@ -46,6 +52,34 @@ public sealed class LibraryRecordingLinkJobHandler(ITrackIdentityService identit
         if (payload?.UserId is not { } user || user == Guid.Empty || execution.Claim.OwnerUserId != user)
             return DurableJobCompletion.Failure("library_recording_link_invalid", "The saved library linking request is invalid.");
         await using var db = await factory.CreateDbContextAsync(cancellationToken);
+        if (payload.RecordingIds is { Length: > 0 } recordings)
+        {
+            if (recordings.Length > 256 || string.IsNullOrWhiteSpace(payload.BackendLibraryId))
+                return DurableJobCompletion.Failure("library_recording_link_invalid", "The release linking request is invalid.");
+            var promotionActor = new ProviderActorContext(ProviderActorKind.SystemJob, null,
+                durableJobId: execution.Claim.JobId, actingForUserId: user);
+            var listener = await db.Users.AsNoTracking().SingleAsync(item => item.Id == user && item.Enabled, cancellationToken);
+            var confirmed = new List<Guid>();
+            foreach (var recordingId in recordings.Distinct())
+            {
+                var recording = await identities.ResolveRecordingAsync(promotionActor, recordingId.ToString("D"), cancellationToken);
+                if (recording == null) return DurableJobCompletion.Failure("library_recording_missing", "A promoted recording is no longer available.");
+                await identities.LinkLibraryRecordingsAsync(promotionActor, execution.Claim.CorrelationId,
+                    recording.Id, cancellationToken: cancellationToken);
+                recording = await identities.ResolveRecordingAsync(promotionActor, recordingId.ToString("D"), cancellationToken) ?? recording;
+                var linked = await db.LibraryTracks.AsNoTracking().AnyAsync(item => item.OwnerUserId == user &&
+                    item.BackendInstanceId == listener.BackendInstanceId && item.BackendLibraryId == payload.BackendLibraryId &&
+                    item.CanonicalRecordingId == recording.Id, cancellationToken);
+                if (!linked) return DurableJobCompletion.Defer("library_recording_scan_pending",
+                    "Waiting for the refreshed library index to confirm every promoted recording.", TimeSpan.FromSeconds(30));
+                confirmed.Add(recording.Id);
+            }
+            if (payload.RemoveKeptCopy && kept != null)
+                foreach (var recordingId in confirmed.Distinct())
+                    await kept.ReleasePromotedCopyAsync(user, recordingId, payload.BackendLibraryId,
+                        execution.Claim.JobId, execution.Claim.CorrelationId, cancellationToken);
+            return DurableJobCompletion.Success();
+        }
         if (await db.AuditEvents.AnyAsync(item => item.ActorUserId == user &&
                 item.Action == LibraryRecordingLinkQueue.CompletionAction, cancellationToken))
             return DurableJobCompletion.Success();

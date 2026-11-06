@@ -19,7 +19,7 @@ using Moq;
 
 namespace allstarr.Tests;
 
-public sealed class LibraryPromotionTests : IAsyncLifetime
+public sealed partial class LibraryPromotionTests : IAsyncLifetime
 {
     private readonly string directory = Path.Combine(Path.GetTempPath(), "allstarr-promotion", Guid.NewGuid().ToString("N"));
     private readonly Guid owner = Guid.CreateVersion7();
