@@ -12,6 +12,7 @@ import time
 from dataclasses import asdict
 from pathlib import Path
 
+from gamdl.api.constants import APPLE_MUSIC_AMP_API_URL
 from gamdl.interface import AppleMusicSongInterface
 from gamdl.interface.enums import SongCodec, SyncedLyricsFormat
 from gamdl.interface.exceptions import GamdlInterfaceFormatNotAvailableError
@@ -141,6 +142,18 @@ async def prepare(sessions, request):
 
 async def prepare_lyrics(sessions, request):
     async def operation(session):
+        apple = session.base.apple_music_api
+        try:
+            response = await apple.client.get(
+                f"{APPLE_MUSIC_AMP_API_URL}/v1/catalog/{request['storefront']}/songs/{request['song_id']}/syllable-lyrics",
+                params={"l": apple.language}, headers={"music-user-token": request["token"]})
+            response.raise_for_status()
+            for entry in response.json().get("data", []):
+                ttml = entry.get("attributes", {}).get("ttml")
+                if isinstance(ttml, str) and ttml.strip():
+                    return ttml
+        except Exception:
+            pass
         metadata = (await session.base.apple_music_api.get_song(request["song_id"]))["data"][0]
         entries = metadata.get("relationships", {}).get("lyrics", {}).get("data", [])
         for entry in entries:

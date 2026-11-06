@@ -8,6 +8,7 @@ import os
 import shutil
 import time
 import uuid
+import xml.etree.ElementTree as ET
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, AsyncIterator, Awaitable, Callable
@@ -107,6 +108,19 @@ def _song_request(account: MediaAccount, song_id: str, quality: str) -> str:
 
 def _cache_key(account: MediaAccount, song_id: str, quality: str) -> str:
     return hashlib.sha256(f"{account.scope}\n{account.storefront}\n{song_id}\n{quality.lower()}".encode()).hexdigest()
+
+
+def _lyrics_timing(content: str) -> str:
+    if content.lstrip().startswith("<"):
+        try:
+            root = ET.fromstring(content)
+            if any(element.tag.rsplit("}", 1)[-1] == "span" and element.get("begin") is not None and
+                    (element.get("end") is not None or element.get("dur") is not None) and
+                    "".join(element.itertext()).strip() for element in root.iter()):
+                return "word"
+        except ET.ParseError:
+            pass
+    return "line"
 
 
 @dataclass(slots=True)
@@ -602,13 +616,19 @@ def create_app(
     @application.get("/api/lyrics/{song_id}")
     async def lyrics_song(
         song_id: str, quality: str = "aac-he", account: MediaAccount = Depends(_account)
-    ) -> dict[str, str]:
+    ) -> JSONResponse:
         url = _song_request(account, song_id, quality)
-        key = _cache_key(account, song_id, quality) + "-ttml"
-        cached = lyrics_path(key)
+        key = _cache_key(account, song_id, quality) + "-ttml-v2"
+
+        def cached_lyrics() -> Path | None:
+            for timing in ("word", "line"):
+                path = lyrics_path(key + "-" + timing)
+                if not path.is_symlink() and path.is_file():
+                    return path
+            return None
 
         async def prepare_lyrics() -> Path:
-            if not cached.is_symlink() and cached.is_file():
+            if cached := cached_lyrics():
                 return cached
             if open_lyrics := getattr(process_runner, "lyrics", None):
                 try:
@@ -618,6 +638,7 @@ def create_app(
                     raise HTTPException(status_code=status, detail=exc.code) from None
                 if not content:
                     raise HTTPException(status_code=404, detail="lyrics_not_found")
+                cached = lyrics_path(key + "-" + _lyrics_timing(content))
                 cached.parent.mkdir(parents=True, exist_ok=True, mode=0o750)
                 partial = cached.with_name(f"{cached.name}.{uuid.uuid4().hex}.partial")
                 try:
@@ -633,14 +654,16 @@ def create_app(
                 )
                 if not lyrics:
                     raise ProcessFailure("artifact_missing")
-                return cache_lyrics(lyrics[0], key)
+                content = lyrics[0].read_text(encoding="utf-8")
+                return cache_lyrics(lyrics[0], key + "-" + _lyrics_timing(content))
             except ProcessFailure as exc:
                 status = 504 if exc.code == "process_timeout" else 403 if exc.code == "account_mismatch" else 404
                 raise HTTPException(status_code=status, detail=exc.code) from None
             finally:
                 shutil.rmtree(root, ignore_errors=True)
 
-        if cached.is_symlink() or not cached.is_file():
+        cached = cached_lyrics()
+        if cached is None:
             cached = await coalesce("lyrics:" + key, prepare_lyrics)
         try:
             content = cached.read_text(encoding="utf-8")
@@ -648,7 +671,8 @@ def create_app(
             raise HTTPException(status_code=502, detail="lyrics_unreadable") from None
         if not content.strip():
             raise HTTPException(status_code=404, detail="lyrics_not_found")
-        return {"source": "GAMDL", "format": "TTML" if content.lstrip().startswith("<") else "LineTimed", "content": content}
+        return JSONResponse({"source": "GAMDL", "format": "TTML" if content.lstrip().startswith("<") else "LineTimed", "content": content},
+            headers={"X-Lyrics-Timing": _lyrics_timing(content)})
 
     @application.head("/api/lyrics/{song_id}")
     async def head_lyrics(

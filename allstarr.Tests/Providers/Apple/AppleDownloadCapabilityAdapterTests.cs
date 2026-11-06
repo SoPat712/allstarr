@@ -1,6 +1,7 @@
 using allstarr.Core.Providers.Lyrics;
 using allstarr.Core.Providers.AppleMusicKit;
 using allstarr.Core.Storage;
+using allstarr.Core.Music;
 using System.Net;
 using System.Security.Cryptography;
 using System.Text;
@@ -8,6 +9,8 @@ using allstarr.Core.Capabilities;
 using allstarr.Core.Downloads;
 using allstarr.Core.Providers.AppleDownload;
 using allstarr.Models.Settings;
+using allstarr.Models.Domain;
+using allstarr.Models.Lyrics;
 using allstarr.Services.AppleMusic;
 using Microsoft.Extensions.Options;
 using Moq;
@@ -359,7 +362,12 @@ public sealed class AppleDownloadCapabilityAdapterTests : IDisposable
             {
                 source = "GAMDL",
                 format = "TTML",
-                content = "<tt xmlns='http://www.w3.org/ns/ttml'><body><div><p begin='1' end='2'><span begin='1' end='1.5'>Synthetic </span><span begin='1.5' end='2'>words</span></p></div></body></tt>"
+                content = """
+                    <tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata"
+                        xmlns:itunes="http://music.apple.com/lyric-ttml-internal" itunes:timing="Word" xml:space="preserve">
+                      <body><div><p begin="0:01.000" end="0:03.000"><span begin="0:01.000" end="0:01.400">Sample </span><span begin="0:01.400" end="0:01.700">sun</span><span begin="0:01.700" end="0:02.000">shine</span><span ttm:role="x-bg" begin="0:01.500" end="0:02.800"><span begin="0:01.500" end="0:02.000">Soft </span><span begin="0:02.000" end="0:02.800">echo</span></span></p></div></body>
+                    </tt>
+                    """
             })
         };
         var settings = new AppleDownloadSettings { BaseUrl = "https://gateway.test/" };
@@ -369,8 +377,27 @@ public sealed class AppleDownloadCapabilityAdapterTests : IDisposable
         var value = (await adapter.FetchLyricsAsync(Context(Guid.CreateVersion7()), new(Guid.CreateVersion7(),
             new(AppleDownloadCapabilityAdapter.StableProviderId, ProviderResourceKind.Track, "103")))).RequireValue();
         Assert.Equal("GAMDL", value.Source);
-        Assert.Equal(2, Assert.Single(value.TimedLines!).Segments!.Count);
-        Assert.Equal(TimeSpan.FromMilliseconds(1500), value.TimedLines![0].Segments![1].Start);
+        Assert.Equal(ProviderLyricsFormat.WordTimed, value.Format);
+        var line = Assert.Single(value.TimedLines!);
+        Assert.Equal(5, line.Segments!.Count);
+        Assert.Equal(TimeSpan.FromMilliseconds(1400), line.Segments[1].Start);
+        Assert.Equal(TimeSpan.FromMilliseconds(300), line.Segments[1].Duration);
+        Assert.True(line.Segments[3].IsBackground);
+        var lyrics = new LyricsInfo { Source = "apple", SyncedLyrics = value.Content, TimedLines = value.TimedLines };
+        var rich = RichLyricsMapper.Map(lyrics)!;
+        Assert.Equal("word", rich.Format);
+        var lead = Assert.Single(rich.Lines, item => item.Part == "lead");
+        Assert.Equal("Sample sunshine", lead.Text);
+        Assert.Equal(new long[] { 1000, 1400, 1700 }, lead.Words.Select(word => word.StartMs));
+        Assert.Equal(new long?[] { 1400, 1700, 2000 }, lead.Words.Select(word => word.EndMs));
+        var background = Assert.Single(rich.Lines, item => item.Part == "background");
+        Assert.Equal("Soft echo", background.Text);
+        Assert.Equal(new long[] { 1500, 2000 }, background.Words.Select(word => word.StartMs));
+        var score = LyricsQuality.Evaluate(lyrics, new Song { Duration = 3 })!;
+        Assert.Contains("synced_words", score.Reasons);
+        Assert.Contains("duration_fits", score.Reasons);
+        Assert.True(score.Score > LyricsQuality.Evaluate(new LyricsInfo { SyncedLyrics = "[00:01]Sample sunshine" }, new Song())!.Score);
+        Assert.False(LyricsQuality.CanImprove("apple", 0, score.Score, 0, new Song { Duration = 3 }));
     }
 
     [Fact]

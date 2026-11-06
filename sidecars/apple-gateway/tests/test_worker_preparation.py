@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import socket
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -12,6 +13,10 @@ from gamdl.interface.types import StreamInfo, StreamInfoAv
 
 from apple_gateway.sessions import AccountSessions
 from apple_gateway.worker import prepare
+
+
+WORD_TTML = (Path(__file__).parent / "fixtures" / "word-lyrics.ttml").read_text()
+LINE_TTML = "<tt><body><p begin='1' end='3'>Sample sunshine</p></body></tt>"
 
 
 @pytest.fixture(autouse=True)
@@ -80,3 +85,44 @@ async def test_lyrics_preserve_raw_ttml_word_spans():
             return await operation(SimpleNamespace(base=SimpleNamespace(apple_music_api=apple)))
 
     assert await prepare_lyrics(Sessions(), {"song_id": "103", "token": "fixture", "storefront": "us"}) == ttml
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("syllable", ["present", "missing", "404", "403", "empty", "blank", "timeout", "invalid"])
+async def test_lyrics_prefer_syllables_and_fall_back_to_catalog(syllable):
+    from apple_gateway.worker import prepare_lyrics
+
+    requests = []
+
+    async def send(request):
+        requests.append(request)
+        if syllable in {"404", "403"}:
+            return httpx.Response(int(syllable))
+        if syllable == "timeout":
+            raise httpx.ReadTimeout("fixture", request=request)
+        if syllable == "invalid":
+            return httpx.Response(200, text="invalid")
+        return httpx.Response(200, json={"data": [] if syllable == "missing" else [
+            {"attributes": {"ttml": WORD_TTML if syllable == "present" else "  " if syllable == "blank" else ""}}]})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(send),
+            headers={"authorization": "Bearer fixture-public-token"}) as http:
+        apple = SimpleNamespace(client=http, language="en-US", get_song=AsyncMock(return_value={"data": [{
+            "relationships": {"lyrics": {"data": [{"attributes": {"ttml": LINE_TTML}}]}}
+        }]}))
+
+        class Sessions:
+            async def prepare(self, token, storefront, operation):
+                assert (token, storefront) == ("fixture-token", "us")
+                return await operation(SimpleNamespace(base=SimpleNamespace(apple_music_api=apple)))
+
+        assert await prepare_lyrics(Sessions(), {"song_id": "103", "token": "fixture-token", "storefront": "us"}) == (
+            WORD_TTML if syllable == "present" else LINE_TTML)
+        assert len(requests) == 1
+        assert str(requests[0].url) == "https://amp-api.music.apple.com/v1/catalog/us/songs/103/syllable-lyrics?l=en-US"
+        assert requests[0].headers["music-user-token"] == "fixture-token"
+        assert requests[0].headers["authorization"] == "Bearer fixture-public-token"
+        if syllable == "present":
+            apple.get_song.assert_not_awaited()
+        else:
+            apple.get_song.assert_awaited_once_with("103")

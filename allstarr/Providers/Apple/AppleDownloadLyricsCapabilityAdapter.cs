@@ -74,7 +74,7 @@ public sealed class AppleDownloadLyricsCapabilityAdapter : IProviderLyricsCapabi
 
             if (!OutboundRequestGuard.TryCreateConfiguredServiceUri(configuredUrl, out var baseUri, out _))
                 return Failure(ProviderErrorKind.AccountNeedsConfiguration);
-            var cacheKey = "lyrics:v4:apple-musickit:" + Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(
+            var cacheKey = "lyrics:v5:apple-musickit:" + Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(
                 JsonSerializer.SerializeToUtf8Bytes(new { context.Actor, context.Account, request, configuredUrl })));
             try
             {
@@ -132,6 +132,9 @@ public sealed class AppleDownloadLyricsCapabilityAdapter : IProviderLyricsCapabi
                 var parsedTtml = TtmlLyricsParser.Parse(content, source);
                 if (!parsedTtml.IsSuccess) return parsedTtml;
                 result = parsedTtml.RequireValue();
+                if (result.TimedLines?.Any(line => line.Segments is { Count: > 0 }) == true)
+                    result = new(result.Availability, source, ProviderLyricsFormat.WordTimed,
+                        result.Content, result.Revision, result.TimedLines, result.Attribution);
                 if (request.PreferredFormat == ProviderLyricsFormat.PlainText && result.TimedLines != null)
                     result = new(result.Availability, source, ProviderLyricsFormat.PlainText,
                         string.Join('\n', result.TimedLines.Select(line => line.Text)), result.Revision);

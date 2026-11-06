@@ -7,7 +7,9 @@ import stat
 import sys
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
@@ -17,6 +19,7 @@ from fastapi.responses import StreamingResponse
 from apple_gateway.app import (
     API_VERSION,
     FLAC_GUIDANCE_PREFIX,
+    _cache_key,
     create_app,
 )
 from apple_gateway.config import Settings
@@ -327,6 +330,7 @@ async def test_simultaneous_song_streams_share_preparation(settings):
 def test_song_lyrics_use_gamdl_artifact_and_cache(client):
     response = client[0].get("/api/lyrics/103")
     assert response.status_code == 200
+    assert response.headers["X-Lyrics-Timing"] == "line"
     assert response.json() == {
         "source": "GAMDL",
         "format": "LineTimed",
@@ -349,6 +353,97 @@ def test_song_lyrics_return_ttml_without_flattening(client):
     assert response.status_code == 200
     assert response.json()["format"] == "TTML"
     assert response.json()["content"] == ttml
+    assert response.headers["X-Lyrics-Timing"] == "word"
+
+
+@pytest.mark.parametrize("timing", ["word", "line"])
+def test_song_lyrics_upgrade_legacy_cache_once_and_reuse_result(client, settings, timing):
+    word_ttml = (Path(__file__).parent / "fixtures" / "word-lyrics.ttml").read_text()
+    line_ttml = "<tt><body><p begin='1' end='3'>Sample sunshine</p></body></tt>"
+    legacy = settings.data_root / "lyrics" / f"{_cache_key(ACCOUNT, '104', 'aac-he')}-ttml.lrc"
+    legacy.parent.mkdir(parents=True, exist_ok=True)
+    legacy.write_text(line_ttml)
+    calls = []
+
+    async def lyrics(song_id, **kwargs):
+        calls.append((song_id, kwargs))
+        return word_ttml if timing == "word" else line_ttml
+
+    client[2].lyrics = lyrics
+    for _ in range(2):
+        response = client[0].get("/api/lyrics/104")
+        assert response.status_code == 200
+        assert response.headers["X-Lyrics-Timing"] == timing
+        assert response.json()["content"] == (word_ttml if timing == "word" else line_ttml)
+    assert calls == [("104", {"media_user_token": ACCOUNT.token, "storefront": "us"})]
+    assert legacy.read_text() == line_ttml
+    with TestClient(create_app(settings, FakeWrapper(), FakeRunner()), headers=ACCOUNT_HEADERS) as restarted:
+        response = restarted.get("/api/lyrics/104")
+        assert response.json()["content"] == (word_ttml if timing == "word" else line_ttml)
+        assert response.headers["X-Lyrics-Timing"] == timing
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("syllable", ["present", "missing", "404", "empty"])
+async def test_song_lyrics_syllable_result_and_fallback_headers(settings, syllable):
+    from apple_gateway.worker import prepare_lyrics
+
+    word_ttml = (Path(__file__).parent / "fixtures" / "word-lyrics.ttml").read_text()
+    line_ttml = "<tt><body><p begin='1' end='3'>Sample sunshine</p></body></tt>"
+    requests = []
+
+    async def send(request):
+        requests.append(request)
+        return httpx.Response(404 if syllable == "404" else 200, json={"data": [] if syllable == "missing" else [
+            {"attributes": {"ttml": word_ttml if syllable == "present" else ""}}]})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(send)) as upstream:
+        apple = SimpleNamespace(client=upstream, language="en-US", get_song=AsyncMock(return_value={"data": [{
+            "relationships": {"lyrics": {"data": [{"attributes": {"ttml": line_ttml}}]}}
+        }]}))
+
+        class Sessions:
+            async def prepare(self, token, storefront, operation):
+                return await operation(SimpleNamespace(base=SimpleNamespace(apple_music_api=apple)))
+
+        async def lyrics(song_id, *, media_user_token, storefront):
+            return await prepare_lyrics(Sessions(), {"song_id": song_id, "token": media_user_token, "storefront": storefront})
+
+        runner = FakeRunner()
+        runner.lyrics = lyrics
+        app = create_app(settings, FakeWrapper(), runner)
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://fixture", headers=ACCOUNT_HEADERS) as http:
+            response = await http.get("/api/lyrics/104")
+        assert response.status_code == 200
+        assert response.headers["X-Lyrics-Timing"] == ("word" if syllable == "present" else "line")
+        assert response.json()["content"] == (word_ttml if syllable == "present" else line_ttml)
+        assert len(requests) == 1
+
+
+@pytest.mark.asyncio
+async def test_song_lyrics_coalesce_word_upgrade(settings):
+    runner = FakeRunner()
+    started, release = asyncio.Event(), asyncio.Event()
+    calls = []
+    ttml = (Path(__file__).parent / "fixtures" / "word-lyrics.ttml").read_text()
+
+    async def lyrics(song_id, **kwargs):
+        calls.append(song_id)
+        started.set()
+        await release.wait()
+        return ttml
+
+    runner.lyrics = lyrics
+    app = create_app(settings, FakeWrapper(), runner)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://fixture", headers=ACCOUNT_HEADERS) as http:
+        first = asyncio.create_task(http.get("/api/lyrics/104"))
+        await started.wait()
+        second = asyncio.create_task(http.get("/api/lyrics/104"))
+        await asyncio.sleep(0)
+        release.set()
+        responses = await asyncio.gather(first, second)
+    assert calls == ["104"]
+    assert all(response.status_code == 200 and response.headers["X-Lyrics-Timing"] == "word" for response in responses)
 
 
 @pytest.mark.asyncio
@@ -586,7 +681,8 @@ async def test_simultaneous_lyrics_for_same_account_coalesce(settings):
         route.endpoint("101", "aac-he", ACCOUNT),
         route.endpoint("101", "aac-he", ACCOUNT),
     )
-    assert results[0] == results[1]
+    assert results[0].body == results[1].body
+    assert results[0].headers["X-Lyrics-Timing"] == results[1].headers["X-Lyrics-Timing"] == "line"
     assert len(runner.calls) == 1
 
 
