@@ -413,7 +413,8 @@ public sealed partial class ManagedTrackCacheServiceTests
         ILocalLibraryService local,
         IHostApplicationLifetime? lifetime = null,
         TimeProvider? timeProvider = null,
-        IProviderAudioVerifier? audioVerifier = null)
+        IProviderAudioVerifier? audioVerifier = null,
+        Func<string, string, ProviderMediaFormat, CancellationToken, Task>? finalizer = null)
     {
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
@@ -428,7 +429,8 @@ public sealed partial class ManagedTrackCacheServiceTests
                 StorageMode = Enum.Parse<StorageMode>(storageMode)
             }),
             local,
-            NullLogger<ManagedTrackCacheService>.Instance, lifetime, timeProvider, audioVerifier: audioVerifier ?? FixtureAudioVerifier.Instance);
+            NullLogger<ManagedTrackCacheService>.Instance, lifetime, timeProvider, audioVerifier: audioVerifier ?? FixtureAudioVerifier.Instance,
+            audioFinalizer: finalizer);
     }
 
     private static HttpResponseMessage Response(HttpStatusCode status, byte[] bytes)

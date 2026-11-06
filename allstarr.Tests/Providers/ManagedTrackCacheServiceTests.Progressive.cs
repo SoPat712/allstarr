@@ -475,7 +475,8 @@ public sealed partial class ManagedTrackCacheServiceTests
         public readonly TaskCompletionSource Published = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public string? PublishedPath;
 
-        public ProgressiveFixture(bool knownLength, bool shortBody = false, bool fail = false, IHostApplicationLifetime? lifetime = null, bool registrationFails = false, int? declaredLength = null, string provider = "deezer", string mode = "Cache", TimeProvider? timeProvider = null)
+        public ProgressiveFixture(bool knownLength, bool shortBody = false, bool fail = false, IHostApplicationLifetime? lifetime = null, bool registrationFails = false, int? declaredLength = null, string provider = "deezer", string mode = "Cache", TimeProvider? timeProvider = null,
+            Func<string, string, ProviderMediaFormat, CancellationToken, Task>? finalizer = null)
         {
             Track = new(provider, ProviderResourceKind.Track, "track-1");
             Source = new ControlledSource(Bytes, shortBody, fail);
@@ -491,7 +492,7 @@ public sealed partial class ManagedTrackCacheServiceTests
             if (registrationFails)
                 local.Setup(item => item.RegisterDownloadedSongAsync(It.IsAny<DownloadedSongMappingScope>(), It.IsAny<Song>(), It.IsAny<string>()))
                     .ThrowsAsync(new IOException("Registration unavailable"));
-            Service = CreateService(Root, mode, local.Object, lifetime, timeProvider);
+            Service = CreateService(Root, mode, local.Object, lifetime, timeProvider, finalizer: finalizer);
         }
 
         public async Task StartAsync(Func<TrackMediaFacts, CancellationToken, Task>? record = null)

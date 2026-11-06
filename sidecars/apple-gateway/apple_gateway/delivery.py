@@ -14,12 +14,14 @@ logger = logging.getLogger("uvicorn.error")
 
 
 class SharedAudio:
-    def __init__(self, open_audio, target, *, completed, song_id, quality):
+    def __init__(self, open_audio, target, *, completed, song_id, quality, finalize):
         self._open_audio, self._target, self._completed = open_audio, target, completed
+        self._finalize = finalize
         self._song_id, self._quality = song_id, quality
         self._changed = asyncio.Condition()
         self.ready = asyncio.get_running_loop().create_future()
         self.path: Path | None = None
+        self._source: Path | None = None
         self.available = 0
         self.finished = False
         self.error = None
@@ -29,6 +31,7 @@ class SharedAudio:
 
     async def _produce(self):
         partial = None
+        finalized = None
         started = time.monotonic()
         try:
             async with self._open_audio() as (header, chunks):
@@ -36,6 +39,7 @@ class SharedAudio:
                 target.parent.mkdir(parents=True, exist_ok=True, mode=0o750)
                 partial = target.with_name(f"{target.name}.{uuid.uuid4().hex}.partial")
                 self.path = partial
+                self._source = partial
                 with partial.open("xb") as output:
                     async for chunk in chunks:
                         if not chunk:
@@ -50,8 +54,20 @@ class SharedAudio:
                             self._changed.notify_all()
                 if not self.available:
                     raise ProcessFailure("audio_artifact_missing")
+            finalized = target.with_name(f"{target.name}.{uuid.uuid4().hex}.partial")
+            try:
+                await self._finalize(partial, finalized)
+            except Exception as exc:
+                logger.warning("Audio cache finalization song=%s quality=%s failure=%s; retaining validated output",
+                    self._song_id, self._quality, type(exc).__name__)
+                finalized.unlink(missing_ok=True)
+                finalized = None
             self._completed(header)
-            partial.replace(target)
+            if finalized is None:
+                partial.replace(target)
+                self._source = target
+            else:
+                finalized.replace(target)
             self.path = target
             logger.info("Audio progressive song=%s quality=%s first_byte_ms=%d total_ms=%d bytes=%d",
                 self._song_id, self._quality, self.first_byte_ms, round((time.monotonic() - started) * 1000), self.available)
@@ -69,18 +85,24 @@ class SharedAudio:
                 logger.warning("Audio progressive song=%s quality=%s bytes=%d failure=%s",
                     self._song_id, self._quality, self.available, code)
         finally:
-            if partial is not None:
+            if partial is not None and self.error is not None:
                 partial.unlink(missing_ok=True)
+            if finalized is not None:
+                finalized.unlink(missing_ok=True)
             async with self._changed:
                 self.finished = True
                 self._changed.notify_all()
+
+    def discard(self):
+        if self._source is not None and self._source != self.path:
+            self._source.unlink(missing_ok=True)
 
     async def read(self, release):
         try:
             await asyncio.shield(self.ready)
             if self.finished and self.error is not None:
                 raise self.error
-            with self.path.open("rb") as source:
+            with self._source.open("rb") as source:
                 position = 0
                 while True:
                     async with self._changed:

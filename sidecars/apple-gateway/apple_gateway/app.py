@@ -296,6 +296,7 @@ def create_app(
         return found
 
     async def progressive_audio(account, song_id, quality, *, original_container=False, force_flac=False):
+        from .finalization import finalize_audio
         key = _cache_key(account, song_id, quality)
         variant = ".original" if original_container else ".stream" if force_flac else ""
         identity = f"{key}{variant}"
@@ -320,7 +321,9 @@ def create_app(
                 entry = SharedAudio(lambda: process_runner.open_audio(song_id, _codec(quality),
                     media_user_token=account.token, storefront=account.storefront,
                     ceiling=AUDIO_CEILINGS.get(quality.lower()), original_container=original_container,
-                    force_flac=force_flac), target, completed=completed, song_id=song_id, quality=quality)
+                    force_flac=force_flac), target, completed=completed, song_id=song_id, quality=quality,
+                    finalize=lambda source, target: asyncio.wait_for(
+                        finalize_audio(source, target, config.ffmpeg_path), config.subprocess_timeout_seconds))
                 audio_preparations[identity] = entry
             entry.waiters += 1
         released = False
@@ -341,6 +344,8 @@ def create_app(
                         canceled = entry.task
             if canceled is not None:
                 await asyncio.gather(canceled, return_exceptions=True)
+            if entry.waiters == 0:
+                entry.discard()
 
         try:
             header = await asyncio.shield(entry.ready)

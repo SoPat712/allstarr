@@ -23,6 +23,7 @@ public sealed partial class ManagedTrackCacheService : IAsyncDisposable
     private readonly ILogger<ManagedTrackCacheService> logger;
     private readonly TimeProvider clock;
     private readonly IProviderAudioVerifier mediaVerifier;
+    private readonly Func<string, string, ProviderMediaFormat, CancellationToken, Task> audioFinalizer;
     private readonly ConcurrentDictionary<string, Transfer> active = new(StringComparer.Ordinal);
     private readonly MemoryCache completedMedia = new(new MemoryCacheOptions { SizeLimit = 1024 });
     private readonly object lifecycle = new();
@@ -36,7 +37,8 @@ public sealed partial class ManagedTrackCacheService : IAsyncDisposable
         ILocalLibraryService localLibrary, ILogger<ManagedTrackCacheService> logger,
         IHostApplicationLifetime? lifetime = null, TimeProvider? timeProvider = null,
         IDownloadedSongMappingStore? mappings = null, IManagedFileOperations? files = null,
-        MediaCapacityLimits? capacity = null, Func<long>? audioMaximumBytes = null, IProviderAudioVerifier? audioVerifier = null)
+        MediaCapacityLimits? capacity = null, Func<long>? audioMaximumBytes = null, IProviderAudioVerifier? audioVerifier = null,
+        Func<string, string, ProviderMediaFormat, CancellationToken, Task>? audioFinalizer = null)
     {
         this.configuration = configuration;
         this.settings = settings;
@@ -46,6 +48,7 @@ public sealed partial class ManagedTrackCacheService : IAsyncDisposable
         fileOperations = files ?? new PhysicalManagedFileOperations();
         mediaLimits = capacity ?? new(configuration);
         mediaVerifier = audioVerifier ?? new ProviderAudioVerifier();
+        this.audioFinalizer = audioFinalizer ?? ProgressiveAudioFinalizer.FinalizeAsync;
         audioMaximumOverride = audioMaximumBytes;
         if (audioMaximumBytes != null && audioMaximumBytes() <= 0) throw new ArgumentOutOfRangeException(nameof(audioMaximumBytes));
         clock = timeProvider ?? TimeProvider.System;
@@ -563,6 +566,7 @@ public sealed partial class ManagedTrackCacheService : IAsyncDisposable
         private readonly object gate = new();
         private TaskCompletionSource changed = Signal();
         private string path;
+        private string? publicationPath;
         private long available;
         private long? total;
         private int readers;
@@ -819,6 +823,11 @@ public sealed partial class ManagedTrackCacheService : IAsyncDisposable
                 DisposeSource();
                 lock (gate) { retired = true; playbackStarted.Dispose(); }
                 if (!published) TryDelete(path);
+                if (publicationPath != null && publicationPath != path)
+                {
+                    TryDelete(path);
+                    if (!published) TryDelete(publicationPath);
+                }
                 owner.AudioCompleted(allocation);
                 owner.active.TryRemove(key, out _);
                 complete.TrySetResult();
@@ -924,15 +933,71 @@ public sealed partial class ManagedTrackCacheService : IAsyncDisposable
             var final = PathHelper.BuildTrackPath(cacheRoot, song.AlbumArtist ?? song.Artist, song.Album,
                 song.Title, song.Track, Extension(Media), provider, track);
             Directory.CreateDirectory(Path.GetDirectoryName(final)!);
-            lock (owner.lifecycle)
+            var publication = path;
+            var cacheFacts = FileFacts.Measured ?? new TrackMediaFacts(Media, available);
+            FileStream? finalizedAnchor = null;
+            string? finalizedHash = null;
+            if ((provider is "apple-musickit" or "apple-download") && (Media.Codec is "flac" or "aac" or "alac"))
             {
-                cancel.Token.ThrowIfCancellationRequested();
-                final = PathHelper.ResolveUniquePath(final);
-                lock (gate) { File.Move(path, final); path = final; }
-                owner.AudioPathChanged(allocation, final);
+                var candidate = path + $".{Guid.NewGuid():N}.partial";
+                try
+                {
+                    await owner.audioFinalizer(path, candidate, Media, cancel.Token);
+                    cacheFacts = await owner.mediaVerifier.VerifyFileAsync(candidate, Media, cacheFacts.DurationSeconds, cancel.Token);
+                    await owner.GrowAudioAsync(allocation, checked(available + new FileInfo(candidate).Length), cancel.Token);
+                    finalizedAnchor = new(candidate, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+                    finalizedHash = Convert.ToHexStringLower(await SHA256.HashDataAsync(finalizedAnchor, cancel.Token));
+                    publication = candidate;
+                }
+                catch (Exception error) when (!cancel.IsCancellationRequested)
+                {
+                    finalizedAnchor?.Dispose();
+                    finalizedAnchor = null;
+                    TryDelete(candidate);
+                    cacheFacts = FileFacts.Measured ?? new TrackMediaFacts(Media, available);
+                    owner.logger.LogWarning("Could not finalize completed audio for {ProviderId} ({ErrorType}); retaining validated output",
+                        provider, error.GetType().Name);
+                }
+                catch
+                {
+                    finalizedAnchor?.Dispose();
+                    TryDelete(candidate);
+                    throw;
+                }
+            }
+            try
+            {
+                lock (owner.lifecycle)
+                {
+                    cancel.Token.ThrowIfCancellationRequested();
+                    final = PathHelper.ResolveUniquePath(final);
+                    lock (gate)
+                    {
+                        File.Move(publication, final);
+                        if (publication == path) path = final;
+                        publicationPath = final;
+                    }
+                    if (finalizedAnchor != null)
+                    {
+                        lock (owner.audioAllocationGate)
+                        {
+                            allocation.Anchor?.Dispose();
+                            allocation.Anchor = finalizedAnchor;
+                            finalizedAnchor = null;
+                            allocation.ContentHash = finalizedHash;
+                            allocation.Reserved = new FileInfo(final).Length;
+                        }
+                    }
+                    owner.AudioPathChanged(allocation, final);
+                }
+            }
+            finally
+            {
+                finalizedAnchor?.Dispose();
+                if (publication != path) TryDelete(publication);
             }
             song.LocalPath = final;
-            owner.completedMedia.Set(final, FileFacts.Measured ?? new TrackMediaFacts(Media, available),
+            owner.completedMedia.Set(final, cacheFacts,
                 new MemoryCacheEntryOptions { Size = 1, AbsoluteExpirationRelativeToNow = TimeSpan.FromHours(1) });
             FileFacts.Media = Media;
             if (preparation) await owner.audioBudgetGate.WaitAsync(cancel.Token);
