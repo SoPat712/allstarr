@@ -22,6 +22,116 @@ namespace allstarr.Tests;
 public sealed partial class ProtocolRouteFixtureTests
 {
     [Theory]
+    [InlineData("deezer", false)]
+    [InlineData("deezer", true)]
+    [InlineData("apple-download", true)]
+    [InlineData("apple-download", false)]
+    public async Task ClientApi_MatchUsesExactIdentityForCatalogSongs(string provider, bool linked)
+    {
+        var registeredProvider = provider == "apple-download" ? "apple-musickit" : provider;
+        using var factory = ClientMatchFactory(false, candidateProvider: registeredProvider);
+        using var client = CreateClientApiClient(factory);
+        client.DefaultRequestHeaders.Add("X-Emby-Token", "listener-token");
+        var owner = (await factory.Services.GetRequiredService<BackendIdentityResolver>().ResolveAsync(new("Jellyfin", "listener")))!.UserId;
+        var itemId = $"ext-{provider}-song-catalog";
+        await using (var db = await factory.Services.GetRequiredService<IDbContextFactory<AllstarrDbContext>>().CreateDbContextAsync())
+        {
+            Guid? identityId = null;
+            if (linked)
+            {
+                var recording = Guid.NewGuid();
+                identityId = Guid.NewGuid();
+                db.CanonicalRecordings.Add(new() { Id = recording, CreatedByUserId = owner, PublicId = itemId, Title = "Catalog song", Revision = 1 });
+                db.ProviderTrackIdentities.Add(new() { Id = identityId.Value, CanonicalRecordingId = recording, ProviderId = registeredProvider, ExternalId = "catalog", ExternalIdHash = ClientMatchPayloadHash("catalog"), ResourceKind = ProviderResourceKind.Track, Scope = ProviderIdentityScope.Catalog, Verification = ProviderIdentityVerification.Verified, VerificationMethod = "source-use", DecisionVersion = 1, Revision = 1 });
+            }
+            const string payload = """{"Title":"Catalog song","Artist":"Artist","Isrc":"GBAYE1901259","DurationMilliseconds":137000}""";
+            db.ExternalMetadataSnapshots.Add(new() { Id = Guid.NewGuid(), OwnerUserId = owner, ProviderTrackIdentityId = identityId, BackendInstanceId = "primary", BackendPrincipalId = "listener", Protocol = "jellyfin", ProviderId = linked ? registeredProvider : provider, ResourceKind = "track", ExternalIdHash = ClientMatchPayloadHash("catalog"), SnapshotVersion = 1, RetrievedAt = DateTimeOffset.UtcNow, PayloadJson = payload, PayloadSha256 = ClientMatchPayloadHash(payload) });
+            await db.SaveChangesAsync();
+        }
+        var match = await ReadClientLyricsJsonAsync(client, $"/allstarr/v1/items/{itemId}/match");
+        Assert.Equal("accepted", match["state"]!.GetValue<string>());
+        Assert.Equal("automatic", match["authority"]!.GetValue<string>());
+        Assert.Equal(1, match["confidence"]!.GetValue<double>());
+        var current = match["current"]!;
+        Assert.Equal(1, current["confidence"]!.GetValue<double>());
+        Assert.Equal("GBAYE1901259", current["isrc"]!.GetValue<string>());
+        Assert.Contains("same_song", current["reasons"]!.AsArray().Select(reason => reason!.GetValue<string>()));
+        Assert.True(JsonNode.DeepEquals(current, match["candidates"]!.AsArray().Single(candidate => candidate!["candidateId"]!.GetValue<string>() == current["candidateId"]!.GetValue<string>())));
+        await AssertClientDetailsMatchAsync(client, itemId, match);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ClientApi_MatchUsesRecordingEvidenceBeforeCatalogIdentity(bool household)
+    {
+        using var factory = ClientMatchFactory(false);
+        using var client = CreateClientApiClient(factory);
+        client.DefaultRequestHeaders.Add("X-Emby-Token", "listener-token");
+        var (owner, _, _) = await SeedClientMatchAsync(factory);
+        Guid recording;
+        await using (var db = await factory.Services.GetRequiredService<IDbContextFactory<AllstarrDbContext>>().CreateDbContextAsync())
+        {
+            recording = (await db.TrackMatches.SingleAsync()).CanonicalRecordingId!.Value;
+            if (!household) db.ManualTrackOverrides.RemoveRange(await db.ManualTrackOverrides.ToArrayAsync());
+            var identityId = Guid.NewGuid();
+            db.ProviderTrackIdentities.Add(new() { Id = identityId, CanonicalRecordingId = recording, ProviderId = "deezer", ExternalId = "target", ExternalIdHash = ClientMatchPayloadHash("target"), ResourceKind = ProviderResourceKind.Track, Scope = ProviderIdentityScope.Catalog, Verification = ProviderIdentityVerification.Verified, DecisionVersion = 1, Revision = 1 });
+            const string payload = """{"Title":"Fixture","Artist":"Artist","Isrc":"US1234567890"}""";
+            db.ExternalMetadataSnapshots.Add(new() { Id = Guid.NewGuid(), OwnerUserId = owner, ProviderTrackIdentityId = identityId, BackendInstanceId = "primary", BackendPrincipalId = "listener", Protocol = "jellyfin", ProviderId = "deezer", ResourceKind = "track", ExternalIdHash = ClientMatchPayloadHash("target"), SnapshotVersion = 1, RetrievedAt = DateTimeOffset.UtcNow.AddMinutes(1), PayloadJson = payload, PayloadSha256 = ClientMatchPayloadHash(payload) });
+            await db.SaveChangesAsync();
+        }
+        var canonical = await ReadClientLyricsJsonAsync(client, $"/allstarr/v1/items/ext-allstarr-song-{recording:D}/match");
+        var playback = await ReadClientLyricsJsonAsync(client, "/allstarr/v1/items/ext-deezer-song-target/match");
+        Assert.Equal(.97, canonical["confidence"]!.GetValue<double>());
+        Assert.Equal(household ? "household" : "automatic", playback["authority"]!.GetValue<string>());
+        Assert.True(JsonNode.DeepEquals(canonical, playback));
+        await AssertClientDetailsMatchAsync(client, "ext-deezer-song-target", playback);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ClientApi_MatchFillsCurrentIsrcFromStoredMetadata(bool catalogIdentifier)
+    {
+        using var factory = ClientMatchFactory(false);
+        using var client = CreateClientApiClient(factory);
+        client.DefaultRequestHeaders.Add("X-Emby-Token", "listener-token");
+        var (_, _, snapshot) = await SeedClientMatchAsync(factory);
+        await using (var db = await factory.Services.GetRequiredService<IDbContextFactory<AllstarrDbContext>>().CreateDbContextAsync())
+        {
+            db.ManualTrackOverrides.RemoveRange(await db.ManualTrackOverrides.ToArrayAsync());
+            var decision = await db.TrackMatches.SingleAsync();
+            decision.CandidateResultsJson = decision.CandidateResultsJson.Replace("\"candidateIsrc\":\"US1234567890\",", "", StringComparison.Ordinal);
+            var source = await db.ExternalMetadataSnapshots.SingleAsync(item => item.Id == snapshot);
+            if (catalogIdentifier)
+                db.RecordingIdentifiers.Add(new() { Id = Guid.NewGuid(), RecordingId = decision.CanonicalRecordingId!.Value, Kind = RecordingIdentifierKinds.Isrc, Value = "US1234567890", Source = "fixture" });
+            else
+            {
+                const string payload = """{"Title":"Fixture","Artist":"Artist","Isrc":"US1234567890"}""";
+                db.ExternalMetadataSnapshots.Add(new() { Id = Guid.NewGuid(), OwnerUserId = source.OwnerUserId, BackendInstanceId = source.BackendInstanceId, BackendPrincipalId = source.BackendPrincipalId, Protocol = source.Protocol, ProviderId = source.ProviderId, ResourceKind = "track", ExternalIdHash = source.ExternalIdHash, SnapshotVersion = 2, RetrievedAt = source.RetrievedAt.AddMinutes(1), PayloadJson = payload, PayloadSha256 = ClientMatchPayloadHash(payload) });
+            }
+            await db.SaveChangesAsync();
+        }
+        var match = await ReadClientLyricsJsonAsync(client, "/allstarr/v1/items/ext-deezer-song-match/match");
+        Assert.Equal(.97, match["confidence"]!.GetValue<double>());
+        Assert.Equal(.97, match["current"]!["confidence"]!.GetValue<double>());
+        Assert.Equal("US1234567890", match["current"]!["isrc"]!.GetValue<string>());
+        Assert.Equal("US1234567890", Assert.Single(match["candidates"]!.AsArray())!["isrc"]!.GetValue<string>());
+        await AssertClientDetailsMatchAsync(client, "ext-deezer-song-match", match);
+    }
+
+    private static async Task AssertClientDetailsMatchAsync(HttpClient client, string itemId, JsonNode match)
+    {
+        using var response = await client.PostAsJsonAsync("/allstarr/v1/items/details", new { ids = new[] { itemId } });
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var details = JsonNode.Parse(await response.Content.ReadAsStringAsync())!;
+        var item = Assert.Single(details["items"]!.AsArray())!;
+        Assert.NotNull(item["match"]);
+        foreach (var field in new[] { "state", "confidence", "authority" })
+            Assert.True(JsonNode.DeepEquals(match[field], item["match"]![field]), field);
+    }
+
+    [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public async Task ClientApi_MatchChoicesArePersonalAndKeepHouseholdAndOtherListeners(bool administrator)

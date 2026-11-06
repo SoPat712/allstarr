@@ -96,8 +96,15 @@ public sealed partial class ProtocolRouteFixtureTests
     [InlineData(true)]
     public async Task ClientApi_ItemDetailsUsesStoredPersonalMatchAndMeasuredAudio(bool glyph)
     {
+        var gateway = new Mock<IProtocolProviderGateway>();
+        gateway.Setup(service => service.GetPlayableProviderOrderAsync(It.IsAny<ProviderActorContext>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(["deezer"]);
         using var factory = ClientDetailsFactory(request => request.RequestUri!.AbsolutePath == "/Users/Me"
-            ? Json(200, """{"Id":"listener"}""") : throw new InvalidOperationException("Unexpected upstream request"));
+            ? Json(200, """{"Id":"listener"}""") : throw new InvalidOperationException("Unexpected upstream request"), services =>
+            {
+                services.RemoveAll<IProtocolProviderGateway>();
+                services.AddSingleton(gateway.Object);
+            });
         using var fixtures = new ProviderIconFiles();
         using var client = CreateClientApiClient(factory);
         fixtures.Use(factory.Services, glyph);

@@ -20,6 +20,7 @@ public sealed class ItemMatchReader(
     TrackMatchCommandService commands,
     IProtocolProviderGateway providers,
     IProviderRegistry registry,
+    ITrackIdentityService identities,
     IEffectiveProviderPolicyResolver policies, LibraryProviderResolver libraryProvider)
 {
     public async Task<ClientItemMatch?> ReadAsync(HttpContext http, ProtocolExecutionContext execution, string itemId) =>
@@ -76,23 +77,32 @@ public sealed class ItemMatchReader(
             item.BackendPrincipalId == execution.VerifiedBackendPrincipalId);
         var (external, provider, kind, externalId) = localLibrary.ParseExternalId(itemId);
         if (external && kind != "song") return null;
+        var requestedProvider = provider;
+        if (external) provider = registry.ResolveProviderId(provider!);
         ExternalMetadataSnapshotRecord? snapshot = null;
         if (external && provider != "allstarr")
         {
             var hash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(externalId!)));
-            snapshot = await query.Where(item => item.ProviderId == provider && item.ExternalIdHash == hash)
+            snapshot = await query.Where(item => (item.ProviderId == provider || item.ProviderId == requestedProvider) && item.ExternalIdHash == hash)
                 .OrderByDescending(item => item.RetrievedAt).ThenByDescending(item => item.SnapshotVersion)
                 .ThenByDescending(item => item.Id).FirstOrDefaultAsync(token);
         }
-        if (snapshot == null)
+        var recording = external
+            ? (await identities.ResolveRecordingAsync(execution.RequireActor(), itemId, token))?.Id
+            : await items.ResolveRecordingIdAsync(http, execution, itemId);
+        if (recording.HasValue)
         {
-            var recording = await items.ResolveRecordingIdAsync(http, execution, itemId);
-            if (!recording.HasValue) return null;
-            query = query.Where(item => db.TrackMatches.Any(decision => decision.ExternalSnapshotId == item.Id &&
+            var recordingQuery = query.Where(item => db.TrackMatches.Any(decision => decision.ExternalSnapshotId == item.Id &&
                     decision.OwnerUserId == actor.UserId && decision.CanonicalRecordingId == recording) ||
-                db.ProviderTrackIdentities.Any(identity => identity.Id == item.ProviderTrackIdentityId && identity.CanonicalRecordingId == recording));
-            snapshot = await query.OrderByDescending(item => item.RetrievedAt).ThenByDescending(item => item.SnapshotVersion)
+                db.ProviderTrackIdentities.Any(identity => identity.CanonicalRecordingId == recording &&
+                    (identity.Id == item.ProviderTrackIdentityId || identity.ProviderId == item.ProviderId && identity.ExternalIdHash == item.ExternalIdHash)));
+            var recorded = await recordingQuery.OrderByDescending(item => db.TrackMatches.Any(decision =>
+                    decision.ExternalSnapshotId == item.Id && decision.OwnerUserId == actor.UserId && decision.CanonicalRecordingId == recording))
+                .ThenByDescending(item => item.RetrievedAt).ThenByDescending(item => item.SnapshotVersion)
                 .ThenByDescending(item => item.Id).FirstOrDefaultAsync(token);
+            if (recorded != null && (snapshot == null || await db.TrackMatches.AnyAsync(decision =>
+                    decision.ExternalSnapshotId == recorded.Id && decision.OwnerUserId == actor.UserId && decision.CanonicalRecordingId == recording, token)))
+                snapshot = recorded;
         }
         if (snapshot == null) return null;
         var revision = await TrackMatchRevision.ReadAsync(db, snapshot, actor.UserId, token);
@@ -129,19 +139,86 @@ public sealed class ItemMatchReader(
             var key = local ? $"local:{libraryId}" : $"{providerId}:{targetId}";
             registry.TryGet(providerId, out var descriptor);
             var icon = (await ProviderArtworkResolver.ResolveIconsAsync(http.RequestServices, [providerId], token)).GetValueOrDefault(providerId);
+            var isrc = Text(json, "candidateIsrc");
+            if (string.IsNullOrWhiteSpace(isrc))
+                isrc = local ? review.LibraryTracks.FirstOrDefault(item => item.Id == libraryId)?.Isrc
+                    : await ReadStoredIsrcAsync(db, execution, snapshot, review.ProviderIdentities, providerId, targetId!, token);
             var candidate = new ClientMatchCandidate(Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(key))),
-                Text(json, "title"), Text(json, "artist"), Text(json, "album"), Milliseconds(json), Text(json, "candidateIsrc"),
+                Text(json, "title"), Text(json, "artist"), Text(json, "album"), Milliseconds(json), isrc,
                 library ?? icon?.Provider(providerId, descriptor?.DisplayName ?? execution.Protocol.ToString()) ??
                     new(providerId, descriptor?.DisplayName ?? execution.Protocol.ToString(), null), !local,
                 Number(json, "confidence"), Strings(json, "reasons"));
             candidates.Add(new(candidate, libraryId, local ? null : providerId, targetId));
             if (json.GetProperty("isCurrent").GetBoolean() && projection.ReviewState != TrackMatchState.Rejected) current = candidate;
         }
+        var state = projection.ReviewState;
+        var confidence = Finite(decision?.Confidence);
+        var nativeSource = external && provider != "allstarr" && provider == registry.ResolveProviderId(snapshot.ProviderId) &&
+            CanonicalCatalogKeys.Hash(externalId!) == snapshot.ExternalIdHash;
+        if (current == null && nativeSource && decision == null && layers.Effective == null &&
+            playableProviders.Contains(ExternalTrackPlaybackPolicy.Normalize(provider)) && policy.IsAutomatic(provider!))
+        {
+            var metadata = TrackIdentityService.ReadDisplaySong(snapshot.PayloadJson, provider!, externalId!);
+            if (metadata != null)
+            {
+                registry.TryGet(provider!, out var descriptor);
+                var icon = (await ProviderArtworkResolver.ResolveIconsAsync(http.RequestServices, [provider!], token)).GetValueOrDefault(provider!);
+                current = new(Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes($"{provider}:{externalId}"))),
+                    metadata.Title, metadata.Artist, metadata.Album,
+                    metadata.PreciseDuration.HasValue ? (long)metadata.PreciseDuration.Value.TotalMilliseconds : metadata.Duration * 1000L,
+                    await ReadStoredIsrcAsync(db, execution, snapshot, review.ProviderIdentities, provider!, externalId!, token),
+                    icon?.Provider(provider!, descriptor?.DisplayName ?? provider!) ?? new(provider!, descriptor?.DisplayName ?? provider!, null),
+                    true, 1, ["same_song"]);
+                candidates.Insert(0, new(current, null, provider, externalId));
+                state = TrackMatchState.Accepted;
+            }
+        }
+        if (current is { IsExternal: true } && state is TrackMatchState.Accepted or TrackMatchState.Pinned &&
+            decision?.CanonicalRecordingId == null && external && provider != "allstarr" &&
+            candidates.Any(item => item.Value.CandidateId == current.CandidateId && item.ExternalId == externalId &&
+                registry.ResolveProviderId(item.ProviderId!) == provider))
+        {
+            current = current with { Confidence = 1, Reasons = current.Reasons.Append("same_song").Distinct(StringComparer.Ordinal).ToArray() };
+            for (var index = 0; index < candidates.Count; index++)
+                if (candidates[index].Value.CandidateId == current.CandidateId) candidates[index] = candidates[index] with { Value = current };
+            confidence = 1;
+        }
         if (revision != await TrackMatchRevision.ReadAsync(db, snapshot, actor.UserId, token))
             throw new DbUpdateConcurrencyException("The match changed.");
-        return new(new(projection.ReviewState.ToString().ToLowerInvariant(), Finite(decision?.Confidence), layers.EffectiveScope,
+        return new(new(state.ToString().ToLowerInvariant(), confidence, layers.EffectiveScope,
             current, candidates.Select(item => item.Value).DistinctBy(item => item.CandidateId).ToArray(), revision),
             snapshot, layers.Personal, candidates.DistinctBy(item => item.Value.CandidateId).ToArray());
+    }
+
+    private async Task<string?> ReadStoredIsrcAsync(AllstarrDbContext db, ProtocolExecutionContext execution,
+        ExternalMetadataSnapshotRecord source, IReadOnlyList<ProviderTrackIdentityRecord> links, string providerId, string externalId,
+        CancellationToken token)
+    {
+        providerId = registry.ResolveProviderId(providerId);
+        var storedProviders = links.Select(item => item.ProviderId).Append(source.ProviderId).Append(providerId)
+            .Where(item => registry.ResolveProviderId(item) == providerId).Distinct(StringComparer.Ordinal).ToArray();
+        var hash = CanonicalCatalogKeys.Hash(externalId);
+        var snapshots = await db.ExternalMetadataSnapshots.AsNoTracking().Where(item => item.OwnerUserId == source.OwnerUserId &&
+            item.Protocol == source.Protocol && item.BackendInstanceId == source.BackendInstanceId &&
+            item.BackendPrincipalId == execution.VerifiedBackendPrincipalId && storedProviders.Contains(item.ProviderId) && item.ExternalIdHash == hash &&
+            (item.ResourceKind == "track" || item.ResourceKind == "playback-metadata") &&
+            (item.ProviderAccountId == null || db.ProviderAccounts.Any(account => account.Id == item.ProviderAccountId && account.Enabled &&
+                (account.OwnerUserId == null || account.OwnerUserId == source.OwnerUserId))))
+            .OrderByDescending(item => item.RetrievedAt).ThenByDescending(item => item.SnapshotVersion).ToArrayAsync(token);
+        foreach (var snapshot in snapshots)
+        {
+            try
+            {
+                using var payload = JsonDocument.Parse(snapshot.PayloadJson);
+                var isrc = Text(payload.RootElement, "Isrc") ?? Text(payload.RootElement, "isrc") ?? Text(payload.RootElement, "ISRC");
+                if (!string.IsNullOrWhiteSpace(isrc)) return isrc;
+            }
+            catch (JsonException) { }
+        }
+        var recordingIds = links.Where(item => registry.ResolveProviderId(item.ProviderId) == providerId && item.ExternalId == externalId &&
+            CatalogIdentityPolicy.IsPlaybackEligible(item)).Select(item => item.CanonicalRecordingId).Distinct().ToArray();
+        return await db.RecordingIdentifiers.AsNoTracking().Where(item => recordingIds.Contains(item.RecordingId) &&
+            item.Kind == RecordingIdentifierKinds.Isrc).OrderBy(item => item.CreatedAt).Select(item => item.Value).FirstOrDefaultAsync(token);
     }
 
     private static TrackMatchActor Actor(ProtocolExecutionContext execution) => new(execution.RequireActor().EffectiveUserId!.Value, false);

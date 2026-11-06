@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using allstarr.Core.Capabilities;
 using allstarr.Core.Protocols;
 using allstarr.Core.Matching;
 using Microsoft.EntityFrameworkCore;
@@ -44,7 +45,10 @@ public sealed partial class ProtocolRouteFixtureTests
     [Fact]
     public async Task ClientApi_ItemDetailsUsesAccessibleLocalRecordingAfterLinking()
     {
-        using var factory = ClientMixFactory(new Mock<IProtocolProviderGateway>(MockBehavior.Strict));
+        var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        gateway.Setup(service => service.GetPlayableProviderOrderAsync(It.IsAny<ProviderActorContext>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(["deezer"]);
+        using var factory = ClientMixFactory(gateway);
         using var client = CreateClientApiClient(factory);
         using var fixtures = new ProviderIconFiles();
         fixtures.Use(factory.Services);
@@ -105,6 +109,8 @@ public sealed partial class ProtocolRouteFixtureTests
     public async Task ClientApi_CanonicalItemDetailsUsesStreamingProviderOrSnapshotProvider(string? serving)
     {
         var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        gateway.Setup(service => service.GetPlayableProviderOrderAsync(It.IsAny<ProviderActorContext>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(["deezer"]);
         gateway.Setup(service => service.GetStreamingProviderAsync(It.IsAny<ProtocolExecutionContext>(), "allstarr", It.IsAny<string>()))
             .ReturnsAsync(serving);
         using var factory = ClientDetailsFactory(_ => Json(200, """{"Id":"listener"}"""), services =>

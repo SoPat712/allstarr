@@ -23,6 +23,7 @@ public sealed class ItemDetailsReader(
     JellyfinProxyService jellyfin,
     IApplicationCache cache,
     IDurableRuntimeSettings settings,
+    ItemMatchReader matches,
     IProtocolProviderGateway? gateway = null, ILibraryIndexService? libraryIndex = null)
 {
     public async Task<ItemDetailsResponse> ReadAsync(HttpContext http, ProtocolExecutionContext execution, string[] ids)
@@ -129,7 +130,7 @@ public sealed class ItemDetailsReader(
             var candidates = source.Provider == "allstarr" && recording != null
                 ? snapshots.Where(snapshot => links.Any(link => link.CanonicalRecordingId == recording.Id && link.ProviderId == snapshot.ProviderId && link.ExternalIdHash == snapshot.ExternalIdHash) ||
                     decisions.Any(match => match.ExternalSnapshotId == snapshot.Id && match.CanonicalRecordingId == recording.Id))
-                : snapshots.Where(snapshot => snapshot.ProviderId == source.Provider && snapshot.ExternalIdHash == CanonicalCatalogKeys.Hash(source.ExternalId));
+                : snapshots.Where(snapshot => registry.ResolveProviderId(snapshot.ProviderId) == source.Provider && snapshot.ExternalIdHash == CanonicalCatalogKeys.Hash(source.ExternalId));
             var snapshot = candidates.OrderByDescending(item => item.ResourceKind == "track").ThenByDescending(item => item.RetrievedAt)
                 .ThenByDescending(item => item.SnapshotVersion).FirstOrDefault();
             Song? song = null;
@@ -197,6 +198,12 @@ public sealed class ItemDetailsReader(
             var match = snapshot == null || decision == null && authority?.Effective == null ? null : new ItemDetailsMatch(
                 authority?.Effective is { } effective ? effective.Decision == ManualOverrideDecision.Pin ? "pinned" : "rejected" : decision!.State.ToString().ToLowerInvariant(),
                 decision != null && double.IsFinite(decision.Confidence) ? Math.Clamp(decision.Confidence, 0, 1) : null, authority?.EffectiveScope ?? "automatic");
+            if (snapshot != null)
+            {
+                var matchId = local != null && recordingId.HasValue ? CanonicalRecordingRecord.DefaultPublicId(recordingId.Value) : id;
+                if (await matches.ReadAsync(http, execution, matchId) is { } effectiveMatch)
+                    match = new(effectiveMatch.State, effectiveMatch.Confidence, effectiveMatch.Authority);
+            }
             var state = states.FirstOrDefault(item => item.ItemId == id && item.IsFavorite);
             var storedFile = retained.FirstOrDefault(item => item.RecordingId == recordingId && File.Exists(item.File.CanonicalPath));
             var kept = state == null ? null : retained.FirstOrDefault(item => item.RecordingId == recordingId &&
