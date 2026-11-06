@@ -18,6 +18,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response, StreamingRes
 from starlette.background import BackgroundTask
 
 from .config import Settings
+from .delivery import AudioResponse, SharedAudio
 from .models import Login2faRequest, LoginRequest, MediaAccount
 from .runner import AudioCeiling, BoundedProcessRunner, ProcessFailure
 from .security import diagnostic_tail, media_account, song_url
@@ -123,17 +124,18 @@ def create_app(
     wrapper_client = wrapper or WrapperClient(config.wrapper_url, config.wrapper_timeout_seconds)
     process_runner = runner or BoundedProcessRunner(config)
     preparations: dict[str, _Preparation] = {}
+    audio_preparations: dict[str, SharedAudio] = {}
     preparation_lock = asyncio.Lock()
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         config.prepare()
         # A waiting helper holds about 80 MB.
-        if warm_up := getattr(process_runner, "warm_up", None):
+        if warm_up := getattr(process_runner, "warm_up_audio", None) or getattr(process_runner, "warm_up", None):
             warm_up()
         yield
         async with preparation_lock:
-            tasks = [entry.task for entry in preparations.values()]
+            tasks = [entry.task for entry in [*preparations.values(), *audio_preparations.values()]]
             for task in tasks:
                 task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
@@ -206,6 +208,12 @@ def create_app(
             if canceled is not None:
                 await asyncio.gather(canceled, return_exceptions=True)
 
+    def preparation_failure(exc):
+        code = exc.code if isinstance(exc, ProcessFailure) else "download_failed"
+        status = 504 if code == "process_timeout" else 403 if code == "account_mismatch" else 502
+        return HTTPException(status_code=status, detail=code,
+            headers={"X-Allstarr-Failure-Code": code} if code == "account_mismatch" else None)
+
     def lyrics_path(key: str) -> Path:
         return config.data_root / "lyrics" / f"{key}.lrc"
 
@@ -264,7 +272,8 @@ def create_app(
             shutil.rmtree(root, ignore_errors=True)
             raise HTTPException(status_code=502, detail="download_failed") from None
 
-    def cached_source(key: str, *, audio_file: bool = False, original_container: bool = False) -> Path | None:
+    def cached_source(key: str, *, audio_file: bool = False, original_container: bool = False,
+            stream: bool = False) -> Path | None:
         cache_root = config.data_root / "prepared"
         now = time.time()
         tracks: dict[str, list[Path]] = {}
@@ -282,14 +291,85 @@ def create_app(
                     os.utime(path, ns=(time.time_ns(), path.stat().st_mtime_ns))
                     if (".audio." in path.name) == audio_file and (
                         not audio_file or (".audio.original." in path.name) == original_container
-                    ):
+                    ) and (".audio.stream." in path.name) == stream:
                         found = path
         return found
+
+    async def progressive_audio(account, song_id, quality, *, original_container=False, force_flac=False):
+        key = _cache_key(account, song_id, quality)
+        variant = ".original" if original_container else ".stream" if force_flac else ""
+        identity = f"{key}{variant}"
+
+        def target(header):
+            return config.data_root / "prepared" / f"{key}.audio{variant}{header.suffix}"
+
+        def completed(header):
+            if header.lyrics:
+                path = lyrics_path(key)
+                path.parent.mkdir(parents=True, exist_ok=True, mode=0o750)
+                partial = path.with_name(f"{path.name}.{uuid.uuid4().hex}.partial")
+                try:
+                    partial.write_text(header.lyrics, encoding="utf-8")
+                    partial.replace(path)
+                finally:
+                    partial.unlink(missing_ok=True)
+
+        async with preparation_lock:
+            entry = audio_preparations.get(identity)
+            if entry is None:
+                entry = SharedAudio(lambda: process_runner.open_audio(song_id, _codec(quality),
+                    media_user_token=account.token, storefront=account.storefront,
+                    ceiling=AUDIO_CEILINGS.get(quality.lower()), original_container=original_container,
+                    force_flac=force_flac), target, completed=completed, song_id=song_id, quality=quality)
+                audio_preparations[identity] = entry
+            entry.waiters += 1
+        released = False
+
+        async def release():
+            nonlocal released
+            if released:
+                return
+            released = True
+            canceled = None
+            async with preparation_lock:
+                entry.waiters -= 1
+                if entry.waiters == 0:
+                    if audio_preparations.get(identity) is entry:
+                        audio_preparations.pop(identity)
+                    if not entry.task.done():
+                        entry.task.cancel()
+                        canceled = entry.task
+            if canceled is not None:
+                await asyncio.gather(canceled, return_exceptions=True)
+
+        try:
+            header = await asyncio.shield(entry.ready)
+            if entry.finished and entry.error is not None:
+                raise entry.error
+        except BaseException as exc:
+            await release()
+            if isinstance(exc, asyncio.CancelledError):
+                raise
+            raise preparation_failure(exc) from None
+        return entry, header, entry.read(release), release
 
     async def prepare_song(
         account: MediaAccount, song_id: str, quality: str, fallback_quality: str | None = None
     ) -> Path:
         key = _cache_key(account, song_id, quality)
+        if hasattr(process_runner, "open_audio"):
+            if cached := cached_source(key, audio_file=True, original_container=True):
+                return cached
+            entry, _, chunks, release = await progressive_audio(account, song_id, quality, original_container=True)
+            try:
+                async for _ in chunks:
+                    pass
+                return entry.path
+            except Exception as exc:
+                raise preparation_failure(exc) from None
+            finally:
+                await chunks.aclose()
+                await release()
         if cached := cached_source(key):
             return cached
 
@@ -319,13 +399,33 @@ def create_app(
     async def audio_song(
         song_id: str, quality: str = "alac-16-44", account: MediaAccount = Depends(_account),
         original_container: bool = False,
-    ) -> FileResponse:
+        request: Request = None,
+    ) -> Response:
         _song_request(account, song_id, quality)
         key = _cache_key(account, song_id, quality)
         preparation_headers = {
             "X-Allstarr-Prepare-Download-Ms": "0",
             "X-Allstarr-Prepare-Process-Ms": "0",
         }
+
+        cached = cached_source(key, audio_file=True, original_container=original_container)
+        if cached is None and hasattr(process_runner, "open_audio"):
+            entry, header, content, release = await progressive_audio(account, song_id, quality,
+                original_container=original_container)
+            if request is not None and request.method == "HEAD":
+                try:
+                    async for _ in content:
+                        pass
+                except Exception as exc:
+                    raise preparation_failure(exc) from None
+                cached = entry.path
+            else:
+                headers = {**preparation_headers, "Cache-Control": "no-store", "X-Accel-Buffering": "no",
+                    "Content-Disposition": f'inline; filename="{song_id}{header.suffix}"'}
+                headers["X-Allstarr-Prepare-Download-Ms"] = str(entry.first_byte_ms)
+                if header.duration_seconds is not None:
+                    headers["X-Allstarr-Duration-Seconds"] = str(header.duration_seconds)
+                return AudioResponse(content, media_type=header.media_type, headers=headers, release=release)
 
         async def prepare_audio() -> Path:
             if cached := cached_source(key, audio_file=True, original_container=original_container):
@@ -393,7 +493,7 @@ def create_app(
                     partial.unlink(missing_ok=True)
 
         variant = "original:" if original_container else ""
-        artifact = cached_source(key, audio_file=True, original_container=original_container) or await coalesce(
+        artifact = cached or await coalesce(
             "file:" + variant + key, prepare_audio
         )
         is_mp4 = artifact.suffix == ".m4a"
@@ -428,21 +528,41 @@ def create_app(
     @application.get("/api/stream/{song_id}")
     async def stream_song(
         song_id: str, quality: str = "alac-16-44", account: MediaAccount = Depends(_account)
-    ) -> StreamingResponse:
+    ) -> Response:
         _song_request(account, song_id, quality)
+        key = _cache_key(account, song_id, quality)
+        if hasattr(process_runner, "open_audio") and (cached := cached_source(key, audio_file=True, stream=True)):
+            return FileResponse(cached, media_type="audio/flac", filename=f"{song_id}.flac",
+                content_disposition_type="inline")
+        chunks = release = None
+
+        async def close_stream():
+            if chunks is not None:
+                await chunks.aclose()
+            if release is not None:
+                await release()
 
         async def content() -> AsyncIterator[bytes]:
+            nonlocal chunks, release
             yield FLAC_GUIDANCE_PREFIX
-            source = await prepare_song(account, song_id, quality, "aac-web")
-            async for chunk in process_runner.stream_flac(source):
-                yield chunk
+            if hasattr(process_runner, "open_audio"):
+                _, _, chunks, release = await progressive_audio(account, song_id, quality, force_flac=True)
+                try:
+                    async for chunk in chunks:
+                        yield chunk
+                finally:
+                    await close_stream()
+            else:
+                source = await prepare_song(account, song_id, quality, "aac-web")
+                async for chunk in process_runner.stream_flac(source):
+                    yield chunk
 
         headers = {
             "Content-Disposition": f'inline; filename="{song_id}.flac"',
             "Cache-Control": "no-store",
             "X-Accel-Buffering": "no",
         }
-        return StreamingResponse(content(), media_type="audio/flac", headers=headers)
+        return AudioResponse(content(), media_type="audio/flac", headers=headers, release=close_stream)
 
     @application.head("/api/download/{song_id}")
     @application.head("/api/stream/{song_id}")
@@ -466,6 +586,22 @@ def create_app(
 
         async def prepare_lyrics() -> Path:
             if not cached.is_symlink() and cached.is_file():
+                return cached
+            if open_lyrics := getattr(process_runner, "lyrics", None):
+                try:
+                    content = await open_lyrics(song_id, media_user_token=account.token, storefront=account.storefront)
+                except ProcessFailure as exc:
+                    status = 504 if exc.code == "process_timeout" else 403 if exc.code == "account_mismatch" else 404
+                    raise HTTPException(status_code=status, detail=exc.code) from None
+                if not content:
+                    raise HTTPException(status_code=404, detail="lyrics_not_found")
+                cached.parent.mkdir(parents=True, exist_ok=True, mode=0o750)
+                partial = cached.with_name(f"{cached.name}.{uuid.uuid4().hex}.partial")
+                try:
+                    partial.write_text(content, encoding="utf-8")
+                    partial.replace(cached)
+                finally:
+                    partial.unlink(missing_ok=True)
                 return cached
             root = config.data_root / "artifacts" / uuid.uuid4().hex
             try:

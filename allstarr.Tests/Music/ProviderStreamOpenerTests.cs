@@ -180,6 +180,99 @@ public sealed partial class ProviderStreamOpenerTests
     public Task TruncatedDeclaredFlacCannotBePublishedAfterLazyNormalization() =>
         VerifyBodyStartAsync(cacheEnabled: true, truncated: true);
 
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task AppleProgressiveAudioWithoutLength_PublishesOnlyAfterSuccessfulCompletion(bool cacheEnabled, bool abort)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "allstarr-tests", Guid.NewGuid().ToString("N"));
+        var protocol = new ProtocolExecutionContext(ProtocolKind.Jellyfin, "backend", "principal",
+            new allstarr.Core.Identity.AllstarrPrincipal(Guid.NewGuid(), "jellyfin", "backend", "principal", "Listener", false),
+            "progressive-stream", DateTimeOffset.UtcNow.AddMinutes(1), CancellationToken.None,
+            new ProtocolClientDescriptor("client", "device"));
+        string? registeredPath = null;
+        var library = new Mock<allstarr.Services.Local.ILocalLibraryService>(MockBehavior.Strict);
+        library.Setup(item => item.GetLocalPathForExternalSongAsync(
+                It.IsAny<allstarr.Core.Downloads.DownloadedSongMappingScope>(), "apple-musickit", "101"))
+            .ReturnsAsync(() => registeredPath);
+        library.Setup(item => item.RegisterDownloadedSongAsync(
+                It.IsAny<allstarr.Core.Downloads.DownloadedSongMappingScope>(), It.IsAny<Song>(), It.IsAny<string>()))
+            .Callback<allstarr.Core.Downloads.DownloadedSongMappingScope, Song, string>((_, _, path) => registeredPath = path)
+            .Returns(Task.CompletedTask);
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        { ["Library:DownloadPath"] = root }).Build();
+        var cache = cacheEnabled ? new allstarr.Services.Common.ManagedTrackCacheService(configuration,
+            Microsoft.Extensions.Options.Options.Create(new allstarr.Models.Settings.SubsonicSettings
+            { StorageMode = allstarr.Models.Settings.StorageMode.Cache }), library.Object,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<allstarr.Services.Common.ManagedTrackCacheService>.Instance,
+            audioVerifier: FixtureAudioVerifier.Instance) : null;
+        using var source = new ProgressiveAudioTail(Flac(), abort);
+        using var upstream = new HttpResponseMessage(HttpStatusCode.OK) { Content = new StreamContent(source) };
+        upstream.Content.Headers.ContentType = new("audio/flac");
+        upstream.Headers.TransferEncodingChunked = true;
+        upstream.Headers.Add("X-Allstarr-Duration-Seconds", "2.5");
+        var routed = new ProtocolProviderStream(upstream, SequentialLease(), "apple-musickit", "101");
+        var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        gateway.Setup(item => item.OpenStreamAsync(protocol, "apple-musickit", "101", ProviderAudioQuality.Any, null, false))
+            .ReturnsAsync(routed);
+        gateway.Setup(item => item.GetSongAsync(protocol, "apple-musickit", "101"))
+            .ReturnsAsync(new Song { Title = "Fixture", Duration = 3 });
+        using var activity = new allstarr.Services.Common.PlaybackDeliveryActivityStore();
+        activity.StreamOpened(protocol, "ext-apple-musickit-song-101", ProviderAudioQuality.Any, routed);
+        var http = new DefaultHttpContext();
+        try
+        {
+            var result = await new ProviderStreamOpener(gateway.Object, new ProtocolStreamingResponseAdapter(), cache, activity)
+                .OpenAsync(http, protocol, "apple-musickit", "101", ProviderAudioQuality.Any);
+            Assert.Null(http.Response.ContentLength);
+            var file = Assert.IsType<FileStreamResult>(result);
+            await using var reader = file.FileStream;
+            using var output = new MemoryStream();
+            var first = new byte[Flac().Length];
+            var read = await reader.ReadAsync(first).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.True(read > 0);
+            Assert.Equal("fLaC"u8.ToArray(), first[..4]);
+            output.Write(first, 0, read);
+            Assert.Null(registeredPath);
+            source.Completion.TrySetResult();
+
+            if (abort)
+            {
+                await Assert.ThrowsAnyAsync<IOException>(() => reader.CopyToAsync(output).WaitAsync(TimeSpan.FromSeconds(10)));
+                Assert.True(activity.WasInterrupted(protocol, "device", "ext-apple-musickit-song-101", DateTimeOffset.UtcNow));
+                Assert.Null(registeredPath);
+                if (cache != null)
+                {
+                    await cache.DisposeAsync();
+                    Assert.Empty(Directory.GetFiles(root, "*", SearchOption.AllDirectories));
+                }
+            }
+            else
+            {
+                await reader.CopyToAsync(output).WaitAsync(TimeSpan.FromSeconds(10));
+                var delivered = output.ToArray();
+                Assert.Equal(Flac().Length, delivered.Length);
+                Assert.Equal(Flac()[26..], delivered[26..]);
+                Assert.Equal(120000UL, BinaryPrimitives.ReadUInt64BigEndian(delivered.AsSpan(18, 8)) & ((1UL << 36) - 1));
+                Assert.False(activity.WasInterrupted(protocol, "device", "ext-apple-musickit-song-101", DateTimeOffset.UtcNow));
+                if (cache != null)
+                {
+                    Assert.NotNull(registeredPath);
+                    Assert.Equal(delivered, await File.ReadAllBytesAsync(registeredPath));
+                }
+            }
+        }
+        finally
+        {
+            source.Completion.TrySetResult();
+            upstream.Dispose();
+            if (cache != null) await cache.DisposeAsync();
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
+    }
+
     private async Task VerifyBodyStartAsync(bool cacheEnabled, bool truncated)
     {
         var root = Path.Combine(Path.GetTempPath(), "allstarr-tests", Guid.NewGuid().ToString("N"));
@@ -312,6 +405,21 @@ public sealed partial class ProviderStreamOpenerTests
                 ReadStarted = true;
                 Started.TrySetResult();
                 await Release.Task.WaitAsync(cancellationToken);
+            }
+            return await base.ReadAsync(buffer, cancellationToken);
+        }
+    }
+
+    private sealed class ProgressiveAudioTail(byte[] bytes, bool abort) : MemoryStream(bytes)
+    {
+        public readonly TaskCompletionSource Completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public override bool CanSeek => false;
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            if (Position == Length)
+            {
+                await Completion.Task.WaitAsync(cancellationToken);
+                if (abort) throw new HttpIOException(HttpRequestError.ResponseEnded, "The audio transport ended unexpectedly.");
             }
             return await base.ReadAsync(buffer, cancellationToken);
         }

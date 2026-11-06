@@ -193,6 +193,35 @@ public sealed class AppleDownloadCapabilityAdapterTests : IDisposable
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
+    public async Task Stream_OpensUnknownLengthAudioWithoutBufferingItsBody(bool audioFile)
+    {
+        var audio = Encoding.UTF8.GetBytes("progressive apple audio");
+        using var source = new UnbufferedAudio(audio);
+        var gateway = new GatewayHandler(audio, "audio/flac")
+        {
+            AdvertiseAudioFile = audioFile,
+            AudioSource = source
+        };
+        var settings = new AppleDownloadSettings { BaseUrl = "https://gateway.test/" };
+        using var http = new HttpClient(gateway);
+        var discovery = new AppleDownloadEndpointDiscovery(new StaticClientFactory(http), Options.Create(settings));
+        var adapter = new AppleDownloadStreamingCapabilityAdapter(http, settings, discovery, AppleProviderTestFactory.Client());
+        var track = new ProviderExternalResourceId(AppleDownloadCapabilityAdapter.StableProviderId, ProviderResourceKind.Track, "101");
+        var lease = (await adapter.GetStreamLeaseAsync(Context(Guid.CreateVersion7()), new(track))).RequireValue();
+        using var request = new HttpRequestMessage(HttpMethod.Get, lease.ProtectedSourceUri);
+
+        using var response = await lease.ProtectedResponseFactory!(request, CancellationToken.None);
+
+        Assert.Null(response.Content.Headers.ContentLength);
+        Assert.True(response.Headers.TransferEncodingChunked);
+        Assert.False(source.ReadStarted);
+        Assert.Equal(audioFile ? "/api/audio/101" : "/api/stream/101", request.RequestUri!.AbsolutePath);
+        Assert.Equal(audio, await response.Content.ReadAsByteArrayAsync());
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
     public async Task Stream_UsesAudioFileAndPreservesByteRanges(bool preferOriginalContainer)
     {
         var audio = Encoding.UTF8.GetBytes("apple audio file");
@@ -478,6 +507,7 @@ public sealed class AppleDownloadCapabilityAdapterTests : IDisposable
         public bool AdvertiseAudioFile { get; init; }
         public HttpStatusCode AudioStatus { get; init; } = HttpStatusCode.OK;
         public string? AudioError { get; init; }
+        public Stream? AudioSource { get; init; }
         public string? AudioRange { get; private set; }
         public bool AdvertiseLyrics { get; init; }
         public bool MissingLyrics { get; init; }
@@ -515,7 +545,11 @@ public sealed class AppleDownloadCapabilityAdapterTests : IDisposable
 
         private HttpResponseMessage Audio()
         {
-            var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(audio) };
+            var response = new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = AudioSource == null ? new ByteArrayContent(audio) : new StreamContent(AudioSource)
+            };
+            if (AudioSource != null) response.Headers.TransferEncodingChunked = true;
             response.Content.Headers.ContentType = new(contentType);
             return response;
         }
@@ -542,6 +576,22 @@ public sealed class AppleDownloadCapabilityAdapterTests : IDisposable
         {
             Content = new StringContent(body, Encoding.UTF8, "application/json")
         };
+    }
+
+    private sealed class UnbufferedAudio(byte[] bytes) : MemoryStream(bytes)
+    {
+        public bool ReadStarted { get; private set; }
+        public override bool CanSeek => false;
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            ReadStarted = true;
+            return base.ReadAsync(buffer, cancellationToken);
+        }
+        public override Task CopyToAsync(Stream destination, int bufferSize, CancellationToken cancellationToken)
+        {
+            ReadStarted = true;
+            return base.CopyToAsync(destination, bufferSize, cancellationToken);
+        }
     }
 
     private sealed class MemoryStore : IProviderDownloadArtifactStore

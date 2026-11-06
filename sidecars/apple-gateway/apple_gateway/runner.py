@@ -86,6 +86,9 @@ class BoundedProcessRunner:
         self._warm: asyncio.subprocess.Process | None = None
         self._warming: asyncio.Task | None = None
         self._probed: dict[str, dict[str, str]] = {}
+        self._audio_warming: asyncio.Task | None = None
+        from .workers import WorkerPool
+        self._audio_workers = WorkerPool(settings, semaphore=self._semaphore)
 
     async def _start_warm(self) -> None:
         if self._warm is None or self._warm.returncode is not None:
@@ -106,6 +109,41 @@ class BoundedProcessRunner:
         """Start the first helper with the gateway, so the first song after a restart is as quick as the rest."""
         self._prepare_warm()
 
+    def warm_up_audio(self) -> None:
+        if self._audio_warming is None or self._audio_warming.done():
+            self._audio_warming = asyncio.create_task(self._audio_workers.warm_up())
+
+    @contextlib.asynccontextmanager
+    async def open_audio(self, song_id: str, quality: str, *, media_user_token: str, storefront: str,
+            ceiling: AudioCeiling | None = None, original_container: bool = False, force_flac: bool = False):
+        from .progressive import AudioHeader
+
+        if not valid_media_token(media_user_token):
+            raise ValueError("account_context_required")
+        request = {"song_id": song_id, "quality": quality, "token": media_user_token, "storefront": storefront,
+            "ceiling": None if ceiling is None else [ceiling.bit_depth, ceiling.sample_rate],
+            "original_container": original_container, "force_flac": force_flac}
+        started = time.monotonic()
+        async with self._audio_workers.open(request) as (payload, chunks):
+            media_type, suffix = payload.get("media_type"), payload.get("suffix")
+            if (media_type, suffix) not in {("audio/flac", ".flac"), ("audio/mp4", ".m4a")}:
+                raise ProcessFailure("worker_failed")
+            _log_preparation(json.dumps(payload.get("preparation")), quality, (time.monotonic() - started) * 1000)
+            duration = payload.get("duration_seconds")
+            if type(duration) not in (float, int) or not math.isfinite(duration) or duration <= 0:
+                duration = None
+            yield AudioHeader(media_type, suffix, duration, payload.get("lyrics")), chunks
+
+    async def lyrics(self, song_id: str, *, media_user_token: str, storefront: str) -> str | None:
+        if not valid_media_token(media_user_token):
+            raise ValueError("account_context_required")
+        async with self._audio_workers.open({"mode": "lyrics", "song_id": song_id,
+                "token": media_user_token, "storefront": storefront}) as (header, chunks):
+            async for _ in chunks:
+                raise ProcessFailure("worker_failed")
+            content = header.get("lyrics")
+            return content if isinstance(content, str) else None
+
     async def _hand_to_warm(self, arguments: list[str], cwd: Path) -> asyncio.subprocess.Process | None:
         process, self._warm = self._warm, None
         if process is None or process.returncode is not None or process.stdin is None:
@@ -122,6 +160,9 @@ class BoundedProcessRunner:
             return None
 
     async def close(self) -> None:
+        if self._audio_warming is not None:
+            await asyncio.gather(self._audio_warming, return_exceptions=True)
+        await self._audio_workers.close()
         if self._warming is not None and not self._warming.done():
             self._warming.cancel()
             await asyncio.gather(self._warming, return_exceptions=True)

@@ -25,6 +25,19 @@ ALAC_STREAM = re.compile(r"audio-alac-stereo-(\d+)-(\d+)")
 STREAM_NAME = re.compile(r"audio-[A-Za-z0-9-]{1,48}")
 
 
+def lossless_playlist(playlists, chosen, ceiling):
+    if ceiling is None:
+        return chosen
+    lossless = [(playlist, int(match.group(1)), int(match.group(2))) for playlist in playlists
+        if (match := ALAC_STREAM.fullmatch(str(playlist.get("stream_info", {}).get("audio") or "")))]
+    fitting = [playlist for playlist, rate, depth in lossless if depth <= ceiling[0] and rate <= ceiling[1]]
+    if fitting:
+        return max(fitting, key=lambda playlist: playlist["stream_info"].get("average_bandwidth") or 0)
+    if lossless:
+        return min(lossless, key=lambda item: (item[1] * item[2], item[0]["stream_info"].get("average_bandwidth") or 0))[0]
+    return chosen
+
+
 class AccountFailure(RuntimeError):
     def __init__(self, code: str):
         super().__init__(code)
@@ -144,13 +157,7 @@ def song_preparation(cli, started: float | None = None, ceiling: tuple[int, int]
             chosen = select(self, m3u8_data, codec)
             playlists = m3u8_data.get("playlists", [])
             if getattr(codec, "value", None) == "alac" and ceiling is not None:
-                lossless = [(playlist, int(match.group(1)), int(match.group(2))) for playlist in playlists
-                    if (match := ALAC_STREAM.fullmatch(str(playlist.get("stream_info", {}).get("audio") or "")))]
-                fitting = [playlist for playlist, rate, depth in lossless if depth <= ceiling[0] and rate <= ceiling[1]]
-                if fitting:
-                    chosen = max(fitting, key=lambda playlist: playlist["stream_info"].get("average_bandwidth") or 0)
-                elif lossless:
-                    chosen = min(lossless, key=lambda item: (item[1] * item[2], item[0]["stream_info"].get("average_bandwidth") or 0))[0]
+                chosen = lossless_playlist(playlists, chosen, ceiling)
             names = {playlist.get("stream_info", {}).get("audio") for playlist in playlists}
             stream["offered"] = sorted(name for name in names if isinstance(name, str) and STREAM_NAME.fullmatch(name))[:16]
             stream["chosen"] = chosen.get("stream_info", {}).get("audio") if chosen else None
