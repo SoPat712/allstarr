@@ -80,10 +80,11 @@ public sealed partial class PersonalMixServiceTests : IAsyncLifetime
         service = NewService();
     }
 
-    private PersonalMixService NewService(Microsoft.Extensions.Logging.ILogger<PersonalMixService>? logger = null) => new(factory, clock, tags, taste,
+    private PersonalMixService NewService(Microsoft.Extensions.Logging.ILogger<PersonalMixService>? logger = null,
+        allstarr.Core.Matching.ILibraryIndexService? libraryIndex = null, allstarr.Core.Matching.ITrackIdentityService? identities = null) => new(factory, clock, tags, taste,
         new MusicMixService(gateway.Object, timeProvider: clock), gateway.Object,
         NewReleaseService(),
-        settings.Object, policies.Object, access.Object, tagSources: tagSources, logger: logger);
+        settings.Object, policies.Object, access.Object, tagSources: tagSources, logger: logger, libraryIndex: libraryIndex, identities: identities);
 
     private NewReleasesService NewReleaseService()
     {

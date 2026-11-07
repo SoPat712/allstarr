@@ -321,6 +321,21 @@ public sealed class TrackMatchesController(
             return BadRequest(new { error = "Sort is not supported" });
 
         var userId = session!.AllstarrUserId!.Value;
+        ProtocolExecutionContext execution;
+        try
+        {
+            execution = await protocolContexts.CreateAsync(session!, HttpContext.TraceIdentifier, cancellationToken);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return StatusCode(403, new { error = "The linked backend identity is unavailable" });
+        }
+        var summaryKey = page == 1 && pageSize == 1 && string.IsNullOrEmpty(backendLibraryId) &&
+            string.IsNullOrEmpty(state) && string.IsNullOrEmpty(search) && externalSnapshotId == null && string.IsNullOrEmpty(sort) &&
+            applicationCache?.IsEnabled == true
+            ? await SummaryCacheKeyAsync(session, cancellationToken) : null;
+        if (summaryKey != null && await applicationCache!.GetStringAsync(summaryKey) is { } cached)
+            return Ok(JsonSerializer.Deserialize<JsonElement>(cached));
         var started = Stopwatch.GetTimestamp();
         var review = await trackMatchCommands.GetReviewDataAsync(
             new TrackMatchActor(userId, session.IsAdministrator),
@@ -341,15 +356,6 @@ public sealed class TrackMatchesController(
                 .ToArray(), StringComparer.Ordinal);
         var identities = review.ProviderIdentities
             .GroupBy(item => item.CanonicalRecordingId).ToDictionary(group => group.Key, group => group.ToArray());
-        ProtocolExecutionContext execution;
-        try
-        {
-            execution = await protocolContexts.CreateAsync(session!, HttpContext.TraceIdentifier, cancellationToken);
-        }
-        catch (UnauthorizedAccessException)
-        {
-            return StatusCode(403, new { error = "The linked backend identity is unavailable" });
-        }
         var playableProviders = await providerGateway.GetPlayableProviderOrderAsync(execution.RequireActor(), cancellationToken);
         var providerPolicy = effectivePolicies == null ? execution.Policy :
             await effectivePolicies.ResolveForUserAsync(userId, cancellationToken);
@@ -417,7 +423,7 @@ public sealed class TrackMatchesController(
             (int)Stopwatch.GetElapsedTime(started, loaded).TotalMilliseconds, (int)Stopwatch.GetElapsedTime(loaded, prepared).TotalMilliseconds,
             (int)Stopwatch.GetElapsedTime(prepared, projected).TotalMilliseconds, (int)Stopwatch.GetElapsedTime(projected, enriched).TotalMilliseconds,
             (int)Stopwatch.GetElapsedTime(enriched).TotalMilliseconds, allRows.Length);
-        return Ok(new
+        var response = new
         {
             matches = items,
             stats = new
@@ -440,8 +446,29 @@ public sealed class TrackMatchesController(
                     TrackMatchState.Suggested or TrackMatchState.Ambiguous)
             },
             pagination = new { page, pageSize, total, totalPages = Math.Max(1, (int)Math.Ceiling(total / (double)pageSize)) }
-        }
-        );
+        };
+        if (summaryKey != null)
+            await applicationCache!.SetStringAsync(summaryKey, JsonSerializer.Serialize(response), TimeSpan.FromSeconds(60));
+        return Ok(response);
+    }
+
+    private async Task<string> SummaryCacheKeyAsync(AdminAuthSession session, CancellationToken token)
+    {
+        await using var db = await contextFactory.CreateDbContextAsync(token);
+        // Revision aggregates invalidate the short-lived projection for writes from every matching path,
+        // including background work. They read scalar columns without loading payloads or scoring candidates.
+        var revision = await db.Database.SqlQueryRaw<string>("""
+            SELECT
+                (SELECT COUNT(*) || ':' || COALESCE(SUM("Revision"), 0) || ':' || COALESCE(MAX("DecidedAt"), 0) FROM track_matches) || ':' ||
+                (SELECT COUNT(*) || ':' || COALESCE(SUM("SnapshotVersion"), 0) || ':' || COALESCE(MAX("RetrievedAt"), 0) FROM external_metadata_snapshots WHERE "ResourceKind" IN ('track', 'track-media') AND "ProviderId" != 'allstarr') || ':' ||
+                (SELECT COUNT(*) || ':' || COALESCE(SUM("Revision"), 0) || ':' || COUNT("RevokedAt") FROM manual_track_overrides) || ':' ||
+                (SELECT COUNT(*) || ':' || COALESCE(SUM("Revision"), 0) FROM library_tracks) || ':' ||
+                (SELECT COUNT(*) || ':' || COALESCE(SUM("Revision"), 0) FROM provider_track_identities) || ':' ||
+                (SELECT COUNT(*) || ':' || COALESCE(SUM("Revision"), 0) FROM provider_accounts) || ':' ||
+                (SELECT COUNT(*) || ':' || COALESCE(SUM("Revision"), 0) FROM runtime_settings) AS "Value"
+            """).SingleAsync(token);
+        var scope = $"{db.Database.GetConnectionString()}:{session.AllstarrUserId}:{session.IsAdministrator}:{session.BackendType}:{session.BackendInstanceId}:{session.UserId}:{revision}";
+        return "track-matches:summary:v1:" + Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(scope)));
     }
 
     [HttpGet("{externalSnapshotId:guid}/current")]

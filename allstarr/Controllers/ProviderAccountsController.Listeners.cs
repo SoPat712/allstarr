@@ -91,6 +91,23 @@ public sealed partial class ProviderAccountsController
             .Select(group => new { UserId = group.Key, Count = group.Count() })
             .ToDictionaryAsync(item => item.UserId, item => item.Count, cancellationToken);
 
+        var recentPlays = await plays.GroupBy(item => item.OwnerUserId)
+            .Select(group => new
+            {
+                UserId = group.Key,
+                Plays = group.OrderByDescending(item => item.ListenedAt ?? item.StartedAt)
+                    .ThenByDescending(item => item.Id)
+                    .Take(5)
+                    .Select(item => new
+                    {
+                        title = item.Title,
+                        artist = item.Artist,
+                        playedAt = item.ListenedAt ?? item.StartedAt
+                    })
+                    .ToList()
+            })
+            .ToDictionaryAsync(item => item.UserId, item => item.Plays, cancellationToken);
+
         var summaries = new List<object>(users.Count);
         foreach (var user in users)
         {
@@ -99,17 +116,6 @@ public sealed partial class ProviderAccountsController
             if (activity.GetValueOrDefault(user.Id) is { } playedAt &&
                 (!lastActiveAt.HasValue || playedAt > lastActiveAt.Value))
                 lastActiveAt = playedAt;
-            var recentPlays = await plays.Where(item => item.OwnerUserId == user.Id)
-                .OrderByDescending(item => item.ListenedAt ?? item.StartedAt)
-                .ThenByDescending(item => item.Id)
-                .Take(5)
-                .Select(item => new
-                {
-                    title = item.Title,
-                    artist = item.Artist,
-                    playedAt = item.ListenedAt ?? item.StartedAt
-                })
-                .ToListAsync(cancellationToken);
             summaries.Add(new
             {
                 user.Id,
@@ -119,7 +125,7 @@ public sealed partial class ProviderAccountsController
                 lastActiveAt,
                 playsThisWeek = weeklyCounts.GetValueOrDefault(user.Id),
                 user.playlistEditingAllowed,
-                recentPlays
+                recentPlays = recentPlays.GetValueOrDefault(user.Id) ?? []
             });
         }
 

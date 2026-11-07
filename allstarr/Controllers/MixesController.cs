@@ -20,7 +20,7 @@ public sealed partial class MixesController(PersonalMixService mixes, IDurableRu
     public Task<IActionResult> List([FromQuery] string? timeZoneId = null, CancellationToken token = default) => ExecuteAsync(async user =>
     {
         var enabled = (bool)(await settings.GetAsync(PersonalMixService.PublishKey, token)).Value;
-        return (await mixes.ListAsync(user.Id, timeZoneId, token)).Select(mix => Card(mix, enabled));
+        return (await mixes.ListCardsAsync(user.Id, timeZoneId, token)).Select(mix => Card(mix, enabled));
     }, token);
 
     [HttpGet("{id:guid}")]

@@ -55,24 +55,32 @@ public sealed partial class LibraryIndexService
                 .Select(item => (ProviderId: item.ProviderId!, ExternalIdHash: CanonicalCatalogKeys.Hash(item.ExternalId!))).ToArray();
             var ids = recordings.Where(item => item.RecordingId.HasValue).Select(item => item.RecordingId!.Value).ToArray();
             var isrcs = recordings.Select(item => CleanIsrc(item.Isrc)).OfType<string>().ToArray();
-            var hashes = sources.Select(item => item.ExternalIdHash).Distinct().ToArray();
-            var providers = sources.Select(item => item.ProviderId).Distinct().ToArray();
-            var storedSnapshots = await db.ExternalMetadataSnapshots.AsNoTracking().Where(item =>
+            var knownIdentities = ids.Length == 0 ? [] : await db.ProviderTrackIdentities.AsNoTracking().Where(item =>
+                    ids.Contains(item.CanonicalRecordingId) && item.ResourceKind == ProviderResourceKind.Track &&
+                    (item.Verification == ProviderIdentityVerification.Verified || item.Verification == ProviderIdentityVerification.Pinned) &&
+                    item.VerificationMethod != CatalogIdentityPolicy.SupersededVerificationMethod &&
+                    (item.Scope == ProviderIdentityScope.Catalog || item.Scope == ProviderIdentityScope.Account &&
+                     db.ProviderAccounts.Any(account => account.Id == item.ProviderAccountId && account.Enabled &&
+                         (account.OwnerUserId == null || account.OwnerUserId == context.Principal.UserId))))
+                .ToArrayAsync(cancellationToken);
+            var knownIdentitiesBySource = knownIdentities.ToLookup(item => (item.ProviderId, item.ExternalIdHash));
+            var directSources = sources.ToHashSet();
+            var candidateSources = sources.Concat(knownIdentities.Select(item => (item.ProviderId, item.ExternalIdHash))).ToArray();
+            var hashes = candidateSources.Select(item => item.ExternalIdHash).Distinct().ToArray();
+            var providers = candidateSources.Select(item => item.ProviderId).Distinct().ToArray();
+            var storedSnapshots = (await db.ExternalMetadataSnapshots.AsNoTracking().Where(item =>
                     item.OwnerUserId == context.Principal.UserId && item.Protocol == context.Protocol.ToString().ToLowerInvariant() &&
                     item.BackendInstanceId == context.BackendInstanceId && item.BackendPrincipalId == context.VerifiedBackendPrincipalId &&
-                    item.ResourceKind == "track" &&
-                    (hashes.Contains(item.ExternalIdHash) && providers.Contains(item.ProviderId) ||
-                     db.ProviderTrackIdentities.Any(identity =>
-                         (!item.ProviderTrackIdentityId.HasValue || identity.Id == item.ProviderTrackIdentityId) && identity.ProviderId == item.ProviderId &&
-                         identity.ExternalIdHash == item.ExternalIdHash && identity.ResourceKind == ProviderResourceKind.Track &&
-                         (identity.Verification == ProviderIdentityVerification.Verified || identity.Verification == ProviderIdentityVerification.Pinned) &&
-                         identity.VerificationMethod != CatalogIdentityPolicy.SupersededVerificationMethod &&
-                         ids.Contains(identity.CanonicalRecordingId) &&
-                         (identity.Scope == ProviderIdentityScope.Catalog || identity.ProviderAccountId == item.ProviderAccountId))) &&
+                    item.ResourceKind == "track" && hashes.Contains(item.ExternalIdHash) && providers.Contains(item.ProviderId) &&
                     (item.ProviderAccountId == null || db.ProviderAccounts.Any(account => account.Id == item.ProviderAccountId &&
                         account.Enabled && (account.OwnerUserId == null || account.OwnerUserId == context.Principal.UserId))))
                 .OrderByDescending(item => item.RetrievedAt).ThenByDescending(item => item.SnapshotVersion)
-                .ToArrayAsync(cancellationToken);
+                .ToArrayAsync(cancellationToken))
+                .Where(item => directSources.Contains((item.ProviderId, item.ExternalIdHash)) ||
+                    knownIdentitiesBySource[(item.ProviderId, item.ExternalIdHash)].Any(identity =>
+                        (!item.ProviderTrackIdentityId.HasValue || identity.Id == item.ProviderTrackIdentityId) &&
+                        (identity.Scope == ProviderIdentityScope.Catalog || identity.ProviderAccountId == item.ProviderAccountId)))
+                .ToArray();
             var snapshots = storedSnapshots.GroupBy(item => (item.ProviderId, item.ExternalIdHash))
                 .ToDictionary(group => group.Key, group => group.First());
             var identityIds = storedSnapshots.Select(item => item.ProviderTrackIdentityId).OfType<Guid>().Distinct().ToArray();

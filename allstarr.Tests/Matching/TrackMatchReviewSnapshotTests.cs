@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using allstarr.Controllers;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Identity;
@@ -10,6 +11,7 @@ using allstarr.Core.Playlists;
 using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
 using allstarr.Services.Admin;
+using allstarr.Services.Common;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -19,6 +21,72 @@ namespace allstarr.Tests;
 
 public sealed class TrackMatchReviewSnapshotTests
 {
+    [Fact]
+    public async Task SummaryCacheKeepsResponseShapeAndRechecksDecisionsAuthoritiesAndAccess()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var cache = new TestMemoryApplicationCache();
+        static JsonElement Raw(IActionResult result) => JsonSerializer.SerializeToElement(Assert.IsType<OkObjectResult>(result).Value);
+        async Task<JsonElement> Read() => Raw(await fixture.Controller(cache).List(pageSize: 1));
+        var initial = await Read();
+        Assert.True(JsonNode.DeepEquals(JsonNode.Parse(initial.GetRawText()), JsonNode.Parse((await Read()).GetRawText())));
+        Guid sourceId;
+        await using (var db = fixture.Factory.CreateDbContext())
+        {
+            var source = await db.ExternalMetadataSnapshots.SingleAsync(item => item.ResourceKind == "track" && item.ExternalIdHash == Hash("older"));
+            sourceId = source.Id;
+            db.TrackMatches.Add(new()
+            {
+                Id = Guid.NewGuid(),
+                OwnerUserId = fixture.Owner,
+                ExternalSnapshotId = sourceId,
+                State = TrackMatchState.Rejected,
+                DecisionVersion = 1,
+                SourceSnapshotVersion = source.SnapshotVersion,
+                Revision = 1,
+                DecidedAt = DateTimeOffset.UtcNow
+            });
+            await db.SaveChangesAsync();
+        }
+        var changed = await Read();
+        Assert.Equal(initial.GetProperty("stats").GetProperty("rejected").GetInt32() + 1, changed.GetProperty("stats").GetProperty("rejected").GetInt32());
+        Assert.Equal(Raw(await fixture.Controller(cache).List(pageSize: 50)).GetProperty("stats").GetRawText(), changed.GetProperty("stats").GetRawText());
+        await using (var db = fixture.Factory.CreateDbContext())
+        {
+            var source = await db.ExternalMetadataSnapshots.SingleAsync(item => item.Id == sourceId);
+            db.ManualTrackOverrides.Add(new()
+            {
+                Id = Guid.NewGuid(),
+                ExternalSnapshotId = sourceId,
+                OwnerUserId = fixture.Owner,
+                SourceProviderId = source.ProviderId,
+                SourceExternalIdHash = source.ExternalIdHash,
+                Decision = ManualOverrideDecision.Reject,
+                Revision = 1,
+                DecisionVersion = 1,
+                CreatedAt = DateTimeOffset.UtcNow
+            });
+            await db.SaveChangesAsync();
+        }
+        var manual = await Read();
+        Assert.Equal(1, manual.GetProperty("stats").GetProperty("manualRejections").GetInt32());
+        Assert.True(JsonNode.DeepEquals(JsonNode.Parse(manual.GetRawText()), JsonNode.Parse((await Read()).GetRawText())));
+        await using (var db = fixture.Factory.CreateDbContext())
+        {
+            var authority = await db.ManualTrackOverrides.SingleAsync(item => item.ExternalSnapshotId == sourceId);
+            authority.RevokedAt = DateTimeOffset.UtcNow;
+            authority.Revision++;
+            await db.SaveChangesAsync();
+        }
+        Assert.Equal(0, (await Read()).GetProperty("stats").GetProperty("manualRejections").GetInt32());
+        await using (var db = fixture.Factory.CreateDbContext())
+        {
+            (await db.Users.SingleAsync(item => item.Id == fixture.Owner)).Enabled = false;
+            await db.SaveChangesAsync();
+        }
+        Assert.Equal(403, Assert.IsType<ObjectResult>(await fixture.Controller(cache).List(pageSize: 1)).StatusCode);
+    }
+
     [Theory]
     [InlineData(null)]
     [InlineData("Retained")]
@@ -210,7 +278,7 @@ public sealed class TrackMatchReviewSnapshotTests
             RetrievedAt = at ?? Now.AddMinutes(1)
         };
 
-        public TrackMatchesController Controller()
+        public TrackMatchesController Controller(IApplicationCache? cache = null)
         {
             var gateway = new Mock<IProtocolProviderGateway>();
             gateway.Setup(item => item.GetPlayableProviderOrderAsync(It.IsAny<ProviderActorContext>(), It.IsAny<CancellationToken>())).ReturnsAsync(new[] { "qobuz" });
@@ -228,7 +296,7 @@ public sealed class TrackMatchReviewSnapshotTests
                 ExpiresAtUtc = DateTime.UtcNow.AddHours(1)
             };
             return new(Service, gateway.Object, new AdminProtocolExecutionContextFactory(Factory, new SystemPlatformClock()),
-                Factory, null!, null!, new TrackMatchDecisionEngine(), null!)
+                Factory, null!, null!, new TrackMatchDecisionEngine(), null!, applicationCache: cache)
             { ControllerContext = new() { HttpContext = http } };
         }
 

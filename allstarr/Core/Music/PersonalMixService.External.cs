@@ -23,7 +23,7 @@ public sealed partial class PersonalMixService
                 account.Id == link.ProviderAccountId && account.OwnerUserId == user.Id && account.Enabled &&
                 account.ProviderId == link.SourceProviderId));
 
-    private async Task<IReadOnlyList<PersonalMix>> ExternalMixesAsync(UserRecord user, CancellationToken token, Guid? id = null)
+    private async Task<IReadOnlyList<PersonalMix>> ExternalMixesAsync(UserRecord user, CancellationToken token, Guid? id = null, bool cardsOnly = false)
     {
         await using var db = await factory.CreateDbContextAsync(token);
         var links = (await ExternalLinks(db, user).Where(link => id == null || link.Id == id).AsNoTracking().OrderBy(link => link.CreatedAt).ToArrayAsync(token))
@@ -32,7 +32,7 @@ public sealed partial class PersonalMixService
         var policy = await policies.ResolveForUserAsync(user.Id, token);
         var projections = id.HasValue
             ? new Dictionary<Guid, DurablePlaylistProjection>()
-            : await reader.ReadByLinkIdsAsync(user.Id, links.Select(link => link.Id).ToArray(), token, user.Id);
+            : await reader.ReadByLinkIdsAsync(user.Id, links.Select(link => link.Id).ToArray(), token, user.Id, preferLocalCopies: !cardsOnly);
         var result = new List<PersonalMix>(links.Length);
         foreach (var link in links)
         {

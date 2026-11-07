@@ -90,10 +90,10 @@ public static class TrackRouteProjector
         IEnumerable<LibraryTrackRecord> accessibleLibraryTracks,
         IEnumerable<ProviderTrackIdentityRecord> providerIdentities,
         IReadOnlyCollection<string>? providerPriority = null,
-        EffectiveProviderPolicySnapshot? providerPolicy = null) =>
+        EffectiveProviderPolicySnapshot? providerPolicy = null, bool preferLocalCopies = true) =>
         Project(snapshot, decision, manual, sourceIdentity,
             new TrackRouteLibrary(accessibleLibraryTracks.Where(item => item.BackendInstanceId == snapshot.BackendInstanceId)),
-            providerIdentities, providerPriority, providerPolicy);
+            providerIdentities, providerPriority, providerPolicy, preferLocalCopies);
 
     public static TrackRouteProjection Project(
         ExternalMetadataSnapshotRecord snapshot,
@@ -103,7 +103,7 @@ public static class TrackRouteProjector
         TrackRouteLibrary library,
         IEnumerable<ProviderTrackIdentityRecord> providerIdentities,
         IReadOnlyCollection<string>? providerPriority = null,
-        EffectiveProviderPolicySnapshot? providerPolicy = null)
+        EffectiveProviderPolicySnapshot? providerPolicy = null, bool preferLocalCopies = true)
     {
         var canonicalId = decision?.CanonicalRecordingId ?? sourceIdentity?.CanonicalRecordingId;
         var identities = canonicalId.HasValue
@@ -125,7 +125,7 @@ public static class TrackRouteProjector
             scopedLibrary.Ids, providerPolicy, snapshot.ProviderId);
         scopedLibrary.ById.TryGetValue(classification.LibraryTrackId ?? Guid.Empty, out var local);
         var matchingSource = TrackSnapshotMetadata.MatchingSource(snapshot, sourceIdentity);
-        if (local == null && manual == null && decision?.State is not (TrackMatchState.Pinned or TrackMatchState.Rejected) &&
+        if (preferLocalCopies && local == null && manual == null && decision?.State is not (TrackMatchState.Pinned or TrackMatchState.Rejected) &&
             snapshot.OwnerUserId != Guid.Empty &&
             providerPolicy?.IsAutomatic(sourceIdentity?.ProviderId ?? snapshot.ProviderId) != false)
         {
@@ -150,7 +150,7 @@ public static class TrackRouteProjector
             }
         }
         canonicalId ??= local?.CanonicalRecordingId;
-        if (local == null && manual == null &&
+        if (preferLocalCopies && local == null && manual == null &&
             decision?.State is not (TrackMatchState.Pinned or TrackMatchState.Rejected) &&
             classification.PrimaryProviderRoute?.IsManual != true &&
             classification.ReviewState is TrackMatchState.Accepted or TrackMatchState.Pinned &&

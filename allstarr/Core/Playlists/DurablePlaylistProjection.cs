@@ -192,7 +192,7 @@ public sealed class DurablePlaylistProjectionReader(
         Guid? ownerUserId,
         IReadOnlyCollection<Guid> playlistLinkIds,
         CancellationToken cancellationToken = default,
-        Guid? viewerUserId = null)
+        Guid? viewerUserId = null, bool preferLocalCopies = true)
     {
         var result = new Dictionary<Guid, DurablePlaylistProjection>();
         if (playlistLinkIds.Count == 0) return result;
@@ -318,7 +318,7 @@ public sealed class DurablePlaylistProjectionReader(
                 var projected = currentEntries.Select(entry => ProjectEntry(entry, currentExternal[entry.ExternalMetadataSnapshotId],
                     currentSources, currentIdentities, currentOrder,
                     entry.PublishedTrackMatchId is { } id ? currentMatches.GetValueOrDefault(id) : null,
-                    currentOverrides, currentRoutes, policy, durations)).ToArray();
+                    currentOverrides, currentRoutes, policy, durations, preferLocalCopies)).ToArray();
                 var run = runs.SingleOrDefault(item => item.PlaylistSourceSnapshotId == snapshot.Id &&
                     item.PlaylistLinkId == link.Id && item.OwnerUserId == snapshot.OwnerUserId);
                 result[link.Id] = new(link.Id, snapshot.Id, snapshot.SnapshotVersion, snapshot.Name,
@@ -1044,12 +1044,12 @@ public sealed class DurablePlaylistProjectionReader(
         IReadOnlyDictionary<Guid, ManualTrackOverrideLayers> overrides,
         TrackRouteLibrary library,
         EffectiveProviderPolicySnapshot? providerPolicy = null,
-        IReadOnlyDictionary<Guid, long?>? recordingDurations = null)
+        IReadOnlyDictionary<Guid, long?>? recordingDurations = null, bool preferLocalCopies = true)
     {
         var manual = overrides.GetValueOrDefault(external.Id)?.Effective;
         var identity = sourceIdentities.GetValueOrDefault(external.Id);
         var route = TrackRouteProjector.Project(
-            external, match, manual, identity, library, identities, providerOrder, providerPolicy);
+            external, match, manual, identity, library, identities, providerOrder, providerPolicy, preferLocalCopies);
         var classification = route.Classification;
         var local = route.LibraryTrack;
         var backendItemId = local?.BackendItemId;

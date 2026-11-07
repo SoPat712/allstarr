@@ -13,6 +13,32 @@ namespace allstarr.Tests;
 public sealed partial class PersonalMixServiceTests
 {
     [Fact]
+    public async Task Mix_cards_keep_current_filters_and_saved_artwork_while_details_resolve_local_copies()
+    {
+        await Seed();
+        var generated = (await service.GenerateAsync(owner)).Single(mix => mix.Kind == "on-repeat");
+        var selected = generated.Songs[0].Song;
+        var local = new Mock<allstarr.Core.Matching.ILibraryIndexService>(MockBehavior.Strict);
+        var identities = new Mock<allstarr.Core.Matching.ITrackIdentityService>(MockBehavior.Strict);
+        identities.Setup(item => item.ResolveRecordingsAsync(It.IsAny<allstarr.Core.Capabilities.ProviderActorContext>(),
+                It.IsAny<IReadOnlyCollection<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Dictionary<string, allstarr.Core.Matching.CanonicalRecordingIdentity?>());
+        local.Setup(item => item.FindKnownRecordingTracksAsync(It.IsAny<ProtocolExecutionContext>(),
+                It.IsAny<IReadOnlyList<allstarr.Core.Matching.LibraryRecordingLookup>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Dictionary<string, string> { [selected.Id] = "local-copy" });
+        service = NewService(libraryIndex: local.Object, identities: identities.Object);
+        var cards = await service.ListCardsAsync(owner);
+        Assert.Equal(selected.Id, cards.Single(mix => mix.Id == generated.Id).Songs[0].Song.Id);
+        local.VerifyNoOtherCalls();
+        identities.VerifyNoOtherCalls();
+        Assert.Equal("local-copy", (await service.GetAsync(owner, generated.Id)).Songs[0].Song.Id);
+        await taste.PutNudgeAsync(owner, new("artist", selected.Artist, "never"));
+        Assert.DoesNotContain((await service.ListCardsAsync(owner)).SelectMany(mix => mix.Songs), item => item.Song.Artist == selected.Artist);
+        filter = "CleanOnly";
+        Assert.Equal((await service.ListAsync(owner)).Select(mix => mix.Readiness), (await service.ListCardsAsync(owner)).Select(mix => mix.Readiness));
+    }
+
+    [Fact]
     public async Task Custom_setup_does_not_load_a_mix_document_that_it_discards()
     {
         await Seed();

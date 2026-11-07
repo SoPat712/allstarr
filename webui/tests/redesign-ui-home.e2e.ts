@@ -59,6 +59,62 @@ async function homeFixture(page: Page, admin: boolean, playing = true, todayCoun
   await page.route("**/api/admin/storage", route => route.fulfill({ json: { backups: [{ id: "backup", status: "verified", createdAt: "2026-11-02T22:00:00Z", bytes: 185100000 }], backupPolicy: { enabled: true, dailyRetentionCount: 7, weeklyRetentionCount: 4 }, backupStatus: { nextRunAt: "2026-11-04T22:00:00Z" } } }));
   await page.route("**/api/admin/stats?*", route => route.fulfill({ json: { playCount: 36, timelineUnit: "day", timeline: [{ key: "2026-10-29", plays: 5 }, { key: "2026-10-30", plays: 8 }, { key: "2026-10-31", plays: 3 }, { key: "2026-11-01", plays: 4 }, { key: "2026-11-02", plays: 6 }, { key: "2026-11-03", plays: 7 }, { key: "2026-11-04", plays: 3 }] } }));
 }
+test("Home fills setup tiles while mixes take ten seconds", async ({ page }) => {
+  await appearance(page, 1280, "dark");
+  await homeFixture(page, true);
+  let mixesPending = true, release!: () => void;
+  const pending = new Promise<void>(resolve => { release = resolve; });
+  await page.route("**/api/admin/mixes?*", async route => {
+    await new Promise(resolve => setTimeout(resolve, 10_000));
+    await pending;
+    mixesPending = false;
+    await route.fallback();
+  });
+  await page.goto("/#/");
+  const tile = (title: string) => page.locator(".setup-tile").filter({ has: page.getByRole("heading", { name: title, exact: true }) });
+  try {
+    await expect(tile("Matches")).toContainText("4,999 matched");
+    await expect(tile("Storage")).toContainText("600 MiB cached of 2 GiB");
+    await expect(tile("Backups")).toContainText("Verified");
+    expect(mixesPending).toBe(true);
+    await expect(page.getByRole("status", { name: "Loading mixes", exact: true })).toBeVisible();
+    await expect(page.getByText("Your mixes start here", { exact: true })).toHaveCount(0);
+    release();
+    await expect(page.getByRole("region", { name: "Pick up where you left off", exact: true })).toBeVisible({ timeout: 15_000 });
+  } finally { release(); }
+});
+
+for (const fails of [false, true]) test(`Home uses loading placeholders until each setup request settles: ${fails ? "failure" : "success"}`, async ({ page }) => {
+  await appearance(page, 1280, "dark");
+  await homeFixture(page, true);
+  let release!: () => void;
+  const pending = new Promise<void>(resolve => { release = resolve; });
+  for (const endpoint of ["track-matches?*", "downloads?*", "storage", "mixes?*"]) {
+    await page.route(`**/api/admin/${endpoint}`, async route => {
+      await pending;
+      if (fails) await route.fulfill({ status: 503, json: { error: "Unavailable" } });
+      else await route.fallback();
+    });
+  }
+  try {
+    await page.goto("/#/");
+    for (const title of ["Matches", "Storage", "Backups"]) {
+      const tile = page.locator(".setup-tile").filter({ has: page.getByRole("heading", { name: title, exact: true }) });
+      await expect(tile.getByRole("status", { name: `Loading ${title}`, exact: true })).toBeVisible();
+      await expect(tile).not.toContainText("Not checked");
+      await expect(tile).not.toContainText("Not available");
+    }
+    await expect(page.getByText("Your mixes start here", { exact: true })).toHaveCount(0);
+    release();
+    await expect(page.getByRole("status", { name: "Loading Matches", exact: true })).toHaveCount(0);
+    if (fails) {
+      await expect(page.locator(".setup-tile").filter({ hasText: "Matches" })).toContainText("Not checked");
+      await expect(page.locator(".setup-tile").filter({ hasText: "Backups" })).toContainText("Not available");
+      await expect(page.getByText("Your mixes start here", { exact: true })).toBeVisible();
+    } else await expect(page.locator(".setup-tile").filter({ hasText: "Matches" })).toContainText("4,999 matched");
+  } finally { release(); }
+});
+
 test("Home recent activity keeps one rollout summary and rematch failures", async ({ page }) => {
   await appearance(page, 1280, "dark");
   const row = { kind: "matching", state: "accepted", detail: "Result", occurredAt: "2026-11-03T20:00:00Z" };

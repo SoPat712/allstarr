@@ -743,30 +743,31 @@ public sealed partial class ProviderAccountsController : ControllerBase
         CancellationToken cancellationToken)
     {
         var summaries = new Dictionary<Guid, AccountConfigurationSummary>();
-        foreach (var account in accounts.Where(item => item.SecretReferenceId.HasValue))
-        {
-            var (fields, origin) = AccountFields(account.ProviderId);
-            if (fields.Count == 0) continue;
-
-            using var lease = await _secretStore.OpenAsync(
-                account.SecretReferenceId!.Value,
-                SecretAccess(account),
-                cancellationToken);
-            using var document = JsonDocument.Parse(lease.Value);
-            if (document.RootElement.ValueKind != JsonValueKind.Object) continue;
-
-            var values = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
-            var configured = new List<string>();
-            foreach (var setting in fields)
+        var configuredAccounts = accounts.Where(item => item.SecretReferenceId.HasValue)
+            .Select(account => (Account: account, Definition: AccountFields(account.ProviderId)))
+            .Where(item => item.Definition.Fields.Count > 0)
+            .ToList();
+        await _secretStore.ReadManyAsync(
+            configuredAccounts.Select(item => (item.Account.SecretReferenceId!.Value, SecretAccess(item.Account))).ToArray(),
+            (index, plaintext) =>
             {
-                if (!TryGetSettingValue(document.RootElement, setting.Key, origin, out var value) || !HasValue(value)) continue;
-                configured.Add(setting.Key);
-                if (setting.ValueKind != ProviderSettingValueKind.Secret)
-                    values[setting.Key] = value.Clone();
-            }
+                var (account, (fields, origin)) = configuredAccounts[index];
+                using var document = JsonDocument.Parse(plaintext);
+                if (document.RootElement.ValueKind != JsonValueKind.Object) return;
 
-            summaries[account.Id] = new AccountConfigurationSummary(values, configured);
-        }
+                var values = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+                var configured = new List<string>();
+                foreach (var setting in fields)
+                {
+                    if (!TryGetSettingValue(document.RootElement, setting.Key, origin, out var value) || !HasValue(value)) continue;
+                    configured.Add(setting.Key);
+                    if (setting.ValueKind != ProviderSettingValueKind.Secret)
+                        values[setting.Key] = value.Clone();
+                }
+
+                summaries[account.Id] = new AccountConfigurationSummary(values, configured);
+            },
+            cancellationToken);
 
         return summaries;
     }

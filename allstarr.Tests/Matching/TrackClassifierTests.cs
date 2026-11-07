@@ -9,6 +9,29 @@ namespace allstarr.Tests;
 public sealed class TrackClassifierTests
 {
     [Fact]
+    public void StoredCardProjectionKeepsPublishedRoutesWithoutSearchingForNewLocalMatches()
+    {
+        var owner = Guid.NewGuid();
+        var source = Identity(Guid.NewGuid(), "spotify", "source");
+        var snapshot = new ExternalMetadataSnapshotRecord
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = owner,
+            BackendInstanceId = "backend",
+            ProviderId = "spotify",
+            SnapshotVersion = 1,
+            PayloadJson = SelfLoveMatchFixture.Payload
+        };
+        var track = SelfLoveMatchFixture.Local(owner, "backend");
+        var library = new TrackRouteLibrary([track]);
+        var card = TrackRouteProjector.Project(snapshot, null, null, source, library, [source], [], preferLocalCopies: false);
+        Assert.Null(card.LibraryTrack);
+        Assert.Equal(track.Id, TrackRouteProjector.Project(snapshot, null, null, source, library, [source], []).LibraryTrack?.Id);
+        var stored = Decision(track.Id, TrackMatchState.Accepted, 1, .88);
+        Assert.Equal(track.Id, TrackRouteProjector.Project(snapshot, stored, null, source, library, [source], [], preferLocalCopies: false).LibraryTrack?.Id);
+    }
+
+    [Fact]
     public void QualifiedLibraryProjectionDoesNotRequireAStreamingFallback()
     {
         var owner = Guid.NewGuid();

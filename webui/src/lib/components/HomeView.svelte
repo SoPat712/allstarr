@@ -35,28 +35,39 @@
   let listeners = $state<number | null>(null);
   let tasks = $state<ActivityTask[]>([]);
   let extrasPending = false, extrasAt = 0, disposed = false;
+  let extrasLoaded = $state({ week: false, shelf: false, audio: false, matchStats: false, storage: false, indexedSongs: false, listeners: false, tasks: false });
   const daily = $derived(recapTimeline(week?.timeline ?? [], week?.timelineUnit ?? "day"));
   async function loadExtras() {
     if (extrasPending || Date.now() - extrasAt < 30_000) return;
     extrasPending = true;
-    const results = await Promise.allSettled([listeningStats.get("7d"), mixes.list(), administrator ? Promise.resolve(null) : releaseInbox.get(), administrator ? downloads.list("cache") : Promise.resolve(null), administrator ? settings.storage() : Promise.resolve(null), administrator ? settings.config() : Promise.resolve(null), administrator ? downloads.list("kept") : Promise.resolve(null), administrator ? matchReview.list({ pageSize: 1 }) : Promise.resolve(null), administrator ? playlistLinks.libraryIndexCounts() : Promise.resolve(null), administrator ? sources.accounts() : Promise.resolve(null), administrator ? activityWork.tasks("everyone") : Promise.resolve(null)] as const);
-    if (!disposed) {
-      if (results[0].status === "fulfilled") week = results[0].value;
-      if (results[1].status === "fulfilled" && Array.isArray(results[1].value)) shelf = results[1].value.filter(card => card.readiness.ready).sort((a, b) => Number(b.inApps) - Number(a.inApps)).slice(0, 6);
-      if (results[2].status === "fulfilled" && results[2].value) releases = results[2].value.entries ?? [];
-      if (results[3].status === "fulfilled" && typeof results[3].value?.totalSize === "number") {
-        const config = results[5].status === "fulfilled" ? results[5].value : null;
-        const configured = Number((config?.cache as Record<string, unknown> | undefined)?.audioMaximumGiB);
-        const maximum = Number.isFinite(configured) && configured > 0 ? configured * 1024 ** 3 : null;
-        audio = { bytes: results[3].value.totalSize, maximum, keptBytes: results[6].status === "fulfilled" ? results[6].value?.totalSize ?? null : null };
-      }
-      if (results[7].status === "fulfilled") matchStats = results[7].value?.stats ?? null;
-      if (results[4].status === "fulfilled") storage = results[4].value;
-      if (results[8].status === "fulfilled" && typeof results[8].value?.trackCount === "number") indexedSongs = results[8].value.trackCount;
-      if (results[9].status === "fulfilled" && Array.isArray(results[9].value?.audienceUsers)) listeners = results[9].value.audienceUsers.length;
-      if (results[10].status === "fulfilled" && Array.isArray(results[10].value?.items)) tasks = results[10].value.hasMore ? [] : results[10].value.items;
-      extrasAt = Date.now();
+    function settle<T>(request: Promise<T>, update: (value: T) => void, loaded?: keyof typeof extrasLoaded) {
+      return request
+        .then(value => { if (!disposed) update(value); })
+        .catch(() => {
+          // Keep the last successful value; initial failures use the existing fallback.
+        })
+        .finally(() => { if (!disposed && loaded) extrasLoaded = { ...extrasLoaded, [loaded]: true }; });
     }
+    let maximum: number | null = null, keptBytes: number | null = null;
+    await Promise.allSettled([
+      settle(listeningStats.get("7d"), value => { week = value; }, "week"),
+      settle(mixes.list(), value => { if (Array.isArray(value)) shelf = value.filter(card => card.readiness.ready).sort((a, b) => Number(b.inApps) - Number(a.inApps)).slice(0, 6); }, "shelf"),
+      ...(!administrator ? [settle(releaseInbox.get(), value => { releases = value.entries ?? []; })] : [
+        settle(downloads.list("cache"), value => { if (typeof value.totalSize === "number") audio = { bytes: value.totalSize, maximum, keptBytes }; }, "audio"),
+        settle(settings.storage(), value => { storage = value; }, "storage"),
+        settle(settings.config(), value => {
+          const configured = Number((value.cache as Record<string, unknown> | undefined)?.audioMaximumGiB);
+          maximum = Number.isFinite(configured) && configured > 0 ? configured * 1024 ** 3 : null;
+          if (audio) audio = { ...audio, maximum };
+        }),
+        settle(downloads.list("kept"), value => { keptBytes = value.totalSize ?? null; if (audio) audio = { ...audio, keptBytes }; }),
+        settle(matchReview.list({ pageSize: 1 }), value => { matchStats = value.stats ?? null; }, "matchStats"),
+        settle(playlistLinks.libraryIndexCounts(), value => { if (typeof value.trackCount === "number") indexedSongs = value.trackCount; }, "indexedSongs"),
+        settle(sources.accounts(), value => { if (Array.isArray(value.audienceUsers)) listeners = value.audienceUsers.length; }, "listeners"),
+        settle(activityWork.tasks("everyone"), value => { if (Array.isArray(value.items)) tasks = value.hasMore ? [] : value.items; }, "tasks"),
+      ]),
+    ]);
+    if (!disposed) extrasAt = Date.now();
     extrasPending = false;
   }
   let snapshot = $state<HomeSnapshot | null>(null);
@@ -348,7 +359,7 @@
       <Button variant="outline" size="sm" href={item.href}>{item.action}</Button>
     </section>
   {/if}
-  {#if administrator}<HomeSetup {snapshot} {audio} {matchStats} {storage} {indexedSongs} {listeners} {tasks} />{/if}
+  {#if administrator}<HomeSetup {snapshot} {audio} {matchStats} {storage} {indexedSongs} {listeners} {tasks} loaded={extrasLoaded} />{/if}
 
   <div class="home-summary" class:administrator>
   <section class="week-panel panel" aria-label={administrator ? "This week" : "Your week"} aria-busy={refreshing}>
@@ -362,7 +373,7 @@
         {#if !administrator && week?.newArtistCount != null || snapshot.stats.scrobblesToday != null}<div class="scrobble-kpi">{#if !administrator && week?.newArtistCount != null}<strong>{week.newArtistCount.toLocaleString()}</strong><span>{countNoun(week.newArtistCount, "new artist")}</span>{:else if snapshot.stats.scrobblesToday != null}<strong>{snapshot.stats.scrobblesToday.toLocaleString()}</strong><span>{countNoun(snapshot.stats.scrobblesToday, "scrobble")}<span class="desktop-kpi">{" sent"}</span>{" today"}</span>{/if}</div>{/if}
       </div>
     {:else}<p class="muted">Listening stats aren't available right now.</p>{/if}
-    {#if daily.length}<div class="week-chart"><p>Songs finished each day</p><RecapBars points={daily} label="Songs finished each day" unit="songs" compact /></div>{:else}<p class="muted">Your daily listening chart appears when listening stats are available.</p>{/if}
+    {#if !extrasLoaded.week}<RowsSkeleton label="Loading listening stats" count={1} />{:else if daily.length}<div class="week-chart"><p>Songs finished each day</p><RecapBars points={daily} label="Songs finished each day" unit="songs" compact /></div>{:else}<p class="muted">Your daily listening chart appears when listening stats are available.</p>{/if}
   </section>
 
   {#if administrator || visibleActivity.length}
@@ -379,7 +390,8 @@
   {/if}
   </div>
   <div class="home-mixes">
-  {#if shelf.length}<MixShelf title="Pick up where you left off" cards={shelf} columns={6} seeAll="#/for-you" seeAllLabel="All mixes" onopen={card => { window.location.hash = `#/for-you?mix=${encodeURIComponent(card.id)}`; }} />
+  {#if !extrasLoaded.shelf}<RowsSkeleton label="Loading mixes" count={1} />
+  {:else if shelf.length}<MixShelf title="Pick up where you left off" cards={shelf} columns={6} seeAll="#/for-you" seeAllLabel="All mixes" onopen={card => { window.location.hash = `#/for-you?mix=${encodeURIComponent(card.id)}`; }} />
   {:else}<EmptyState title="Your mixes start here" description="Play some music or import your history to get mixes made for you.">{#snippet icon()}<Headphones size={24} />{/snippet}{#snippet action()}<Button variant="outline" href="#/for-you">Explore your mixes</Button>{/snippet}</EmptyState>{/if}
   </div>
   {#if !administrator && releases.length}<div class="release-note"><span>New from artists you follow: <strong>{releases[0].title}</strong> by {releases[0].artist}</span><Button variant="text" size="sm" href="#/for-you?section=releases">See releases</Button></div>{/if}

@@ -312,13 +312,16 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
     public Task<IReadOnlyList<PersonalMix>> ListAsync(Guid owner, string? timeZoneId = null, CancellationToken token = default) =>
         ListCoreAsync(owner, timeZoneId, token);
 
+    public Task<IReadOnlyList<PersonalMix>> ListCardsAsync(Guid owner, string? timeZoneId = null, CancellationToken token = default) =>
+        ListCoreAsync(owner, timeZoneId, token, cardsOnly: true);
+
     public Task<IReadOnlyList<PersonalMix>> ListAsync(ProtocolExecutionContext context, string? timeZoneId = null) =>
         context.Actor?.EffectiveUserId is { } owner
             ? ListCoreAsync(owner, timeZoneId, context.CancellationToken, context)
             : Task.FromResult<IReadOnlyList<PersonalMix>>([]);
 
     private async Task<IReadOnlyList<PersonalMix>> ListCoreAsync(Guid owner, string? timeZoneId, CancellationToken token,
-        ProtocolExecutionContext? context = null)
+        ProtocolExecutionContext? context = null, bool cardsOnly = false)
     {
         await using var db = await factory.CreateDbContextAsync(token);
         var user = await BrowseUserAsync(db, owner, token, context);
@@ -332,7 +335,8 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
             document = (await SnapshotAsync(owner, token, timeZoneId)).Document;
         else
             document = await LoadAsync(db, user, token, saved: row, document: saved);
-        return (await VisibleAsync(owner, document, token)).Concat(await ExternalMixesAsync(user, token)).ToArray();
+        return (await VisibleAsync(owner, document, token, preferLocalCopies: !cardsOnly))
+            .Concat(await ExternalMixesAsync(user, token, cardsOnly: cardsOnly)).ToArray();
     }
 
     public async Task<PersonalMix> GetAsync(Guid owner, Guid id, CancellationToken token = default)
@@ -626,7 +630,8 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
         ExplicitContentLyrics = song.ExplicitContentLyrics
     };
 
-    private async Task<IReadOnlyList<PersonalMix>> VisibleAsync(Guid owner, PersonalMixDocument document, CancellationToken token)
+    private async Task<IReadOnlyList<PersonalMix>> VisibleAsync(Guid owner, PersonalMixDocument document, CancellationToken token,
+        bool preferLocalCopies = true)
     {
         var songs = document.Mixes.Values.SelectMany(mix => mix.Songs).Select(item => item.Song).ToArray();
         var blocked = await taste.BlockedSongsAsync(owner, songs, token);
@@ -640,7 +645,8 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
                 readiness = new(false, "No playable songs are available for this mix yet. Refresh after more listening or new releases.");
             return mix with { Songs = visible, Readiness = readiness };
         }).ToArray();
-        return await PreferLocalCopiesAsync(owner, visibleMixes, token);
+        // Cards use the saved artwork identities. Resolve current local playback routes when opening the mix.
+        return preferLocalCopies ? await PreferLocalCopiesAsync(owner, visibleMixes, token) : visibleMixes;
     }
 
     public async Task SetInAppsAsync(Guid owner, Guid id, bool enabled, CancellationToken token)
