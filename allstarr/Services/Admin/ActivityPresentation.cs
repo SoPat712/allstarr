@@ -4,6 +4,17 @@ namespace allstarr.Services.Admin;
 
 internal static class ActivityPresentation
 {
+    public static bool IsRoutine(string label, string state, string severity)
+    {
+        var normalized = state.ToLowerInvariant().Replace("-", "").Replace("_", "").Replace(" ", "");
+        if (severity.Equals("error", StringComparison.OrdinalIgnoreCase) || severity.Equals("warning", StringComparison.OrdinalIgnoreCase) ||
+            normalized is "failed" or "rejected" or "unhealthy" or "unresolved" or "error" or "blocked" or "unauthorized") return false;
+        return normalized is "pending" or "waiting" or "deferred" or "retryscheduled" ||
+            System.Text.RegularExpressions.Regex.IsMatch(label,
+                @"background.?task|runtime settings source use|record[\s_-]+(?:a[\s_-]+)?listen|playback\.signal|track.?identity|canonical.?recording|history.?resolution",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+    }
+
     public static string? SafeText(string? value, int maxLength = 1000)
     {
         var text = SafeOperationalText.Sanitize(value, maxLength);

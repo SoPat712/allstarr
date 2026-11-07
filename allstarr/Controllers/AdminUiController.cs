@@ -387,8 +387,7 @@ public class AdminUiController : ControllerBase
             ? (await GetProviderSummaries(cancellationToken) as OkObjectResult)?.Value
             : new { providers = Array.Empty<object>() };
         timings.Add(("sources", Stopwatch.GetTimestamp()));
-        // Home leaves out routine work, so it asks for enough to still have something to show.
-        var activity = (await GetDashboardActivity(40, cancellationToken: cancellationToken) as OkObjectResult)?.Value;
+        var activity = await ReadHomeActivityAsync(cancellationToken);
         timings.Add(("activity", Stopwatch.GetTimestamp()));
         services.GetService<ILogger<AdminUiController>>()?.LogInformation("Home timing: {Steps}", string.Join(", ", timings.Skip(1).Select((item, index) =>
             $"{item.Step} {(int)Stopwatch.GetElapsedTime(timings[index].At, item.At).TotalMilliseconds} ms")));
@@ -886,15 +885,43 @@ public class AdminUiController : ControllerBase
         activityTimings.Add(("assembly", Stopwatch.GetTimestamp()));
         HttpContext.RequestServices.GetService<ILogger<AdminUiController>>()?.LogInformation("Activity timing: {Steps}", string.Join(", ",
             activityTimings.Skip(1).Select((item, index) => $"{item.Step} {(int)Stopwatch.GetElapsedTime(activityTimings[index].At, item.At).TotalMilliseconds} ms")));
-        return Ok(new
-        {
+        return Ok(new AdminUiActivityPage(
             items,
-            hasMore = ordered.Length > limit || jobs.Count == scanLimit ||
-                      playlistRuns.Count == scanLimit || matches.Count == scanLimit || audits.Count == scanLimit ||
-                      extensionLogs.Count == scanLimit || downloadArtifacts.Count == scanLimit,
-            nextCursor = items.LastOrDefault()?.OccurredAt,
-            nextCursorId = items.LastOrDefault()?.Id
-        });
+            ordered.Length > limit || jobs.Count == scanLimit ||
+                playlistRuns.Count == scanLimit || matches.Count == scanLimit || audits.Count == scanLimit ||
+                extensionLogs.Count == scanLimit || downloadArtifacts.Count == scanLimit,
+            items.LastOrDefault()?.OccurredAt,
+            items.LastOrDefault()?.Id));
+    }
+
+    internal async Task<AdminUiActivityPage?> ReadHomeActivityAsync(CancellationToken cancellationToken = default)
+    {
+        const int limit = 24;
+        var items = new List<AdminUiActivityItem>();
+        var healthResults = new HashSet<string>(StringComparer.Ordinal);
+        DateTimeOffset? before = null;
+        Guid? beforeId = null;
+        while (true)
+        {
+            var result = await GetDashboardActivity(100, before, beforeId, cancellationToken);
+            if (result is not OkObjectResult { Value: AdminUiActivityPage page }) return null;
+            foreach (var item in page.Items)
+            {
+                if (item.IsRoutine) continue;
+                if (item.Action == "health.smoke" || item.Label.Equals("Health check", StringComparison.OrdinalIgnoreCase))
+                {
+                    var key = JsonSerializer.Serialize(new[] { item.ActorUserId, item.ProviderId, item.Source, item.Label, item.State, item.Detail });
+                    if (!healthResults.Add(key)) continue;
+                }
+                items.Add(item);
+                if (items.Count == limit)
+                    return new(items.ToArray(), true, item.OccurredAt, item.Id);
+            }
+            if (!page.HasMore || page.Items.Length == 0)
+                return new(items.ToArray(), false, items.LastOrDefault()?.OccurredAt, items.LastOrDefault()?.Id);
+            before = page.NextCursor;
+            beforeId = page.NextCursorId == null ? null : Guid.Parse(page.NextCursorId);
+        }
     }
 
     private static string FormatBytes(long length)
@@ -2147,4 +2174,13 @@ public sealed record AdminUiActivityItem(
     string? JobId = null,
     string? Recovery = null,
     string? ActionHref = null,
-    string? ActionLabel = null);
+    string? ActionLabel = null)
+{
+    public bool IsRoutine => ActivityPresentation.IsRoutine(Label, State, Severity);
+}
+
+internal sealed record AdminUiActivityPage(
+    [property: System.Text.Json.Serialization.JsonPropertyName("items")] AdminUiActivityItem[] Items,
+    [property: System.Text.Json.Serialization.JsonPropertyName("hasMore")] bool HasMore,
+    [property: System.Text.Json.Serialization.JsonPropertyName("nextCursor")] DateTimeOffset? NextCursor,
+    [property: System.Text.Json.Serialization.JsonPropertyName("nextCursorId")] string? NextCursorId);

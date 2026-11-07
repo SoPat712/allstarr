@@ -51,12 +51,16 @@ internal static class ActivityJobPresentation
                     AND length(replace(a."SubjectId", '-', '')) = 32
                     AND j."OwnerUserId" IS a."ActorUserId"
                     AND a."SubjectType" = 'job'
-                    AND lower(j."Type") IN (SELECT value FROM json_each({JsonSerializer.Serialize(RoutineJobTypes)})))
+                    AND (lower(j."Type") IN (SELECT value FROM json_each({JsonSerializer.Serialize(RoutineJobTypes)}))
+                        OR lower(j."Type") = 'listening-history.resolve'
+                            AND a."Category" = 'job-progress' AND a."Action" = 'history-resolution-current'))
         """).AsNoTracking();
 
     public static bool ShowAuditInHistory(AuditEventRecord audit, DurableJobRecord job) =>
-        audit.Category is not ("job-attempt" or "job-progress") || !RoutineJobTypes.Contains(job.Type, StringComparer.OrdinalIgnoreCase) ||
-        FailureOutcomes.Contains(audit.Outcome, StringComparer.OrdinalIgnoreCase);
+        audit.Category is not ("job-attempt" or "job-progress") || FailureOutcomes.Contains(audit.Outcome, StringComparer.OrdinalIgnoreCase) ||
+        !(RoutineJobTypes.Contains(job.Type, StringComparer.OrdinalIgnoreCase) ||
+          job.Type == Core.Intelligence.ListeningHistoryResolution.JobTypeName &&
+          audit.Category == "job-progress" && audit.Action == "history-resolution-current");
 
     public static async Task<IReadOnlyDictionary<Guid, ActivityJobDisplay>> ResolveAsync(
         AllstarrDbContext db, IReadOnlyCollection<DurableJobRecord> jobs,
@@ -140,7 +144,8 @@ internal static class ActivityJobPresentation
              job.Type.Equals("storage.backup", StringComparison.OrdinalIgnoreCase) ? "Backup archive" : null);
         var summary = Summary(job, favorite, health, playlistName);
         var activityState = job.State.ToString().ToLowerInvariant();
-        var severity = Severity(job.State, health);
+        var severity = job.Type == Core.Intelligence.ListeningHistoryResolution.JobTypeName &&
+            job.LastAttemptOutcome == "deferred" && job.LastErrorCode == null ? "info" : Severity(job.State, health);
         IReadOnlyDictionary<string, string>? technical = null;
         if (health is { } healthContext)
         {
@@ -177,6 +182,20 @@ internal static class ActivityJobPresentation
     private static string Summary(DurableJobRecord job, FavoriteContext? favorite,
         HealthContext? health, string? playlistName)
     {
+        if (job.Type == Core.Intelligence.ListeningHistoryResolution.JobTypeName)
+        {
+            try
+            {
+                using var payload = JsonDocument.Parse(job.PayloadJson);
+                if (payload.RootElement.TryGetProperty("Cursor", out var cursor) && cursor.TryGetInt32(out var completed) &&
+                    payload.RootElement.TryGetProperty("Total", out var count) && count.TryGetInt32(out var total) && total > 0)
+                {
+                    var progress = $"{Math.Clamp(completed, 0, total)} of {total} songs checked; {Math.Max(0, total - completed)} remaining.";
+                    return job.LastErrorCode == null ? progress : $"{progress} {Safe(job.LastErrorMessage) ?? "Waiting to retry a source that could not be reached."}";
+                }
+            }
+            catch (JsonException) { }
+        }
         if (job.Type == SpotifyLikesImport.Type)
         {
             try
@@ -353,6 +372,7 @@ internal static class ActivityJobPresentation
         "playlist.retain-track" => "Keep playlist song",
         "playback.signal" or "playback.signal.process" => "Record a listen",
         "listening-history.import" => "History import",
+        "listening-history.resolve" => "History resolution",
         "listening.musicbrainz.enrich" => "Identify listened song",
         "recording.keep" => "Keep a song",
         "recording.kept-cleanup" => "Remove unused kept copy",

@@ -51,15 +51,19 @@ public sealed record DurableJobCompletion(
     DurableJobCompletionKind Kind,
     string? ErrorCode = null,
     string? SafeMessage = null,
-    TimeSpan? RetryDelay = null)
+    TimeSpan? RetryDelay = null,
+    bool IsContinuation = false,
+    bool UseDeferralBackoff = false)
 {
     public static DurableJobCompletion Success() => new(DurableJobCompletionKind.Succeeded);
     public static DurableJobCompletion Retry(string code, string? message, TimeSpan? delay = null) =>
         new(DurableJobCompletionKind.Retry, code, message, delay);
     public static DurableJobCompletion Failure(string code, string? message) =>
         new(DurableJobCompletionKind.Failed, code, message);
-    public static DurableJobCompletion Defer(string code, string? message, TimeSpan? delay = null) =>
-        new(DurableJobCompletionKind.Deferred, code, message, delay);
+    public static DurableJobCompletion Defer(string code, string? message, TimeSpan? delay = null, bool useBackoff = false) =>
+        new(DurableJobCompletionKind.Deferred, code, message, delay, UseDeferralBackoff: useBackoff);
+    public static DurableJobCompletion Continue(TimeSpan delay) =>
+        new(DurableJobCompletionKind.Deferred, RetryDelay: delay, IsContinuation: true);
     public static DurableJobCompletion Cancelled() => new(DurableJobCompletionKind.Cancelled);
 }
 
@@ -382,32 +386,45 @@ public sealed partial class DurableJobQueue
             return false;
         }
 
-        context.AuditEvents.Add(new AuditEventRecord
+        var currentSnapshot = job.Type == "listening-history.resolve" && stage == "history-resolution";
+        var action = currentSnapshot ? "history-resolution-current" : stage;
+        var subjectId = job.Id.ToString("D");
+        var progress = currentSnapshot
+            ? await context.AuditEvents.SingleOrDefaultAsync(item => item.Category == "job-progress" &&
+                item.Action == action && item.SubjectType == "job" && item.SubjectId == subjectId &&
+                item.ActorUserId == job.OwnerUserId, cancellationToken)
+            : null;
+        if (progress == null)
         {
-            Id = Guid.CreateVersion7(),
-            ActorUserId = job.OwnerUserId,
-            Category = "job-progress",
-            Action = stage,
-            Outcome = "running",
-            CorrelationId = job.CorrelationId,
-            SubjectType = "job",
-            SubjectId = job.Id.ToString("D"),
-            DetailsJson = JsonSerializer.Serialize(new
+            progress = new AuditEventRecord
             {
-                jobId = job.Id,
-                attempt = job.AttemptCount,
-                stage,
-                message,
-                completed,
-                total,
-                provider,
-                playlist,
-                track,
-                deferralReason,
-                throughputPerSecond
-            }),
-            CreatedAt = now
+                Id = Guid.CreateVersion7(),
+                ActorUserId = job.OwnerUserId,
+                Category = "job-progress",
+                Action = action,
+                Outcome = "running",
+                CorrelationId = job.CorrelationId,
+                SubjectType = "job",
+                SubjectId = subjectId
+            };
+            context.AuditEvents.Add(progress);
+        }
+        progress.DetailsJson = JsonSerializer.Serialize(new
+        {
+            jobId = job.Id,
+            attempt = job.AttemptCount,
+            stage,
+            message,
+            completed,
+            total,
+            provider,
+            playlist,
+            track,
+            deferralReason,
+            throughputPerSecond,
+            currentSnapshot
         });
+        progress.CreatedAt = now;
         await context.SaveChangesAsync(cancellationToken);
         if (_clientEvents != null && job.Type == allstarr.Core.Favorites.FavoriteActionPipeline.JobType)
             await _clientEvents.KeepProgressAsync(job.Id, total > 0 && completed.HasValue ? (double)completed.Value / total.Value : null);
@@ -441,6 +458,7 @@ public sealed partial class DurableJobQueue
             errorCode = null;
             safeMessage = null;
         }
+        var continuation = effectiveKind == DurableJobCompletionKind.Deferred && completion.IsContinuation;
         switch (effectiveKind)
         {
             case DurableJobCompletionKind.Succeeded:
@@ -476,11 +494,27 @@ public sealed partial class DurableJobQueue
                 }
                 break;
             case DurableJobCompletionKind.Deferred:
+                if (continuation)
+                {
+                    job.State = DurableJobState.RetryScheduled;
+                    job.AvailableAt = now.Add(completion.RetryDelay ?? TimeSpan.Zero);
+                    job.LastAttemptOutcome = "deferred";
+                    job.DeferralCount = 0;
+                    errorCode = null;
+                    safeMessage = null;
+                    break;
+                }
+                if (completion.UseDeferralBackoff)
+                    job.MaxDeferrals = Math.Min(job.MaxDeferrals, _options.DefaultMaxDeferrals);
                 job.DeferralCount++;
                 if (job.DeferralCount <= job.MaxDeferrals)
                 {
                     job.State = DurableJobState.RetryScheduled;
-                    job.AvailableAt = now.Add(completion.RetryDelay ?? TimeSpan.FromMinutes(5));
+                    var delay = completion.RetryDelay ?? (completion.UseDeferralBackoff
+                        ? TimeSpan.Zero : TimeSpan.FromMinutes(5));
+                    if (completion.UseDeferralBackoff && RetryDelay(job.DeferralCount) > delay)
+                        delay = RetryDelay(job.DeferralCount);
+                    job.AvailableAt = now.Add(delay);
                     job.LastAttemptOutcome = "deferred";
                 }
                 else
@@ -508,7 +542,7 @@ public sealed partial class DurableJobQueue
         job.LastErrorMessage = safeMessage;
         job.UpdatedAt = now;
         job.Revision++;
-        DurableJobHistory.Append(context, job, now);
+        if (!continuation) DurableJobHistory.Append(context, job, now);
         await context.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
     }
