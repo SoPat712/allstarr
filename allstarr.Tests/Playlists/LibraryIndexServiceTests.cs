@@ -238,6 +238,92 @@ public sealed class LibraryIndexServiceTests : IAsyncLifetime
             [new("ext-deezer-song-remote", null, "USRC17607839", "deezer", "remote")]));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task NativeLookupUsesTheBestScopedLibraryCopyWithoutReplacingAPersonalProviderPin(bool pinned)
+    {
+        var viewer = Context(_userA, "principal-a");
+        var recording = await _identities.CreateRecordingAsync(viewer.RequireActor(), "lookup", null, null, publicId: "ext-deezer-song-source");
+        var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes("source"))).ToLowerInvariant();
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var snapshot = new ExternalMetadataSnapshotRecord
+            {
+                Id = Guid.NewGuid(),
+                OwnerUserId = _userA,
+                ProviderId = "deezer",
+                ResourceKind = "track",
+                Protocol = "jellyfin",
+                BackendInstanceId = "backend",
+                BackendPrincipalId = "principal-a",
+                ExternalIdHash = hash,
+                PayloadSha256 = new string('a', 64),
+                SnapshotVersion = 1,
+                RetrievedAt = _clock.UtcNow,
+                PayloadJson = """{"Title":"Song","Artist":"Artist","Album":"Album","DurationMilliseconds":240000}"""
+            };
+            db.ExternalMetadataSnapshots.Add(snapshot);
+            for (var index = 0; index < 3; index++)
+            {
+                var canonical = Guid.NewGuid();
+                db.CanonicalRecordings.Add(new CanonicalRecordingRecord { Id = canonical, CreatedByUserId = _userA });
+                db.LibraryTracks.Add(new LibraryTrackRecord
+                {
+                    Id = Guid.NewGuid(),
+                    OwnerUserId = _userA,
+                    CanonicalRecordingId = canonical,
+                    BackendInstanceId = "backend",
+                    BackendLibraryId = "music",
+                    Protocol = "jellyfin",
+                    BackendItemId = $"copy-{index}",
+                    FilePath = index == 0 ? "/music/0.mp3" : $"/music/{index}.flac",
+                    Title = "Song",
+                    Artist = "Artist",
+                    Album = "Album",
+                    DurationMilliseconds = 240_000,
+                    SourceModifiedAt = _clock.UtcNow.AddDays(index)
+                });
+            }
+            if (pinned) db.ManualTrackOverrides.Add(new ManualTrackOverrideRecord
+            {
+                Id = Guid.NewGuid(),
+                OwnerUserId = _userA,
+                ExternalSnapshotId = snapshot.Id,
+                SourceProviderId = "deezer",
+                SourceExternalIdHash = hash,
+                Decision = ManualOverrideDecision.Pin,
+                TargetProviderId = "deezer",
+                TargetExternalId = "personal-choice",
+                DecisionVersion = 1
+            });
+            await db.SaveChangesAsync();
+        }
+        LibraryRecordingLookup[] lookups = [new("ext-deezer-song-source", recording.Recording.Id, null, "deezer", "source")];
+        await using var saved = await _factory.CreateDbContextAsync();
+        var before = (await saved.AuditEvents.CountAsync(), await saved.TrackMatches.CountAsync(), await saved.Jobs.CountAsync());
+
+        var matches = await _service.FindKnownRecordingTracksAsync(viewer, lookups);
+
+        if (pinned) Assert.Empty(matches);
+        else Assert.Equal("copy-2", Assert.Single(matches).Value);
+        Assert.Equal(pinned ? null : "copy-2", await _service.ResolveKnownTrackAsync(viewer, "ext-deezer-song-source"));
+        Assert.Empty(await _service.FindKnownRecordingTracksAsync(Context(_userB, "principal-b"), lookups));
+        Assert.Equal(before, (await saved.AuditEvents.CountAsync(), await saved.TrackMatches.CountAsync(), await saved.Jobs.CountAsync()));
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            foreach (var copy in await db.LibraryTracks.ToArrayAsync()) copy.Isrc = "USAAA2600002";
+            await db.SaveChangesAsync();
+        }
+        Assert.Empty(await _service.FindKnownRecordingTracksAsync(viewer, [lookups[0] with { Isrc = "USAAA2600001" }]));
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            foreach (var copy in await db.LibraryTracks.ToArrayAsync()) copy.BackendLibraryId = "unavailable";
+            await db.SaveChangesAsync();
+        }
+        Assert.Empty(await _service.FindKnownRecordingTracksAsync(viewer, lookups));
+    }
+
     [Fact]
     public async Task KnownRecordingReads_UseOnlyProvenIdentityAndCurrentLibraryAccessWithoutWrites()
     {

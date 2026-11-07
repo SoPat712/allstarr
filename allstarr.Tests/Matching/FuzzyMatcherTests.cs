@@ -6,6 +6,18 @@ namespace allstarr.Tests;
 public class FuzzyMatcherTests
 {
     [Theory]
+    [InlineData("Self Love (Spider-Man: Across the Spider-Verse)", "Self Love")]
+    [InlineData("Self Love (Instrumental)", "Self Love (Instrumental)")]
+    [InlineData("Self Love (Another Film)", "Self Love (Another Film)")]
+    [InlineData("Self Love (Spider-Man: Across the Spider-Verse) (Instrumental)", "Self Love (Instrumental)")]
+    public void SoundtrackAlbumAnnotationsDoNotChangeTheRecordingVersion(string title, string expected)
+    {
+        const string album = "Metro Boomin Presents Spider-Man: Across the Spider-Verse (Soundtrack From and Inspired by the Motion Picture)";
+        Assert.Equal(expected, FuzzyMatcher.WithoutSoundtrackAlbumAnnotation(title, album));
+        Assert.Equal(title, FuzzyMatcher.WithoutSoundtrackAlbumAnnotation(title, "Another album"));
+    }
+
+    [Theory]
     [InlineData("Anxiety - Single", "anxiety")]
     [InlineData("Anxiety - EP", "anxiety")]
     [InlineData("Anxiety (sInGlE)", "anxiety")]

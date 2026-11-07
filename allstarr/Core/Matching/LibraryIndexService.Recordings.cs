@@ -60,11 +60,33 @@ public sealed partial class LibraryIndexService
                 .Select(item => item.LibraryTrackId!.Value).ToArray();
             var ids = recordings.Where(item => item.RecordingId.HasValue).Select(item => item.RecordingId!.Value).ToArray();
             var isrcs = recordings.Select(item => CleanIsrc(item.Isrc)).OfType<string>().ToArray();
-            var tracks = await LibraryTrackAccess.Query(db, context, access).Where(item =>
-                    pinnedIds.Contains(item.Id) || item.CanonicalRecordingId.HasValue && ids.Contains(item.CanonicalRecordingId.Value) ||
-                    item.Isrc != null && isrcs.Contains(item.Isrc))
-                .OrderBy(item => item.BackendLibraryId).ThenBy(item => item.BackendItemId).ThenBy(item => item.Id)
-                .ToArrayAsync(cancellationToken);
+            var hashes = sources.Select(item => item.ExternalIdHash).Distinct().ToArray();
+            var providers = sources.Select(item => item.ProviderId).Distinct().ToArray();
+            var snapshots = (await db.ExternalMetadataSnapshots.AsNoTracking().Where(item =>
+                    item.OwnerUserId == context.Principal.UserId && item.Protocol == context.Protocol.ToString().ToLowerInvariant() &&
+                    item.BackendInstanceId == context.BackendInstanceId && item.BackendPrincipalId == context.VerifiedBackendPrincipalId &&
+                    item.ResourceKind == "track" && hashes.Contains(item.ExternalIdHash) && providers.Contains(item.ProviderId) &&
+                    (item.ProviderAccountId == null || db.ProviderAccounts.Any(account => account.Id == item.ProviderAccountId &&
+                        account.Enabled && (account.OwnerUserId == null || account.OwnerUserId == context.Principal.UserId))))
+                .OrderByDescending(item => item.RetrievedAt).ThenByDescending(item => item.SnapshotVersion)
+                .ToArrayAsync(cancellationToken)).GroupBy(item => (item.ProviderId, item.ExternalIdHash))
+                .ToDictionary(group => group.Key, group => group.First());
+            var query = LibraryTrackAccess.Query(db, context, access);
+            if (snapshots.Count == 0)
+                query = query.Where(item => pinnedIds.Contains(item.Id) ||
+                    item.CanonicalRecordingId.HasValue && ids.Contains(item.CanonicalRecordingId.Value) ||
+                    item.Isrc != null && isrcs.Contains(item.Isrc));
+            var tracks = (await query.ToArrayAsync(cancellationToken))
+                .OrderByDescending(item => LocalCopyPreference.FormatRank(Path.GetExtension(item.FilePath)))
+                .ThenByDescending(item => item.SourceModifiedAt)
+                .ThenBy(item => item.BackendLibraryId).ThenBy(item => item.BackendItemId).ThenBy(item => item.Id).ToArray();
+            var engine = new TrackMatchDecisionEngine(new TrackMatchPolicy
+            {
+                LocalPriorityWindow = policy?.LocalPreferenceWindow ?? .07,
+                ExplicitContent = policy?.Preferences.ExplicitFilter == "CleanOnly"
+                    ? ProviderExplicitContentPolicy.CleanOnly : ProviderExplicitContentPolicy.Allow
+            });
+            var candidates = engine.PrepareCandidates(tracks.Select(LocalCopyPreference.ToCandidate));
             ProviderUseMode Mode(string providerId) => policy?.GetProviderMode(providerId) ??
                 (_registry?.TryGet(providerId, out var descriptor) == true
                     ? descriptor!.DefaultUseMode : ProviderUseMode.Automatic);
@@ -89,6 +111,18 @@ public sealed partial class LibraryIndexService
                     var isrc = CleanIsrc(recording.Isrc);
                     track ??= isrc == null ? null : tracks.FirstOrDefault(item => item.Isrc == isrc &&
                         (!recording.RecordingId.HasValue || !item.CanonicalRecordingId.HasValue || item.CanonicalRecordingId == recording.RecordingId));
+                    if (recording.ProviderId != null && recording.ExternalId != null &&
+                        snapshots.GetValueOrDefault((recording.ProviderId, CanonicalCatalogKeys.Hash(recording.ExternalId))) is { } snapshot &&
+                        TrackSnapshotMetadata.MatchingSource(snapshot) is { } source)
+                    {
+                        source = source with { Isrc = source.Isrc ?? CleanIsrc(recording.Isrc) };
+                        var scope = new TrackMatchScope(context.Principal.UserId, context.BackendInstanceId,
+                            snapshot.ProviderAccountId, 2, snapshot.SnapshotVersion, access.LibraryIds.ToHashSet(StringComparer.Ordinal));
+                        var match = engine.Decide(scope, source, candidates);
+                        if (match.State == TrackMatchReviewState.Accepted)
+                            track = tracks.First(item => item.Id == match.SelectedLibraryTrackId);
+                    }
+
                 }
                 if (track != null) result.TryAdd(recording.PublicId, track.BackendItemId);
             }

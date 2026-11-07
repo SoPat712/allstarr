@@ -374,7 +374,8 @@ public sealed class MatchReplayTests(ITestOutputHelper output)
                     score.BackendItemId, canonical, score.Title, score.Artist, score.Album, albumArtist,
                     score.DurationMilliseconds, score.CandidateIsrc, recordingId, explicitness,
                     score.ProviderTrackIds, score.IsLocal, score.IsBestVersion,
-                    score.IsLocal ? null : score.ProviderTrackIds?.Keys.FirstOrDefault()));
+                    score.IsLocal ? null : score.ProviderTrackIds?.Keys.FirstOrDefault())
+                { FileFormat = score.FileFormat, SourceModifiedAt = score.SourceModifiedAt });
                 baselineCandidates.Add(candidates[^1] with { IsExplicit = baselineExplicitness });
             }
             if (candidates.Count != stored.Length || candidates.Select(item => item.LibraryTrackId).Distinct().Count() != candidates.Count)

@@ -6,7 +6,6 @@ using System.Text.Json;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Identity;
 using allstarr.Core.Jobs;
-using allstarr.Core.ManagedFiles;
 using allstarr.Core.Operations;
 using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
@@ -281,20 +280,6 @@ public sealed class TrackRematchAllService(
             .ToArrayAsync(cancellationToken);
         var decisionsBySnapshot = decisions.ToDictionary(item => item.ExternalSnapshotId);
         var protectedSnapshots = await ManualTrackOverrides.ProtectedSnapshotIdsAsync(db, snapshotIds, cancellationToken);
-        if (algorithmRollout)
-        {
-            var keptRecordingIds = await db.Set<RecordingKeptRouteEntity>().AsNoTracking()
-                .Select(item => item.CanonicalRecordingId).ToArrayAsync(cancellationToken);
-            protectedSnapshots.UnionWith(decisions.Where(item =>
-                    item.CanonicalRecordingId.HasValue && keptRecordingIds.Contains(item.CanonicalRecordingId.Value))
-                .Select(item => item.ExternalSnapshotId));
-            var keptSnapshots = await db.ExternalMetadataSnapshots.AsNoTracking()
-                .Where(snapshot => snapshotIds.Contains(snapshot.Id) &&
-                    db.ProviderTrackIdentities.Any(identity => identity.Id == snapshot.ProviderTrackIdentityId &&
-                        keptRecordingIds.Contains(identity.CanonicalRecordingId)))
-                .Select(snapshot => snapshot.Id).ToArrayAsync(cancellationToken);
-            protectedSnapshots.UnionWith(keptSnapshots);
-        }
         var groups = snapshotGroups.Select(group => new TrackRematchGroup(
                 group.Current,
                 group.Snapshots.Select(item => decisionsBySnapshot.GetValueOrDefault(item.Id))
@@ -368,7 +353,8 @@ public sealed class TrackRematchAllService(
         Guid snapshotId,
         string correlationId,
         int decisionVersion,
-        DateTimeOffset createdAt) => new()
+        DateTimeOffset createdAt,
+        bool libraryPrimary = false) => new()
         {
             Id = Guid.CreateVersion7(),
             ActorUserId = ownerUserId,
@@ -379,7 +365,8 @@ public sealed class TrackRematchAllService(
             DetailsJson = JsonSerializer.Serialize(new
             {
                 row = RowHash(snapshotId),
-                decisionVersion
+                decisionVersion,
+                libraryPrimary
             }),
             CreatedAt = createdAt
         };
@@ -472,6 +459,9 @@ public sealed class TrackRematchAllJobHandler(
         if (work.Pending.Count == 0)
         {
             if (publications != null) await publications.QueueAsync(cancellationToken);
+            var promoted = await LibraryPrimaryCountAsync(work.OperationCorrelation, cancellationToken);
+            if (promoted > 0)
+                await context.ReportProgressAsync(new("track.rematch", $"Now plays from your library: {promoted} songs"), cancellationToken);
             return DurableJobCompletion.Success();
         }
 
@@ -550,9 +540,12 @@ public sealed class TrackRematchAllJobHandler(
         await SaveAuditsAsync(audits, cancellationToken);
         if (publications != null) await publications.QueueAsync(cancellationToken);
         var remaining = Math.Max(0, total - completed);
+        var libraryPrimaryCount = await LibraryPrimaryCountAsync(work.OperationCorrelation, cancellationToken);
         await context.ReportProgressAsync(new(
             "track.rematch",
-            remaining == 0
+            remaining == 0 && libraryPrimaryCount > 0
+                ? $"Now plays from your library: {libraryPrimaryCount} songs"
+                : remaining == 0
                 ? "Finished replacing automatic match decisions."
                 : $"Reprocessed {completed} of {total} automatic match decisions.",
             completed,
@@ -571,6 +564,23 @@ public sealed class TrackRematchAllJobHandler(
                 "track_rematch_batch_pending",
                 "The next bounded rematch batch is scheduled.",
                 TimeSpan.FromSeconds(2));
+    }
+
+    private async Task<int> LibraryPrimaryCountAsync(string correlationId, CancellationToken cancellationToken)
+    {
+        await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
+        var changes = await db.AuditEvents.AsNoTracking().Where(item => item.CorrelationId == correlationId &&
+                item.Category == "track-rematch" && item.Action == "automatic.review" && item.Outcome == "rematched")
+            .Select(item => item.DetailsJson).ToArrayAsync(cancellationToken);
+        var rows = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var json in changes)
+        {
+            using var details = JsonDocument.Parse(json);
+            if (details.RootElement.TryGetProperty("libraryPrimary", out var promoted) && promoted.ValueKind == JsonValueKind.True &&
+                details.RootElement.TryGetProperty("row", out var row) && row.GetString() is { } hash)
+                rows.Add(hash);
+        }
+        return rows.Count;
     }
 
     private async Task<IReadOnlyDictionary<Guid, RuntimeIdentity>> LoadRuntimesAsync(

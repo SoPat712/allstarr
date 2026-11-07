@@ -63,6 +63,18 @@ public sealed class MatchCorpusTests
         Assert.Equal(cases.Count, cases.Select(item => item.Case).Distinct(StringComparer.Ordinal).Count());
     }
 
+    [Fact]
+    public void DuplicateCopiesInTheRecordedCorpusResolveToOneLocalRecording()
+    {
+        var duplicates = Evaluate().Where(item => item.Case.EndsWith("/duplicate-locals", StringComparison.Ordinal)).ToArray();
+        Assert.Equal(12, duplicates.Length);
+        Assert.All(duplicates, item =>
+        {
+            Assert.Equal("Accepted", item.State);
+            Assert.Contains(item.Selected, new[] { "first", "second" });
+        });
+    }
+
     private static string Describe(CorpusResult result) =>
         $"{result.State}/{result.Selected ?? "none"}/{result.Confidence:0.0000}; decision=[{string.Join(",", result.DecisionReasons)}]; selected=[{string.Join(",", result.SelectedReasons)}]";
 

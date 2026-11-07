@@ -230,6 +230,19 @@ public static partial class FuzzyMatcher
         return cleaned.Trim();
     }
 
+    internal static string WithoutSoundtrackAlbumAnnotation(string title, string? album)
+    {
+        var normalizedAlbum = " " + NormalizeForMatching(album ?? "") + " ";
+        if (!normalizedAlbum.Contains(" soundtrack ", StringComparison.Ordinal)) return title;
+        return WhitespaceRegex().Replace(BracketedTitlePartRegex().Replace(title, match =>
+        {
+            var annotation = match.Groups[1].Value;
+            var normalized = NormalizeForMatching(annotation);
+            return normalized.Length > 0 && RecordingVersionTags(annotation).Count == 0 &&
+                   normalizedAlbum.Contains(" " + normalized + " ", StringComparison.Ordinal) ? " " : match.Value;
+        }), " ").Trim();
+    }
+
     public static string NormalizeTitleForMatching(
         string title, string? creditedArtists, string? additionalArtists = null) =>
         NormalizeForMatching(StripDecorators(title, string.Join(", ", creditedArtists, additionalArtists),

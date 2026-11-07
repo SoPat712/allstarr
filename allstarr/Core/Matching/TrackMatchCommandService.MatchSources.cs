@@ -258,8 +258,14 @@ public sealed partial class TrackMatchCommandService
                 var providerEvidence = StoredProviderEvidence(latest.CandidateResultsJson);
                 var providerRoutes = DurableProviderRouteSelector.Select(identity, providerIdentities, providerOrder,
                     canonicalRecordingId: latest.CanonicalRecordingId, providerPolicy: ownerPolicies[snapshot.OwnerUserId]);
+                var fallbackScore = providerEvidence.Select(item => item.Deserialize<TrackMatchCandidateScore>())
+                    .OfType<TrackMatchCandidateScore>()
+                    .Where(item => TrackMatchDecisionEngine.IsAcceptedExternalCandidate(item, decision.AcceptThreshold) &&
+                        providerRoutes.Any(route => TrackMatchSignals.TryGetProviderTrackId(item.ProviderTrackIds, route.ProviderId, out var id) &&
+                            id == route.ExternalId))
+                    .OrderByDescending(item => item.Confidence).FirstOrDefault();
                 var keepProviderDecision = decision.State != TrackMatchReviewState.Accepted &&
-                    latest.State == TrackMatchState.Accepted && !latest.LibraryTrackId.HasValue &&
+                    latest.State == TrackMatchState.Accepted && (!latest.LibraryTrackId.HasValue || fallbackScore != null) &&
                     latest.Confidence >= latest.Threshold &&
                     providerRoutes.Count > 0 &&
                     (!cleanOnly || providerRoutes.All(route =>
@@ -274,12 +280,12 @@ public sealed partial class TrackMatchCommandService
                         LibraryTrackId = null,
                         CanonicalRecordingId = latest.CanonicalRecordingId,
                         State = latest.State,
-                        Confidence = latest.Confidence,
+                        Confidence = latest.LibraryTrackId.HasValue ? fallbackScore!.Confidence : latest.Confidence,
                         Threshold = latest.Threshold,
-                        MatcherVersion = latest.MatcherVersion,
-                        PolicyVersion = latest.PolicyVersion,
-                        ReasonsJson = latest.ReasonsJson,
-                        WarningsJson = latest.WarningsJson
+                        MatcherVersion = latest.LibraryTrackId.HasValue ? TrackMatchDecisionEngine.AlgorithmVersion : latest.MatcherVersion,
+                        PolicyVersion = latest.LibraryTrackId.HasValue ? input.PolicyVersion : latest.PolicyVersion,
+                        ReasonsJson = latest.LibraryTrackId.HasValue ? JsonSerializer.Serialize(fallbackScore!.Reasons) : latest.ReasonsJson,
+                        WarningsJson = latest.LibraryTrackId.HasValue ? JsonSerializer.Serialize(fallbackScore!.Warnings) : latest.WarningsJson
                     };
                 }
                 if (providerEvidence.Length > 0)
@@ -354,23 +360,8 @@ public sealed partial class TrackMatchCommandService
                select decision;
     }
 
-    private static LocalTrackMatchCandidate ToLocalCandidate(LibraryTrackRecord item) => new(
-        item.Id,
-
-        item.OwnerUserId,
-        item.BackendInstanceId,
-        item.BackendLibraryId,
-        item.BackendItemId,
-        item.CanonicalRecordingId,
-        item.Title,
-        item.Artist,
-        item.Album,
-        item.AlbumArtist,
-        item.DurationMilliseconds is > 0 ? item.DurationMilliseconds : null,
-        item.Isrc,
-        item.MusicBrainzRecordingId,
-        null,
-        ReadProviderTrackIds(item.ProviderIdsJson));
+    private static LocalTrackMatchCandidate ToLocalCandidate(LibraryTrackRecord item) =>
+        LocalCopyPreference.ToCandidate(item);
 
     private static AutomatedSourceMatchResult ToAutomatedResult(
         SourceTrackSeed source,

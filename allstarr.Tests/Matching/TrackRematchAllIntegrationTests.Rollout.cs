@@ -184,6 +184,104 @@ public sealed partial class TrackRematchAllIntegrationTests
         Assert.Equal("retired-v1", (await final.TrackMatches.SingleAsync(item => item.State == TrackMatchState.Pinned)).MatcherVersion);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    [Trait("Category", "Sqlite")]
+    public async Task LibraryPrimaryRolloutReplacesTwoAutomaticDecisionsAndKeepsThePersonalProviderPin(bool newerSnapshot)
+    {
+        await using var database = await SqliteTestDatabase.CreateAsync();
+        var factory = new DbFactory(database.Options);
+        var clock = new Clock(DateTimeOffset.UtcNow);
+        var owner = Guid.NewGuid();
+        var account = Guid.NewGuid();
+        var externalRecording = Guid.NewGuid();
+        var snapshots = Enumerable.Range(0, 3).Select(_ => Guid.NewGuid()).ToArray();
+        var copies = Enumerable.Range(0, 3).Select(index =>
+        {
+            var copy = Local(Guid.NewGuid(), owner, "Self Love", clock.UtcNow);
+            copy.BackendItemId = $"copy-{index}";
+            copy.FilePath = $"/music/{index}.flac";
+            copy.Album = "Metro Boomin Presents Spider-Man: Across the Spider-Verse (Soundtrack From and Inspired by the Motion Picture)";
+            copy.Artist = "Metro Boomin, Coi Leray";
+            copy.SourceModifiedAt = clock.UtcNow.AddDays(index - 3);
+            copy.CanonicalRecordingId = Guid.NewGuid();
+            return copy;
+        }).ToArray();
+        await using (var db = factory.CreateDbContext())
+        {
+            db.Users.Add(User(owner, "Owner", clock.UtcNow));
+            db.ProviderAccounts.Add(Account(account, owner, clock.UtcNow));
+            db.CanonicalRecordings.AddRange(copies.Select(copy => new CanonicalRecordingRecord
+            { Id = copy.CanonicalRecordingId!.Value, CreatedByUserId = owner }));
+            db.CanonicalRecordings.Add(new CanonicalRecordingRecord { Id = externalRecording, CreatedByUserId = owner });
+            db.LibraryTracks.AddRange(copies);
+            for (var index = 0; index < snapshots.Length; index++)
+            {
+                var snapshot = Snapshot(snapshots[index], account, owner, "Self Love", Hash(index), clock.UtcNow);
+                snapshot.PayloadJson = JsonSerializer.Serialize(new
+                {
+                    Title = index == 2 ? "Self Love (Instrumental)" :
+                    "Self Love (Spider-Man: Across the Spider-Verse)",
+                    Artist = "Metro Boomin, Coi Leray",
+                    Album = "Metro Boomin Presents Spider-Man: Across the Spider-Verse (Soundtrack From and Inspired by the Motion Picture)",
+                    DurationMilliseconds = 180_000
+                });
+                var previousId = snapshot.Id;
+                if (newerSnapshot && index < 2)
+                {
+                    var previous = Snapshot(Guid.NewGuid(), account, owner, "Self Love", Hash(index), clock.UtcNow.AddSeconds(-1));
+                    previous.PayloadJson = snapshot.PayloadJson;
+                    previousId = previous.Id;
+                    snapshot.SnapshotVersion = 2;
+                    db.ExternalMetadataSnapshots.Add(previous);
+                }
+                db.ExternalMetadataSnapshots.Add(snapshot);
+                db.TrackMatches.Add(Decision(previousId, owner, null, externalRecording, TrackMatchState.Accepted, clock.UtcNow.AddMinutes(-1)));
+            }
+            db.ManualTrackOverrides.Add(new ManualTrackOverrideRecord
+            {
+                Id = Guid.NewGuid(),
+                OwnerUserId = owner,
+                ExternalSnapshotId = snapshots[2],
+                SourceProviderId = "spotify",
+                SourceExternalIdHash = Hash(2),
+                Decision = ManualOverrideDecision.Pin,
+                TargetProviderId = "apple-musickit",
+                TargetExternalId = "instrumental",
+                Revision = 1,
+                DecisionVersion = 1,
+                Reason = "Personal choice",
+                CreatedAt = clock.UtcNow
+            });
+            await db.SaveChangesAsync();
+        }
+        var rematches = new TrackRematchAllService(factory, Queue(factory, clock), clock);
+        Assert.Equal(1, await rematches.QueueAlgorithmUpgradesAsync());
+        DurableJobClaim claim;
+        await using (var db = factory.CreateDbContext()) claim = RolloutClaim(await db.Jobs.SingleAsync());
+        Assert.Equal(2, claim.Payload.Deserialize<TrackRematchAllJobPayload>()!.ApprovedCount);
+        var commands = new TrackMatchCommandService(factory, new TrackMatchDecisionEngine(),
+            new ProviderAccountResolver(factory), clock, new TestBackendLibraryAccess(factory, "music"));
+        var handler = new TrackRematchAllJobHandler(factory, rematches, commands, clock);
+        var progress = new List<DurableJobProgressUpdate>();
+        var execution = new DurableJobExecutionContext(claim, EmptyServices.Instance)
+        { ReportProgressAsync = (update, _) => { progress.Add(update); return Task.FromResult(true); } };
+
+        Assert.Equal(DurableJobCompletionKind.Succeeded, (await handler.ExecuteAsync(execution, default)).Kind);
+        Assert.Equal("Now plays from your library: 2 songs", progress.Last().Message);
+        Assert.Equal(DurableJobCompletionKind.Succeeded, (await handler.ExecuteAsync(execution, default)).Kind);
+        await using var saved = factory.CreateDbContext();
+        var latest = await saved.TrackMatches.Where(item => item.MatcherVersion == TrackMatchDecisionEngine.AlgorithmVersion).ToArrayAsync();
+        Assert.Equal(2, latest.Length);
+        Assert.All(latest, item => { Assert.Equal(TrackMatchState.Accepted, item.State); Assert.Equal(copies[2].Id, item.LibraryTrackId); });
+        Assert.Equal(5, await saved.TrackMatches.CountAsync());
+        var pin = Assert.Single(await saved.ManualTrackOverrides.ToArrayAsync());
+        Assert.Equal("instrumental", pin.TargetExternalId);
+        Assert.Equal(1, pin.Revision);
+        Assert.Null(pin.RevokedAt);
+    }
+
     private static async Task SeedRolloutAsync(DbFactory factory, Guid owner, Guid account, Guid local,
         DateTimeOffset now, int count)
     {

@@ -968,6 +968,8 @@ public sealed partial class PlaylistOrchestrationService : IPlaylistOrchestratio
                 Protocol = item.Protocol,
                 BackendInstanceId = item.BackendInstanceId,
                 BackendItemId = item.BackendItemId,
+                FilePath = item.FilePath,
+                SourceModifiedAt = item.SourceModifiedAt,
                 Title = item.Title,
                 Artist = item.Artist,
                 Album = item.Album,
@@ -1627,15 +1629,8 @@ public sealed partial class PlaylistOrchestrationService : IPlaylistOrchestratio
             DetailsJson = JsonSerializer.Serialize(new { entry.Reasons, entry.Warnings })
         });
 
-    private static LocalTrackMatchCandidate ToCandidate(LibraryTrackRecord item)
-    {
-        IReadOnlyDictionary<string, string>? providers = null;
-        try { providers = JsonSerializer.Deserialize<Dictionary<string, string>>(item.ProviderIdsJson); } catch (JsonException) { }
-        return new(item.Id, item.OwnerUserId, item.BackendInstanceId, item.BackendLibraryId,
-            item.BackendItemId, item.CanonicalRecordingId, item.Title, item.Artist, item.Album, item.AlbumArtist,
-            item.DurationMilliseconds,
-            item.Isrc, item.MusicBrainzRecordingId, null, providers);
-    }
+    private static LocalTrackMatchCandidate ToCandidate(LibraryTrackRecord item) =>
+        LocalCopyPreference.ToCandidate(item);
 
     private static TrackMatchReviewState ToReviewState(TrackMatchState state) => state switch
     {

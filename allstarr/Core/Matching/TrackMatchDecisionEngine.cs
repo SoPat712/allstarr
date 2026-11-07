@@ -65,7 +65,11 @@ public sealed record LocalTrackMatchCandidate(
     IReadOnlyDictionary<string, string>? ProviderTrackIds = null,
     bool IsLocal = true,
     bool IsBestVersion = false,
-    string? ExternalProvider = null);
+    string? ExternalProvider = null)
+{
+    public string? FileFormat { get; init; }
+    public DateTimeOffset SourceModifiedAt { get; init; }
+}
 
 public sealed record ScopedTrackMatchOverride(
     Guid UserId,
@@ -96,6 +100,8 @@ public sealed record TrackMatchCandidateScore(
     bool IsLocal = true,
     bool IsBestVersion = false)
 {
+    public string? FileFormat { get; init; }
+    public DateTimeOffset SourceModifiedAt { get; init; }
     public bool? IsExplicit { get; init; }
     public string? AlbumArtist { get; init; }
     public Guid? CanonicalRecordingId { get; init; }
@@ -156,7 +162,7 @@ public sealed class TrackMatchPolicy
 
 public sealed class TrackMatchDecisionEngine
 {
-    public const string AlgorithmVersion = "accepted-routing-v28";
+    public const string AlgorithmVersion = "library-primary-v29";
     private const double ScoreEpsilon = 0.0000001;
 
     private readonly TrackMatchPolicy _policy;
@@ -196,6 +202,8 @@ public sealed class TrackMatchDecisionEngine
                 candidate.MusicBrainzRecordingId,
                 candidate.IsExplicit,
                 candidate.IsLocal,
+                candidate.FileFormat,
+                candidate.SourceModifiedAt,
                 ProviderTrackIds = candidate.ProviderTrackIds?.OrderBy(item => item.Key)
             }));
         return BinaryPrimitives.ReadInt64BigEndian(SHA256.HashData(Encoding.UTF8.GetBytes(json)));
@@ -310,6 +318,18 @@ public sealed class TrackMatchDecisionEngine
                 .ThenByDescending(candidate => candidate.Score.Confidence)
                 .ThenBy(candidate => candidate.Score.LibraryTrackId)
                 .ToArray();
+        var first = preferred[0];
+        if (first.Candidate.IsLocal && IsAcceptanceQualified(first.Score))
+        {
+            var copy = preferred.Where(candidate => IsAcceptanceQualified(candidate.Score) &&
+                    SameLibraryRecording(first.Candidate, candidate.Candidate))
+                .OrderByDescending(candidate => LocalCopyPreference.FormatRank(candidate.Candidate.FileFormat))
+                .ThenByDescending(candidate => candidate.Candidate.SourceModifiedAt)
+                .ThenByDescending(candidate => candidate.Score.Confidence)
+                .ThenBy(candidate => candidate.Candidate.LibraryTrackId)
+                .FirstOrDefault();
+            if (copy != null) preferred = new[] { copy }.Concat(preferred.Where(candidate => candidate != copy)).ToArray();
+        }
         var selected = preferred[0];
         return preferred.Concat(ranked.Except(preferred))
             .Select(candidate => ExplainPrioritySelection(
@@ -566,6 +586,7 @@ public sealed class TrackMatchDecisionEngine
                 providerPriority).Rank == selectedPriority.Rank &&
             (!MatchesSourceVariant(source, selected, _policy.DurationToleranceSeconds, best) ||
              MatchesSourceVariant(source, visible.Single(candidate => candidate.LibraryTrackId == score.LibraryTrackId), _policy.DurationToleranceSeconds, score)) &&
+            !SameLibraryRecording(selected, visible.Single(candidate => candidate.LibraryTrackId == score.LibraryTrackId)) &&
             !SameRecordingIdentity(
                 selected,
                 visible.Single(candidate => candidate.LibraryTrackId == score.LibraryTrackId), source.Artist) &&
@@ -737,15 +758,47 @@ public sealed class TrackMatchDecisionEngine
                     Duration = candidate.DurationMilliseconds is > 0 ? (int)(candidate.DurationMilliseconds.Value / 1000) : null,
                     ExplicitContentLyrics = 0
                 });
+        var matchingSource = source with { Title = MatchingTitle(source.Title, source.Album, candidate.Album) };
+        var matchingCandidate = candidate with { Title = MatchingTitle(candidate.Title, candidate.Album, source.Album) };
         var outcome = counterpart
             ? TrackMatchRuleSet.Accept("clean_counterpart", "Verified clean version with matching title, artist, album and duration.", "cleanCounterpart")
-            : TrackMatchRuleSet.Evaluate(source, candidate, _policy, singleAlbumAgreement, allowVocalSourceAlbumMarkers);
+            : TrackMatchRuleSet.Evaluate(matchingSource, matchingCandidate, _policy, singleAlbumAgreement, allowVocalSourceAlbumMarkers);
+        if ((source.Title != matchingSource.Title || candidate.Title != matchingCandidate.Title) &&
+            !outcome.Reasons.Contains("title_decorators_ignored"))
+            outcome = outcome with { Reasons = outcome.Reasons.Append("title_decorators_ignored").ToArray() };
         var score = Score(source, candidate, outcome.Confidence, outcome.Reasons, outcome.Warnings, outcome.Components);
         return score.IsBestVersion ? score with
         {
             Confidence = Math.Min(1, score.Confidence + 0.05),
             Reasons = score.Reasons.Append("ArtistGrid best version +5").ToArray()
         } : score;
+    }
+
+    private static string MatchingTitle(string title, string? album, string? counterpartAlbum)
+    {
+        var stripped = FuzzyMatcher.WithoutSoundtrackAlbumAnnotation(title, album);
+        return stripped == FuzzyMatcher.WithoutSoundtrackAlbumAnnotation(title, counterpartAlbum) ? stripped : title;
+    }
+
+    internal static bool SameLibraryRecording(LocalTrackMatchCandidate left, LocalTrackMatchCandidate right)
+    {
+        if (!left.IsLocal || !right.IsLocal ||
+            !FuzzyMatcher.RecordingVersionsMatch(left.Title, left.Album, right.Title, right.Album) ||
+            !FuzzyMatcher.TitleAnnotationsMatch(left.Title, left.Artist, right.Title, right.Artist) ||
+            TrackMatchSignals.Explicitness(left).HasValue && TrackMatchSignals.Explicitness(right).HasValue &&
+            TrackMatchSignals.Explicitness(left) != TrackMatchSignals.Explicitness(right) ||
+            left.Isrc is { Length: > 0 } && right.Isrc is { Length: > 0 } && !FuzzyMatcher.IdentifiersEqual(left.Isrc, right.Isrc) ||
+            TrackMatchSignals.RecordingIdentity(left) is { Length: > 0 } leftId &&
+            TrackMatchSignals.RecordingIdentity(right) is { Length: > 0 } rightId && !FuzzyMatcher.IdentifiersEqual(leftId, rightId) ||
+            left.DurationMilliseconds is > 0 && right.DurationMilliseconds is > 0 &&
+            Math.Abs(left.DurationMilliseconds.Value - right.DurationMilliseconds.Value) > 3_000)
+            return false;
+        // Separate internal records can describe copies of the same album file.
+        return SameAlbumEdition(left.Album, right.Album) == true &&
+               FuzzyMatcher.NormalizeTitleForMatching(left.Title, left.Artist, right.Artist) ==
+               FuzzyMatcher.NormalizeTitleForMatching(right.Title, right.Artist, left.Artist) &&
+               FuzzyMatcher.SplitCredits(left.Artist).Select(FuzzyMatcher.NormalizeForMatching).ToHashSet(StringComparer.Ordinal)
+                   .SetEquals(FuzzyMatcher.SplitCredits(right.Artist).Select(FuzzyMatcher.NormalizeForMatching));
     }
 
     internal static bool SameRecordingIdentity(
@@ -878,8 +931,8 @@ public sealed class TrackMatchDecisionEngine
         source.Isrc,
         candidate.Isrc,
         candidate.ProviderTrackIds,
-        FuzzyMatcher.NormalizeTitleForMatching(source.Title, source.Artist, candidate.Artist),
-        FuzzyMatcher.NormalizeTitleForMatching(candidate.Title, candidate.Artist, source.Artist),
+        FuzzyMatcher.NormalizeTitleForMatching(MatchingTitle(source.Title, source.Album, candidate.Album), source.Artist, candidate.Artist),
+        FuzzyMatcher.NormalizeTitleForMatching(MatchingTitle(candidate.Title, candidate.Album, source.Album), candidate.Artist, source.Artist),
         TrackMatchSignals.ArtistSimilarity(source.Artist, candidate.Artist),
         AlbumEvidence(source, candidate),
         source.DurationMilliseconds.HasValue && candidate.DurationMilliseconds.HasValue
@@ -889,6 +942,8 @@ public sealed class TrackMatchDecisionEngine
         !candidate.IsLocal && candidate.IsBestVersion &&
         string.Equals(candidate.ExternalProvider, "artistgrid", StringComparison.OrdinalIgnoreCase))
         {
+            FileFormat = candidate.FileFormat,
+            SourceModifiedAt = candidate.SourceModifiedAt,
             IsExplicit = candidate.IsExplicit,
             AlbumArtist = candidate.AlbumArtist,
             CanonicalRecordingId = candidate.CanonicalRecordingId,
@@ -1029,23 +1084,23 @@ public sealed class TrackMatchCandidateIndex
     {
         if (source.CanonicalRecordingId.HasValue &&
             _byCanonical.TryGetValue(source.CanonicalRecordingId.Value, out var canonicalCandidates))
-            return canonicalCandidates;
+            return WithLibraryCopies(canonicalCandidates);
 
         var recordingId = TrackMatchSignals.RecordingIdentity(source);
         if (!string.IsNullOrWhiteSpace(recordingId) &&
             _byMusicBrainz.TryGetValue(recordingId.Trim(), out var recordingCandidates))
-            return recordingCandidates;
+            return WithLibraryCopies(recordingCandidates);
 
         var isrc = NormalizeIsrc(source.Isrc);
         if (isrc != null && _byIsrc.TryGetValue(isrc, out var isrcCandidates))
-            return isrcCandidates;
+            return WithLibraryCopies(isrcCandidates);
 
         var aliases = (source.ExactProviderAliases ?? new Dictionary<string, string>())
             .Append(new KeyValuePair<string, string>(source.ProviderId, source.ExternalId));
         var exactTracks = aliases.SelectMany(alias => _byProviderTrack.GetValueOrDefault(
                 (alias.Key.ToLowerInvariant(), alias.Value)) ?? [])
             .DistinctBy(item => item.LibraryTrackId).ToArray();
-        if (exactTracks.Length > 0) return exactTracks;
+        if (exactTracks.Length > 0) return WithLibraryCopies(exactTracks);
 
         var keys = BuildMatchKeys(source.Title, source.Artist).ToArray();
         if (keys.Length == 0) return [];
@@ -1071,6 +1126,12 @@ public sealed class TrackMatchCandidateIndex
         }
         return selected.Values.ToArray();
     }
+
+    private IReadOnlyList<LocalTrackMatchCandidate> WithLibraryCopies(IReadOnlyList<LocalTrackMatchCandidate> matches) =>
+        matches.Concat(matches.Where(item => item.IsLocal).SelectMany(item =>
+                _byMatchKey.GetValueOrDefault("title:" + FuzzyMatcher.NormalizeTitleForMatching(item.Title, item.Artist)) ?? [])
+            .Where(copy => matches.Any(item => TrackMatchDecisionEngine.SameLibraryRecording(item, copy))))
+            .DistinctBy(item => item.LibraryTrackId).ToArray();
 
     private static IEnumerable<string> BuildMatchKeys(string? titleValue, string? artistValue)
     {

@@ -221,8 +221,8 @@
   },
   {
     "case": "blinding-lights/duplicate-locals",
-    "state": "Ambiguous",
-    "selected": null,
+    "state": "Accepted",
+    "selected": "first",
     "confidence": 1,
     "decisionReasons": [
       "album_artist_exact",
@@ -231,7 +231,13 @@
       "duration_close",
       "title_exact"
     ],
-    "selectedReasons": []
+    "selectedReasons": [
+      "album_artist_exact",
+      "album_exact",
+      "artist_exact",
+      "duration_close",
+      "title_exact"
+    ]
   },
   {
     "case": "bohemian-rhapsody/exact-metadata",
@@ -456,8 +462,8 @@
   },
   {
     "case": "bohemian-rhapsody/duplicate-locals",
-    "state": "Ambiguous",
-    "selected": null,
+    "state": "Accepted",
+    "selected": "second",
     "confidence": 1,
     "decisionReasons": [
       "album_artist_exact",
@@ -466,7 +472,13 @@
       "duration_close",
       "title_exact"
     ],
-    "selectedReasons": []
+    "selectedReasons": [
+      "album_artist_exact",
+      "album_exact",
+      "artist_exact",
+      "duration_close",
+      "title_exact"
+    ]
   },
   {
     "case": "halo/exact-metadata",
@@ -702,8 +714,8 @@
   },
   {
     "case": "halo/duplicate-locals",
-    "state": "Ambiguous",
-    "selected": null,
+    "state": "Accepted",
+    "selected": "first",
     "confidence": 1,
     "decisionReasons": [
       "album_artist_exact",
@@ -712,7 +724,13 @@
       "duration_close",
       "title_exact"
     ],
-    "selectedReasons": []
+    "selectedReasons": [
+      "album_artist_exact",
+      "album_exact",
+      "artist_exact",
+      "duration_close",
+      "title_exact"
+    ]
   },
   {
     "case": "dreams/exact-metadata",
@@ -936,8 +954,8 @@
   },
   {
     "case": "dreams/duplicate-locals",
-    "state": "Ambiguous",
-    "selected": null,
+    "state": "Accepted",
+    "selected": "second",
     "confidence": 1,
     "decisionReasons": [
       "album_artist_exact",
@@ -946,7 +964,13 @@
       "duration_close",
       "title_exact"
     ],
-    "selectedReasons": []
+    "selectedReasons": [
+      "album_artist_exact",
+      "album_exact",
+      "artist_exact",
+      "duration_close",
+      "title_exact"
+    ]
   },
   {
     "case": "levitating/exact-metadata",
@@ -1170,8 +1194,8 @@
   },
   {
     "case": "levitating/duplicate-locals",
-    "state": "Ambiguous",
-    "selected": null,
+    "state": "Accepted",
+    "selected": "second",
     "confidence": 1,
     "decisionReasons": [
       "album_artist_exact",
@@ -1180,7 +1204,13 @@
       "duration_close",
       "title_exact"
     ],
-    "selectedReasons": []
+    "selectedReasons": [
+      "album_artist_exact",
+      "album_exact",
+      "artist_exact",
+      "duration_close",
+      "title_exact"
+    ]
   },
   {
     "case": "rolling-in-the-deep/exact-metadata",
@@ -1405,8 +1435,8 @@
   },
   {
     "case": "rolling-in-the-deep/duplicate-locals",
-    "state": "Ambiguous",
-    "selected": null,
+    "state": "Accepted",
+    "selected": "second",
     "confidence": 1,
     "decisionReasons": [
       "album_artist_exact",
@@ -1415,7 +1445,13 @@
       "duration_close",
       "title_exact"
     ],
-    "selectedReasons": []
+    "selectedReasons": [
+      "album_artist_exact",
+      "album_exact",
+      "artist_exact",
+      "duration_close",
+      "title_exact"
+    ]
   },
   {
     "case": "get-lucky/exact-metadata",
@@ -1640,8 +1676,8 @@
   },
   {
     "case": "get-lucky/duplicate-locals",
-    "state": "Ambiguous",
-    "selected": null,
+    "state": "Accepted",
+    "selected": "first",
     "confidence": 1,
     "decisionReasons": [
       "album_artist_exact",
@@ -1650,7 +1686,13 @@
       "duration_close",
       "title_exact"
     ],
-    "selectedReasons": []
+    "selectedReasons": [
+      "album_artist_exact",
+      "album_exact",
+      "artist_exact",
+      "duration_close",
+      "title_exact"
+    ]
   },
   {
     "case": "sanguine-paradise/exact-metadata",
@@ -1874,8 +1916,8 @@
   },
   {
     "case": "sanguine-paradise/duplicate-locals",
-    "state": "Ambiguous",
-    "selected": null,
+    "state": "Accepted",
+    "selected": "first",
     "confidence": 1,
     "decisionReasons": [
       "album_artist_exact",
@@ -1884,7 +1926,13 @@
       "duration_close",
       "title_exact"
     ],
-    "selectedReasons": []
+    "selectedReasons": [
+      "album_artist_exact",
+      "album_exact",
+      "artist_exact",
+      "duration_close",
+      "title_exact"
+    ]
   },
   {
     "case": "cheek-to-cheek/exact-metadata",
@@ -2108,8 +2156,8 @@
   },
   {
     "case": "cheek-to-cheek/duplicate-locals",
-    "state": "Ambiguous",
-    "selected": null,
+    "state": "Accepted",
+    "selected": "second",
     "confidence": 1,
     "decisionReasons": [
       "album_artist_exact",
@@ -2118,7 +2166,13 @@
       "duration_close",
       "title_exact"
     ],
-    "selectedReasons": []
+    "selectedReasons": [
+      "album_artist_exact",
+      "album_exact",
+      "artist_exact",
+      "duration_close",
+      "title_exact"
+    ]
   },
   {
     "case": "gurenge/exact-metadata",
@@ -2342,8 +2396,8 @@
   },
   {
     "case": "gurenge/duplicate-locals",
-    "state": "Ambiguous",
-    "selected": null,
+    "state": "Accepted",
+    "selected": "first",
     "confidence": 1,
     "decisionReasons": [
       "album_artist_exact",
@@ -2352,7 +2406,13 @@
       "duration_close",
       "title_exact"
     ],
-    "selectedReasons": []
+    "selectedReasons": [
+      "album_artist_exact",
+      "album_exact",
+      "artist_exact",
+      "duration_close",
+      "title_exact"
+    ]
   },
   {
     "case": "despacito/exact-metadata",
@@ -2576,8 +2636,8 @@
   },
   {
     "case": "despacito/duplicate-locals",
-    "state": "Ambiguous",
-    "selected": null,
+    "state": "Accepted",
+    "selected": "second",
     "confidence": 1,
     "decisionReasons": [
       "album_artist_exact",
@@ -2586,7 +2646,13 @@
       "duration_close",
       "title_exact"
     ],
-    "selectedReasons": []
+    "selectedReasons": [
+      "album_artist_exact",
+      "album_exact",
+      "artist_exact",
+      "duration_close",
+      "title_exact"
+    ]
   },
   {
     "case": "smells-like-teen-spirit/exact-metadata",
@@ -2810,8 +2876,8 @@
   },
   {
     "case": "smells-like-teen-spirit/duplicate-locals",
-    "state": "Ambiguous",
-    "selected": null,
+    "state": "Accepted",
+    "selected": "second",
     "confidence": 1,
     "decisionReasons": [
       "album_artist_exact",
@@ -2820,6 +2886,12 @@
       "duration_close",
       "title_exact"
     ],
-    "selectedReasons": []
+    "selectedReasons": [
+      "album_artist_exact",
+      "album_exact",
+      "artist_exact",
+      "duration_close",
+      "title_exact"
+    ]
   }
 ]

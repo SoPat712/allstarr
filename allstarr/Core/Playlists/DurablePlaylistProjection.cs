@@ -278,11 +278,8 @@ public sealed class DurablePlaylistProjectionReader(
                 ? await providerGateway.GetPlayableProviderOrderAsync(actor, cancellationToken) : [];
             var overrideRecords = await ManualTrackOverrides.LoadAsync(database, viewer, external, cancellationToken);
             var overrides = ManualTrackOverrides.Index(external, overrideRecords, viewer);
-            var libraryIds = matches.Where(item => item.LibraryTrackId.HasValue).Select(item => item.LibraryTrackId!.Value)
-                .Concat(overrides.Values.Select(item => item.Effective?.LibraryTrackId).OfType<Guid>()).Distinct().ToArray();
-            var library = await LibraryTrackAccess.Query(database, access)
-                .Where(item => EF.Parameter(libraryIds).Contains(item.Id) || item.CanonicalRecordingId.HasValue &&
-                    EF.Parameter(canonicalIds).Contains(item.CanonicalRecordingId.Value)).ToArrayAsync(cancellationToken);
+            var library = await LibraryTrackAccess.Query(database, access).ToArrayAsync(cancellationToken);
+            var viewerRoutes = new Dictionary<(string Backend, string Protocol), TrackRouteLibrary>();
             foreach (var snapshot in viewerSnapshots)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -309,14 +306,15 @@ public sealed class DurablePlaylistProjectionReader(
                     .Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
                 if (providerOrder == null && policy != null)
                     currentOrder = policy.ApplyProviderAvailability(ProviderCapabilityKind.Streaming, currentOrder);
-                var currentLibraryIds = currentMatches.Values.Select(item => item.LibraryTrackId)
-                    .Concat(currentOverrides.Values.Select(item => item.Effective?.LibraryTrackId)).OfType<Guid>().ToHashSet();
-                var currentLibrary = library.Where(item =>
-                    (currentLibraryIds.Contains(item.Id) || item.CanonicalRecordingId is { } id && currentCanonicalIds.Contains(id)) &&
-                    item.BackendInstanceId == link.TargetBackendInstanceId &&
-                    (link.TargetProtocol == "jellyfin" ? item.Protocol == "jellyfin" :
-                        item.Protocol is "subsonic" or "opensubsonic" or "navidrome")).ToDictionary(item => item.Id);
-                var currentRoutes = new TrackRouteLibrary(currentLibrary.Values);
+                var libraryScope = (link.TargetBackendInstanceId, link.TargetProtocol);
+                if (!viewerRoutes.TryGetValue(libraryScope, out var currentRoutes))
+                {
+                    currentRoutes = new TrackRouteLibrary(library.Where(item =>
+                        item.BackendInstanceId == link.TargetBackendInstanceId &&
+                        (link.TargetProtocol == "jellyfin" ? item.Protocol == "jellyfin" :
+                            item.Protocol is "subsonic" or "opensubsonic" or "navidrome")));
+                    viewerRoutes.Add(libraryScope, currentRoutes);
+                }
                 var projected = currentEntries.Select(entry => ProjectEntry(entry, currentExternal[entry.ExternalMetadataSnapshotId],
                     currentSources, currentIdentities, currentOrder,
                     entry.PublishedTrackMatchId is { } id ? currentMatches.GetValueOrDefault(id) : null,
@@ -543,17 +541,8 @@ public sealed class DurablePlaylistProjectionReader(
             link.SourceProviderId, identities, overrides.Values, ownerUserId, access, cancellationToken);
         var providerPolicy = effectivePolicies == null ? null :
             await effectivePolicies.ResolveForUserAsync(ownerUserId, cancellationToken);
-        var libraryIds = matches.Values.Where(item => item.LibraryTrackId.HasValue)
-            .Select(item => item.LibraryTrackId!.Value)
-            .Concat(overrides.Values.Select(item => item.Effective?.LibraryTrackId)
-                .OfType<Guid>()).Distinct().ToArray();
-        var matchedCanonicalIds = matches.Values.Where(item => item.CanonicalRecordingId.HasValue)
-            .Select(item => item.CanonicalRecordingId!.Value)
-            .Concat(canonicalIds).Distinct().ToArray();
         var library = await LibraryTrackAccess.Query(database, access)
-            .Where(item => (EF.Parameter(libraryIds).Contains(item.Id) ||
-                           item.CanonicalRecordingId.HasValue && EF.Parameter(matchedCanonicalIds).Contains(item.CanonicalRecordingId.Value)) &&
-                           item.BackendInstanceId == link.TargetBackendInstanceId &&
+            .Where(item => item.BackendInstanceId == link.TargetBackendInstanceId &&
                            (link.TargetProtocol == "jellyfin"
                                ? item.Protocol == "jellyfin"
                                : item.Protocol == "subsonic" || item.Protocol == "opensubsonic" ||
@@ -808,20 +797,10 @@ public sealed class DurablePlaylistProjectionReader(
             link.SourceProviderId, identities, overrides.Values, viewerUserId, access, cancellationToken);
         var providerPolicy = effectivePolicies == null ? null :
             await effectivePolicies.ResolveForUserAsync(viewerUserId, cancellationToken);
-        var libraryIds = publishedMatches.Values
-            .Where(item => item.LibraryTrackId.HasValue)
-            .Select(item => item.LibraryTrackId!.Value)
-            .Concat(overrides.Values.Select(item => item.Effective)
-                .Where(item => item?.LibraryTrackId.HasValue == true)
-                .Select(item => item!.LibraryTrackId!.Value))
-            .Distinct()
-            .ToArray();
         var matchedCanonicalIds = publishedMatches.Values.Where(item => item.CanonicalRecordingId.HasValue)
             .Select(item => item.CanonicalRecordingId!.Value).Concat(canonicalIds).Distinct().ToArray();
         var library = await LibraryTrackAccess.Query(database, access)
-            .Where(item => (libraryIds.Contains(item.Id) ||
-                           item.CanonicalRecordingId.HasValue && matchedCanonicalIds.Contains(item.CanonicalRecordingId.Value)) &&
-                           item.BackendInstanceId == link.TargetBackendInstanceId &&
+            .Where(item => item.BackendInstanceId == link.TargetBackendInstanceId &&
                            (link.TargetProtocol == "jellyfin"
                                ? item.Protocol == "jellyfin"
                                : item.Protocol == "subsonic" ||

@@ -13,6 +13,39 @@ namespace allstarr.Tests;
 
 public sealed partial class PlaylistOrchestrationIntegrationTests
 {
+    [Fact]
+    public async Task PublishedPlaylistReadersPreferUnlinkedLibraryCopiesOverAnAutomaticProviderRoute()
+    {
+        _source.Snapshot = Snapshot("library-copies", Entry(0, "one", "source-1", "One"));
+        await _service.RunAsync(Context(), new(_link, 1));
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var match = await db.TrackMatches.OrderByDescending(item => item.DecisionVersion).FirstAsync();
+            match.LibraryTrackId = null;
+            match.CanonicalRecordingId = _canonical;
+            match.Confidence = .9568;
+            var original = await db.LibraryTracks.SingleAsync(item => item.Id == _trackOne);
+            original.CanonicalRecordingId = null;
+            original.ProviderIdsJson = "{}";
+            var newest = Local(Guid.NewGuid(), "new-copy", "unused", "One");
+            newest.ProviderIdsJson = "{}";
+            newest.SourceModifiedAt = _now.AddDays(1);
+            db.LibraryTracks.Add(newest);
+            var fallback = ProviderIdentity("fallback");
+            fallback.ProviderId = "deezer";
+            db.ProviderTrackIdentities.Add(fallback);
+            await db.SaveChangesAsync();
+        }
+        var reader = new DurablePlaylistProjectionReader(_factory, new TestBackendLibraryAccess(_factory, "music"));
+
+        var detail = Assert.IsType<DurablePlaylistProjection>(await reader.ReadByLinkIdAsync(_user, _link));
+        var bulk = await reader.ReadByLinkIdsAsync(_user, [_link]);
+
+        Assert.Equal("new-copy", Assert.Single(detail.Entries).BackendItemId);
+        Assert.Equal("new-copy", Assert.Single(bulk[_link].Entries).BackendItemId);
+        Assert.Equal("local", Assert.Single(detail.Entries).RouteKind);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

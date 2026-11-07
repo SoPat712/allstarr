@@ -279,7 +279,11 @@ public sealed partial class TrackMatchCommandService
             playable != null &&
             selected == null;
         var selectedExternal = externalRoutable ? playable!.SelectedExternal : null;
-        Guid? canonicalRecordingId = selected?.CanonicalRecordingId ?? source?.CanonicalRecordingId;
+        var retainedProviderEvidence = existingSelection == null ? [] : StoredProviderEvidence(existingSelection.CandidateResultsJson);
+        Guid? canonicalRecordingId = selected != null && retainedProviderEvidence.Length > 0 &&
+            existingSelection?.State == TrackMatchState.Accepted
+                ? existingSelection.CanonicalRecordingId ?? source?.CanonicalRecordingId ?? selected.CanonicalRecordingId
+                : selected?.CanonicalRecordingId ?? source?.CanonicalRecordingId;
         try
         {
             if (externalRoutable && selectedExternal != null)
@@ -337,6 +341,12 @@ public sealed partial class TrackMatchCommandService
                 snapshot.SnapshotVersion,
                 libraryIndexRevision,
                 policyVersion);
+        if (selected != null && retainedProviderEvidence.Length > 0)
+            input = input with
+            {
+                CandidateResultsJson = JsonSerializer.Serialize(
+                decision.Candidates.Select(item => JsonSerializer.SerializeToElement(item)).Concat(retainedProviderEvidence))
+            };
         var record = ToRecord(
             input, snapshot.OwnerUserId,
             correlationId, clock.UtcNow);
@@ -355,7 +365,9 @@ public sealed partial class TrackMatchCommandService
                 snapshot.Id,
                 correlationId,
                 record.DecisionVersion,
-                record.DecidedAt));
+                record.DecidedAt,
+                decision.State == TrackMatchReviewState.Accepted && selected != null &&
+                existingSelection?.State == TrackMatchState.Accepted && !existingSelection.LibraryTrackId.HasValue));
         try
         {
             await db.SaveChangesAsync(cancellationToken);

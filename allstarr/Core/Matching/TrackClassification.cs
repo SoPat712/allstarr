@@ -59,10 +59,14 @@ public sealed class TrackRouteLibrary(IEnumerable<LibraryTrackRecord> tracks)
         {
             ById = tracks.ToDictionary(item => item.Id);
             Ids = ById.Keys.ToHashSet();
+            LibraryIds = ById.Values.Select(item => item.BackendLibraryId).ToHashSet(StringComparer.Ordinal);
+            Candidates = new TrackMatchDecisionEngine().PrepareCandidates(ById.Values.Select(LocalCopyPreference.ToCandidate));
             FirstByRecording = ById.Values.Where(item => item.CanonicalRecordingId.HasValue)
                 .GroupBy(item => item.CanonicalRecordingId!.Value)
                 .ToDictionary(group => group.Key, group => group
-                    .OrderBy(item => item.BackendLibraryId, StringComparer.Ordinal)
+                    .OrderByDescending(item => LocalCopyPreference.FormatRank(Path.GetExtension(item.FilePath)))
+                    .ThenByDescending(item => item.SourceModifiedAt)
+                    .ThenBy(item => item.BackendLibraryId, StringComparer.Ordinal)
                     .ThenBy(item => item.BackendItemId, StringComparer.Ordinal)
                     .ThenBy(item => item.Id)
                     .First());
@@ -70,6 +74,8 @@ public sealed class TrackRouteLibrary(IEnumerable<LibraryTrackRecord> tracks)
 
         public Dictionary<Guid, LibraryTrackRecord> ById { get; }
         public HashSet<Guid> Ids { get; }
+        public HashSet<string> LibraryIds { get; }
+        public TrackMatchCandidateSet Candidates { get; }
         public Dictionary<Guid, LibraryTrackRecord> FirstByRecording { get; }
     }
 }
@@ -118,8 +124,32 @@ public static class TrackRouteProjector
             providerOrder,
             scopedLibrary.Ids, providerPolicy, snapshot.ProviderId);
         scopedLibrary.ById.TryGetValue(classification.LibraryTrackId ?? Guid.Empty, out var local);
+        if (local == null && manual == null && decision?.State is not (TrackMatchState.Pinned or TrackMatchState.Rejected) &&
+            classification.ProviderRoutes.Count > 0 && snapshot.OwnerUserId != Guid.Empty &&
+            providerPolicy?.IsAutomatic(sourceIdentity?.ProviderId ?? snapshot.ProviderId) != false)
+        {
+            if (TrackSnapshotMetadata.MatchingSource(snapshot, sourceIdentity) is { } source)
+            {
+                var scope = new TrackMatchScope(snapshot.OwnerUserId, snapshot.BackendInstanceId, null, 2,
+                    Math.Max(1, snapshot.SnapshotVersion), scopedLibrary.LibraryIds);
+                var engine = new TrackMatchDecisionEngine(new TrackMatchPolicy
+                {
+                    LocalPriorityWindow = providerPolicy?.LocalPreferenceWindow ?? .07,
+                    ExplicitContent = providerPolicy?.Preferences.ExplicitFilter == "CleanOnly"
+                        ? allstarr.Core.Capabilities.ProviderExplicitContentPolicy.CleanOnly
+                        : allstarr.Core.Capabilities.ProviderExplicitContentPolicy.Allow
+                });
+                var localDecision = engine.Decide(scope, source, scopedLibrary.Candidates);
+                if (localDecision.State == TrackMatchReviewState.Accepted &&
+                    localDecision.SelectedLibraryTrackId is { } selectedId)
+                {
+                    local = scopedLibrary.ById[selectedId];
+                    classification = classification with { State = TrackMatchState.Accepted, LibraryTrackId = selectedId };
+                }
+            }
+        }
         canonicalId ??= local?.CanonicalRecordingId;
-        if (local == null &&
+        if (local == null && manual == null &&
             classification.PrimaryProviderRoute?.IsManual != true &&
             classification.ReviewState is TrackMatchState.Accepted or TrackMatchState.Pinned &&
             canonicalId.HasValue)

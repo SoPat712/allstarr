@@ -1040,6 +1040,105 @@ public sealed class TrackMatchRefreshTests(ITestOutputHelper output)
         Assert.Single(await saved.ManualTrackOverrides.Where(item => item.RevokedAt == null).ToArrayAsync());
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    [Trait("Category", "Sqlite")]
+    public async Task LibraryRefreshReplacesAnAutomaticProviderDecisionThenReturnsToItsFallbackWhenCopiesDisappear(bool rematch)
+    {
+        await using var fixture = await Fixture.CreateAsync(ExplicitPayload("", "null"));
+        var providerScore = new TrackMatchCandidateScore(Guid.NewGuid(), "external-deezer-target", .9568,
+            ["title_exact", "artist_strong", "album_exact"], [], Title: "Track Melodies", Artist: "Artist", Album: "Album",
+            ProviderTrackIds: new Dictionary<string, string> { ["deezer"] = "target" }, IsLocal: false);
+        var copies = Enumerable.Range(0, 3).Select(index =>
+        {
+            var copy = Local(fixture.Owner, $"copy-{index}", "Track Melodies");
+            copy.FilePath = $"/music/{index}.flac";
+            copy.SourceModifiedAt = DateTimeOffset.UnixEpoch.AddDays(index);
+            copy.CanonicalRecordingId = Guid.NewGuid();
+            return copy;
+        }).ToArray();
+        await using (var db = fixture.Factory.CreateDbContext())
+        {
+            db.CanonicalRecordings.AddRange(copies.Select(copy => new CanonicalRecordingRecord
+            { Id = copy.CanonicalRecordingId!.Value, CreatedByUserId = fixture.Owner }));
+            db.LibraryTracks.AddRange(copies);
+            db.TrackMatches.Add(new TrackMatchRecord
+            {
+                Id = Guid.NewGuid(),
+                OwnerUserId = fixture.Owner,
+                ExternalSnapshotId = fixture.SnapshotId,
+                CanonicalRecordingId = fixture.Recording,
+                State = TrackMatchState.Accepted,
+                Confidence = .9568,
+                Threshold = .88,
+                DecisionVersion = 1,
+                SourceSnapshotVersion = 1,
+                MatcherVersion = "previous",
+                PolicyVersion = "automatic",
+                CandidateResultsJson = JsonSerializer.Serialize(new[] { providerScore })
+            });
+            await db.SaveChangesAsync();
+        }
+        SourceTrackSeed seed = new("spotify", "source", "Track Melodies", "Artist", "Album", 180000, null, null, "1");
+        if (rematch)
+            Assert.True((await fixture.Service.RematchSnapshotAsync(new(fixture.Owner, false), fixture.SnapshotId, "library-rematch")).Succeeded);
+        else
+        {
+            var fromLibrary = Assert.Single(await fixture.Service.MatchSourceTracksAsync([seed], "library-refresh"));
+            Assert.Equal(TrackMatchReviewState.Accepted, fromLibrary.State);
+            Assert.Equal("copy-2", fromLibrary.LocalBackendItemId);
+        }
+        long libraryRevision;
+        await using (var db = fixture.Factory.CreateDbContext())
+        {
+            var promoted = await db.TrackMatches.OrderByDescending(item => item.DecisionVersion).FirstAsync();
+            Assert.Equal(copies[2].Id, promoted.LibraryTrackId);
+            Assert.Equal(fixture.Recording, promoted.CanonicalRecordingId);
+            Assert.Contains(JsonSerializer.Deserialize<TrackMatchCandidateScore[]>(promoted.CandidateResultsJson)!, item => !item.IsLocal);
+            libraryRevision = promoted.LibraryIndexRevision;
+            foreach (var copy in await db.LibraryTracks.ToArrayAsync()) copy.BackendLibraryId = "unavailable";
+            await db.SaveChangesAsync();
+        }
+
+        var fallback = Assert.Single(await fixture.Service.MatchSourceTracksAsync([seed], "library-removed"));
+
+        Assert.Equal(TrackMatchReviewState.Accepted, fallback.State);
+        Assert.Null(fallback.LocalBackendItemId);
+        await using var saved = fixture.Factory.CreateDbContext();
+        var latest = await saved.TrackMatches.OrderByDescending(item => item.DecisionVersion).FirstAsync();
+        Assert.Null(latest.LibraryTrackId);
+        Assert.Equal(.9568, latest.Confidence);
+        Assert.NotEqual(libraryRevision, latest.LibraryIndexRevision);
+        Assert.Equal(TrackMatchDecisionEngine.AlgorithmVersion, latest.MatcherVersion);
+        var identities = await saved.ProviderTrackIdentities.ToArrayAsync();
+        var projection = TrackRouteProjector.Project(await saved.ExternalMetadataSnapshots.SingleAsync(), latest, null,
+            identities.Single(item => item.ProviderId == "spotify"), [], identities, ["deezer"]);
+        Assert.Equal("target", projection.PrimaryProviderRoute!.ExternalId);
+        Assert.Empty(await saved.ManualTrackOverrides.ToArrayAsync());
+    }
+
+    [Fact]
+    [Trait("Category", "Sqlite")]
+    public async Task MatchReviewConsidersAccessibleLibraryCopiesWithoutCanonicalLinks()
+    {
+        await using var fixture = await Fixture.CreateAsync(ExplicitPayload("", "null"));
+        await using (var db = fixture.Factory.CreateDbContext())
+        {
+            db.LibraryTracks.Add(Local(fixture.Owner, "unlinked", "Track Melodies"));
+            await db.SaveChangesAsync();
+        }
+
+        var review = await fixture.Service.GetReviewDataAsync(new(fixture.Owner, false));
+
+        var local = Assert.Single(review.LibraryTracks);
+        var source = review.ProviderIdentities.Single(item => item.ProviderId == "spotify");
+        var projection = TrackRouteProjector.Project(Assert.Single(review.Snapshots), null, null,
+            source, review.LibraryTracks, review.ProviderIdentities, ["deezer"]);
+        Assert.Equal(local.Id, projection.LibraryTrack!.Id);
+        Assert.Equal("target", projection.Classification.PrimaryProviderRoute!.ExternalId);
+    }
+
     private static async Task RunRoutineAsync(Fixture fixture, bool refresh)
     {
         if (refresh) Assert.Single(await fixture.Service.MatchSourceTracksAsync(

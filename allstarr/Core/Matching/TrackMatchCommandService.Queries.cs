@@ -181,10 +181,8 @@ public sealed partial class TrackMatchCommandService
         timings.Add(("overrides", Stopwatch.GetTimestamp()));
         var libraryIds = decisions.Where(item => item.LibraryTrackId.HasValue)
             .Select(item => item.LibraryTrackId!.Value)
-            .Concat(overrides.Where(item => item.LibraryTrackId.HasValue)
-                .Select(item => item.LibraryTrackId!.Value))
-            .Distinct()
-            .ToArray();
+            .Concat(overrides.Where(item => item.LibraryTrackId.HasValue).Select(item => item.LibraryTrackId!.Value))
+            .ToHashSet();
         var sourceIdentityIds = snapshots
             .Where(item => item.ProviderTrackIdentityId.HasValue)
             .Select(item => item.ProviderTrackIdentityId!.Value)
@@ -209,13 +207,23 @@ public sealed partial class TrackMatchCommandService
             .Concat(sourceIdentities.Select(item => item.CanonicalRecordingId))
             .Distinct()
             .ToArray();
+        var backendInstances = snapshots.Select(item => item.BackendInstanceId).Distinct().ToArray();
         var libraryQuery = (await AccessibleTracksAsync(db, actor, cancellationToken))
-            .Where(item => EF.Parameter(libraryIds).Contains(item.Id) ||
-                           item.CanonicalRecordingId.HasValue &&
-                           EF.Parameter(canonicalIds).Contains(item.CanonicalRecordingId.Value));
+            .Where(item => EF.Parameter(backendInstances).Contains(item.BackendInstanceId));
         if (!string.IsNullOrWhiteSpace(backendLibraryId))
             libraryQuery = libraryQuery.Where(item => item.BackendLibraryId == backendLibraryId.Trim());
         var library = await libraryQuery.ToListAsync(cancellationToken);
+        var indexes = library.GroupBy(item => item.BackendInstanceId).ToDictionary(group => group.Key,
+            group => new TrackMatchCandidateIndex(group.Select(LocalCopyPreference.ToCandidate)));
+        foreach (var snapshot in snapshots)
+        {
+            if (indexes.TryGetValue(snapshot.BackendInstanceId, out var index) &&
+                TrackSnapshotMetadata.MatchingSource(snapshot) is { } source)
+                libraryIds.UnionWith(index.Select(source).Select(item => item.LibraryTrackId));
+        }
+        var knownRecordingIds = canonicalIds.ToHashSet();
+        library = library.Where(item => libraryIds.Contains(item.Id) ||
+            item.CanonicalRecordingId is { } recordingId && knownRecordingIds.Contains(recordingId)).ToList();
         timings.Add(("library", Stopwatch.GetTimestamp()));
         var identities = await VisibleProviderIdentitiesAsync(
             db,

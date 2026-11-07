@@ -217,17 +217,8 @@ public sealed class PlaylistRematchService(
                select decision;
     }
 
-    private static LocalTrackMatchCandidate ToCandidate(LibraryTrackRecord item)
-    {
-        IReadOnlyDictionary<string, string>? providers = null;
-        try { providers = JsonSerializer.Deserialize<Dictionary<string, string>>(item.ProviderIdsJson); }
-        catch (JsonException) { }
-        return new(item.Id, item.OwnerUserId, item.BackendInstanceId,
-            item.BackendLibraryId, item.BackendItemId, item.CanonicalRecordingId, item.Title,
-            item.Artist, item.Album, item.AlbumArtist,
-            item.DurationMilliseconds is > 0 ? item.DurationMilliseconds : null,
-            item.Isrc, item.MusicBrainzRecordingId, null, providers);
-    }
+    private static LocalTrackMatchCandidate ToCandidate(LibraryTrackRecord item) =>
+        LocalCopyPreference.ToCandidate(item);
 
     private static string Hash(string value) =>
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();

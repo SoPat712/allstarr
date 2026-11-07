@@ -4,6 +4,18 @@ namespace allstarr.Core.Matching;
 
 public static class TrackSnapshotMetadata
 {
+    internal static ExternalTrackMatchSnapshot? MatchingSource(allstarr.Core.Storage.ExternalMetadataSnapshotRecord snapshot,
+        allstarr.Core.Storage.ProviderTrackIdentityRecord? identity = null)
+    {
+        var metadata = TrackMatchCommandService.ReadMetadata(snapshot.PayloadJson);
+        return string.IsNullOrWhiteSpace(metadata.Title) || string.IsNullOrWhiteSpace(metadata.Artist) ? null :
+            new ExternalTrackMatchSnapshot(snapshot.Id.ToString(), identity?.ProviderId ?? snapshot.ProviderId,
+                identity?.ExternalId ?? snapshot.ExternalIdHash, metadata.Title, metadata.Artist, metadata.Album, metadata.AlbumArtist,
+                TrackMatchCommandService.ReadDurationMilliseconds(snapshot.PayloadJson), metadata.Isrc,
+                metadata.MusicBrainzRecordingId, metadata.IsExplicit)
+            { DurationProvenance = metadata.DurationProvenance };
+    }
+
     public static string? DurationProvenance(JsonElement root) =>
         Text(root, "durationProvenance", "DurationProvenance");
 

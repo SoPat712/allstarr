@@ -7,8 +7,10 @@ namespace allstarr.Tests;
 
 public sealed partial class RecordingKeptFilesTests
 {
-    [Fact]
-    public async Task AlgorithmRolloutLeavesKeptDecisionsUntouched()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AlgorithmRolloutProtectsManualChoicesWithoutExemptingKeptAutomaticDecisions(bool pinned)
     {
         await Service().PublishAsync(Request());
         var snapshotId = Guid.CreateVersion7();
@@ -43,15 +45,38 @@ public sealed partial class RecordingKeptFilesTests
                 DecisionVersion = 1,
                 DecidedAt = now
             });
+            if (pinned)
+                db.ManualTrackOverrides.Add(new ManualTrackOverrideRecord
+                {
+                    Id = Guid.NewGuid(),
+                    OwnerUserId = owner,
+                    ExternalSnapshotId = snapshotId,
+                    SourceProviderId = "deezer",
+                    SourceExternalIdHash = source.ExternalIdHash,
+                    Decision = ManualOverrideDecision.Pin,
+                    TargetProviderId = "deezer",
+                    TargetExternalId = source.ExternalId,
+                    DecisionVersion = 1,
+                    Revision = 1,
+                    Reason = "Personal choice",
+                    CreatedAt = now
+                });
             await db.SaveChangesAsync();
         }
         var rematches = new TrackRematchAllService(factory, queue, new SystemPlatformClock());
 
-        Assert.Equal(0, await rematches.QueueAlgorithmUpgradesAsync());
+        Assert.Equal(pinned ? 0 : 1, await rematches.QueueAlgorithmUpgradesAsync());
 
         await using var verification = factory.CreateDbContext();
         Assert.Equal("retired-v1", (await verification.TrackMatches.SingleAsync()).MatcherVersion);
         Assert.Single(await verification.Set<allstarr.Core.ManagedFiles.RecordingKeptRouteEntity>().ToArrayAsync());
         Assert.Single(await verification.ManagedFiles.ToArrayAsync());
+        var authority = await verification.ManualTrackOverrides.SingleOrDefaultAsync();
+        Assert.Equal(pinned, authority != null);
+        if (authority != null)
+        {
+            Assert.Equal(1, authority.Revision);
+            Assert.Null(authority.RevokedAt);
+        }
     }
 }

@@ -297,22 +297,7 @@ public sealed partial class LibraryIndexService : ILibraryIndexService
         var tracks = await LibraryTrackAccess.Query(db, executionContext, access).Where(track => track.BackendLibraryId == backendLibraryId)
             .OrderBy(track => track.Id)
             .ToListAsync(cancellationToken);
-        return tracks.Select(track => new LocalTrackMatchCandidate(
-            track.Id,
-            track.OwnerUserId,
-            track.BackendInstanceId,
-            track.BackendLibraryId,
-            track.BackendItemId,
-            track.CanonicalRecordingId,
-            track.Title,
-            track.Artist,
-            track.Album,
-            track.AlbumArtist,
-            track.DurationMilliseconds,
-            track.Isrc,
-            track.MusicBrainzRecordingId,
-            IsExplicit: null,
-            ParseProviderIds(track.ProviderIdsJson))).ToList();
+        return tracks.Select(LocalCopyPreference.ToCandidate).ToList();
     }
 
     private static Core.Identity.AllstarrPrincipal RequireScope(

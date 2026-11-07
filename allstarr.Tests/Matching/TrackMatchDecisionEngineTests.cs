@@ -534,12 +534,13 @@ public sealed class TrackMatchDecisionEngineTests(ITestOutputHelper output)
     public void NearTiedCandidates_RemainAmbiguousWithoutAutomaticAction()
     {
         var scope = Scope();
-        var first = Candidate(scope);
+        var first = Candidate(scope) with { Isrc = "USAAA2600001" };
         var second = first with
         {
             LibraryTrackId = Guid.CreateVersion7(),
             BackendItemId = "local-2",
             CanonicalRecordingId = Guid.CreateVersion7(),
+            Isrc = "USAAA2600002",
             DurationMilliseconds = 240_000
         };
 
@@ -1382,12 +1383,13 @@ public sealed class TrackMatchDecisionEngineTests(ITestOutputHelper output)
     public void MultipleAcceptanceQualifiedLocalRecordingsRemainAmbiguous()
     {
         var scope = Scope();
-        var first = Candidate(scope);
+        var first = Candidate(scope) with { Isrc = "USAAA2600001" };
         var second = first with
         {
             LibraryTrackId = Guid.CreateVersion7(),
             BackendItemId = "local-2",
             CanonicalRecordingId = Guid.CreateVersion7(),
+            Isrc = "USAAA2600002",
             DurationMilliseconds = 240_000
         };
 
@@ -1993,6 +1995,125 @@ public sealed class TrackMatchDecisionEngineTests(ITestOutputHelper output)
         var decision = new TrackMatchDecisionEngine().Decide(scope, Source(), candidates);
 
         Assert.Equal(20, decision.Candidates.Count);
+    }
+
+    [Fact]
+    public void SoundtrackTitleAnnotationsRequireAlbumEvidenceForBothRecordings()
+    {
+        var scope = Scope();
+        var source = Source() with
+        {
+            Title = "Self Love (Spider-Man: Across the Spider-Verse)",
+            Album = "Spider-Man: Across the Spider-Verse (Soundtrack)"
+        };
+        var differentAlbum = Candidate(scope) with { Title = "Self Love", Album = "Another soundtrack" };
+        var decision = new TrackMatchDecisionEngine().Decide(scope, source, [differentAlbum]);
+        Assert.NotEqual(TrackMatchReviewState.Accepted, decision.State);
+    }
+
+    [Fact]
+    public void CanonicalCandidateLookupIncludesBetterCopiesWithSeparateInternalRecords()
+    {
+        var scope = Scope();
+        var old = Candidate(scope) with { FileFormat = ".mp3", SourceModifiedAt = DateTimeOffset.UnixEpoch };
+        var better = old with
+        {
+            LibraryTrackId = Guid.NewGuid(),
+            BackendItemId = "better-copy",
+            CanonicalRecordingId = Guid.NewGuid(),
+            FileFormat = ".flac"
+        };
+        var engine = new TrackMatchDecisionEngine();
+        var decision = engine.Decide(scope, Source() with { CanonicalRecordingId = old.CanonicalRecordingId },
+            engine.PrepareCandidates([old, better]));
+        Assert.Equal(TrackMatchReviewState.Accepted, decision.State);
+        Assert.Equal(better.LibraryTrackId, decision.SelectedLibraryTrackId);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void DuplicateLibraryCopiesChooseTheBestFileBeforeTheExternalFallback(bool reverse)
+    {
+        var scope = Scope();
+        var source = Source() with
+        {
+            Title = "Self Love (Spider-Man: Across the Spider-Verse)",
+            Artist = "Metro Boomin, Coi Leray",
+            Album = "Metro Boomin Presents Spider-Man: Across the Spider-Verse (Soundtrack From and Inspired by the Motion Picture)",
+            DurationMilliseconds = null
+        };
+        var local = Candidate(scope) with
+        {
+            Title = "Self Love",
+            Artist = source.Artist,
+            Album = source.Album,
+            DurationMilliseconds = null,
+            FileFormat = ".flac",
+            SourceModifiedAt = DateTimeOffset.UnixEpoch
+        };
+        var newest = local with
+        {
+            LibraryTrackId = Guid.NewGuid(),
+            BackendItemId = "newest",
+            CanonicalRecordingId = Guid.NewGuid(),
+            FileFormat = ".flac",
+            SourceModifiedAt = DateTimeOffset.UnixEpoch.AddDays(1)
+        };
+        var lossy = newest with
+        {
+            LibraryTrackId = Guid.NewGuid(),
+            BackendItemId = "lossy",
+            CanonicalRecordingId = Guid.NewGuid(),
+            FileFormat = ".mp3",
+            SourceModifiedAt = DateTimeOffset.UnixEpoch.AddDays(2)
+        };
+        var external = local with
+        {
+            LibraryTrackId = Guid.NewGuid(),
+            BackendItemId = "external",
+            IsLocal = false,
+            Artist = "Metro Boomin",
+            ProviderTrackIds = new Dictionary<string, string> { ["apple-musickit"] = "fallback" }
+        };
+        LocalTrackMatchCandidate[] copies = [local, newest, lossy, external];
+        if (reverse) Array.Reverse(copies);
+
+        var decision = new TrackMatchDecisionEngine().Decide(scope, source, copies, providerPriority: ["apple-musickit"]);
+
+        Assert.Equal(TrackMatchReviewState.Accepted, decision.State);
+        Assert.Equal(newest.LibraryTrackId, decision.SelectedLibraryTrackId);
+        Assert.True(decision.Confidence > decision.Candidates.Single(item => !item.IsLocal).Confidence);
+        Assert.DoesNotContain("ambiguous_top_candidates", decision.Warnings);
+    }
+
+    [Theory]
+    [InlineData("isrc")]
+    [InlineData("recording")]
+    [InlineData("duration")]
+    [InlineData("version")]
+    public void DuplicateLibraryFilesKeepConflictingRecordingEvidenceSeparate(string conflict)
+    {
+        var scope = Scope();
+        var first = Candidate(scope) with { Isrc = "USAAA2600001", MusicBrainzRecordingId = Guid.NewGuid().ToString() };
+        var second = first with { LibraryTrackId = Guid.NewGuid(), CanonicalRecordingId = Guid.NewGuid() };
+        second = conflict switch
+        {
+            "isrc" => second with { Isrc = "USAAA2600002" },
+            "recording" => second with { MusicBrainzRecordingId = Guid.NewGuid().ToString() },
+            "duration" => second with { DurationMilliseconds = 260_000, Isrc = null, MusicBrainzRecordingId = null },
+            _ => second with { Title = first.Title + " (Instrumental)", Isrc = null, MusicBrainzRecordingId = null }
+        };
+        Assert.False(TrackMatchDecisionEngine.SameLibraryRecording(first, second));
+    }
+
+    [Fact]
+    public void LibraryRevisionChangesWhenThePreferredCopyChanges()
+    {
+        var candidate = Candidate(Scope()) with { FileFormat = ".mp3" };
+        var revision = TrackMatchDecisionEngine.LibraryIndexRevision([candidate]);
+        Assert.NotEqual(revision, TrackMatchDecisionEngine.LibraryIndexRevision([candidate with { FileFormat = ".flac" }]));
+        Assert.NotEqual(revision, TrackMatchDecisionEngine.LibraryIndexRevision([candidate with { SourceModifiedAt = DateTimeOffset.UtcNow }]));
     }
 
     private static TrackMatchScope Scope() => new(

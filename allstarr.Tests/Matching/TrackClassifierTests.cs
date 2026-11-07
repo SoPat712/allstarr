@@ -198,6 +198,61 @@ public sealed class TrackClassifierTests
         Assert.Equal(original, source.CanonicalRecordingId);
     }
 
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public void MatchingLibraryCopiesPrecedeCanonicalProviderRoutesAndPreservePersonalPins(bool existingDecision, bool pinned)
+    {
+        var owner = Guid.NewGuid();
+        var canonical = Guid.NewGuid();
+        var source = Identity(canonical, "spotify", "source");
+        var fallback = Identity(canonical, "apple-musickit", "fallback");
+        var snapshot = new ExternalMetadataSnapshotRecord
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = owner,
+            BackendInstanceId = "backend",
+            ProviderId = "spotify",
+            ExternalIdHash = "source",
+            SnapshotVersion = 1,
+            PayloadJson = """{"Title":"Self Love (Spider-Man: Across the Spider-Verse)","Artist":"Metro Boomin, Coi Leray","Album":"Metro Boomin Presents Spider-Man: Across the Spider-Verse (Soundtrack From and Inspired by the Motion Picture)"}"""
+        };
+        var copies = Enumerable.Range(0, 3).Select(index => new LibraryTrackRecord
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = owner,
+            BackendInstanceId = "backend",
+            BackendLibraryId = "music",
+            BackendItemId = $"copy-{index}",
+            CanonicalRecordingId = Guid.NewGuid(),
+            Title = "Self Love",
+            Artist = "Metro Boomin, Coi Leray",
+            Album = "Metro Boomin Presents Spider-Man: Across the Spider-Verse (Soundtrack From and Inspired by the Motion Picture)",
+            FilePath = $"/music/{index}.flac",
+            SourceModifiedAt = DateTimeOffset.UnixEpoch.AddDays(index)
+        }).ToArray();
+        var decision = existingDecision ? Decision(Guid.Empty, TrackMatchState.Accepted, .9568, .88) : null;
+        if (decision != null) { decision.LibraryTrackId = null; decision.CanonicalRecordingId = canonical; }
+        var pin = pinned ? new ManualTrackOverrideRecord
+        {
+            Decision = ManualOverrideDecision.Pin,
+            OwnerUserId = owner,
+            TargetProviderId = "apple-musickit",
+            TargetExternalId = "personal-choice"
+        } : null;
+
+        var projection = TrackRouteProjector.Project(snapshot, decision, pin, source, copies, [source, fallback], ["apple-musickit"]);
+
+        Assert.Equal(pinned ? TrackMatchState.Pinned : TrackMatchState.Accepted, projection.ReviewState);
+        Assert.Equal(pinned ? null : copies[2].Id, projection.LibraryTrack?.Id);
+        Assert.Equal(pinned ? "personal-choice" : "fallback", projection.Classification.PrimaryProviderRoute!.ExternalId);
+        var removed = TrackRouteProjector.Project(snapshot, decision, pin, source, [], [source, fallback], ["apple-musickit"]);
+        Assert.Null(removed.LibraryTrack);
+        Assert.Equal(pinned ? "personal-choice" : "fallback", removed.PrimaryProviderRoute!.ExternalId);
+    }
+
     private static TrackMatchRecord Decision(
         Guid local,
         TrackMatchState state,

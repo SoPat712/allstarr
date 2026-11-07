@@ -246,7 +246,7 @@ public sealed partial class TrackMatchCommandService
             throw new ArgumentException("A normalized SHA-256 value is required.", name);
     }
 
-    private static (string? Title, string? Artist, string? Album, string? AlbumArtist, string? Isrc, bool? IsExplicit, string? MusicBrainzRecordingId, string? DurationProvenance) ReadMetadata(string json)
+    internal static (string? Title, string? Artist, string? Album, string? AlbumArtist, string? Isrc, bool? IsExplicit, string? MusicBrainzRecordingId, string? DurationProvenance) ReadMetadata(string json)
     {
         try
         {
@@ -269,7 +269,7 @@ public sealed partial class TrackMatchCommandService
         }
     }
 
-    private static long? ReadDurationMilliseconds(string json)
+    internal static long? ReadDurationMilliseconds(string json)
     {
         try
         {
