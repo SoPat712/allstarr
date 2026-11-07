@@ -344,6 +344,38 @@ public sealed partial class ProviderAccountsControllerTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task UserList_PreservesStoredLabelsWithoutUsingCredentialsAsIdentity()
+    {
+        var controller = Controller(Session(_userId));
+        using var secret = JsonDocument.Parse(
+            """{"email":"listener@example.test","password":"fixture-private-password","token":"fixture-private-token"}""");
+        foreach (var label in new[] { "Road trip", "Weekend" })
+            Assert.IsType<CreatedAtActionResult>(await controller.Create(new()
+            {
+                ProviderId = "qobuz",
+                DisplayName = label,
+                Secret = secret.RootElement
+            }));
+
+        var result = Assert.IsType<OkObjectResult>(await controller.List());
+
+        using var payload = JsonDocument.Parse(JsonSerializer.Serialize(result.Value));
+        var accounts = payload.RootElement.GetProperty("accounts").EnumerateArray().ToArray();
+        Assert.Equal(new[] { "Road trip", "Weekend" },
+            accounts.Select(account => account.GetProperty("displayName").GetString()));
+        Assert.Equal(new[] { "Road trip", "Weekend" },
+            accounts.Select(account => account.GetProperty("customLabel").GetString()));
+        Assert.All(accounts, account => Assert.True(account.GetProperty("secret").GetProperty("configured").GetBoolean()));
+        Assert.DoesNotContain("listener@example.test", payload.RootElement.GetRawText(), StringComparison.Ordinal);
+        Assert.DoesNotContain("fixture-private-password", payload.RootElement.GetRawText(), StringComparison.Ordinal);
+        Assert.DoesNotContain("fixture-private-token", payload.RootElement.GetRawText(), StringComparison.Ordinal);
+        await using var context = await _factory.CreateDbContextAsync();
+        Assert.Equal(new[] { "Road trip", "Weekend" },
+            await context.ProviderAccounts.OrderBy(account => account.DisplayName)
+                .Select(account => account.DisplayName).ToArrayAsync());
+    }
+
+    [Fact]
     public async Task ExtensionConfiguration_ReturnsSafeValuesAndPreservesBlankSecretFields()
     {
         var registry = AppleExtensionRegistry();

@@ -189,11 +189,12 @@ for (const viewport of [{ width: 1280, theme: "light" }, { width: 1280, theme: "
     await expect(list.getByRole("button", { name: "Add selected to library", exact: true })).toBeVisible();
     if (viewport.width === 1280) expect((await list.getByRole("button", { name: "Add selected to library", exact: true }).boundingBox())!.height).toBe(32);
     await page.getByRole("button", { name: "Show 2 copies of Nicole Kidman", exact: true }).click();
-    const copies = page.getByRole("group", { name: "Copies of Nicole Kidman", exact: true });
-    await expect(copies.locator(".item-row")).toHaveCount(2);
+    const copies = page.getByRole("table", { name: "Copies of Nicole Kidman", exact: true });
+    await expect(copies.locator(".library-download-row")).toHaveCount(2);
     await expect(copies).toContainText("Apple Music");
     await page.getByRole("button", { name: "Hide 2 copies of Nicole Kidman", exact: true }).click();
-    await expect(list.getByText("Below CD quality", { exact: true })).toBeVisible();
+    if (viewport.width === 390) await expect(list.locator(".phone-facts").filter({ hasText: /Below CD quality/ })).toBeVisible();
+    else await expect(list.locator(".quality-check-badge").filter({ hasText: /^Below CD quality$/ })).toBeVisible();
     if (viewport.width === 390) await expectContainedMobileGeometry(page);
     await page.screenshot({ path: `test-results/ui-library/kept-${viewport.width}-${viewport.theme}.png`, fullPage: true });
     const opener = page.getByRole("button", { name: "Open song details for Take On Me", exact: true });
@@ -208,8 +209,8 @@ for (const viewport of [{ width: 1280, theme: "light" }, { width: 1280, theme: "
     await panel.getByText("Copy details", { exact: true }).click();
     await expect(panel).toContainText("Take On Me.flac");
     await panel.getByText("Copy details", { exact: true }).click();
-    const selected = list.locator(".kept-song-group > .item-row.selected");
-    await expectSubtleSelection(selected, selected.locator("h3"));
+    const selected = list.locator(".kept-song-group > .library-download-row.selected");
+    await expectSubtleSelection(selected, selected.locator("strong"));
     await expectSingleRowFooter(panel);
     await expect(panel.getByRole("link", { name: "Download", exact: true })).toHaveAttribute("href", /downloads\/file/);
     if (viewport.width === 390) await expectContainedMobileGeometry(page);

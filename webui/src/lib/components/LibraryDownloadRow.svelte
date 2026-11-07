@@ -6,10 +6,16 @@
   import ProviderMark from "$lib/components/ProviderMark.svelte";
   import LibraryDownloadActions from "$lib/components/LibraryDownloadActions.svelte";
   import { relativeTime } from "$lib/activity";
+  import { Checkbox } from "$lib/components/ui/checkbox";
+  import StatePill from "$lib/components/patterns/StatePill.svelte";
 
   let { file, copies, storage, provider, providerName, quality, qualities, warnings = [], lowerQuality = false,
     size, lifecycle, expanded = false, copiesId, selected = false, busy = false, moving = false,
-    onopen, ontoggle, onkeep, onrelease, onremove, ondeletion }: {
+    selection = false, checked = false, inLibrary = false, oncheck, onopen, ontoggle, onkeep, onrelease, onremove, ondeletion }: {
+    inLibrary?: boolean;
+    selection?: boolean;
+    checked?: boolean;
+    oncheck?: (checked: boolean) => void;
     file: ManagedDownload;
     copies: ManagedDownload[];
     storage: "cache" | "kept";
@@ -35,10 +41,11 @@
   } = $props();
 </script>
 
-<tr class="download-row library-download-row" class:selected class:attention={lowerQuality} data-path={file.path}>
+<tr class="download-row library-download-row" class:kept={storage === "kept"} class:selected class:attention={lowerQuality} data-path={file.path}>
   <td class="song-cell">
     <button type="button" class="open-song" aria-label={`Open song details for ${file.title || file.fileName}`} onclick={onopen}></button>
     <div class="song-copy">
+      {#if selection}<span class="song-selection"><Checkbox {checked} aria-label={`Select ${file.title || file.fileName}`} onCheckedChange={value => oncheck?.(value)} /></span>{/if}
       <span class="media-art library-download-art">
         <ProviderMark id={file.provider || "file"} definition={provider} label={providerName} />
         {#if file.artworkUrl}<img src={adminUrl(file.artworkUrl)} alt="" loading="lazy" onerror={event => event.currentTarget.remove()} />{/if}
@@ -52,7 +59,8 @@
         {/if}
         </div>
         <small>{file.artist || "Unknown artist"}{file.album ? ` · ${file.album}` : ""}</small>
-        <small class="phone-facts">{storage === "cache" ? `Leaves ${lifecycle}` : lifecycle} · {quality}</small>
+        {#if inLibrary}<span class="song-status"><StatePill compact filled tone="ok" text="In library" /></span>{/if}
+        <small class="phone-facts">{storage === "cache" ? `Leaves ${lifecycle}` : lifecycle}{lifecycle ? " · " : ""}{quality}{#if storage === "kept" && lowerQuality} · Below CD quality{/if}</small>
 
       </div>
     </div>
@@ -61,8 +69,9 @@
   <td class="quality-cell" class:has-warning={warnings.length > 0}>
     <span class="quality-labels" title={quality}>{#each qualities ?? [{ label: quality, lower: lowerQuality }] as item, index}{#if index}<span aria-hidden="true"> · </span>{/if}<span class:lower-quality={item.lower}>{item.label}</span>{/each}</span>
     {#each warnings as warning}<span class="quality-check-badge" title={warning.detail}>{warning.label}</span>{/each}
+    {#if storage === "kept" && lowerQuality}<span class="quality-check-badge">Below CD quality</span>{/if}
   </td>
-  <td class="lifecycle-cell"><span>{lifecycle}</span>{#if file.publicationState === "Imported"}<small>Imported original · read-only</small>{/if}</td>
+  <td class="lifecycle-cell"><span title={lifecycle}>{lifecycle}</span>{#if file.publicationState === "Imported"}<small>Imported original · read-only</small>{/if}</td>
   <td class="size-cell"><span>{size}</span><span class="sr-only">Updated {relativeTime(file.lastModified)}</span></td>
   <td class="download-actions library-download-actions">
     <LibraryDownloadActions {file} {storage} {busy} {moving} {onkeep} {onrelease} {onremove} {ondeletion} />
@@ -76,6 +85,8 @@
   td { min-width: 0; border-bottom: 1px solid var(--color-edge); padding: var(--space-2) var(--space-3); color: var(--color-ink); font-size: var(--text-sm); vertical-align: middle; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .song-cell { padding-left: var(--space-4); }
   .song-copy { display: flex; min-width: 0; align-items: center; gap: var(--space-3); }
+  .song-selection { position: relative; z-index: 2; display: flex; align-items: center; min-height: var(--control-md); }
+  .song-status { display: block; margin-top: var(--space-1); }
   .song-description { min-width: 0; }
   .song-title { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
   .song-title > strong { flex: 1; min-width: 0; }
@@ -107,8 +118,11 @@
     .song-cell { grid-column: 1; grid-row: 1; padding-left: var(--space-3); padding-bottom: 0; }
     .song-copy { gap: var(--space-2); }
     .song-title > strong { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; }
+    .kept .song-title > strong { display: block; white-space: normal; overflow-wrap: anywhere; -webkit-line-clamp: unset; line-clamp: unset; }
     .song-description > small:not(.phone-facts) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .phone-facts { display: block; }
+    .kept .phone-facts { white-space: normal; overflow-wrap: anywhere; }
+    .kept .song-description > small:not(.phone-facts) { white-space: normal; overflow-wrap: anywhere; }
     .source-cell { grid-column: 1; grid-row: 2; padding-top: var(--space-1); padding-left: calc(36px + var(--space-3) + var(--space-2)); color: var(--color-ink-muted); font-size: var(--text-xs); }
     .quality-cell, .lifecycle-cell, .size-cell { display: none; }
     .quality-cell.has-warning { display: flex; grid-column: 1 / -1; gap: var(--space-2); padding-top: 0; padding-left: calc(36px + var(--space-3) + var(--space-2)); }

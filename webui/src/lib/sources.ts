@@ -208,6 +208,13 @@ export function accountSubtitle(account: { scope: string; customLabel?: string |
   return account.customLabel ? `${audience} · ${account.customLabel}` : audience;
 }
 
+export function accountDisplayLabel(account: ProviderAccount, serviceName: string) {
+  for (const value of [account.customLabel, account.configuration?.username, account.configuration?.userName,
+    account.displayName !== serviceName ? account.displayName : ""])
+    if (typeof value === "string" && value.trim()) return value.trim();
+  return "";
+}
+
 export function audienceLabel(account: ProviderAccount) {
   if (account.scope === "Shared") return "Shared";
   return account.ownerDisplayName ? `Personal · ${account.ownerDisplayName}` : "Personal · you";

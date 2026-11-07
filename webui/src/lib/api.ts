@@ -1185,6 +1185,8 @@ export type MatchTarget = {
 };
 
 export type ManagedDownload = {
+  keptBy?: { displayName: string; isViewer: boolean; reasons: string[] }[];
+  lastPlayedAt?: string | null;
   path: string;
   storage: string;
   artist: string;
@@ -2013,6 +2015,7 @@ export type BackupStatus = {
   lastFailure: { code: string; message: string; at: string } | null;
 };
 export type StorageOverview = {
+  databaseBytes?: number | null;
   storage: { provider?: string; readiness?: string; checkedAt?: string };
   backups: StorageBackup[];
   restorePending: boolean;

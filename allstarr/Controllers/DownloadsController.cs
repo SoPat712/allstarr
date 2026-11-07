@@ -102,6 +102,7 @@ public partial class DownloadsController : ControllerBase
                 .ThenBy(item => item.Album)
                 .ThenBy(item => item.Title)
                 .ToArray();
+            files = await AddListenerFactsAsync(files, storage, cancellationToken);
             var totalSize = files.Sum(item => item.Size);
             return Ok(new
             {
@@ -923,5 +924,11 @@ public partial class DownloadsController : ControllerBase
         bool ExplicitlyKept,
         AudioQualityCheck? QualityCheck = null,
         Guid? QualityCheckArtifactId = null,
-        bool CanDeleteKeptCopy = false);
+        bool CanDeleteKeptCopy = false)
+    {
+        public IReadOnlyList<DownloadKeeper> KeptBy { get; init; } = [];
+        public DateTimeOffset? LastPlayedAt { get; init; }
+    }
+
+    private sealed record DownloadKeeper(string DisplayName, bool IsViewer, IReadOnlyList<string> Reasons);
 }

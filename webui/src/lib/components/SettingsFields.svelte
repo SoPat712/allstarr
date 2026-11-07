@@ -2,7 +2,7 @@
   import { Lock } from "@lucide/svelte";
   import type { Snippet } from "svelte";
   import { settings, type ConfigField, type ConfigSection, type PlaybackStart } from "$lib/api";
-  import { settingValue, splitLibraryIds, joinLibraryIds } from "$lib/settings-fields";
+  import { settingRestartNote, settingValue, splitLibraryIds, joinLibraryIds } from "$lib/settings-fields";
   import { fieldValue, playbackStartOptions } from "$lib/settings";
   import { rememberRestartUndo } from "$lib/settings-restart";
   import { toast } from "$lib/toasts";
@@ -157,7 +157,7 @@
       <div class="setting-field settings-row" class:wide-control={field.type === "audio-quality" || field.key === "PLAYBACK_START_PREFERENCE"} class:quality-row={field.type === "audio-quality"}>
         <div class:sr-only={field.type === "audio-quality"}>
           <label for={`${id}-${field.key}`}><strong>{label(field)}</strong></label>
-          {#if !locked(field) && (hint || field.requiresRestart)}<small>{hint}{#if field.requiresRestart}<span class="restart-note"> · Restarts Allstarr</span>{/if}</small>{/if}
+          {#if !locked(field) && (hint || field.requiresRestart)}<small>{hint}{#if field.requiresRestart}<span class="restart-note">{settingRestartNote(hint)}</span>{/if}</small>{/if}
           {#if saved[field.key]}<small class="setting-saved" role="status">✓ Saved</small>{/if}
         </div>
         {#if locked(field)}

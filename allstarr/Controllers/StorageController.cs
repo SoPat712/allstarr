@@ -9,7 +9,7 @@ namespace allstarr.Controllers;
 [ApiController]
 [Route("api/admin/storage")]
 [ServiceFilter(typeof(AdminPortFilter))]
-public sealed class StorageController(DurableStorageState storageState, DurableBackupService backupService) : ControllerBase
+public sealed class StorageController(DurableStorageState storageState, DurableBackupService backupService, StorageOptions options) : ControllerBase
 {
     [HttpGet]
     public async Task<IActionResult> Get(CancellationToken cancellationToken = default)
@@ -28,6 +28,7 @@ public sealed class StorageController(DurableStorageState storageState, DurableB
                     storage.ErrorCode,
                     storage.CheckedAt
                 },
+                databaseBytes = ReadDatabaseBytes(),
                 backups = await backupService.ListAsync(cancellationToken),
                 restorePending = backupService.HasPendingRestore,
                 backupPolicy = await backupService.GetPolicyAsync(cancellationToken),
@@ -36,6 +37,26 @@ public sealed class StorageController(DurableStorageState storageState, DurableB
         }
         catch (Exception failure) when (failure is IOException or UnauthorizedAccessException or InvalidOperationException or SqliteException)
         { return StatusCode(503, new { error = "backup_unavailable", message = "Backup information is unavailable. Check durable storage readiness." }); }
+    }
+
+    private long? ReadDatabaseBytes()
+    {
+        try
+        {
+            var databasePath = options.DatabasePath;
+            var databaseBytes = new FileInfo(databasePath).Length;
+            var walBytes = 0L;
+            try
+            {
+                var walPath = databasePath + "-wal";
+                if ((System.IO.File.GetAttributes(walPath) & FileAttributes.Directory) != 0) return null;
+                walBytes = new FileInfo(walPath).Length;
+            }
+            catch (FileNotFoundException) { }
+            return checked(databaseBytes + walBytes);
+        }
+        catch (Exception failure) when (failure is IOException or UnauthorizedAccessException or OverflowException)
+        { return null; }
     }
 
     [HttpPost("backups")]

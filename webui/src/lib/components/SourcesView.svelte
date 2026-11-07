@@ -50,6 +50,7 @@
   import {
     accountSettings,
     accountSubtitle,
+    accountDisplayLabel,
     accountOwnershipLabel,
     providerDisplayName,
     ctsMeasurementLabel,
@@ -691,14 +692,14 @@
 {#snippet accountList()}
   {#if filteredAccounts.length}
     {@const groups = [...new Set(filteredAccounts.map(account => account.providerId))].map(id => filteredAccounts.filter(account => account.providerId === id))}
-    {@const labels = new Map(filteredAccounts.map(item => [item.id, item.customLabel || String(item.configuration?.username || item.configuration?.userName || (item.displayName !== providerDisplayName(providers, item.providerId) ? item.displayName : ""))]))}
+    {@const labels = new Map(filteredAccounts.map(item => [item.id, accountDisplayLabel(item, providerDisplayName(providers, item.providerId))]))}
     {@const hasLabels = [...labels.values()].some(Boolean)}
     <div class="accounts-table-wrap"><table class="accounts-table" aria-label="Accounts"><thead><tr><th>Service</th>{#if hasLabels}<th>Account</th>{/if}<th>Owner</th><th>Shared with</th><th>State</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody>
       {#each groups as group (group[0].providerId)}
         {@const account = group[0]}
         <tr class:account-selected={group.some(item => focusAccount === item.id)} id={`connection-${account.id}`}>
           <td data-label="Service"><a class="account-opener" href={servicePath(account.providerId, account.id)} data-sveltekit-keepfocus data-sveltekit-noscroll aria-label={`Open ${providerDisplayName(providers, account.providerId)} account`}><ProviderArtwork id={account.providerId} definition={provider(account.providerId)} decorative /><strong>{providerDisplayName(providers, account.providerId)}{group.length > 1 ? ` · ${countLabel(group.length, "account")}` : ""}</strong></a></td>
-          {#if hasLabels}<td data-label="Account">{[...new Set(group.map(item => labels.get(item.id)).filter(Boolean))].join(", ")}</td>{/if}
+          {#if hasLabels}{@const accountLabels = [...new Set(group.map(item => labels.get(item.id)).filter(Boolean))].join(", ")}<td data-label={accountLabels ? "Account" : undefined}>{accountLabels}</td>{/if}
           <td data-label="Owner">{[...new Set(group.map(item => item.ownerDisplayName || item.creatorDisplayName).filter(Boolean))].join(", ")}</td>
           <td data-label="Shared with">{[...new Set(group.map(item => item.scope === "Shared" ? "Everyone" : `Just ${item.ownerDisplayName || "you"}`))].join(", ")}</td>
           <td data-label="State">{#each [...new Set(group.map(accountState))] as state}<StatePill tone={state === "Working" ? "ok" : state === "Service down" ? "stop" : ["Off", "Connected"].includes(state) ? "neutral" : "warn"} text={state} />{/each}</td>
@@ -1088,6 +1089,7 @@
   @media (max-width: 380px) { .sources-heading-actions { grid-template-columns: minmax(0, 1fr); } }
   @container (max-width: 640px) {
     .accounts-table, .accounts-table tbody, .accounts-table tr, .accounts-table td { display: block; }
+    .accounts-table td:empty { display: none; }
     .accounts-table thead { display: none; }.accounts-table tr { display: grid; grid-template-columns: minmax(0, 1fr) auto; padding: var(--space-3); border-bottom: 1px solid var(--color-edge); }
     .accounts-table tr:last-child { border: 0; }.accounts-table td { padding: var(--space-1); border: 0; min-width: 0; }.accounts-table td:first-child { grid-column: 1; }.accounts-table td:nth-child(2), .accounts-table td:nth-child(3), .accounts-table td:nth-child(4) { grid-column: 1; padding-left: calc(28px + var(--space-4)); color: var(--color-ink-muted); font-size: var(--text-xs); }
     .accounts-table td:nth-child(5) { grid-column: 2; grid-row: 1; align-self: center; }.accounts-table td:last-child { grid-column: 2; grid-row: 2 / 5; justify-self: end; }

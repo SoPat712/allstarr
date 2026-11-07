@@ -82,7 +82,7 @@ public sealed class PlayTraceService(IDbContextFactory<AllstarrDbContext> factor
             item.ActorUserId != null && (session.IsAdministrator || item.ActorUserId == session.AllstarrUserId));
     }
 
-    private static PlayTraceDetail? Read(AuditEventRecord row)
+    internal static PlayTraceDetail? Read(AuditEventRecord row)
     {
         if (row.DetailsJson.Length > 131072) return null;
         try

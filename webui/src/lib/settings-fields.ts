@@ -1,6 +1,10 @@
 import type { ConfigField } from "$lib/api";
 import { pathValue } from "$lib/settings";
 
+export function settingRestartNote(description: string) {
+  return `${description.trim() ? " · " : ""}Restarts Allstarr`;
+}
+
 export function settingValue(config: Record<string, unknown>, field: ConfigField): string {
   if (field.sensitive) return "";
   const value = pathValue(config, field.valuePath);

@@ -1,24 +1,22 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { downloads, home, type DownloadsResponse, type ManagedDownload, type ProviderDefinition, type KeptCopyDeletionPreview } from "$lib/api";
-  import { ChevronDown, MoreHorizontal } from "@lucide/svelte";
+  import { MoreHorizontal } from "@lucide/svelte";
   import { countLabel } from "$lib/count-label";
   import { relativeTime } from "$lib/activity";
   import { formatDuration } from "$lib/playlists";
-  import { filterDownloads, formatDownloadSize, groupDownloadSongs, lowerDownloadQuality, qualityDetails, qualityWarning, type DownloadSort } from "$lib/downloads";
-  import { providerDisplayName } from "$lib/sources";
+  import { compareKeptBy, downloadQualityLabel, filterDownloads, formatDownloadSize, groupDownloadSongs, keptByText, lowerDownloadQuality, qualityDetails, qualityWarning, type DownloadSort } from "$lib/downloads";
+  import { findProviderDefinition, providerDisplayName } from "$lib/sources";
   import { libraryPromotions, type KeptPromotionContext, type PromotionRequest } from "$lib/library-promotion-api";
-  import { keptQuality } from "$lib/library-promotion-presentation";
   import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
   import { toast } from "$lib/toasts";
   import { newReportRequestId as newRequestId } from "$lib/support";
-  import ItemRow from "./patterns/ItemRow.svelte";
-  import StatePill from "./patterns/StatePill.svelte";
+  import LibraryDownloadRow from "./LibraryDownloadRow.svelte";
+  import LibraryDownloadTable from "./LibraryDownloadTable.svelte";
   import PageStatus from "./patterns/PageStatus.svelte";
   import RowsSkeleton from "./patterns/RowsSkeleton.svelte";
   import EmptyState from "./patterns/EmptyState.svelte";
   import ErrorState from "./patterns/ErrorState.svelte";
-  import MediaArtwork from "./MediaArtwork.svelte";
   import LibraryPromotionAddPanel from "./LibraryPromotionAddPanel.svelte";
   import LibraryDownloadActions from "./LibraryDownloadActions.svelte";
   import SongPlaylistMembership from "./SongPlaylistMembership.svelte";
@@ -53,7 +51,7 @@
   const songs = $derived.by(() => {
     const filtered = filterDownloads(files, query, providerFilter, sort === "lifecycle" ? "track" : sort)
       .filter(file => segment === "all" || segment === "explicit" && file.explicitlyKept || segment === "lower" && lowerDownloadQuality(file));
-    const sorted = sort === "lifecycle" ? filtered.toSorted((left, right) => Number(right.explicitlyKept) - Number(left.explicitlyKept) || (right.referenceCount ?? 0) - (left.referenceCount ?? 0)) : filtered;
+    const sorted = sort === "lifecycle" ? filtered.toSorted(compareKeptBy) : filtered;
     return reversed ? sorted.toReversed() : sorted;
   });
   const songGroups = $derived.by(() => {
@@ -187,23 +185,13 @@
 </script>
 
 {#snippet songRow(file: ManagedDownload, copies: ManagedDownload[], groupKey: string, copiesId: string, physicalCopy: boolean)}
-  {@const inLibrary = copies.some(copy => context?.items.some(item => item.path === copy.path && item.inLibrary))}
-  {@const lowerCount = copies.filter(lowerDownloadQuality).length}
-  <ItemRow title={file.title || file.fileName} subtitle={physicalCopy ? `${providerDisplayName(providers, file.provider)} · ${file.sizeFormatted}` : `${file.artist}${file.album ? ` · ${file.album}` : ""}`} selected={open && copies.some(copy => copy.path === selectedFile?.path)} selection={selecting && !physicalCopy} checked={selectionCopies(copies).some(copy => chosen.includes(copy.path))} oncheck={checked => selectSong(copies, checked)} onclick={() => openSong(file)} actionLabel={`Open song details for ${file.title || file.fileName}`}>
-    {#snippet leading()}<MediaArtwork url={file.artworkUrl} />{/snippet}
-    {#snippet pill()}{#if inLibrary || keptQuality(file)}<StatePill filled compact tone={inLibrary ? "ok" : "neutral"} text={inLibrary ? "In library" : keptQuality(file)} />{/if}{/snippet}
-    {#snippet chips()}
-      {#if inLibrary && physicalCopy && keptQuality(file)}<StatePill text={keptQuality(file)} />{/if}
-      {#if lowerCount}<StatePill tone="warn" text={copies.length === 1 ? "Below CD quality" : `${lowerCount} below CD quality`} />{/if}
-      {#each warnings(copies) as warning (warning.label)}<span class="quality-check-badge" title={warning.detail}>{warning.label}</span>{/each}
-    {/snippet}
-    {#snippet trailing()}{#if copies.length > 1 && !physicalCopy}
-      <button type="button" class="copies-toggle" aria-expanded={expanded.includes(groupKey)} aria-controls={copiesId} aria-label={`${expanded.includes(groupKey) ? "Hide" : "Show"} ${copies.length} copies of ${file.title || file.fileName}`} title={`${copies.length} copies`} onclick={() => expanded = expanded.includes(groupKey) ? expanded.filter(key => key !== groupKey) : [...expanded, groupKey]}>
-        <span>{copies.length}<span class="copies-word"> copies</span></span><ChevronDown size={14} aria-hidden="true" />
-      </button>
-    {/if}{/snippet}
-    {#snippet menu()}<LibraryDownloadActions {file} storage="kept" placement="menu" busy={Boolean(action)} onkeep={() => {}} onrelease={() => confirm({ kind: "release", file })} onremove={() => confirm({ kind: "one", file })} ondeletion={() => void previewDeletion(file)} />{/snippet}
-  </ItemRow>
+  <LibraryDownloadRow {file} {copies} storage="kept" provider={findProviderDefinition(providers, file.provider)} providerName={[...new Set(copies.map(copy => providerDisplayName(providers, copy.provider)))].join(" + ")}
+    quality={downloadQualityLabel(file)} qualities={[...new Map(copies.map(copy => [downloadQualityLabel(copy), { label: downloadQualityLabel(copy), lower: lowerDownloadQuality(copy) }])).values()]}
+    warnings={warnings(copies)} lowerQuality={copies.some(lowerDownloadQuality)} size={formatDownloadSize(copies.reduce((total, copy) => total + copy.size, 0))} lifecycle={keptByText(file.keptBy)}
+    inLibrary={copies.some(copy => context?.items.some(item => item.path === copy.path && item.inLibrary))} selected={open && copies.some(copy => copy.path === selectedFile?.path)} selection={selecting && !physicalCopy} checked={selectionCopies(copies).some(copy => chosen.includes(copy.path))} oncheck={checked => selectSong(copies, checked)}
+    expanded={expanded.includes(groupKey)} {copiesId} busy={Boolean(action)} onopen={() => openSong(file)}
+    ontoggle={copies.length > 1 && !physicalCopy ? () => expanded = expanded.includes(groupKey) ? expanded.filter(key => key !== groupKey) : [...expanded, groupKey] : undefined}
+    onkeep={() => {}} onrelease={() => confirm({ kind: "release", file })} onremove={() => confirm({ kind: "one", file })} ondeletion={() => void previewDeletion(file)} />
 {/snippet}
 
 <section class="promotion-page" class:panel-open={open} aria-label="Kept songs">
@@ -223,21 +211,25 @@
       <div class="kept-search-sort"><SearchField bind:value={query} label="Filter kept songs" placeholder="Search kept songs" hiddenLabel /><SelectField bind:value={providerFilter} label="Source" options={[{ value: "", label: "All sources" }, ...availableProviders.map(value => ({ value, label: providerDisplayName(providers, value) }))]} /><SelectField bind:value={sort} label="Sort songs" options={[{ value: "lifecycle", label: "Kept by" }, { value: "track", label: "Song" }, { value: "provider", label: "Source" }, { value: "quality", label: "Quality" }, { value: "size", label: "Size" }, { value: "updated", label: "Newest" }]} onchange={() => reversed = false} /><Button variant="text" aria-pressed={reversed} onclick={() => reversed = !reversed}>Reverse order</Button></div>
     </div>{/if}
     {#if selecting}<p class="selection-note">Select songs to add their albums. <Button variant="text" onclick={() => { selecting = false; chosen = []; }}>Cancel selection</Button></p>{/if}
-    {#if songGroups.length}<div class="promotion-list" class:selecting>
+    {#if songGroups.length}<div class="promotion-list downloads-table-scroll" class:selecting>
+      <LibraryDownloadTable label="Kept songs" kept {sort} {reversed} onsort={value => { if (sort === value) reversed = !reversed; else { sort = value; reversed = false; } }}>
       {#each songGroups as group, index (group.key)}
         {@const copiesId = `${id}-copies-${index}`}
-        <div class="kept-song-group">
+        <tbody class="kept-song-group">
           {@render songRow(group.files[0], group.files, group.key, copiesId, false)}
           {#if group.files.length > 1}
-            <div class="kept-copies" role="group" aria-label={`Copies of ${group.files[0].title || group.files[0].fileName}`} id={copiesId} hidden={!expanded.includes(group.key)}>
+            <tr class="kept-copies" id={copiesId} hidden={!expanded.includes(group.key)}><td colspan="6">
               {#if expanded.includes(group.key)}
                 <p class="copies-explanation">The song row opens the highest-quality copy. Each copy has its own details and actions.</p>
-                {#each group.files as file (file.path)}{@render songRow(file, [file], "", "", true)}{/each}
+                <LibraryDownloadTable class="copies-table" label={`Copies of ${group.files[0].title || group.files[0].fileName}`} kept><tbody>
+                  {#each group.files as file (file.path)}{@render songRow(file, [file], "", "", true)}{/each}
+                </tbody></LibraryDownloadTable>
               {/if}
-            </div>
+            </td></tr>
           {/if}
-        </div>
+        </tbody>
       {/each}
+      </LibraryDownloadTable>
     </div>{:else if files.length}<EmptyState title="No songs match these filters" description="Try another source, search, or filter.">{#snippet action()}<Button variant="outline" onclick={resetFilters}>Show all songs</Button>{/snippet}</EmptyState>{:else}<EmptyState title="No kept songs" description="Use Keep on a cached song to save it permanently." />{/if}
   {/if}
 </section>
@@ -280,7 +272,6 @@
   .kept-search-sort { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
   .kept-search-sort :global(.search-field) { flex: 1 1 160px; }
   .kept-search-sort :global(.select-root) { min-width: 0; }
-  .promotion-list :global(.row-chips:empty) { display: none; }
   .kept-copy { min-width: 0; }
   .kept-copy p { margin: 0 0 var(--space-2); color: var(--color-ink-muted); font-size: var(--text-xs); overflow-wrap: anywhere; }
   .kept-copy-actions { justify-content: flex-end; margin-top: var(--space-3); }
@@ -290,35 +281,19 @@
   .copy-facts dt { color: var(--color-ink-muted); }
   .copy-facts dd { min-width: 0; margin: 0; overflow-wrap: anywhere; }
   .kept-copy .copy-warning { color: var(--warning); }
-  .quality-check-badge { width: fit-content; max-width: 100%; border: 1px solid var(--color-edge); border-radius: var(--radius-sm); padding: var(--space-1) var(--space-2); color: var(--warning); font-size: var(--text-xs); }
-  .promotion-list :global(.row-chips .state-pill) { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
   h2 { margin: 0; font-size: var(--text-section); font-weight: 600; }
   .promotion-list { overflow: hidden; border: 1px solid var(--color-edge); border-radius: 14px; }
-  .kept-song-group + .kept-song-group { border-top: 1px solid var(--color-edge); }
-  .kept-song-group > :global(.item-row) { border-bottom: 0; }
-  .copies-toggle { display: inline-flex; min-height: var(--control-md); align-items: center; justify-content: center; gap: var(--space-1); border: 0; border-radius: var(--radius-sm); padding: var(--space-1) var(--space-2); background: transparent; color: var(--color-ink-muted); font: inherit; font-size: var(--text-xs); white-space: nowrap; cursor: pointer; }
-  .copies-toggle:hover { background: var(--color-panel-raised); color: var(--color-ink); }
-  .copies-toggle:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
-  .copies-toggle[aria-expanded="true"] :global(svg) { transform: rotate(180deg); }
-  .kept-copies { border-top: 1px solid var(--color-edge); padding-left: var(--space-4); background: var(--color-panel-raised); }
+  .downloads-table-scroll { container: downloads / inline-size; min-width: 0; }
+  .kept-copies { background: var(--color-panel-raised); }
   .kept-copies[hidden] { display: none; }
-  .copies-explanation { margin: 0; padding: var(--space-3) var(--space-4); color: var(--color-ink-muted); font-size: var(--text-xs); line-height: 1.5; }
+  .kept-copies > td { padding: var(--space-3); }
+  .copies-explanation { margin: 0 0 var(--space-3); color: var(--color-ink-muted); font-size: var(--text-xs); line-height: 1.5; }
   .selection-note { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0; font-size: .8rem; color: var(--color-ink-muted); }
   @media (max-width: 899px) {
     .promotion-page-heading { flex-wrap: wrap; }
     .promotion-page-heading :global([data-slot="button"]) { min-height: 44px; }
-    .promotion-list :global(.item-row) { display: grid; grid-template-columns: 40px minmax(0, 1fr) auto 18px; grid-template-areas: "artwork copy actions chevron" "artwork quality actions chevron"; row-gap: 4px; }
-    .promotion-list.selecting :global(.item-row:has(.row-selection)) { grid-template-columns: var(--control-md) 40px minmax(0, 1fr) auto 18px; grid-template-areas: "selection artwork copy actions chevron" "selection artwork quality actions chevron"; }
-    .promotion-list :global(.row-selection) { grid-area: selection; }
-    .promotion-list :global(.row-leading) { grid-area: artwork; }
-    .promotion-list :global(.row-copy) { grid-area: copy; }
-    .promotion-list :global(.row-copy h3), .promotion-list :global(.row-copy p) { white-space: normal; overflow-wrap: anywhere; }
-    .promotion-list :global(.row-pill) { grid-area: quality; max-width: 100%; justify-self: start; }
-    .promotion-list :global(.row-chevron) { grid-area: chevron; }
-    .promotion-list :global(.row-controls) { grid-area: actions; }
-    .copies-toggle { min-width: 44px; min-height: 44px; padding-inline: var(--space-1); }
-    .copies-word { display: none; }
-    .kept-copies { padding-left: var(--space-2); }
+    .kept-copies, .kept-copies > td { display: block; }
+    .kept-copies > td { padding: var(--space-2); }
     .kept-copy-actions :global([data-slot="button"]) { min-height: 44px; }
     .kept-search-sort :global([data-slot="button"]) { min-height: 44px; }
   }

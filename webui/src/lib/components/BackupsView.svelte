@@ -2,6 +2,7 @@
   import AdvancedFold from "$lib/components/patterns/AdvancedFold.svelte";
   import RefreshButton from "$lib/components/RefreshButton.svelte";
   import { formatLocalDateTime } from "$lib/dates";
+  import { formatDownloadSize } from "$lib/downloads";
   import { onMount } from "svelte";
   import { ApiError, settings, type BackupPolicy, type BackupPolicyInput, type StorageOverview, type StorageBackup } from "$lib/api";
   import { toast } from "$lib/toasts";
@@ -174,7 +175,7 @@
 
 {#if administrator}
   <div class="settings-stack">
-    <PageStatus items={[{ label: status?.lastSuccessAt ? `Last backup verified ${date(status.lastSuccessAt)}` : "No verified backup yet" }, ...(status?.lastBytes ? [{ label: size(status.lastBytes) }] : []), { label: data?.backupPolicy?.enabled ? `Next ${date(status?.nextRunAt)}` : "Scheduling off" }]} />
+    <PageStatus items={[{ label: status?.lastSuccessAt ? `Last backup verified ${date(status.lastSuccessAt)}` : "No verified backup yet" }, ...(status?.lastBytes ? [{ label: size(status.lastBytes) }] : []), { label: data?.backupPolicy?.enabled ? `Next ${date(status?.nextRunAt)}` : "Scheduling off" }, ...(data?.databaseBytes == null ? [] : [{ label: `${formatDownloadSize(data.databaseBytes)} database` }])]} />
     {#if error}<ErrorState title="Backup status is unavailable" detail={error} onretry={() => { polls = 0; return refresh(); }} />{/if}
     {#if !data && !error}<RowsSkeleton count={4} />
     {:else if data}
@@ -202,7 +203,7 @@
         {#if !ready}<p class="settings-impact" role="status">The backup list is unavailable until durable storage is ready.</p>
         {:else if data.backups.length}
           <table class="settings-table"><thead><tr><th>Made</th><th>Size</th><th>State</th><th></th></tr></thead><tbody>
-            {#each data.backups as backup (backup.id)}<tr title={backup.fileName}><td>{date(backup.createdAt)}<small>{backup.origin === "scheduled" ? "Scheduled" : backup.origin === "manual" ? "Manual" : "Existing backup"}{backup.retentionBuckets?.length ? ` · ${backup.retentionBuckets.join(", ")}` : ""}</small></td><td class="number">{size(backup.bytes)}</td><td><StatePill tone={backup.status === "verified" ? "ok" : backup.status === "changed" || backup.status === "invalid" ? "warn" : "neutral"} text={backup.status === "verified" ? "Verified" : backup.status === "changed" ? "File changed" : backup.status === "invalid" ? "Verification failed" : "Verify on download"} /></td><td><div class="backup-actions"><Button variant="text" size="sm" disabled={backup.status === "changed" || backup.status === "invalid"} href={settings.backupDownloadUrl(backup.id)} download={backup.fileName}>Download</Button><DropdownMenu.Root><DropdownMenu.Trigger class="icon-button" aria-label={`More actions for ${date(backup.createdAt)}`}><MoreHorizontal size={18} /></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content class="menu-content"><DropdownMenu.Item class="menu-item settings-danger" disabled={Boolean(action) || pending || active || backup.status === "changed" || backup.status === "invalid"} onSelect={() => openRestore(backup)}>Restore…</DropdownMenu.Item></DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root></div></td></tr>{/each}
+            {#each data.backups as backup (backup.id)}<tr title={backup.fileName}><td>{date(backup.createdAt)}<small>{backup.origin === "scheduled" ? "Scheduled" : backup.origin === "manual" ? "Manual" : "Existing backup"}{backup.retentionBuckets?.length ? ` · ${backup.retentionBuckets.join(", ")}` : ""}{#if backup.bytes != null}<span class="phone-backup-size">{size(backup.bytes)}</span>{/if}</small></td><td class="number">{size(backup.bytes)}</td><td><StatePill tone={backup.status === "verified" ? "ok" : backup.status === "changed" || backup.status === "invalid" ? "warn" : "neutral"} text={backup.status === "verified" ? "Verified" : backup.status === "changed" ? "File changed" : backup.status === "invalid" ? "Verification failed" : "Verify on download"} /></td><td><div class="backup-actions"><Button variant="text" size="sm" disabled={backup.status === "changed" || backup.status === "invalid"} href={settings.backupDownloadUrl(backup.id)} download={backup.fileName}>Download</Button><DropdownMenu.Root><DropdownMenu.Trigger class="icon-button" aria-label={`More actions for ${date(backup.createdAt)}`}><MoreHorizontal size={18} /></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content class="menu-content"><DropdownMenu.Item class="menu-item settings-danger" disabled={Boolean(action) || pending || active || backup.status === "changed" || backup.status === "invalid"} onSelect={() => openRestore(backup)}>Restore…</DropdownMenu.Item></DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root></div></td></tr>{/each}
           </tbody></table>
         {:else}<EmptyState title="No backups yet" description="Back up now to save your settings, accounts and history.">{#snippet icon()}<Archive size={24} />{/snippet}</EmptyState>{/if}
         <footer class="restore-upload" class:has-file={Boolean(restoreFile)}><div class="settings-row"><div><strong>Restore from a file</strong><small>Choose a backup ZIP. Saved sign-ins are included; audio and caches need separate backups.</small></div>{#key pickerRevision}<FilePicker label="Backup ZIP file" accept=".zip,application/zip" buttonLabel="Choose a backup ZIP" disabled={Boolean(action) || pending || active} onselect={files => { restoreFile = files[0] ?? null; if (restoreFile) openRestore(); }} />{/key}</div></footer>
@@ -224,6 +225,7 @@
   </Dialog.Root>
 {/if}
 <style>
+  .phone-backup-size { display: none; }
   .restore-upload .settings-row { padding: 0; width: 100%; }
   .restore-upload:not(.has-file) :global(.file-picker-name) { display: none; }
 
@@ -234,5 +236,5 @@
   .restore-columns h3 { margin: 0; font-size: var(--text-sm); }
   .restore-columns ul { margin: var(--space-2) 0 0; padding-left: var(--space-4); color: var(--color-ink-muted); font-size: var(--text-sm); line-height: 1.7; }
   .backup-first { display: flex; align-items: center; gap: var(--space-3); min-height: 44px; font-size: var(--text-sm); }
-  @media (max-width: 650px) { .restore-columns { grid-template-columns: minmax(0, 1fr); } .settings-table :is(td, th):nth-child(2) { display: none; } .backup-actions { gap: var(--space-1); } }
+  @media (max-width: 650px) { .phone-backup-size { display: inline; margin-left: var(--space-2); } .restore-columns { grid-template-columns: minmax(0, 1fr); } .settings-table :is(td, th):nth-child(2) { display: none; } .backup-actions { gap: var(--space-1); } }
 </style>

@@ -7,6 +7,7 @@
   import { Button } from "$lib/components/ui/button";
   import RefreshButton from "$lib/components/RefreshButton.svelte";
   import LibraryDownloadRow from "$lib/components/LibraryDownloadRow.svelte";
+  import LibraryDownloadTable from "$lib/components/LibraryDownloadTable.svelte";
   import PageStatus from "$lib/components/patterns/PageStatus.svelte";
   import FilterSegments from "$lib/components/patterns/FilterSegments.svelte";
   import RowsSkeleton from "$lib/components/patterns/RowsSkeleton.svelte";
@@ -19,7 +20,7 @@
   } from "$lib/api";
   import SearchField from "$lib/components/SearchField.svelte";
   import SelectField from "$lib/components/SelectField.svelte";
-  import { filterDownloads, groupDownloadSongs, formatDownloadSize as formatSize, lowerDownloadQuality as lowerQuality, qualityWarning, type DownloadSort } from "$lib/downloads";
+  import { downloadQualityLabel as qualityLine, filterDownloads, groupDownloadSongs, formatDownloadSize as formatSize, lowerDownloadQuality as lowerQuality, qualityWarning, type DownloadSort } from "$lib/downloads";
   import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
   import { pathValue } from "$lib/settings";
   import { relativeTime } from "$lib/activity";
@@ -107,9 +108,6 @@
   function warnings(files: ManagedDownload[]) {
     return [...new Map(files.map(qualityWarning).filter(value => value !== null).map(value => [value.label, value])).values()];
   }
-  function qualityLine(file: ManagedDownload) {
-    return [file.codec, file.bitDepth && file.sampleRateHz ? `${file.bitDepth}/${file.sampleRateHz / 1000}` : file.bitrateKbps ? `${file.bitrateKbps} kbps` : file.quality].filter(Boolean).join(" ");
-  }
   function lifecycle(files: ManagedDownload[]) {
     if (cached) {
       const next = files.toSorted((left, right) => expiry(left) - expiry(right))[0];
@@ -121,11 +119,6 @@
   }
   function groupSize(files: ManagedDownload[]) { return files.length === 1 ? files[0].sizeFormatted : formatSize(files.reduce((sum, file) => sum + file.size, 0)); }
   function toggleSort(next: Sort) { if (sort === next) reversed = !reversed; else { sort = next; reversed = false; } }
-  function sortOrder(column: Sort): "none" | "ascending" | "descending" {
-    if (sort !== column) return "none";
-    const descending = column === "quality" || column === "size" || column === "updated" || (!cached && column === "lifecycle");
-    return descending !== reversed ? "descending" : "ascending";
-  }
   const provider = (providerId?: string | null) => findProviderDefinition(providers, providerId);
   const providerName = (providerId?: string | null) => providerDisplayName(providers, providerId);
 
@@ -216,17 +209,6 @@
   });
 </script>
 
-{#snippet tableHead()}
-  <thead><tr>
-    <th class="song-heading" scope="col" aria-sort={sortOrder("track")}><button type="button" onclick={() => toggleSort("track")}>Song</button></th>
-    <th class="source-heading" scope="col" aria-sort={sortOrder("provider")}><button type="button" onclick={() => toggleSort("provider")}>Source</button></th>
-    <th class="quality-heading" scope="col" aria-sort={sortOrder("quality")}><button type="button" onclick={() => toggleSort("quality")}>Quality</button></th>
-    <th class="lifecycle-heading" scope="col" aria-sort={sortOrder("lifecycle")}><button type="button" onclick={() => toggleSort("lifecycle")}>{cached ? "Leaves cache" : "Kept by"}</button></th>
-    <th class="size-heading" scope="col" aria-sort={sortOrder("size")}><button type="button" onclick={() => toggleSort("size")}>Size</button></th>
-    <th class="actions-heading" scope="col"><span class="sr-only">Actions</span></th>
-  </tr></thead>
-{/snippet}
-
 {#snippet songRow(file: ManagedDownload, copies: ManagedDownload[], key: string, copiesId: string)}
   <LibraryDownloadRow {file} {copies} {storage} provider={provider(file.provider)} providerName={[...new Set(copies.map(copy => providerName(copy.provider)))].join(" + ")}
     qualities={[...new Map(copies.map(copy => [qualityLine(copy), { label: qualityLine(copy), lower: lowerQuality(copy) }])).values()]}
@@ -278,8 +260,7 @@
     </div>
     {#if visibleGroups.length}
       <div class="downloads-table-scroll">
-        <table class="library-downloads-table" aria-label={`${label} songs`}>
-          {@render tableHead()}
+        <LibraryDownloadTable label={`${label} songs`} kept={!cached} {sort} {reversed} onsort={toggleSort}>
           <tbody>
             {#each visibleGroups as group, index (group.key)}
               {@const copiesId = `${id}-copies-${index}`}
@@ -288,16 +269,15 @@
                 <tr class="copies-row" id={copiesId} hidden={!expanded.includes(group.key)}><td colspan={panelOpen ? 4 : 6}>
                   {#if expanded.includes(group.key)}
                     <p class="copies-explanation">The row action uses the highest-quality copy. Each copy also has its own actions.</p>
-                    <table class="library-downloads-table copies-table" aria-label={`Copies of ${group.files[0].title || group.files[0].fileName}`}>
-                      {@render tableHead()}
+                    <LibraryDownloadTable class="copies-table" label={`Copies of ${group.files[0].title || group.files[0].fileName}`} kept={!cached} {sort} {reversed} onsort={toggleSort}>
                       <tbody>{#each group.files as file (file.path)}{@render songRow(file, [file], "", "")}{/each}</tbody>
-                    </table>
+                    </LibraryDownloadTable>
                   {/if}
                 </td></tr>
               {/if}
             {/each}
           </tbody>
-        </table>
+        </LibraryDownloadTable>
       </div>
     {:else if allFiles.length}
       <EmptyState title="No songs match these filters" description="Try another source, search, or filter.">
@@ -350,38 +330,10 @@
   .downloads-search-sort :global(.select-root) { flex: 0 0 auto; }
   .downloads-search-sort :global(.select-trigger) { width: auto; gap: var(--space-2); padding-inline: var(--space-2); background: var(--color-panel); color: var(--color-ink); font-size: .8125rem; white-space: nowrap; }
   .downloads-table-scroll { container: downloads / inline-size; min-width: 0; }
-  .library-downloads-table { width: 100%; min-width: 800px; table-layout: fixed; border-collapse: collapse; text-align: left; }
-  th { border-bottom: 1px solid var(--color-edge); padding: var(--space-2) var(--space-3); color: var(--color-ink-muted); font-size: var(--text-xs); font-weight: 500; }
-  th button { min-height: var(--control-sm); border: 0; padding: 0; background: transparent; color: inherit; cursor: pointer; font: inherit; text-align: left; white-space: nowrap; }
-  th[aria-sort="ascending"] button, th[aria-sort="descending"] button { color: var(--color-signal-text); font-weight: 600; }
-  .song-heading { padding-left: var(--space-4); }
-  .source-heading { width: 160px; }
-  .lifecycle-heading { width: 120px; }
-  .size-heading { width: 108px; text-align: right; }
-  .quality-heading { width: 210px; }
-  .actions-heading { width: 116px; }
   .copies-row[hidden] { display: none; }
   .copies-row > td { border-bottom: 1px solid var(--color-edge); padding: var(--space-3); background: var(--color-panel-raised); }
   .copies-explanation { margin: 0 0 var(--space-2); padding-inline: var(--space-3); color: var(--color-ink-muted); font-size: var(--text-xs); }
-  .copies-table { min-width: 0; border: 1px solid var(--color-edge); }
   .track-cache-link { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); border-top: 1px solid var(--color-edge); padding-block: var(--space-3); }
-  @media (min-width: 900px) {
-    @container downloads (max-width: 850px) {
-      .library-downloads-table { min-width: 0; }
-      .song-heading { width: auto; padding-left: var(--space-2); }
-      .source-heading { width: 100px; }
-      .quality-heading { width: 90px; }
-      .lifecycle-heading, .size-heading, :global(.lifecycle-cell), :global(.size-cell) { display: none; }
-      th, :global(.library-download-row > td) { padding-inline: var(--space-2); }
-      :global(.library-download-row > td), :global(.song-title > strong) { font-size: var(--text-xs); }
-      :global(.song-copy) { gap: var(--space-2); }
-      :global(.library-download-art) { width: 36px; height: 36px; }
-      :global(.source-name) { flex-wrap: wrap; gap: var(--space-1); overflow-wrap: normal; }
-      :global(.library-download-actions [data-slot="button"]) { padding-inline: var(--space-2); font-size: var(--text-xs); }
-      :global(.library-download-actions [data-slot="button"] svg) { display: none; }
-      :global(.library-download-menu) { width: 32px; min-width: 32px; height: 32px; min-height: 32px; }
-    }
-  }
   @media (max-width: 899px) {
     .library-downloads-heading { flex-wrap: wrap; padding-bottom: var(--space-3); }
     h2 { font-size: var(--text-lg); }
@@ -391,8 +343,6 @@
     .downloads-search-sort :global(.search-field) { grid-column: 1 / -1; min-width: 0; }
     .downloads-search-sort :global(.select-root) { min-width: 0; }
     .downloads-search-sort :global(.select-trigger) { width: 100%; }
-    .library-downloads-table, .library-downloads-table tbody { display: block; width: 100%; min-width: 0; }
-    .library-downloads-table thead { display: none; }
     .copies-row, .copies-row > td { display: block; }
     .copies-row > td { padding: var(--space-2); }
     .track-cache-link { flex-wrap: wrap; }

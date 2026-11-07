@@ -3,6 +3,7 @@
   import { adminUrl } from "$lib/admin-url";
   import type { ManagedDownload, ProviderDefinition } from "$lib/api";
   import { relativeTime } from "$lib/activity";
+  import { formatLocalDateTime } from "$lib/dates";
   import { qualityDetails } from "$lib/downloads";
   import { formatDuration } from "$lib/playlists";
   import LibraryDownloadActions from "$lib/components/LibraryDownloadActions.svelte";
@@ -52,6 +53,7 @@
       <dt>Quality</dt><dd>{qualityDetails(file).join(" · ") || file.quality}</dd>
       <dt>Size</dt><dd>{file.sizeFormatted}</dd>
       <dt>Saved</dt><dd><time datetime={file.lastModified} title={file.lastModified}>{relativeTime(file.lastModified)}</time></dd>
+      {#if file.lastPlayedAt}<dt>Last played</dt><dd><time datetime={file.lastPlayedAt}>{formatLocalDateTime(file.lastPlayedAt)}</time></dd>{/if}
     </dl>
     <SongPlaylistMembership {file} {open} />
     <AdvancedFold><dl>

@@ -167,7 +167,7 @@ for (const width of [390, 1280]) {
       await expect(row).toHaveCount(0);
 
       await page.goto("/#/library/kept");
-      const keptRow = page.locator(".item-row").filter({ hasText: "Fixture Song" });
+      const keptRow = page.locator(".library-download-row").filter({ hasText: "Fixture Song" });
       await expect(keptRow).toBeVisible();
       await keptRow.getByRole("button", { name: "Actions for Fixture Song", exact: true }).click();
       await expect(page.getByRole("menuitem", { name: "Stop keeping", exact: true })).toBeVisible();
@@ -224,7 +224,7 @@ for (const width of [390, 1280]) {
       for (const badge of await page.locator(".quality-check-badge").all()) {
         await expect(badge).toHaveAttribute("title", /.+\.$/);
       }
-      const row = page.locator(".item-row").filter({ hasText: "Quality 4" });
+      const row = page.locator(".library-download-row").filter({ hasText: "Quality 4" });
       await expect(row.locator(".quality-check-badge")).toHaveCount(0);
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
       await page.screenshot({ path: `test-results/hires-downloads-${width}-${colorScheme}.png`, fullPage: true });
@@ -260,7 +260,7 @@ for (const width of [390, 1280]) {
         return json(route, { jobId: "delete-job", queued: true }, 202);
       });
       await page.goto("/#/library/kept");
-      const row = page.locator(".item-row").filter({ hasText: "Check" });
+      const row = page.locator(".library-download-row").filter({ hasText: "Check" });
       await row.getByRole("button", { name: "Open song details for Check", exact: true }).click();
       const panel = page.locator("[data-side-panel][data-state=open]");
       await expect(panel).toContainText("Apple Music");
@@ -369,21 +369,21 @@ test("kept search and copy actions stay reachable without library status", async
   }));
   await page.route("**/api/admin/library-promotions/kept", route => json(route, { error: "Library status is unavailable." }, 503));
   await page.goto("/#/library/kept");
-  await expect(page.locator(".item-row")).toHaveCount(2);
+  await expect(page.locator(".library-download-row")).toHaveCount(2);
   const actions = page.getByRole("button", { name: "Actions for kept songs", exact: true });
   await actions.click();
   await page.getByRole("menuitem", { name: "Search and sort", exact: true }).click();
   await page.getByRole("searchbox", { name: "Filter kept songs", exact: true }).fill("Second");
-  await expect(page.locator(".item-row")).toHaveCount(1);
+  await expect(page.locator(".library-download-row")).toHaveCount(1);
   await page.getByRole("searchbox", { name: "Filter kept songs", exact: true }).fill("");
   await page.getByRole("radio", { name: "Your Keeps 1", exact: true }).click();
-  await expect(page.locator(".item-row")).toHaveCount(1);
-  await expect(page.locator(".item-row")).toContainText("First copy");
+  await expect(page.locator(".library-download-row")).toHaveCount(1);
+  await expect(page.locator(".library-download-row")).toContainText("First copy");
   await page.reload();
   await expect(page.getByRole("radio", { name: "Your Keeps 1", exact: true })).toBeChecked();
-  await expect(page.locator(".item-row")).toHaveCount(1);
+  await expect(page.locator(".library-download-row")).toHaveCount(1);
   await page.getByRole("radio", { name: "Lower quality 1", exact: true }).click();
-  const row = page.locator(".item-row");
+  const row = page.locator(".library-download-row");
   await expect(row).toContainText("Second copy");
   await page.getByRole("button", { name: "Sort songs", exact: true }).click();
   await page.getByRole("option", { name: "Size", exact: true }).click();
@@ -425,41 +425,41 @@ test("kept copies sharing a recording each retain their own actions", async ({ p
     items: ["first.flac", "second.flac", "third.mp3"].map(path => ({ path, recordingId, inLibrary: false })),
   }));
   await page.goto("/#/library/kept");
-  const rows = page.locator(".item-row");
+  const rows = page.locator(".library-download-row");
   await expect(rows).toHaveCount(1);
   await expect(page.getByRole("region", { name: "Kept totals", exact: true })).toContainText("1 kept");
   await expect(page.getByRole("region", { name: "Kept totals", exact: true })).toContainText("3 copies");
-  await expect(rows.first().locator(".row-pill .state-pill")).toHaveText("FLAC 24/96");
+  await expect(rows.first().locator(".quality-labels")).toContainText("FLAC 24/96");
   await expect(rows.first()).toContainText("Likely upscaled");
-  await expect(rows.first()).toContainText("1 below CD quality");
+  await expect(rows.first().locator(".quality-check-badge").filter({ hasText: /^Below CD quality$/ })).toHaveText("Below CD quality");
   await rows.first().getByRole("button", { name: "Actions for Fixture Song", exact: true }).click();
-  await expect(page.getByRole("menuitem", { name: "Download", exact: true })).toHaveAttribute("href", /path=second.flac/);
+  await expect(rows.first().getByRole("link", { name: "Download", exact: true })).toHaveAttribute("href", /path=second.flac/);
   await page.keyboard.press("Escape");
   const expander = rows.first().getByRole("button", { name: /3 copies of Fixture Song$/ });
   await expect(expander).toHaveAccessibleName("Show 3 copies of Fixture Song");
   await expander.click();
   await expect(expander).toHaveAttribute("aria-expanded", "true");
-  const copies = page.getByRole("group", { name: "Copies of Fixture Song", exact: true });
-  await expect(copies.locator(".item-row")).toHaveCount(3);
-  const firstCopy = copies.locator(".item-row").filter({ hasText: "FLAC 16/44" });
-  const secondCopy = copies.locator(".item-row").filter({ hasText: "FLAC 24/96" });
-  const thirdCopy = copies.locator(".item-row").filter({ hasText: "MP3 128" });
+  const copies = page.getByRole("table", { name: "Copies of Fixture Song", exact: true });
+  await expect(copies.locator(".library-download-row")).toHaveCount(3);
+  const firstCopy = copies.locator(".library-download-row").filter({ hasText: "FLAC 16/44" });
+  const secondCopy = copies.locator(".library-download-row").filter({ hasText: "FLAC 24/96" });
+  const thirdCopy = copies.locator(".library-download-row").filter({ hasText: "MP3 128" });
   await expect(firstCopy).toContainText("Lumen Audio");
   await expect(secondCopy).toContainText("Apple Music");
   await expect(secondCopy).toContainText("Likely upscaled");
-  await expect(thirdCopy.locator('.state-pill[data-tone="warn"]')).toHaveText("Below CD quality");
+  await expect(thirdCopy.locator(".quality-check-badge")).toHaveText("Below CD quality");
   await firstCopy.getByRole("button", { name: "Actions for Fixture Song", exact: true }).click();
   await expect(page.getByRole("menuitem", { name: "Stop keeping", exact: true })).toBeVisible();
-  await expect(page.getByRole("menuitem", { name: "Download", exact: true })).toHaveAttribute("href", /path=first.flac/);
+  await expect(firstCopy.getByRole("link", { name: "Download", exact: true })).toHaveAttribute("href", /path=first.flac/);
   await page.keyboard.press("Escape");
   await secondCopy.getByRole("button", { name: "Actions for Fixture Song", exact: true }).click();
   await expect(page.getByRole("menuitem", { name: "Delete kept copy…", exact: true })).toBeVisible();
-  await expect(page.getByRole("menuitem", { name: "Download", exact: true })).toHaveAttribute("href", /path=second.flac/);
+  await expect(rows.first().getByRole("link", { name: "Download", exact: true })).toHaveAttribute("href", /path=second.flac/);
   await page.keyboard.press("Escape");
   await thirdCopy.getByRole("button", { name: "Actions for Fixture Song", exact: true }).click();
   await expect(page.getByRole("menuitem", { name: "Protected copy", exact: true })).toBeDisabled();
   await expect(page.getByRole("menuitem", { name: "Stop keeping", exact: true })).toHaveCount(0);
-  await expect(page.getByRole("menuitem", { name: "Download", exact: true })).toHaveAttribute("href", /path=third.mp3/);
+  await expect(thirdCopy.getByRole("link", { name: "Download", exact: true })).toHaveAttribute("href", /path=third.mp3/);
   await page.keyboard.press("Escape");
   await firstCopy.getByRole("button", { name: "Open song details for Fixture Song", exact: true }).click();
   const panel = page.locator("[data-side-panel][data-state=open]");
@@ -481,8 +481,8 @@ for (const storage of ["cached", "kept"]) test(`Downloads have one outlined acti
   if (storage === "cached") await expect(list.locator("thead th")).toHaveText(["Song", "Source", "Quality", "Leaves cache", "Size", "Actions"]);
   else {
     await expect(list.getByRole("button", { name: "Add selected to library", exact: true })).toBeVisible();
-    await expect(list.locator(".row-pill")).toHaveText("FLAC 16/44");
-    await expect(list.locator(".row-chevron")).toBeVisible();
+    await expect(list.locator(".quality-labels")).toHaveText("FLAC 16/44.1");
+    await expect(list.getByRole("columnheader", { name: "Kept by", exact: true })).toBeVisible();
     await list.getByRole("button", { name: "Open song details for Fixture Song", exact: true }).click();
   }
   const row = storage === "cached" ? list.locator(".download-row").first() : page.locator("[data-side-panel][data-state=open] .kept-copy-actions");

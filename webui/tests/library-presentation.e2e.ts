@@ -361,7 +361,7 @@ for (const [width, theme] of [[1280, "light"], [1280, "dark"], [390, "light"]] a
       await expect(page.getByRole("button", { name: /^Remove all/ })).toHaveCount(0);
       if (width === 1280) {
         await expect(list.getByRole("button", { name: "Actions for Take On Me", exact: true })).toBeVisible();
-        expect(await list.locator(".row-copy h3").first().evaluate(element => getComputedStyle(element).whiteSpace)).toBe("nowrap");
+        expect(await list.locator(".song-title > strong").first().evaluate(element => getComputedStyle(element).whiteSpace)).toBe("nowrap");
       }
     }
     if (name === "mixes") {

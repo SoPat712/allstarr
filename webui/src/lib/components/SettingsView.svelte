@@ -1,6 +1,7 @@
 <script lang="ts">
   import AdvancedFold from "$lib/components/patterns/AdvancedFold.svelte";
   import { countLabel } from "$lib/count-label";
+  import { storageSegments as measuredStorageSegments } from "$lib/storage-usage";
   import { onMount } from "svelte";
   import { toast } from "$lib/toasts";
   import { home, settings, downloads, type DownloadsResponse, type ConfigSection, type UiSchema, type OnboardingState } from "$lib/api";
@@ -46,6 +47,7 @@
   let schema = $state<UiSchema | null>(null), config = $state<Record<string, unknown>>({});
   let cache = $state<Awaited<ReturnType<typeof settings.cache>> | null>(null), preview = $state<Awaited<ReturnType<typeof settings.cachePreview>> | null>(null);
   let cachedSongs = $state<DownloadsResponse | null>(null), keptSongs = $state<DownloadsResponse | null>(null);
+  let databaseBytes = $state<number | null>(null);
   let loading = $state(true), refreshing = $state(false), error = $state(""), action = $state("");
   let purgeOpen = $state(false), purgeTarget = $state("");
   let loadedSection = "";
@@ -67,19 +69,15 @@
   const audioMaximum = $derived(Number((config.cache as Record<string, unknown> | undefined)?.audioMaximumGiB ?? 2) * 1024 ** 3);
   const cacheAudioBytes = $derived(typeof cachedSongs?.totalSize === "number" ? cachedSongs.totalSize : null);
   const keptAudioBytes = $derived(typeof keptSongs?.totalSize === "number" ? keptSongs.totalSize : null);
-  const storageItems = $derived([{ label: cacheAudioBytes === null ? "Cached song usage unavailable" : `${bytes(cacheAudioBytes)} cached of ${bytes(audioMaximum)}` }, { label: keptAudioBytes === null ? "Kept song usage unavailable" : `${bytes(keptAudioBytes)} kept` }]);
-  const storageSegments = $derived(cacheAudioBytes !== null && keptAudioBytes !== null ? [
-    { label: "Cached songs (MiB)", value: Math.round(cacheAudioBytes / 1024 ** 2), tone: "info" as const },
-    { label: "Kept songs (MiB)", value: Math.round(keptAudioBytes / 1024 ** 2), tone: "good" as const },
-    { label: "Cache room left (MiB)", value: Math.round(Math.max(0, audioMaximum - cacheAudioBytes) / 1024 ** 2), tone: "neutral" as const },
-  ] : []);
+  const storageItems = $derived([{ label: cacheAudioBytes === null ? "Cached song usage unavailable" : `${bytes(cacheAudioBytes)} cached of ${bytes(audioMaximum)}` }, { label: keptAudioBytes === null ? "Kept song usage unavailable" : `${bytes(keptAudioBytes)} kept` }, ...(databaseBytes === null ? [] : [{ label: `${bytes(databaseBytes)} database` }])]);
+  const storageSegments = $derived(measuredStorageSegments(cacheAudioBytes, keptAudioBytes, audioMaximum, databaseBytes));
 
   async function refresh() {
     if (refreshing) return;
     refreshing = true; error = "";
     const requests: Array<[string, Promise<unknown>]> = [["schema", home.schema()]];
     if (generic) requests.push(["config", settings.config()]);
-    if (active === "storage") requests.push(["cache", settings.cache()], ["preview", settings.cachePreview()], ["cachedSongs", downloads.list("cache")], ["keptSongs", downloads.list("kept")]);
+    if (active === "storage") requests.push(["cache", settings.cache()], ["preview", settings.cachePreview()], ["cachedSongs", downloads.list("cache")], ["keptSongs", downloads.list("kept")], ["database", settings.storage().then(value => value.databaseBytes ?? null).catch(() => null)]);
     const results = await Promise.allSettled(requests.map(item => item[1]));
     results.forEach((result, index) => {
       if (result.status === "rejected") { error = result.reason instanceof Error ? result.reason.message : "Settings could not be loaded."; return; }
@@ -89,6 +87,7 @@
       if (requests[index][0] === "preview") preview = result.value as typeof preview;
       if (requests[index][0] === "cachedSongs") cachedSongs = result.value as DownloadsResponse;
       if (requests[index][0] === "keptSongs") keptSongs = result.value as DownloadsResponse;
+      if (requests[index][0] === "database") databaseBytes = result.value as number | null;
     });
     loading = false; refreshing = false;
   }

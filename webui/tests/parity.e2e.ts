@@ -3949,14 +3949,15 @@ test("Cached and Kept keep media facts and actions readable on mobile", async ({
   } }));
   await page.goto("#/library/kept");
   const kept = page.getByRole("region", { name: "Kept songs", exact: true });
-  const row = kept.locator(".item-row");
-  await expect(row.getByRole("heading", { name: title, exact: true })).toBeVisible();
-  await expect(row.locator(".row-copy p")).toHaveText(`${artist} · ${album}`);
-  await expect(row.locator(".state-pill")).toHaveText("FLAC 16/44");
+  const row = kept.locator(".library-download-row");
+  await expect(row.locator(".song-title > strong")).toBeVisible();
+  await expect(row.locator(".song-title > strong")).toHaveText(title);
+  await expect(row.locator(".song-description > small:not(.phone-facts)")).toHaveText(`${artist} · ${album}`);
+  await expect(row.locator(".phone-facts")).toContainText("FLAC 16/44.1");
   await expect(kept.getByRole("button", { name: "Keep", exact: true })).toHaveCount(0);
   const expectReadableRow = async () => {
-    expect(await row.locator(".row-copy h3, .row-copy p, .state-pill").evaluateAll(elements =>
-      elements.every(element => element.scrollWidth <= element.clientWidth))).toBe(true);
+    expect(await row.locator(".song-title > strong, .song-description > small").evaluateAll(elements =>
+      elements.filter(element => element.scrollWidth > element.clientWidth).map(element => ({ text: element.textContent, width: element.clientWidth, content: element.scrollWidth })))).toEqual([]);
     await expectContainedMobileGeometry(page);
   };
   await expectReadableRow();
@@ -3974,8 +3975,8 @@ test("Cached and Kept keep media facts and actions readable on mobile", async ({
   await kept.getByRole("button", { name: "Add selected to library", exact: true }).click();
   await expect(row.getByRole("checkbox", { name: `Select ${title}`, exact: true })).toBeVisible();
   await expectReadableRow();
+  await expect(row.getByRole("link", { name: "Download", exact: true })).toHaveAttribute("href", /downloads\/file/);
   await row.getByRole("button", { name: `Actions for ${title}`, exact: true }).click();
-  await expect(page.getByRole("menuitem", { name: "Download", exact: true })).toHaveAttribute("href", /downloads\/file/);
   await page.getByRole("menuitem", { name: "Remove", exact: true }).click();
   const removal = page.getByRole("alertdialog", { name: "Remove this song?", exact: true });
   await expect(removal).toContainText("audio file and its lyrics");
@@ -4875,7 +4876,7 @@ test("Settings loads only the active section owners", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "Storage", level: 2 })).toBeVisible();
   await expect.poll(() => requests.includes("/api/admin/cache/maintenance/preview")).toBe(true);
   expect(requests).toContain("/api/admin/cache");
-  expect(requests).not.toContain("/api/admin/storage");
+  await expect.poll(() => requests.includes("/api/admin/storage")).toBe(true);
   expect(requests).not.toContain("/api/admin/provider-accounts");
 
   requests.length = 0;

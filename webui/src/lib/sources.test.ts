@@ -6,6 +6,7 @@ import {
   sharingDescription,
   accountSettings,
   accountSubtitle,
+  accountDisplayLabel,
   accountOwnershipLabel,
   providerDisplayName,
   lyricsSourceDisplayName,
@@ -170,6 +171,12 @@ describe("source presentation", () => {
     expect(accountSubtitle({ scope: "Personal", customLabel: null })).toBe("Personal");
     expect(accountSubtitle({ scope: "Shared" })).toBe("Shared with everyone");
     expect(accountSubtitle({ scope: "Shared", customLabel: "Road trip" })).toBe("Shared with everyone · Road trip");
+  });
+  it("uses stored account labels and existing public usernames without credential fallbacks", () => {
+    expect(accountDisplayLabel({ ...account(), customLabel: "Road trip", configuration: { username: "listener" } }, "Source")).toBe("Road trip");
+    expect(accountDisplayLabel({ ...account(), displayName: "Source", configuration: { username: "listener" } }, "Source")).toBe("listener");
+    expect(accountDisplayLabel({ ...account(), displayName: "Weekend" }, "Source")).toBe("Weekend");
+    expect(accountDisplayLabel({ ...account(), displayName: "Source", configuration: { email: "private@example.test", token: "private" } }, "Source")).toBe("");
   });
   it("labels legacy Apple identities with the unified service without changing their IDs", () => {
     const providers = [{ id: "apple-musickit", name: "Apple Music" }];

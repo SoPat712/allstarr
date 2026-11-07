@@ -1,5 +1,18 @@
 import type { ManagedDownload } from "./api";
 
+export function keptByText(keepers: ManagedDownload["keptBy"]) {
+  if (!keepers?.length) return "";
+  if (keepers.length > 1) return `${keepers[0].displayName} and ${keepers.length - 1} ${keepers.length === 2 ? "other" : "others"}`;
+  const keeper = keepers[0];
+  const reason = keeper.reasons.length === 1 ? { favorite: "♥ ", keep: "Keep · ", playlist: "Playlist · " }[keeper.reasons[0]] ?? "" : "";
+  return `${reason}${keeper.displayName}`;
+}
+
+export function compareKeptBy(left: ManagedDownload, right: ManagedDownload) {
+  const leftName = left.keptBy?.map(person => person.displayName).join(", ") ?? "", rightName = right.keptBy?.map(person => person.displayName).join(", ") ?? "";
+  return Number(!leftName) - Number(!rightName) || leftName.localeCompare(rightName);
+}
+
 export type DownloadSort = "track" | "provider" | "quality" | "size" | "updated";
 
 export function filterDownloads(
@@ -36,6 +49,10 @@ export function qualityDetails(file: ManagedDownload) {
     file.sampleRateHz ? `${formatSampleRate(file.sampleRateHz)} kHz` : "",
     file.channels ? `${file.channels} ch` : "",
   ].filter(Boolean);
+}
+
+export function downloadQualityLabel(file: ManagedDownload) {
+  return [file.codec, file.bitDepth && file.sampleRateHz ? `${file.bitDepth}/${file.sampleRateHz / 1000}` : file.bitrateKbps ? `${file.bitrateKbps} kbps` : file.quality].filter(Boolean).join(" ");
 }
 
 export function qualityWarning(file: ManagedDownload) {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ManagedDownload } from "./api";
-import { filterDownloads, groupDownloadSongs, qualityDetails, qualityWarning } from "./downloads";
+import { compareKeptBy, downloadQualityLabel, filterDownloads, formatDownloadSize, groupDownloadSongs, keptByText, qualityDetails, qualityWarning } from "./downloads";
 
 const file = (title: string, provider: string, size: number): ManagedDownload => ({
   path: `${title}.flac`,
@@ -26,6 +26,25 @@ const file = (title: string, provider: string, size: number): ManagedDownload =>
 });
 
 describe("managed download presentation", () => {
+  it("formats measured storage bytes including an empty file", () => {
+    expect(formatDownloadSize(0)).toBe("0 B");
+    expect(formatDownloadSize(512)).toBe("512 B");
+    expect(formatDownloadSize(3 * 1024 ** 2)).toBe("3 MiB");
+  });
+  it("formats real keepers, multiple people and restricted names", () => {
+    expect(keptByText(undefined)).toBe("");
+    expect(keptByText([])).toBe("");
+    expect(keptByText([{ displayName: "You", isViewer: true, reasons: ["keep"] }])).toBe("Keep · You");
+    expect(keptByText([{ displayName: "joshp", isViewer: false, reasons: ["favorite"] }])).toBe("♥ joshp");
+    expect(keptByText([{ displayName: "joshp", isViewer: false, reasons: ["keep"] }, { displayName: "Robin", isViewer: false, reasons: ["favorite"] }])).toBe("joshp and 1 other");
+    expect(keptByText([{ displayName: "You", isViewer: true, reasons: ["keep"] }, ...[1, 2].map(() => ({ displayName: "Someone else", isViewer: false, reasons: ["favorite"] }))])).toBe("You and 2 others");
+  });
+  it("sorts the keeper column by its supplied names with unknown keepers last", () => {
+    const unknown = file("Unknown", "source", 1);
+    const yours = { ...unknown, keptBy: [{ displayName: "You", isViewer: true, reasons: ["keep"] }] };
+    const other = { ...unknown, keptBy: [{ displayName: "joshp", isViewer: false, reasons: ["favorite"] }] };
+    expect([unknown, yours, other].toSorted(compareKeptBy)).toEqual([other, yours, unknown]);
+  });
   it("filters arbitrary providers and sorts numeric size", () => {
     expect(filterDownloads([
       file("Small", "future-extension", 1),
@@ -38,6 +57,7 @@ describe("managed download presentation", () => {
   it("formats complete audio quality facts", () => {
     expect(qualityDetails(file("Track", "future-extension", 1)))
       .toEqual(["FLAC", "900 kbps", "24-bit", "44.1 kHz", "2 ch"]);
+    expect(downloadQualityLabel(file("Track", "future-extension", 1))).toBe("FLAC 24/44.1");
   });
 
   it("keeps measured quality warnings distinct from the claimed format", () => {

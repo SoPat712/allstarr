@@ -264,7 +264,7 @@ public sealed partial class DurableBackupServiceTests : IAsyncLifetime
 
     private StorageController Controller(bool? administrator, DurableBackupService? service = null)
     {
-        var controller = new StorageController(_state, service ?? Service()) { ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() } };
+        var controller = new StorageController(_state, service ?? Service(), _options) { ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() } };
         if (administrator.HasValue)
             controller.HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] = new AdminAuthSession
             {

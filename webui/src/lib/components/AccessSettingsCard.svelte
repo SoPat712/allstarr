@@ -1,6 +1,7 @@
 <script lang="ts">
   import ServiceAccessRestore from "$lib/components/ServiceAccessRestore.svelte";
   import { rememberRestartUndo } from "$lib/settings-restart";
+  import { settingRestartNote } from "$lib/settings-fields";
   import { onMount } from "svelte";
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
   import ErrorState from "$lib/components/patterns/ErrorState.svelte";
@@ -93,7 +94,7 @@
     </div><div class="connection-actions"><Badge tone="success">Connected</Badge><Button variant="outline" onclick={() => { editing = true; restored = false; }}>Change access</Button></div></div>
   {:else if snapshot && !saved}
     <form bind:this={form} class="access-form" onchange={() => requestSave()} onsubmit={event => { event.preventDefault(); requestSave(); }}>
-      <div class="settings-row"><div><strong>{kind === "oidc" ? "Sign in with your identity provider" : "Allow playlist sync and library scans"}</strong><small>{kind === "oidc" ? "OpenID Connect. Connection fields appear when switched on. Media-server sign-in stays available." : "Verify an administrator sign-in. The password is discarded after verification."}</small><small class="restart-note">· Restarts Allstarr</small></div><span class="settings-toggle"><Switch aria-label={kind === "oidc" ? "Enable single sign-on" : "Allow playlist sync and library scans"} bind:checked={enabled} disabled={busy} /></span></div>
+      <div class="settings-row"><div><strong>{kind === "oidc" ? "Sign in with your identity provider" : "Allow playlist sync and library scans"}</strong><small>{kind === "oidc" ? "OpenID Connect. Connection fields appear when switched on. Media-server sign-in stays available." : "Verify an administrator sign-in. The password is discarded after verification."}</small><small class="restart-note">{settingRestartNote("")}</small></div><span class="settings-toggle"><Switch aria-label={kind === "oidc" ? "Enable single sign-on" : "Allow playlist sync and library scans"} bind:checked={enabled} disabled={busy} /></span></div>
       {#if kind === "oidc" && enabled}
         {#if snapshot.needsReview}<p class="settings-impact notice-error">The saved connection needs attention. Enter fresh credentials or turn it off.</p>{/if}
         <label class="settings-row"><div><strong>Issuer address</strong></div><input type="url" aria-label="Issuer address" bind:value={authority} disabled={busy} required /></label>
