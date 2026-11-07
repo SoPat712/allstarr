@@ -72,21 +72,6 @@ public sealed class LyricsRefreshSidecars(IDbContextFactory<AllstarrDbContext> f
         finally { File.Delete(temporary); }
     }
 
-    internal static string? Content(LyricsInfo lyrics, long? measuredDurationMs = null)
-    {
-        if (lyrics.TimedLines is not { Count: > 0 }) return lyrics.SyncedLyrics ?? lyrics.PlainLyrics;
-        var projection = new LyricsInfo
-        {
-            Source = lyrics.Source,
-            SyncedLyrics = lyrics.SyncedLyrics,
-            TimedLines = lyrics.TimedLines,
-            Duration = measuredDurationMs.HasValue ? (int)Math.Clamp((measuredDurationMs.Value + 999) / 1000, 0, 86_400) : lyrics.Duration
-        };
-        if (RichLyricsMapper.Map(projection) is not { } rich) return null;
-        static string Time(long ms) => FormattableString.Invariant($"{ms / 60000:00}:{ms / 1000 % 60:00}.{ms % 1000:000}");
-        return string.Join('\n', rich.Lines.Where(line => line.StartMs != null).Select(line =>
-            "[" + Time(line.StartMs!.Value) + "]" + (line.Words.Count == 0 ? line.Text :
-                string.Concat(line.Words.Select(word => "<" + Time(word.StartMs) + ">" + word.Text)) +
-                (line.EndMs is { } end ? "<" + Time(end) + ">" : ""))));
-    }
+    internal static string? Content(LyricsInfo lyrics, long? measuredDurationMs = null) =>
+        LyricsTiming.SidecarContent(lyrics, measuredDurationMs);
 }

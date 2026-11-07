@@ -23,13 +23,23 @@ public sealed class LyricsRefreshStore(IDbContextFactory<AllstarrDbContext> fact
 {
     public static LyricsRefreshSnapshot Read(string json) => JsonSerializer.Deserialize<LyricsRefreshSnapshot>(json)!;
 
-    internal static LyricsInfo? FromIndexedLines(RichLyrics rich, Song song) => rich.Format == "word" ? null : new()
+    internal static LyricsInfo? FromIndexedLines(RichLyrics rich, Song song) => new()
     {
         Source = rich.Source.Id,
+        TrackName = song.Title,
+        ArtistName = song.Artist,
+        AlbumName = song.Album,
         Duration = song.Duration ?? 0,
+        TimingCoverageMilliseconds = rich.Format == "word" ? rich.Lines.Select(line =>
+            Math.Max(line.StartMs ?? 0, line.Words.Select(word => word.StartMs).DefaultIfEmpty(0).Max())).DefaultIfEmpty(0).Max() : null,
         PlainLyrics = rich.Format == "plain" ? string.Join('\n', rich.Lines.Select(line => line.Text)) : null,
         SyncedLyrics = rich.Format == "plain" ? null : string.Join('\n', rich.Lines.Where(line => line.StartMs.HasValue).Select(line =>
-            FormattableString.Invariant($"[{line.StartMs!.Value / 60000:00}:{line.StartMs.Value / 1000 % 60:00}.{line.StartMs.Value % 1000:000}]{line.Text}")))
+            FormattableString.Invariant($"[{line.StartMs!.Value / 60000:00}:{line.StartMs.Value / 1000 % 60:00}.{line.StartMs.Value % 1000:000}]{line.Text}"))),
+        TimedLines = rich.Format == "word" ? rich.Lines.Where(line => line.StartMs.HasValue).Select(line =>
+            new ProviderLyricsTimedLine(line.Text, TimeSpan.FromMilliseconds(line.StartMs!.Value), segments:
+                line.Words.Select(word => new ProviderLyricsTimedSegment(word.Text, TimeSpan.FromMilliseconds(word.StartMs),
+                    word.EndMs is { } end ? TimeSpan.FromMilliseconds(Math.Max(0, end - word.StartMs)) : null)).ToArray(),
+                isBackground: line.Part == "background" ? true : null, voice: line.Voice, singer: line.Singer)).ToArray() : null
     };
 
     public async Task ObserveAsync(ProtocolExecutionContext context, Song song, LyricsInfo? lyrics, long? durationMs)

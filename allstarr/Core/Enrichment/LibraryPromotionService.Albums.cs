@@ -621,13 +621,7 @@ public sealed partial class LibraryPromotionService
         var ranked = candidates.Select(item => (Candidate: item, Score: LyricsQuality.Evaluate(item.Lyrics, song, measuredDurationMilliseconds)))
             .Where(item => item.Candidate.AutomaticEligible && item.Score != null).OrderByDescending(item => item.Score!.Score).FirstOrDefault();
         if (ranked.Score?.Reasons.Contains("duration_fits") != true) return null;
-        if (ranked.Candidate.Lyrics?.TimedLines is { Count: > 0 } && RichLyricsMapper.Map(ranked.Candidate.Lyrics) is { } rich)
-            return string.Join('\n', rich.Lines.Where(line => line.StartMs != null).Select(line =>
-            {
-                var start = line.StartMs!.Value;
-                return FormattableString.Invariant($"[{start / 60000:00}:{start / 1000 % 60:00}.{start % 1000:000}]") + line.Text.Replace('\n', ' ').Replace('\r', ' ');
-            }));
-        return ranked.Candidate.Lyrics?.SyncedLyrics;
+        return ranked.Candidate.Lyrics is { } selected ? LyricsTiming.SidecarContent(selected, measuredDurationMilliseconds) : null;
     }
 
     private async Task ConvertCeilingAsync(PromotionRunRecord run, PromotionTrack track, PromotionProfile profile, CancellationToken token)

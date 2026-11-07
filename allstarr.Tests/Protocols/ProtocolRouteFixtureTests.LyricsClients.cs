@@ -18,6 +18,92 @@ public sealed partial class ProtocolRouteFixtureTests
     [Theory]
     [InlineData("json")]
     [InlineData("xml")]
+    public async Task LyricsClients_StructuredWordSourceKeepsLineOnlyReplies(string format)
+    {
+        var gateway = LyricsClientGateway();
+        var resolver = new Mock<IProtocolLyricsResolver>(MockBehavior.Strict);
+        SetupLyricsClientResolver(resolver, new LyricsInfo
+        {
+            SyncedLyrics = "[00:01.234]café 世界",
+            TimedLines = [new("café 世界", TimeSpan.FromMilliseconds(1234), segments:
+                [new("café ", TimeSpan.FromMilliseconds(1234)), new("世界", TimeSpan.FromSeconds(2))])]
+        });
+        using var factory = new ProtocolFactory("Subsonic", _ => Json(200, """{"subsonic-response":{"status":"ok"}}"""),
+            services => ReplaceLyricsClientServices(services, gateway.Object, resolver.Object));
+        using var client = factory.CreateClient();
+        using var request = LyricsClientRequest("getLyricsBySongId", "Feishin", format, false, "&id=ext-deezer-song-42");
+        using var response = await client.SendAsync(request);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await response.Content.ReadAsStringAsync();
+        if (format == "json")
+        {
+            using var document = JsonDocument.Parse(body);
+            var lyrics = Assert.Single(document.RootElement.GetProperty("subsonic-response").GetProperty("lyricsList")
+                .GetProperty("structuredLyrics").EnumerateArray());
+            Assert.True(lyrics.GetProperty("synced").GetBoolean());
+            var line = Assert.Single(lyrics.GetProperty("line").EnumerateArray());
+            Assert.Equal(1234, line.GetProperty("start").GetInt64());
+            Assert.Equal("café 世界", line.GetProperty("value").GetString());
+            Assert.Equal(["start", "value"], line.EnumerateObject().Select(property => property.Name).Order());
+        }
+        else
+        {
+            var root = XDocument.Parse(body).Root!;
+            var lyrics = Assert.Single(root.Element(root.Name.Namespace + "lyricsList")!.Elements());
+            Assert.Equal("true", lyrics.Attribute("synced")!.Value);
+            var line = Assert.Single(lyrics.Elements());
+            Assert.Equal("1234", line.Attribute("start")!.Value);
+            Assert.Equal("café 世界", line.Value);
+            Assert.Empty(line.Elements());
+        }
+        gateway.VerifyAll();
+        resolver.VerifyAll();
+    }
+
+    [Theory]
+    [InlineData("Audio")]
+    [InlineData("Items")]
+    public async Task LyricsClients_JellyfinExternalSongReturnsStructuredWordCues(string route)
+    {
+        var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        gateway.Setup(service => service.GetSongAsync(It.IsAny<ProtocolExecutionContext>(), "apple", "42"))
+            .ReturnsAsync(new Song { Id = "ext-apple-song-42", Title = "Fixture", Artist = "Artist", Duration = 4 });
+        var resolver = new Mock<IProtocolLyricsResolver>(MockBehavior.Strict);
+        resolver.Setup(service => service.FindAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<Song>(),
+                "apple:42", "apple", "42", null))
+            .ReturnsAsync(new LyricsInfo
+            {
+                Source = "lrcred",
+                Duration = 4,
+                SyncedLyrics = "[00:01.000]café 世界",
+                TimedLines = [new("café 世界", TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(2),
+                    [new("café ", TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1)),
+                     new("世界", TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(1))])]
+            });
+        using var factory = new ProtocolFactory("Jellyfin", request => request.RequestUri!.AbsolutePath == "/Users/Me"
+                ? Json(200, """{"Id":"user-1","Name":"Fixture User"}""")
+                : throw new InvalidOperationException("Only authentication may reach the backend"),
+            services => ReplaceLyricsClientServices(services, gateway.Object, resolver.Object));
+        using var client = factory.CreateClient();
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            using var response = await client.GetAsync($"/{route}/ext-apple-song-42/Lyrics?api_key=fixture-key");
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            var line = Assert.Single(document.RootElement.GetProperty("Lyrics").EnumerateArray());
+            Assert.Equal("café 世界", line.GetProperty("Text").GetString());
+            Assert.Equal(10_000_000, line.GetProperty("Start").GetInt64());
+            Assert.Equal(2, line.GetProperty("Cues").GetArrayLength());
+            Assert.Equal(5, line.GetProperty("Cues")[1].GetProperty("Position").GetInt32());
+            Assert.Equal(30_000_000, line.GetProperty("Cues")[1].GetProperty("End").GetInt64());
+        }
+        gateway.VerifyAll();
+        resolver.VerifyAll();
+    }
+
+    [Theory]
+    [InlineData("json")]
+    [InlineData("xml")]
     public async Task LyricsClients_MergeDiscoveryWithoutPromisingEnhancedProjection(string format)
     {
         using var factory = new ProtocolFactory("Subsonic", _ => LyricsBackendResponse(format,

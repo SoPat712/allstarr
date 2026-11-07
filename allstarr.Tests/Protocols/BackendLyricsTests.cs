@@ -8,6 +8,26 @@ namespace allstarr.Tests;
 public sealed class BackendLyricsTests
 {
     [Fact]
+    public void Jellyfin_BackendWordsSurviveParsingAndProjectionWithOffset()
+    {
+        var lyrics = ParseJellyfin("""
+            {"Metadata":{"IsSynced":true,"Offset":1000000},"Lyrics":[
+              {"Text":"café 世界","Start":10000000,"Cues":[
+                {"Position":0,"EndPosition":5,"Start":10001234,"End":15001234},
+                {"Position":5,"EndPosition":7,"Start":20000000,"End":30000000}]}]}
+            """);
+        Assert.NotNull(lyrics);
+        Assert.Equal("word", RichLyricsMapper.Map(lyrics)!.Format);
+        using var response = JsonDocument.Parse(new allstarr.Core.Protocols.Jellyfin.JellyfinLyricsProtocolAdapter().Shape(lyrics).Body);
+        var line = Assert.Single(response.RootElement.GetProperty("Lyrics").EnumerateArray());
+        Assert.Equal("café 世界", line.GetProperty("Text").GetString());
+        Assert.Equal(9_000_000, line.GetProperty("Start").GetInt64());
+        Assert.Equal(9_001_234, line.GetProperty("Cues")[0].GetProperty("Start").GetInt64());
+        Assert.Equal(14_001_234, line.GetProperty("Cues")[0].GetProperty("End").GetInt64());
+        Assert.Equal(5, line.GetProperty("Cues")[1].GetProperty("Position").GetInt32());
+    }
+
+    [Fact]
     public void Jellyfin_TimedLyricsPreserveMetadataFractionsZeroAndOffset()
     {
         var lyrics = ParseJellyfin("""

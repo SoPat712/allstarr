@@ -8,6 +8,9 @@ using allstarr.Core.Capabilities;
 using allstarr.Core.ClientApi;
 using allstarr.Core.Protocols;
 using allstarr.Core.Settings;
+using allstarr.Core.Identity;
+using allstarr.Core.Protocols.Jellyfin;
+using allstarr.Core.Storage;
 using allstarr.Models.Domain;
 using Moq;
 
@@ -15,6 +18,48 @@ namespace allstarr.Tests;
 
 public sealed class ClientApiStoredLyricsTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task StoredAccountLyricsKeepWordTimingThroughSerializationAndSelection(bool personal)
+    {
+        var owner = Guid.NewGuid();
+        var account = new ProviderAccountRecord
+        {
+            Id = Guid.NewGuid(),
+            ProviderId = "musixmatch",
+            OwnerUserId = personal ? owner : null,
+            Revision = 3,
+            Enabled = true
+        };
+        var stored = new ProviderLyricsResult(ProviderLyricsAvailabilityState.Available, "musixmatch", ProviderLyricsFormat.WordTimed,
+            "[00:01.000]café 世界", timedLines: [new("café 世界", TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(2),
+                [new("café ", TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1)),
+                 new("世界", TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(1))])]);
+        var serialized = JsonSerializer.Serialize(stored, ClientApiContract.JsonOptions);
+        var cache = new Mock<IApplicationCache>(MockBehavior.Strict);
+        cache.Setup(item => item.GetAsync<ProviderLyricsResult>(It.Is<string>(key => key.Contains(account.Id.ToString("N")))))
+            .ReturnsAsync(() => JsonSerializer.Deserialize<ProviderLyricsResult>(serialized, ClientApiContract.JsonOptions));
+        var policy = new EffectiveProviderPolicySnapshot(ImmutableDictionary<ProviderCapabilityKind, ImmutableArray<string>>.Empty
+            .Add(ProviderCapabilityKind.Lyrics, ["musixmatch"]), ImmutableHashSet<string>.Empty, "lossless", .07);
+        var context = new ProtocolExecutionContext(ProtocolKind.Jellyfin, "fixture", "listener",
+            new AllstarrPrincipal(owner, "jellyfin", "fixture", "listener", "Listener", false),
+            "stored-words", DateTimeOffset.UtcNow.AddMinutes(1), default);
+        var observed = new List<LyricsInfo>();
+        var result = await StoredItemLyrics.ReadAsync(cache.Object, new Song { Title = "Fixture", Artist = "Artist", Duration = 3 },
+            null, "musixmatch", null, policy, "https://lyrics.example.test", context, [account], [], default, observeInfo: observed.Add);
+        Assert.Equal("word", result.Format);
+        var lyrics = Assert.Single(observed);
+        var restored = JsonSerializer.Deserialize<LyricsInfo>(JsonSerializer.Serialize(lyrics, ClientApiContract.JsonOptions), ClientApiContract.JsonOptions)!;
+        using var response = JsonDocument.Parse(new JellyfinLyricsProtocolAdapter().Shape(restored).Body);
+        var line = Assert.Single(response.RootElement.GetProperty("Lyrics").EnumerateArray());
+        Assert.Equal("café 世界", line.GetProperty("Text").GetString());
+        Assert.Equal(2, line.GetProperty("Cues").GetArrayLength());
+        Assert.Equal(5, line.GetProperty("Cues")[1].GetProperty("Position").GetInt32());
+        Assert.Equal(30_000_000, line.GetProperty("Cues")[1].GetProperty("End").GetInt64());
+        cache.VerifyAll();
+    }
+
     [Theory]
     [InlineData(null)]
     [InlineData("lrclib")]

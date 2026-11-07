@@ -47,4 +47,36 @@ public sealed class PromotionLyricsTests
         var result = LibraryPromotionService.SelectPromotionLyrics([new("source", lyrics)], new Song { Title = "Song" }, 100000);
         Assert.Equal("[00:01.000]First\n[01:20.000]Last", result);
     }
+
+    [Fact]
+    public void Lyrics_RenderStructuredWordsAsEnhancedLrc()
+    {
+        var lyrics = new LyricsInfo
+        {
+            SyncedLyrics = "[00:01.000]café 世界",
+            TimedLines = [new("café 世界", TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(79),
+                [new("café ", TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1)),
+                 new("世界", TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(78))])]
+        };
+        var result = LibraryPromotionService.SelectPromotionLyrics([new("source", lyrics)], new Song { Title = "Song" }, 100000);
+        Assert.Equal("[00:01.000]<00:01.000>café <00:02.000>世界<01:20.000>", result);
+    }
+
+    [Fact]
+    public void Lyrics_RenderBackgroundPartsAsSeparateEnhancedLrcLines()
+    {
+        var lyrics = new LyricsInfo
+        {
+            SyncedLyrics = "[00:01.000]café oh yes 世界",
+            TimedLines = [new("café oh yes 世界", TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(79), vocalParts:
+                [new("oh yes", TimeSpan.FromSeconds(1.5), TimeSpan.FromSeconds(1),
+                    [new("oh ", TimeSpan.FromSeconds(1.5), TimeSpan.FromSeconds(0.5)),
+                     new("yes", TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(0.5))], isBackground: true),
+                 new("café 世界", TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(79),
+                    [new("café ", TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1)),
+                     new("世界", TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(78))])])]
+        };
+        var result = LibraryPromotionService.SelectPromotionLyrics([new("source", lyrics)], new Song { Title = "Song" }, 100000);
+        Assert.Equal("[00:01.000]<00:01.000>café <00:02.000>世界<01:20.000>\n[00:01.500]<00:01.500>oh <00:02.000>yes<00:02.500>", result);
+    }
 }

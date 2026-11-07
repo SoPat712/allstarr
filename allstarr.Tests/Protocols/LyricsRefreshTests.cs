@@ -392,7 +392,39 @@ public sealed class LyricsRefreshTests : IAsyncLifetime
         var rich = new RichLyrics(new("backend", "Library"), "line", [new(1000, 120_000, "Short excerpt", "lead", [])]);
         var baseline = LyricsRefreshStore.FromIndexedLines(rich, Song);
         Assert.Contains("duration_mismatch", LyricsQuality.Evaluate(baseline, Song, 120_000)!.Reasons);
-        Assert.Null(LyricsRefreshStore.FromIndexedLines(rich with { Format = "word" }, Song));
+        var words = rich with { Format = "word", Lines = [rich.Lines[0] with { Words = [new(1000, 120_000, "Short excerpt")] }] };
+        var wordBaseline = LyricsRefreshStore.FromIndexedLines(words, Song);
+        Assert.NotNull(wordBaseline);
+        Assert.Contains("duration_mismatch", LyricsQuality.Evaluate(wordBaseline, Song, 120_000)!.Reasons);
+        Assert.Equal("word", RichLyricsMapper.Map(wordBaseline)!.Format);
+    }
+
+    [Fact]
+    public async Task IndexedWordsSurviveStoredRefreshAndClientProjection()
+    {
+        var rich = new RichLyrics(new("lrcred", "Fixture"), "word",
+            [new(1000, 3000, "café 世界", "lead", [new(1000, 2000, "café "), new(2000, 3000, "世界")]),
+             new(1500, 2500, "echo", "background", [new(1500, 2500, "echo")])]);
+        var baseline = LyricsRefreshStore.FromIndexedLines(rich, Song);
+        Assert.NotNull(baseline);
+        await store.ObserveAsync(Context, Song, baseline, 120_000);
+        var restored = (await store.CurrentAsync(owner, recording, default))!.Lyrics!;
+        Assert.Contains("duration_mismatch", LyricsQuality.Evaluate(restored, Song, 120_000)!.Reasons);
+        using var response = JsonDocument.Parse(new allstarr.Core.Protocols.Jellyfin.JellyfinLyricsProtocolAdapter().Shape(restored).Body);
+        var lines = response.RootElement.GetProperty("Lyrics");
+        Assert.Equal(2, lines.GetArrayLength());
+        var line = lines[0];
+        Assert.Equal("café 世界", line.GetProperty("Text").GetString());
+        Assert.Equal(2, line.GetProperty("Cues").GetArrayLength());
+        Assert.Equal(5, line.GetProperty("Cues")[1].GetProperty("Position").GetInt32());
+        Assert.Equal(20_000_000, line.GetProperty("Cues")[1].GetProperty("Start").GetInt64());
+        Assert.Equal("echo", lines[1].GetProperty("Text").GetString());
+        Assert.Equal(15_000_000, lines[1].GetProperty("Start").GetInt64());
+        var backgroundWord = Assert.Single(lines[1].GetProperty("Cues").EnumerateArray());
+        Assert.Equal(0, backgroundWord.GetProperty("Position").GetInt32());
+        Assert.Equal(4, backgroundWord.GetProperty("EndPosition").GetInt32());
+        Assert.Equal(15_000_000, backgroundWord.GetProperty("Start").GetInt64());
+        Assert.Equal(25_000_000, backgroundWord.GetProperty("End").GetInt64());
     }
 
     [Fact]

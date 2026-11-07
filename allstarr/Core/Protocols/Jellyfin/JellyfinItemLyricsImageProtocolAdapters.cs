@@ -1,4 +1,5 @@
 using allstarr.Core.Music;
+using allstarr.Core.Capabilities;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using allstarr.Models.Domain;
@@ -102,8 +103,11 @@ public sealed class JellyfinLyricsProtocolAdapter : IJellyfinLyricsProtocolAdapt
     {
         ArgumentNullException.ThrowIfNull(lyrics);
 
-        var isSynced = !string.IsNullOrEmpty(lyrics.SyncedLyrics);
-        var lines = isSynced
+        var timed = LyricsTiming.ReadLines(lyrics);
+        var structured = timed != null && (LyricsTiming.IsTimedText(lyrics.SyncedLyrics) ||
+            timed.SelectMany(line => line.VocalParts ?? [line]).Any(line => line.Segments is { Count: > 0 }));
+        var isSynced = structured || !string.IsNullOrEmpty(lyrics.SyncedLyrics);
+        var lines = structured ? ShapeTimedLines(timed!) : isSynced
             ? ParseSyncedLines(lyrics.SyncedLyrics!)
             : ParsePlainLines(lyrics.PlainLyrics);
 
@@ -120,6 +124,25 @@ public sealed class JellyfinLyricsProtocolAdapter : IJellyfinLyricsProtocolAdapt
             StatusCodes.Status200OK,
             "application/json",
             JsonSerializer.Serialize(response, SerializerOptions));
+    }
+
+    private static IReadOnlyList<Dictionary<string, object>> ShapeTimedLines(
+        IReadOnlyList<ProviderLyricsTimedLine> timed)
+    {
+        var lines = LyricsTiming.VocalLines(timed);
+        var following = LyricsTiming.FollowingStarts(lines);
+        return lines.Select((line, index) => new Dictionary<string, object>
+        {
+            ["Text"] = line.Text,
+            ["Start"] = line.Start.Ticks,
+            ["Cues"] = LyricsTiming.Cues(line, following[index]).Select(cue => new
+            {
+                cue.Position,
+                cue.EndPosition,
+                Start = cue.Start.Ticks,
+                End = cue.End?.Ticks
+            }).ToArray()
+        }).ToArray();
     }
 
     private static IReadOnlyList<Dictionary<string, object>> ParseSyncedLines(string lyrics)

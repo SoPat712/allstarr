@@ -50,6 +50,7 @@ internal static class LyricsQuality
 
     private static double LastTimestamp(LyricsInfo lyrics)
     {
+        if (lyrics.TimingCoverageMilliseconds is { } coverage) return coverage;
         if (lyrics.TimedLines is { Count: > 0 })
             return lyrics.TimedLines.SelectMany(line => line.VocalParts ?? [line]).Select(line =>
                 Math.Max((line.Start + (line.Duration ?? TimeSpan.Zero)).TotalMilliseconds,

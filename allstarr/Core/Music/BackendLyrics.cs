@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using System.Xml;
 using System.Xml.Linq;
+using allstarr.Core.Capabilities;
 using allstarr.Models.Lyrics;
 
 namespace allstarr.Core.Music;
@@ -43,6 +44,7 @@ public static class BackendLyrics
             return null;
 
         var lines = new List<LyricLine>();
+        var timedLines = new List<ProviderLyricsTimedLine>();
         foreach (var item in lyricItems.EnumerateArray())
         {
             if (item.ValueKind != JsonValueKind.Object ||
@@ -60,6 +62,10 @@ public static class BackendLyrics
                 return null;
 
             lines.Add(new LyricLine(startTicks.HasValue, start, text));
+            if (startTicks.HasValue && text.Length <= LyricsTimingLimits.MaximumCharacters &&
+                !text.Contains('\r') && !text.Contains('\n') && startTicks.Value - offsetTicks.GetValueOrDefault() <= MaximumTicks)
+                timedLines.Add(new(text, TimeSpan.FromTicks(Math.Max(0, startTicks.Value - offsetTicks.GetValueOrDefault())),
+                    segments: ReadJellyfinCues(item, text, offsetTicks.GetValueOrDefault())));
         }
 
         if (lines.Count == 0)
@@ -69,7 +75,7 @@ public static class BackendLyrics
         if (useTimed && lines.Any(line => !line.HasStart))
             return null;
 
-        return CreateLyrics(
+        var result = CreateLyrics(
             artist,
             album,
             title,
@@ -77,6 +83,40 @@ public static class BackendLyrics
             offset,
             useTimed,
             lines);
+        if (useTimed && timedLines.Count == lines.Count && timedLines.Any(line => line.Segments is { Count: > 0 })) result.TimedLines = timedLines;
+        return result;
+    }
+
+    private static IReadOnlyList<ProviderLyricsTimedSegment>? ReadJellyfinCues(JsonElement line, string text, long offset)
+    {
+        if (!TryGetArray(line, "Cues", out var values)) return null;
+        var cues = values.EnumerateArray().ToArray();
+        if (cues.Length > LyricsTimingLimits.MaximumElements) return null;
+        var words = new List<ProviderLyricsTimedSegment>();
+        var position = 0;
+        for (var index = 0; index < cues.Length; index++)
+        {
+            var cue = cues[index];
+            if (!TryGetOptionalInt64(cue, "Position", out var startPosition) || startPosition == null ||
+                !TryGetOptionalInt64(cue, "EndPosition", out var endPosition) ||
+                !TryGetOptionalInt64(cue, "Start", out var start) || start == null ||
+                !TryGetOptionalInt64(cue, "End", out var end)) return null;
+            if (endPosition == null && index + 1 < cues.Length)
+            {
+                if (!TryGetOptionalInt64(cues[index + 1], "Position", out endPosition)) return null;
+            }
+            endPosition ??= text.Length;
+            if (startPosition < position || endPosition <= startPosition || endPosition > text.Length ||
+                !TryTimestampTicks(start.Value, out _) || end.HasValue &&
+                (!TryTimestampTicks(end.Value, out _) || end < start)) return null;
+            var startTime = TimeSpan.FromTicks(Math.Max(0, start.Value - offset));
+            var endTime = end is { } endTicks ? TimeSpan.FromTicks(Math.Max(0, endTicks - offset)) : (TimeSpan?)null;
+            if (startTime.TotalMilliseconds > MaximumMilliseconds || endTime?.TotalMilliseconds > MaximumMilliseconds) return null;
+            var word = text[(int)startPosition.Value..(int)endPosition.Value];
+            words.Add(new(word, startTime, endTime - startTime));
+            position = (int)endPosition.Value;
+        }
+        return words;
     }
 
     public static LyricsInfo? ParseSubsonic(ReadOnlyMemory<byte> body, bool json)

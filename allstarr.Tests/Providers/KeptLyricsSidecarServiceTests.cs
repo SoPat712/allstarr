@@ -1,4 +1,9 @@
+using System.Text.Json;
+using allstarr.Core.Downloads;
 using allstarr.Core.Identity;
+using allstarr.Core.Music;
+using allstarr.Core.Protocols.Jellyfin;
+using allstarr.Core.Protocols.Subsonic;
 using allstarr.Core.Protocols;
 using allstarr.Core.Settings;
 using allstarr.Models.Domain;
@@ -11,6 +16,90 @@ namespace allstarr.Tests;
 
 public sealed class KeptLyricsSidecarServiceTests
 {
+    [Theory]
+    [InlineData(".lrc")]
+    [InlineData(".ttml")]
+    public async Task StoredTimedTextSidecarsReturnCleanWordTimedLines(string extension)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "allstarr-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var audio = Path.Combine(root, "Fixture.mp3");
+            await File.WriteAllTextAsync(audio, "synthetic audio");
+            await File.WriteAllTextAsync(Path.ChangeExtension(audio, extension),
+                """<tt xmlns="http://www.w3.org/ns/ttml"><body><div><p begin="1s" end="3s"><span begin="1s" end="2s">café </span><span begin="2s" end="3s">世界</span></p></div></body></tt>""");
+            var saved = await KeptLyricsReader.ReadStoredSidecarAsync(new Song { Title = "Fixture" }, audio, default);
+            Assert.Equal("word", RichLyricsMapper.Map(saved)!.Format);
+            using var response = JsonDocument.Parse(new JellyfinLyricsProtocolAdapter().Shape(saved!).Body);
+            var line = Assert.Single(response.RootElement.GetProperty("Lyrics").EnumerateArray());
+            Assert.Equal("café 世界", line.GetProperty("Text").GetString());
+            Assert.Equal(2, line.GetProperty("Cues").GetArrayLength());
+            var subsonic = SubsonicStructuredLyricsMapper.Map(new Song { Title = "Fixture" }, saved);
+            Assert.Equal((1000L, "café 世界"), (Assert.Single(subsonic!.Lines).StartMilliseconds, subsonic.Lines[0].Text));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public async Task StructuredWordsSurviveSavingAndReadingTheKeptSidecar()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "allstarr-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var audio = Path.Combine(root, "Fixture.mp3");
+            await File.WriteAllTextAsync(audio, "synthetic audio");
+            var context = new ProtocolExecutionContext(ProtocolKind.Subsonic, "backend", "listener",
+                new AllstarrPrincipal(Guid.NewGuid(), "subsonic", "backend", "listener", "Listener", false),
+                "sidecar", DateTimeOffset.UtcNow.AddMinutes(1), default);
+            var song = new Song { Title = "Fixture", Artist = "Artist", Duration = 5 };
+            var lyrics = new LyricsInfo
+            {
+                Source = "lrcred",
+                SyncedLyrics = "[00:01.000]café 世界",
+                Duration = 5,
+                TimedLines = [new("café echo 世界", TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(3),
+                    [new("café ", TimeSpan.FromSeconds(1), TimeSpan.FromMilliseconds(500)),
+                     new("echo ", TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1), true),
+                     new("世界", TimeSpan.FromSeconds(2), TimeSpan.FromMilliseconds(500))])]
+            };
+            var resolver = new Mock<IProtocolLyricsResolver>(MockBehavior.Strict);
+            resolver.Setup(item => item.FindAsync(context, It.IsAny<Song>(), It.IsAny<string>(),
+                    It.Is<ProtocolLyricsSources>(sources => sources.HouseholdOnly && sources.ForPermanentSidecar)))
+                .ReturnsAsync(lyrics);
+            var writer = new KeptLyricsSidecarService(resolver.Object, NullLogger<KeptLyricsSidecarService>.Instance);
+            var path = await writer.EnsureSidecarAsync(audio, song, protocol: context);
+            Assert.NotNull(path);
+            var content = await File.ReadAllTextAsync(path!);
+            Assert.Contains("<00:01.000>café <00:01.500>", content);
+            Assert.Contains("<00:02.000>世界<00:02.500>", content);
+            Assert.EndsWith("\n\n[00:01.000]<00:01.000>café <00:01.500><00:02.000>世界<00:02.500>\n[00:01.000]<00:01.000>echo<00:02.000>", content);
+            var saved = await KeptLyricsReader.ReadStoredSidecarAsync(song, audio, default);
+            Assert.Equal("word", RichLyricsMapper.Map(saved)!.Format);
+            using var response = JsonDocument.Parse(new JellyfinLyricsProtocolAdapter().Shape(saved!).Body);
+            var lines = response.RootElement.GetProperty("Lyrics");
+            Assert.Equal(2, lines.GetArrayLength());
+            var line = lines[0];
+            Assert.Equal("café 世界", line.GetProperty("Text").GetString());
+            Assert.Equal(15_000_000, line.GetProperty("Cues")[0].GetProperty("End").GetInt64());
+            Assert.Equal(5, line.GetProperty("Cues")[1].GetProperty("Position").GetInt32());
+            Assert.Equal(25_000_000, line.GetProperty("Cues")[1].GetProperty("End").GetInt64());
+            Assert.Equal("echo", lines[1].GetProperty("Text").GetString());
+            Assert.Equal(10_000_000, lines[1].GetProperty("Start").GetInt64());
+            var backgroundCue = Assert.Single(lines[1].GetProperty("Cues").EnumerateArray());
+            Assert.Equal(0, backgroundCue.GetProperty("Position").GetInt32());
+            Assert.Equal(4, backgroundCue.GetProperty("EndPosition").GetInt32());
+            Assert.Equal(10_000_000, backgroundCue.GetProperty("Start").GetInt64());
+            Assert.Equal(20_000_000, backgroundCue.GetProperty("End").GetInt64());
+            await File.WriteAllTextAsync(path!, "[00:01.000]Existing line only");
+            Assert.Equal(path, await writer.EnsureSidecarAsync(audio, song, protocol: context));
+            Assert.Equal("[00:01.000]Existing line only", await File.ReadAllTextAsync(path!));
+            resolver.Verify(item => item.FindAsync(context, It.IsAny<Song>(), It.IsAny<string>(), It.IsAny<ProtocolLyricsSources>()), Times.Once);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
     [Fact]
     public async Task SpicySidecarPurposeAndWriterGuardPreventPermanentPublication()
     {

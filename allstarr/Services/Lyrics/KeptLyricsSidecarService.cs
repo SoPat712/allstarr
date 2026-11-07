@@ -225,7 +225,7 @@ public class KeptLyricsSidecarService : IKeptLyricsSidecarService
         var durationSeconds = lyrics.Duration > 0 ? lyrics.Duration : fallbackDurationSeconds;
 
         var body = FirstNonEmpty(
-            NormalizeLineEndings(lyrics.SyncedLyrics),
+            NormalizeLineEndings(LyricsTiming.SidecarContent(lyrics)),
             NormalizeLineEndings(lyrics.PlainLyrics));
 
         if (string.IsNullOrWhiteSpace(body))

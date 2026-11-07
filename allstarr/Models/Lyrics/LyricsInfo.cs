@@ -5,6 +5,9 @@ namespace allstarr.Models.Lyrics;
 public class LyricsInfo
 {
     internal string? CacheProvenance { get; set; }
+    [System.Text.Json.Serialization.JsonInclude]
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    internal long? TimingCoverageMilliseconds { get; set; }
     public int Id { get; set; }
     public string TrackName { get; set; } = string.Empty;
     public string ArtistName { get; set; } = string.Empty;

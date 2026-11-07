@@ -141,7 +141,7 @@ public sealed class KeptLyricsReader(
                     !TryGetSafePath(mapping.LocalPath, roots, out var audioPath))
                     continue;
 
-                var sidecarPath = Path.ChangeExtension(audioPath, ".lrc");
+                var sidecarPath = SidecarPath(audioPath);
                 if (!TryGetSafePath(sidecarPath, roots, out _) ||
                     !File.Exists(audioPath) ||
                     !File.Exists(sidecarPath))
@@ -174,6 +174,15 @@ public sealed class KeptLyricsReader(
 
     private static LyricsInfo? ParseCandidate(Song song, string text, CancellationToken cancellationToken, out bool timed)
     {
+        if (LyricsTiming.IsTimedText(text))
+        {
+            var lyrics = CreateLyrics(song, text, synced: true);
+            lyrics.TimedLines = LyricsTiming.ReadLines(lyrics);
+            cancellationToken.ThrowIfCancellationRequested();
+            timed = lyrics.TimedLines is { Count: > 0 };
+            if (timed) lyrics.SyncedLyrics = LyricsTiming.SidecarContent(lyrics);
+            return timed ? lyrics : null;
+        }
         var parsed = MusicLyrics.ParseSyncedLines(text);
         cancellationToken.ThrowIfCancellationRequested();
         if (parsed.Any(item => !string.IsNullOrWhiteSpace(item.Text)))
@@ -201,11 +210,17 @@ public sealed class KeptLyricsReader(
         if (!TryGetTrustedKeptPath(path, out var audioPath) || !File.Exists(audioPath))
             return null;
 
-        var sidecarCandidate = Path.ChangeExtension(audioPath, ".lrc");
+        var sidecarCandidate = SidecarPath(audioPath);
         if (!TryGetTrustedKeptPath(sidecarCandidate, out var sidecarPath) || !File.Exists(sidecarPath))
             return null;
 
         return await ReadSidecarAsync(sidecarPath, cancellationToken);
+    }
+
+    private static string SidecarPath(string audioPath)
+    {
+        var lrc = Path.ChangeExtension(audioPath, ".lrc");
+        return File.Exists(lrc) ? lrc : Path.ChangeExtension(audioPath, ".ttml");
     }
 
     private static bool TryGetTrustedKeptPath(string? path, out string fullPath)

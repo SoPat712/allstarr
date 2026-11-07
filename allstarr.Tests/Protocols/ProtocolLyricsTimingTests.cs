@@ -24,7 +24,7 @@ public sealed class ProtocolLyricsTimingTests
     }
 
     [Fact]
-    public async Task SharedSelectionRetainsTimingWhileProtocolsKeepLineResponses()
+    public async Task SharedSelectionRetainsWordsForJellyfinAndLinesForSubsonic()
     {
         var context = new ProtocolExecutionContext(ProtocolKind.Jellyfin, "fixture", "listener",
             new AllstarrPrincipal(Guid.CreateVersion7(), "jellyfin", "fixture", "listener", "Listener", false),
@@ -59,9 +59,22 @@ public sealed class ProtocolLyricsTimingTests
         Assert.True(retained.Segments[0].IsBackground);
         var jellyfin = new JellyfinLyricsProtocolAdapter().Shape(result);
         using var document = JsonDocument.Parse(jellyfin.Body);
-        var cue = Assert.Single(document.RootElement.GetProperty("Lyrics").EnumerateArray());
-        Assert.Equal("Synthetic words", cue.GetProperty("Text").GetString());
+        var output = document.RootElement.GetProperty("Lyrics");
+        Assert.Equal(2, output.GetArrayLength());
+        var cue = output[0];
+        Assert.Equal("words", cue.GetProperty("Text").GetString());
         Assert.Equal(12_340_000, cue.GetProperty("Start").GetInt64());
+        var word = Assert.Single(cue.GetProperty("Cues").EnumerateArray());
+        Assert.Equal(0, word.GetProperty("Position").GetInt32());
+        Assert.Equal(5, word.GetProperty("EndPosition").GetInt32());
+        Assert.Equal(16_000_000, word.GetProperty("Start").GetInt64());
+        Assert.Equal(20_000_000, word.GetProperty("End").GetInt64());
+        Assert.Equal("Synthetic", output[1].GetProperty("Text").GetString());
+        Assert.Equal(12_345_678, output[1].GetProperty("Start").GetInt64());
+        var backgroundWord = Assert.Single(output[1].GetProperty("Cues").EnumerateArray());
+        Assert.Equal(0, backgroundWord.GetProperty("Position").GetInt32());
+        Assert.Equal(9, backgroundWord.GetProperty("EndPosition").GetInt32());
+        Assert.Equal(12_345_678, backgroundWord.GetProperty("Start").GetInt64());
         Assert.DoesNotContain("TimedLines", jellyfin.Body);
         Assert.DoesNotContain("Segments", jellyfin.Body);
         var subsonic = SubsonicStructuredLyricsMapper.Map(song, result);
