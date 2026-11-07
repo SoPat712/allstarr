@@ -59,6 +59,24 @@ async function homeFixture(page: Page, admin: boolean, playing = true, todayCoun
   await page.route("**/api/admin/storage", route => route.fulfill({ json: { backups: [{ id: "backup", status: "verified", createdAt: "2026-11-02T22:00:00Z", bytes: 185100000 }], backupPolicy: { enabled: true, dailyRetentionCount: 7, weeklyRetentionCount: 4 }, backupStatus: { nextRunAt: "2026-11-04T22:00:00Z" } } }));
   await page.route("**/api/admin/stats?*", route => route.fulfill({ json: { playCount: 36, timelineUnit: "day", timeline: [{ key: "2026-10-29", plays: 5 }, { key: "2026-10-30", plays: 8 }, { key: "2026-10-31", plays: 3 }, { key: "2026-11-01", plays: 4 }, { key: "2026-11-02", plays: 6 }, { key: "2026-11-03", plays: 7 }, { key: "2026-11-04", plays: 3 }] } }));
 }
+test("Home recent activity keeps one rollout summary and rematch failures", async ({ page }) => {
+  await appearance(page, 1280, "dark");
+  const row = { kind: "matching", state: "accepted", detail: "Result", occurredAt: "2026-11-03T20:00:00Z" };
+  await homeFixture(page, true, true, true, [
+    { ...row, id: "matched", label: "Track matched", action: "automatic.review", isRoutine: true },
+    { ...row, id: "waiting", label: "Refresh matches", state: "retry_scheduled", action: "track-match.rematch", isRoutine: true },
+    { ...row, id: "progress", label: "Checking matches", action: "checking-matches", state: "running", isRoutine: false,
+      detail: "20 of 100 · Now plays from your library: 12 songs" },
+    { ...row, id: "failed", label: "Refresh matches", state: "failed", severity: "error", isRoutine: false },
+  ]);
+  await page.goto("/#/");
+  const recent = page.getByRole("region", { name: "Recent activity", exact: true });
+  await expect(recent.getByText("Checking matches", { exact: true })).toHaveCount(1);
+  await expect(recent).toContainText("20 of 100 · Now plays from your library: 12 songs");
+  await expect(recent).not.toContainText("Track matched");
+  await expect(recent.getByText("Refresh matches", { exact: true })).toHaveCount(1);
+});
+
 test("Home recent activity uses server flags and keeps background failures", async ({ page }) => {
   await appearance(page, 1280, "dark");
   const row = { kind: "administration", state: "succeeded", detail: "Result", occurredAt: "2026-11-03T20:00:00Z" };

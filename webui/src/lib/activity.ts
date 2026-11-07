@@ -31,7 +31,8 @@ export function isRoutineActivity(item: ActivityItem) {
   if (item.isRoutine !== undefined) return item.isRoutine;
   const routine = /background.?task|runtime settings source use|record[\s_-]+(?:a[\s_-]+)?listen|playback\.signal|track.?identity|canonical.?recording|history.?resolution/i.test(item.label);
   const waiting = ["pending", "waiting", "deferred", "retryscheduled"].includes(item.state.toLowerCase().replaceAll(/[-_ ]/g, ""));
-  return !isProblem(item) && (routine || waiting);
+  const automatic = ["track-match.rematch", "automatic.review", "recording.odesli.enrich"].includes(item.action ?? "");
+  return !isProblem(item) && (routine || waiting || automatic);
 }
 
 export function dayLabel(value: string, now = new Date(), options: { weekday?: boolean } = {}) {

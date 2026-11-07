@@ -78,6 +78,21 @@ public sealed partial class AdminUiActivityTests : IClassFixture<AdminUiActivity
                     CreatedAt = now.AddDays(-2).AddSeconds(-index)
                 });
             }
+            var rollout = HistoryJob(owner, "track-match.rematch", DurableJobState.RetryScheduled, "deferred", now);
+            rollout.LastErrorCode = "track_rematch_batch_pending";
+            db.Jobs.Add(rollout);
+            db.AuditEvents.Add(new()
+            {
+                Id = Guid.CreateVersion7(),
+                ActorUserId = owner,
+                Category = "matching-rollout",
+                Action = "checking-matches",
+                Outcome = "running",
+                SubjectType = "job",
+                SubjectId = rollout.Id.ToString("D"),
+                CreatedAt = now,
+                DetailsJson = JsonSerializer.Serialize(new { message = "25 of 100 · Now plays from your library: 12 songs" })
+            });
             await SeedHomePlaylistsAsync(db, owner);
             await db.Database.ExecuteSqlInterpolatedAsync($"""
                 WITH RECURSIVE flood(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM flood WHERE n < 50000)
@@ -89,12 +104,14 @@ public sealed partial class AdminUiActivityTests : IClassFixture<AdminUiActivity
                 WITH RECURSIVE flood(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM flood WHERE n < 50000)
                 INSERT INTO durable_jobs (Id, OwnerUserId, ScopeKey, Type, PayloadJson, PolicySnapshotJson,
                     RequestFingerprint, CorrelationId, IdempotencyKey, State, Priority, AttemptCount,
-                    FailureCount, DeferralCount, MaxAttempts, MaxDeferrals, AvailableAt, CreatedAt, UpdatedAt, Revision)
+                    FailureCount, DeferralCount, MaxAttempts, MaxDeferrals, AvailableAt, CreatedAt, UpdatedAt, Revision, LastAttemptOutcome, LastErrorCode)
                 SELECT printf('%08x-0000-0000-0000-000000000002', n), {owner}, 'flood',
                     CASE n % 3 WHEN 0 THEN 'listening-history.resolve' WHEN 1 THEN 'recording.odesli.enrich'
-                        ELSE 'rematch.rollout' END,
-                    json_object(), json_object(), '', '', printf('flood-%d', n), 'Succeeded', 0, 1, 0, 0, 3, 3,
-                    {now.UtcTicks}, {now.UtcTicks}, {now.UtcTicks} + n, 1 FROM flood
+                        ELSE 'track-match.rematch' END,
+                    json_object(), json_object(), '', '', printf('flood-%d', n),
+                    CASE n % 3 WHEN 2 THEN 'RetryScheduled' ELSE 'Succeeded' END, 0, 1, 0, 0, 3, 3,
+                    {now.UtcTicks}, {now.UtcTicks}, {now.UtcTicks} + n, 1, 'deferred',
+                    CASE n % 3 WHEN 2 THEN 'track_rematch_batch_pending' ELSE NULL END FROM flood
                 """);
         }
         await using (var db = await factory.CreateDbContextAsync())
@@ -168,6 +185,7 @@ public sealed partial class AdminUiActivityTests : IClassFixture<AdminUiActivity
             Assert.Equal(24, rows.Length);
             Assert.All(rows, row => Assert.False(row.GetProperty("IsRoutine").GetBoolean()));
             Assert.Contains(rows, row => row.GetProperty("Label").GetString() == "Favorite update");
+            Assert.Single(rows, row => row.GetProperty("Label").GetString() == "Checking matches");
             if (run == 0) continue;
             Assert.True(reads.Commands.Count <= 40,
                 $"Home performed {reads.Commands.Count} reads in {elapsed.Elapsed.TotalMilliseconds:0.0} ms. {string.Join("; ", timing.Messages)}");

@@ -38,6 +38,19 @@ public sealed partial class TrackRematchAllIntegrationTests
         var handler = new TrackRematchAllJobHandler(factory, rematches, commands, clock);
         Assert.Equal(DurableJobCompletionKind.Deferred,
             (await handler.ExecuteAsync(new(claim, EmptyServices.Instance), default)).Kind);
+        await using (var progressDb = factory.CreateDbContext())
+        {
+            var summaries = await progressDb.AuditEvents.Where(item => item.Action == "checking-matches").ToArrayAsync();
+            if (force) Assert.Empty(summaries);
+            else
+            {
+                var progress = Assert.Single(summaries);
+                Assert.Equal("running", progress.Outcome);
+                using var details = JsonDocument.Parse(progress.DetailsJson);
+                Assert.Equal(25, details.RootElement.GetProperty("completed").GetInt32());
+                Assert.Equal(26, details.RootElement.GetProperty("total").GetInt32());
+            }
+        }
         var pending = Assert.Single((await rematches.ReadWorkAsync(payload, default)).Pending);
         var refreshed = Guid.CreateVersion7();
         var current = Guid.CreateVersion7();
@@ -277,6 +290,10 @@ public sealed partial class TrackRematchAllIntegrationTests
         await using var saved = factory.CreateDbContext();
         var latest = await saved.TrackMatches.Where(item => item.MatcherVersion == TrackMatchDecisionEngine.AlgorithmVersion).ToArrayAsync();
         Assert.Equal(2, latest.Length);
+        var summary = Assert.Single(await saved.AuditEvents.Where(item => item.Action == "checking-matches").ToArrayAsync());
+        Assert.Equal("succeeded", summary.Outcome);
+        using var details = JsonDocument.Parse(summary.DetailsJson);
+        Assert.Equal("2 of 2 · Now plays from your library: 2 songs", details.RootElement.GetProperty("message").GetString());
         Assert.All(latest, item => { Assert.Equal(TrackMatchState.Accepted, item.State); Assert.Equal(copies[2].Id, item.LibraryTrackId); });
         Assert.Equal(5, await saved.TrackMatches.CountAsync());
         var pin = Assert.Single(await saved.ManualTrackOverrides.ToArrayAsync());

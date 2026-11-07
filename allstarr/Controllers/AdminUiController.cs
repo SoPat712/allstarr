@@ -591,6 +591,10 @@ public class AdminUiController : ControllerBase
             : ActivityJobPresentation.HistoryJobs(context.Jobs.AsNoTracking());
         jobSource = home ? jobSource.Where(item => item.OwnerUserId == userId)
             : jobSource.Where(item => everyone || (item.OwnerUserId ?? Guid.Empty) == userId);
+        if (home)
+            jobSource = jobSource.Where(item => item.Type != TrackRematchJobHandler.Type ||
+                item.State != DurableJobState.RetryScheduled || item.LastAttemptOutcome != "deferred" ||
+                item.LastErrorCode != null && item.LastErrorCode != "track_rematch_batch_pending");
         var jobs = await jobSource
             .Where(item => !before.HasValue || item.UpdatedAt < before.Value ||
                 (item.UpdatedAt == before.Value && beforeId.HasValue && item.Id.CompareTo(beforeId.Value) < 0))
@@ -842,6 +846,7 @@ public class AdminUiController : ControllerBase
                 return projected with
                 {
                     Kind = item.Category.Equals("health-check", StringComparison.OrdinalIgnoreCase) ? "health" : projected.Kind,
+                    Action = item.Category == "job-progress" && boundJob.Type == TrackRematchJobHandler.Type ? boundJob.Type : projected.Action,
                     Source = item.Category.Equals("health-check", StringComparison.OrdinalIgnoreCase) ? "Health" : projected.Source,
                     Label = item.Category.Equals("health-check", StringComparison.OrdinalIgnoreCase) ? display.DisplayName : projected.Label,
                     State = item.Category.Equals("health-check", StringComparison.OrdinalIgnoreCase) && item.Action == "completed" ? display.ActivityState : projected.State,
@@ -920,6 +925,12 @@ public class AdminUiController : ControllerBase
                 });
         }));
 
+        activity = activity.Select(item => item with { State = ActivityPresentation.NormalizeState(item.State) }).ToList();
+        var currentRematchStates = activity.Where(item => item.Kind == "job" && item.Action == TrackRematchJobHandler.Type && item.Id == item.JobId)
+            .Select(item => (item.Id, item.State, item.OccurredAt)).ToHashSet();
+        activity.RemoveAll(item => item.Kind == "job" && item.Action == TrackRematchJobHandler.Type &&
+            item.JobId != null && item.Id != item.JobId &&
+            currentRematchStates.Contains((item.JobId, item.State, item.OccurredAt)));
         if (home)
         {
             var healthResults = new HashSet<string>(StringComparer.Ordinal);
@@ -1051,7 +1062,8 @@ public class AdminUiController : ControllerBase
             TargetProviderTrackId: providerRoute?.ExternalId,
             BackendItemId: libraryTrack?.BackendItemId,
             ActorUserId: match.OwnerUserId.ToString("N"),
-            Action: "track-match.evaluate",
+            Action: match.PolicyVersion is TrackRematchAllService.RolloutPolicyVersion or TrackRematchAllService.RolloutFallbackPolicyVersion
+                ? "automatic.review" : "track-match.evaluate",
             TechnicalDetails: technicalDetails);
     }
 
@@ -1110,7 +1122,7 @@ public class AdminUiController : ControllerBase
 
     private static string AttemptDetail(DurableJobAttemptHistory? attempt, ActivityJobDisplay display)
     {
-        var outcome = attempt?.Outcome?.ToLowerInvariant() switch
+        var outcome = (attempt?.Outcome is { } state ? ActivityPresentation.NormalizeState(state) : null) switch
         {
             "succeeded" or "success" => "completed",
             "failed" => "failed",
@@ -1147,12 +1159,13 @@ public class AdminUiController : ControllerBase
             "background-task" => "job",
             "scrobble" => "scrobble",
             "provider-route" => "streaming",
-            "track-identity" or "track-match" => "matching",
+            "track-identity" or "track-match" or "matching-rollout" => "matching",
             "library-index" or "library-promotion" => "library",
             _ => "administration"
         };
         var providerId = ActivityPresentation.SafeText(AuditDetail(item.DetailsJson, "providerId") ?? AuditDetail(item.DetailsJson, "selectedProviderId"), 200);
-        var source = providerId ?? (category == "health-check" ? "Health" : category == "background-task" ? "Maintenance" : category == "lyrics" ? "Lyrics" : item.Category);
+        var source = providerId ?? (category == "health-check" ? "Health" : category == "background-task" ? "Maintenance" :
+            category == "lyrics" ? "Lyrics" : category == "matching-rollout" ? "Matching" : item.Category);
         var detail = category switch
         {
             "background-task" => item.Outcome is "success" or "succeeded" ? "Completed as scheduled."
@@ -1167,6 +1180,7 @@ public class AdminUiController : ControllerBase
         detail = ActivityPresentation.SafeText(detail) ?? HumanizeAuditCategory(item.Action);
         var label = category switch
         {
+            "matching-rollout" when item.Action == "checking-matches" => "Checking matches",
             "lyrics" when item.Action == "automatic.upgraded" => LyricsUpgradeLabel(item.DetailsJson),
             "background-task" => ActivityPresentation.SafeText(AuditDetail(item.DetailsJson, "name"), 200) ?? "Background maintenance",
             "health-check" when item.Action == "configured" => "Health monitoring updated",

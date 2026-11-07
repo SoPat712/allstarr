@@ -18,6 +18,14 @@ describe("Home recent activity", () => {
       { ...check("1"), label: "Update playlist", action: "playlist.sync" }])).toHaveLength(4);
   });
 
+  it("filters automatic rematches while keeping their progress summary and failures", () => {
+    const rematch = { ...check("1"), label: "Track matched", action: "automatic.review", state: "accepted" };
+    const progress = { ...check("4"), id: "progress", label: "Checking matches", action: "checking-matches", state: "running",
+      detail: "20 of 100 · Now plays from your library: 12 songs", isRoutine: false };
+    expect(recentHomeActivity([rematch, { ...rematch, id: "waiting", label: "Refresh matches", action: "track-match.rematch", state: "retry_scheduled" },
+      progress, { ...rematch, id: "failed", state: "failed", severity: "error" }]).map(item => item.id)).toEqual(["progress", "failed"]);
+  });
+
   it("filters routine work and keeps a failed background task", () => {
     const task = { ...check("1"), label: "Background task", action: "", state: "succeeded" };
     expect(recentHomeActivity([task, { ...task, id: "failed", state: "failed", severity: "error" }]).map(item => item.id)).toEqual(["failed"]);

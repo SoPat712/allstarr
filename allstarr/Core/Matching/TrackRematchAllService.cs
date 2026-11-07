@@ -460,6 +460,7 @@ public sealed class TrackRematchAllJobHandler(
         {
             if (publications != null) await publications.QueueAsync(cancellationToken);
             var promoted = await LibraryPrimaryCountAsync(work.OperationCorrelation, cancellationToken);
+            await SaveRolloutActivityAsync(context, payload, payload.ApprovedCount, payload.ApprovedCount, promoted, cancellationToken);
             if (promoted > 0)
                 await context.ReportProgressAsync(new("track.rematch", $"Now plays from your library: {promoted} songs"), cancellationToken);
             return DurableJobCompletion.Success();
@@ -482,6 +483,8 @@ public sealed class TrackRematchAllJobHandler(
         var started = Stopwatch.GetTimestamp();
         var transientFailures = 0;
         var audits = new List<AuditEventRecord>(batch.Length);
+        await SaveRolloutActivityAsync(context, payload, completed, total,
+            await LibraryPrimaryCountAsync(work.OperationCorrelation, cancellationToken), cancellationToken);
 
         foreach (var item in batch)
         {
@@ -541,6 +544,7 @@ public sealed class TrackRematchAllJobHandler(
         if (publications != null) await publications.QueueAsync(cancellationToken);
         var remaining = Math.Max(0, total - completed);
         var libraryPrimaryCount = await LibraryPrimaryCountAsync(work.OperationCorrelation, cancellationToken);
+        await SaveRolloutActivityAsync(context, payload, completed, total, libraryPrimaryCount, cancellationToken);
         await context.ReportProgressAsync(new(
             "track.rematch",
             remaining == 0 && libraryPrimaryCount > 0
@@ -564,6 +568,41 @@ public sealed class TrackRematchAllJobHandler(
                 "track_rematch_batch_pending",
                 "The next bounded rematch batch is scheduled.",
                 TimeSpan.FromSeconds(2));
+    }
+
+    private async Task SaveRolloutActivityAsync(DurableJobExecutionContext context, TrackRematchAllJobPayload payload,
+        int completed, int total, int libraryPrimaryCount, CancellationToken cancellationToken)
+    {
+        if (payload.Force || payload.Scope != TrackRematchScopes.Algorithm) return;
+        await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
+        var subject = context.Claim.JobId.ToString("D");
+        var activity = await db.AuditEvents.SingleOrDefaultAsync(item => item.SubjectType == "job" &&
+            item.SubjectId == subject && item.ActorUserId == context.Claim.OwnerUserId &&
+            item.Category == "matching-rollout" && item.Action == "checking-matches", cancellationToken);
+        if (activity == null)
+        {
+            activity = new AuditEventRecord
+            {
+                Id = Guid.CreateVersion7(),
+                ActorUserId = context.Claim.OwnerUserId,
+                Category = "matching-rollout",
+                Action = "checking-matches",
+                SubjectType = "job",
+                SubjectId = subject,
+                CorrelationId = context.Claim.CorrelationId
+            };
+            db.AuditEvents.Add(activity);
+        }
+        activity.Outcome = completed >= total ? "succeeded" : "running";
+        activity.DetailsJson = JsonSerializer.Serialize(new
+        {
+            message = $"{completed} of {total} · Now plays from your library: {libraryPrimaryCount} songs",
+            completed,
+            total,
+            libraryPrimaryCount
+        });
+        activity.CreatedAt = clock.UtcNow;
+        await db.SaveChangesAsync(cancellationToken);
     }
 
     private async Task<int> LibraryPrimaryCountAsync(string correlationId, CancellationToken cancellationToken)

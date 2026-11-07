@@ -9434,16 +9434,20 @@ for (const width of [320, 390, 1280]) {
       await expect(routing).toContainText("Public access");
       await expect(routing).toContainText("Rate limited");
       await expect(routing).toContainText("Retry after");
+      const panel = page.getByRole("dialog", { name: "Lumen Audio", exact: true });
+      // Source-use settings load above the history; wait for their final layout before clicking.
+      await expect(panel.getByRole("radiogroup", { name: "Use this source for you", exact: true })).toBeVisible();
       const history = page.getByRole("group", { name: /Recent diagnostic checks/ });
       await expect(history).not.toHaveAttribute("open", "");
       await expect(history).toContainText("3 passed · 3 failed · 3 neutral");
-      await history.locator("summary").click();
+      await clickWhenStable(history.locator("summary"));
+      await expect(history).toHaveAttribute("open", "");
       await expect(history.getByRole("listitem")).toHaveCount(6);
       await expect(history).toContainText("Under 1 ms");
       await expect(history).toContainText("Sample unavailable");
       await expect(history).not.toContainText("Invalid Date");
       await expect(history).not.toContainText("0 ms");
-      await history.getByRole("button", { name: "Show more checks" }).click();
+      await clickWhenStable(history.getByRole("button", { name: "Show more checks" }));
       await expect(history.getByRole("listitem")).toHaveCount(9);
       expect(reads).toBe(1);
       if (width < 768) await expectContainedMobileGeometry(page);

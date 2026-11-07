@@ -57,10 +57,11 @@ internal static class ActivityJobPresentation
         """).AsNoTracking();
 
     public static bool ShowAuditInHistory(AuditEventRecord audit, DurableJobRecord job) =>
-        audit.Category is not ("job-attempt" or "job-progress") || FailureOutcomes.Contains(audit.Outcome, StringComparer.OrdinalIgnoreCase) ||
+        (audit.Action != "checking-matches" || job.State is not (DurableJobState.Failed or DurableJobState.Cancelled)) &&
+        (audit.Category is not ("job-attempt" or "job-progress") || FailureOutcomes.Contains(audit.Outcome, StringComparer.OrdinalIgnoreCase) ||
         !(RoutineJobTypes.Contains(job.Type, StringComparer.OrdinalIgnoreCase) ||
           job.Type == Core.Intelligence.ListeningHistoryResolution.JobTypeName &&
-          audit.Category == "job-progress" && audit.Action == "history-resolution-current");
+          audit.Category == "job-progress" && audit.Action == "history-resolution-current"));
 
     public static async Task<IReadOnlyDictionary<Guid, ActivityJobDisplay>> ResolveAsync(
         AllstarrDbContext db, IReadOnlyCollection<DurableJobRecord> jobs,
@@ -143,9 +144,12 @@ internal static class ActivityJobPresentation
              job.Type.StartsWith("library.", StringComparison.OrdinalIgnoreCase) ? "Library" :
              job.Type.Equals("storage.backup", StringComparison.OrdinalIgnoreCase) ? "Backup archive" : null);
         var summary = Summary(job, favorite, health, playlistName);
-        var activityState = job.State.ToString().ToLowerInvariant();
+        var activityState = ActivityPresentation.NormalizeState(job.State.ToString());
         var severity = job.Type == Core.Intelligence.ListeningHistoryResolution.JobTypeName &&
-            job.LastAttemptOutcome == "deferred" && job.LastErrorCode == null ? "info" : Severity(job.State, health);
+            job.LastAttemptOutcome == "deferred" && job.LastErrorCode == null ||
+            job.Type == Core.Matching.TrackRematchJobHandler.Type && job.State == DurableJobState.RetryScheduled &&
+            job.LastAttemptOutcome == "deferred" &&
+            (job.LastErrorCode == null || job.LastErrorCode == "track_rematch_batch_pending") ? "info" : Severity(job.State, health);
         IReadOnlyDictionary<string, string>? technical = null;
         if (health is { } healthContext)
         {

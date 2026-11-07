@@ -4,6 +4,10 @@ namespace allstarr.Services.Admin;
 
 internal static class ActivityPresentation
 {
+    public static string NormalizeState(string state) =>
+        state.Trim().ToLowerInvariant().Replace("-", "").Replace("_", "").Replace(" ", "") == "retryscheduled"
+            ? "retry_scheduled" : state.Trim().ToLowerInvariant();
+
     public static bool IsRoutine(string label, string state, string severity, string? action = null)
     {
         var normalized = state.ToLowerInvariant().Replace("-", "").Replace("_", "").Replace(" ", "");
