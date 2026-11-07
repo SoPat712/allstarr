@@ -249,6 +249,9 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
             entity.HasIndex(item => new { item.State, item.AvailableAt, item.Priority });
             entity.HasIndex(item => new { item.UpdatedAt, item.Id })
                 .HasDatabaseName("IX_durable_job_updates");
+            entity.HasIndex(item => item.OwnerUserId);
+            entity.HasIndex(item => new { item.OwnerUserId, item.UpdatedAt, item.Id })
+                .HasDatabaseName("IX_home_notable_jobs").HasFilter(Core.Operations.HomeActivityPolicy.Jobs);
             entity.HasOne<UserRecord>().WithMany()
                 .HasForeignKey(item => item.OwnerUserId)
                 .HasPrincipalKey(item => item.Id)
@@ -388,6 +391,9 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
                 .HasDatabaseName("IX_audit_subject_history");
             entity.HasIndex(item => new { item.CreatedAt, item.Id })
                 .HasDatabaseName("IX_audit_event_updates");
+            entity.HasIndex(item => item.ActorUserId);
+            entity.HasIndex(item => new { item.ActorUserId, item.CreatedAt, item.Id })
+                .HasDatabaseName("IX_home_notable_audits").HasFilter(Core.Operations.HomeActivityPolicy.Audits);
             entity.HasIndex(item => item.CorrelationId);
             entity.HasOne<UserRecord>().WithMany().HasForeignKey(item => item.ActorUserId)
                 .OnDelete(DeleteBehavior.Restrict);

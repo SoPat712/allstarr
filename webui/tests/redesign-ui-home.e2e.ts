@@ -27,7 +27,7 @@ async function shot(page: Page, name: string, width: number, theme: string) {
   await mkdir(folder, { recursive: true });
   await page.screenshot({ path: `${folder}${name}-${width}-${theme}.png`, fullPage: !(await page.getByRole("dialog").count()) });
 }
-async function homeFixture(page: Page, admin: boolean, playing = true, todayCount = true) {
+async function homeFixture(page: Page, admin: boolean, playing = true, todayCount = true, activityItems?: unknown[]) {
   await mockForYou(page, { admin });
   const failing = ["Monochrome", "Paxsenix", "Amazon Music", "Qobuz", "SoundCloud"].map(name => ({ id: name.toLowerCase().replaceAll(" ", "-"), name }));
   const providers = [{ id: "catalog", name: "Music service" }, ...Array.from({ length: 22 }, (_, index) => ({ id: `working-${index}`, name: `Working source ${index + 1}` })), ...failing];
@@ -37,7 +37,7 @@ async function homeFixture(page: Page, admin: boolean, playing = true, todayCoun
     stats: { linkedPlaylists: 24, playableTracks: 1224, unresolvedTracks: 0, activeJobs: 2, waitingJobs: 1, completedJobsToday: 50, failedJobsToday: 0,
       completedListens: 25, currentWeekListens: 36, previousWeekListens: 0, scrobbleDeliveries: 6, ...(todayCount ? { scrobblesToday: 6 } : {}), cacheTracks: 79, keptTracks: 3, topArtist: { name: "North", listens: 6 } },
     providerHealth: { providers: providers.map(provider => ({ providerId: provider.id, enabledAccountCount: 1, capabilityTotal: 1, healthyCapabilityCount: failing.includes(provider) ? 0 : 1, failedCapabilityCount: failing.includes(provider) ? 1 : 0, lastFailureCode: provider.id === "amazon-music" ? "stream_slow" : null })) },
-    activity: { items: [
+    activity: { items: activityItems ?? [
       { id: "routine", kind: "job", label: "Background task", state: "succeeded", detail: "routine", occurredAt: "2026-11-03T20:00:00Z" },
       { id: "waiting", kind: "job", label: "Background task", state: "deferred", detail: "Waiting for the next scheduled retry", occurredAt: "2026-11-03T20:00:00Z" },
       { id: "settings", kind: "administration", label: "Runtime settings source use", state: "recorded", detail: "Runtime settings", occurredAt: "2026-11-03T20:00:00Z" },
@@ -59,6 +59,23 @@ async function homeFixture(page: Page, admin: boolean, playing = true, todayCoun
   await page.route("**/api/admin/storage", route => route.fulfill({ json: { backups: [{ id: "backup", status: "verified", createdAt: "2026-11-02T22:00:00Z", bytes: 185100000 }], backupPolicy: { enabled: true, dailyRetentionCount: 7, weeklyRetentionCount: 4 }, backupStatus: { nextRunAt: "2026-11-04T22:00:00Z" } } }));
   await page.route("**/api/admin/stats?*", route => route.fulfill({ json: { playCount: 36, timelineUnit: "day", timeline: [{ key: "2026-10-29", plays: 5 }, { key: "2026-10-30", plays: 8 }, { key: "2026-10-31", plays: 3 }, { key: "2026-11-01", plays: 4 }, { key: "2026-11-02", plays: 6 }, { key: "2026-11-03", plays: 7 }, { key: "2026-11-04", plays: 3 }] } }));
 }
+test("Home recent activity uses server flags and keeps background failures", async ({ page }) => {
+  await appearance(page, 1280, "dark");
+  const row = { kind: "administration", state: "succeeded", detail: "Result", occurredAt: "2026-11-03T20:00:00Z" };
+  await homeFixture(page, true, true, true, [
+    { ...row, id: "routine", label: "Matching old listens", isRoutine: true },
+    { ...row, id: "failed", label: "Background task", state: "failed", severity: "error", isRoutine: false },
+    { ...row, id: "health", label: "Health check", action: "health.smoke", detail: "4 passed", isRoutine: false },
+    { ...row, id: "health-old", label: "Health check", action: "health.smoke", detail: "4 passed", isRoutine: false, occurredAt: "2026-11-03T19:00:00Z" },
+  ]);
+  await page.goto("/#/");
+  const recent = page.getByRole("region", { name: "Recent activity", exact: true });
+  await expect(recent).toContainText("Background task");
+  await expect(recent).not.toContainText("Matching old listens");
+  await expect(recent).not.toContainText("Nothing new lately");
+  await expect(recent.getByText("Health check", { exact: true })).toHaveCount(1);
+});
+
 for (const { section, label, stylesheet, ready } of [
   { section: "releases", label: "New releases", stylesheet: "IntelligenceReleases", ready: "Release type" },
   { section: "taste", label: "Your taste", stylesheet: "IntelligenceTaste", ready: "Reset taste" },

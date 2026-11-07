@@ -8,6 +8,7 @@ using allstarr.Core.Identity;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Intelligence;
 using allstarr.Core.Jobs;
+using allstarr.Core.Operations;
 using allstarr.Core.Matching;
 using allstarr.Core.Playback;
 using allstarr.Core.Playlists;
@@ -325,13 +326,9 @@ public class AdminUiController : ControllerBase
         var contextFactory = services.GetRequiredService<IDbContextFactory<AllstarrDbContext>>();
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
         var linksQuery = context.PlaylistLinks.AsNoTracking();
-        var jobsQuery = context.Jobs.AsNoTracking();
-        var listensQuery = context.ListeningEvents.AsNoTracking();
         if (!session.IsAdministrator && session.AllstarrUserId is { } ownerUserId)
         {
             linksQuery = linksQuery.Where(item => item.OwnerUserId == ownerUserId);
-            jobsQuery = jobsQuery.Where(item => item.OwnerUserId == ownerUserId);
-            listensQuery = listensQuery.Where(item => item.OwnerUserId == ownerUserId);
         }
 
         var linkIds = await linksQuery.Select(item => item.Id).ToArrayAsync(cancellationToken);
@@ -346,31 +343,18 @@ public class AdminUiController : ControllerBase
             }, cancellationToken)
             : await services.GetRequiredService<DurablePlaylistProjectionReader>().ReadHomeCountsAsync(countsOwner, linkIds, countsViewer, cancellationToken);
         timings.Add(("playlists", Stopwatch.GetTimestamp()));
-        var activeJobs = await jobsQuery.CountAsync(item =>
-            item.State != DurableJobState.Succeeded && item.State != DurableJobState.Failed &&
-            item.State != DurableJobState.Cancelled, cancellationToken);
-        var jobCounts = await ReadHomeJobCountsAsync(jobsQuery, DateTimeOffset.UtcNow, cancellationToken);
-        var lastDay = DateTimeOffset.UtcNow.AddHours(-24);
-        var currentWeekStart = DateTimeOffset.UtcNow.AddDays(-7);
-        var previousWeekStart = DateTimeOffset.UtcNow.AddDays(-14);
-        var lastMonth = DateTimeOffset.UtcNow.AddDays(-30);
-        var completedListens = await listensQuery.CountAsync(item =>
-            item.State == ListeningEventState.Completed && item.ListenedAt >= lastDay, cancellationToken);
-        var topArtist = await listensQuery
-            .Where(item => item.State == ListeningEventState.Completed && item.ListenedAt >= lastMonth && item.Artist != null)
-            .GroupBy(item => item.Artist)
-            .Select(group => new { name = group.Key, listens = group.Count() })
-            .OrderByDescending(item => item.listens)
-            .ThenBy(item => item.name)
-            .FirstOrDefaultAsync(cancellationToken);
-        var scrobbleCounts = await ReadHomeScrobbleCountsAsync(context.PlaybackDeliveryCheckpoints.AsNoTracking()
-            .Where(item => session.IsAdministrator || item.OwnerUserId == session.AllstarrUserId), DateTimeOffset.UtcNow, cancellationToken);
-        var currentWeekListens = await listensQuery.CountAsync(item =>
-            item.State == ListeningEventState.Completed && item.ListenedAt >= currentWeekStart,
-            cancellationToken);
-        var previousWeekListens = await listensQuery.CountAsync(item =>
-            item.State == ListeningEventState.Completed && item.ListenedAt >= previousWeekStart &&
-            item.ListenedAt < currentWeekStart, cancellationToken);
+        var jobSummary = await ReadRecentHomeValueAsync(services, $"home-jobs:{countsOwner}", TimeSpan.FromSeconds(15),
+            token => ReadHomeJobSummaryAsync(contextFactory, countsOwner, token), cancellationToken);
+        var activeJobs = jobSummary.Active;
+        var jobCounts = jobSummary.Counts;
+        timings.Add(("jobs", Stopwatch.GetTimestamp()));
+        var listening = await ReadRecentHomeValueAsync(services, $"home-listening:{countsOwner}", TimeSpan.FromSeconds(15),
+            token => ReadHomeListeningSummaryAsync(contextFactory, countsOwner, token), cancellationToken);
+        var completedListens = listening.Completed;
+        var currentWeekListens = listening.CurrentWeek;
+        var previousWeekListens = listening.PreviousWeek;
+        var scrobbleCounts = listening.Scrobbles;
+        var topArtist = listening.TopArtist;
         timings.Add(("listening", Stopwatch.GetTimestamp()));
         int? cacheTracks = null;
         int? keptTracks = null;
@@ -379,16 +363,21 @@ public class AdminUiController : ControllerBase
             var downloadRoot = Path.GetFullPath(_configuration["Library:DownloadPath"] ?? "./downloads");
             var keptRoot = services.GetService<allstarr.Core.Downloads.ManagedTrackPlacementOptions>()?.RootPath ??
                 _configuration["Library:KeptPath"] ?? Path.Combine(downloadRoot, "kept");
-            (cacheTracks, keptTracks) = await ReadExistingStorageCountsAsync(context, downloadRoot, keptRoot, cancellationToken);
+            (cacheTracks, keptTracks) = await ReadRecentHomeValueAsync(services, $"home-storage:{downloadRoot}:{keptRoot}", TimeSpan.FromMinutes(1),
+                async token =>
+                {
+                    await using var db = await contextFactory.CreateDbContextAsync(token);
+                    return await ReadExistingStorageCountsAsync(db, downloadRoot, keptRoot, token);
+                }, cancellationToken);
         }
         timings.Add(("storage", Stopwatch.GetTimestamp()));
         var storage = services.GetService<DurableStorageState>()?.GetSnapshot();
+        timings.Add(("status", Stopwatch.GetTimestamp()));
         var providerHealth = session.IsAdministrator
             ? (await GetProviderSummaries(cancellationToken) as OkObjectResult)?.Value
             : new { providers = Array.Empty<object>() };
         timings.Add(("sources", Stopwatch.GetTimestamp()));
-        // Home leaves out routine work, so it asks for enough to still have something to show.
-        var activity = (await GetDashboardActivity(40, cancellationToken: cancellationToken) as OkObjectResult)?.Value;
+        var activity = await ReadHomeActivityAsync(cancellationToken);
         timings.Add(("activity", Stopwatch.GetTimestamp()));
         services.GetService<ILogger<AdminUiController>>()?.LogInformation("Home timing: {Steps}", string.Join(", ", timings.Skip(1).Select((item, index) =>
             $"{item.Step} {(int)Stopwatch.GetElapsedTime(timings[index].At, item.At).TotalMilliseconds} ms")));
@@ -429,6 +418,59 @@ public class AdminUiController : ControllerBase
             providerHealth,
             activity
         });
+    }
+
+    private sealed record HomeJobSummary(int Active, (int WaitingJobs, int CompletedJobsToday, int FailedJobsToday) Counts);
+    private sealed record HomeArtist(string? name, int listens);
+    private sealed record HomeListeningSummary(int Completed, int CurrentWeek, int PreviousWeek,
+        (int LastDay, int Today) Scrobbles, HomeArtist? TopArtist);
+
+    private static Task<T> ReadRecentHomeValueAsync<T>(IServiceProvider services, string key, TimeSpan lifetime,
+        Func<CancellationToken, Task<T>> read, CancellationToken cancellationToken) where T : notnull =>
+        services.GetService<RecentValues>() is { } recent
+            ? recent.GetAsync(key, lifetime, read, cancellationToken)
+            : read(cancellationToken);
+
+    private static async Task<HomeJobSummary> ReadHomeJobSummaryAsync(IDbContextFactory<AllstarrDbContext> factory,
+        Guid? owner, CancellationToken cancellationToken)
+    {
+        await using var db = await factory.CreateDbContextAsync(cancellationToken);
+        var jobs = db.Jobs.AsNoTracking();
+        if (owner.HasValue) jobs = jobs.Where(item => item.OwnerUserId == owner.Value);
+        var active = await jobs.CountAsync(item => item.State == DurableJobState.Pending ||
+            item.State == DurableJobState.Running || item.State == DurableJobState.RetryScheduled, cancellationToken);
+        return new(active, await ReadHomeJobCountsAsync(jobs, DateTimeOffset.UtcNow, cancellationToken));
+    }
+
+    private static async Task<HomeListeningSummary> ReadHomeListeningSummaryAsync(IDbContextFactory<AllstarrDbContext> factory,
+        Guid? owner, CancellationToken cancellationToken)
+    {
+        await using var db = await factory.CreateDbContextAsync(cancellationToken);
+        var listens = db.ListeningEvents.AsNoTracking();
+        var deliveries = db.PlaybackDeliveryCheckpoints.AsNoTracking();
+        if (owner.HasValue)
+        {
+            listens = listens.Where(item => item.OwnerUserId == owner.Value);
+            deliveries = deliveries.Where(item => item.OwnerUserId == owner.Value);
+        }
+        var now = DateTimeOffset.UtcNow;
+        var lastDay = now.AddDays(-1);
+        var currentWeekStart = now.AddDays(-7);
+        var previousWeekStart = now.AddDays(-14);
+        var lastMonth = now.AddDays(-30);
+        var counts = await listens.Where(item => item.State == ListeningEventState.Completed && item.ListenedAt >= previousWeekStart)
+            .GroupBy(item => 1).Select(group => new
+            {
+                Completed = group.Count(item => item.ListenedAt >= lastDay),
+                CurrentWeek = group.Count(item => item.ListenedAt >= currentWeekStart),
+                PreviousWeek = group.Count(item => item.ListenedAt < currentWeekStart)
+            }).FirstOrDefaultAsync(cancellationToken);
+        var artist = await listens.Where(item => item.State == ListeningEventState.Completed && item.ListenedAt >= lastMonth && item.Artist != null)
+            .GroupBy(item => item.Artist).Select(group => new { Name = group.Key, Listens = group.Count() })
+            .OrderByDescending(item => item.Listens).ThenBy(item => item.Name).FirstOrDefaultAsync(cancellationToken);
+        return new(counts?.Completed ?? 0, counts?.CurrentWeek ?? 0, counts?.PreviousWeek ?? 0,
+            await ReadHomeScrobbleCountsAsync(deliveries, now, cancellationToken),
+            artist == null ? null : new(artist.Name, artist.Listens));
     }
 
     internal static async Task<(int LastDay, int Today)> ReadHomeScrobbleCountsAsync(
@@ -518,6 +560,10 @@ public class AdminUiController : ControllerBase
         [FromQuery] Guid? beforeId = null,
         CancellationToken cancellationToken = default,
         [FromQuery] string scope = "mine")
+        => await ReadActivityAsync(limit, before, beforeId, cancellationToken, scope, home: false);
+
+    private async Task<IActionResult> ReadActivityAsync(int limit, DateTimeOffset? before, Guid? beforeId,
+        CancellationToken cancellationToken, string scope, bool home)
     {
         if (!HttpContext.Items.TryGetValue(AdminAuthSessionService.HttpContextSessionItemKey, out var sessionValue) ||
             sessionValue is not AdminAuthSession { AllstarrUserId: { } userId } session)
@@ -530,7 +576,7 @@ public class AdminUiController : ControllerBase
         var everyone = session.IsAdministrator && scope == "everyone";
 
         limit = Math.Clamp(limit, 1, 100);
-        var scanLimit = Math.Min(500, limit * 5);
+        var scanLimit = home ? limit + 1 : Math.Min(500, limit * 5);
         var contextFactory = HttpContext.RequestServices.GetRequiredService<IDbContextFactory<AllstarrDbContext>>();
         var activityTimings = new List<(string Step, long At)> { ("start", Stopwatch.GetTimestamp()) };
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
@@ -540,15 +586,20 @@ public class AdminUiController : ControllerBase
         activityTimings.Add(("accounts", Stopwatch.GetTimestamp()));
         // The owner is compared through a default so SQLite walks the newest-first index and stops at the limit,
         // instead of reading every row of a listener with a long history and sorting them all.
-        var jobs = await ActivityJobPresentation.HistoryJobs(context.Jobs.AsNoTracking())
-            .Where(item => (everyone || (item.OwnerUserId ?? Guid.Empty) == userId) &&
-                (!before.HasValue || item.UpdatedAt < before.Value ||
-                (item.UpdatedAt == before.Value && beforeId.HasValue && item.Id.CompareTo(beforeId.Value) < 0)))
+        var jobSource = home
+            ? context.Jobs.FromSqlRaw(HomeActivityPolicy.JobQuery).AsNoTracking()
+            : ActivityJobPresentation.HistoryJobs(context.Jobs.AsNoTracking());
+        jobSource = home ? jobSource.Where(item => item.OwnerUserId == userId)
+            : jobSource.Where(item => everyone || (item.OwnerUserId ?? Guid.Empty) == userId);
+        var jobs = await jobSource
+            .Where(item => !before.HasValue || item.UpdatedAt < before.Value ||
+                (item.UpdatedAt == before.Value && beforeId.HasValue && item.Id.CompareTo(beforeId.Value) < 0))
             .OrderByDescending(item => item.UpdatedAt).ThenByDescending(item => item.Id)
             .Take(scanLimit)
             .ToListAsync(cancellationToken);
         activityTimings.Add(("jobs", Stopwatch.GetTimestamp()));
         var playlistRuns = await context.PlaylistSyncRuns.AsNoTracking()
+            .Where(item => !home || item.State != PlaylistSyncState.Pending)
             .Where(item => (everyone || item.OwnerUserId == userId) &&
                 (!before.HasValue || (item.CompletedAt ?? item.StartedAt) < before.Value ||
                 ((item.CompletedAt ?? item.StartedAt) == before.Value && beforeId.HasValue && item.Id.CompareTo(beforeId.Value) < 0)))
@@ -591,11 +642,15 @@ public class AdminUiController : ControllerBase
             .ToDictionary(group => group.Key, group => group.ToArray());
         var libraryTracks = matchActivity.LibraryTracks;
         activityTimings.Add(("matches", Stopwatch.GetTimestamp()));
-        var audits = await ActivityJobPresentation.HistoryAudits(context)
+        var auditSource = home
+            ? context.AuditEvents.FromSqlRaw(HomeActivityPolicy.AuditQuery).AsNoTracking()
+            : ActivityJobPresentation.HistoryAudits(context);
+        auditSource = home ? auditSource.Where(item => item.ActorUserId == userId)
+            : auditSource.Where(item => everyone || (item.ActorUserId ?? Guid.Empty) == userId);
+        var audits = await auditSource
             .Where(item => item.Category != allstarr.Core.Playback.PlaybackStartTimingStore.Category)
-            .Where(item => (everyone || (item.ActorUserId ?? Guid.Empty) == userId) &&
-                (!before.HasValue || item.CreatedAt < before.Value ||
-                (item.CreatedAt == before.Value && beforeId.HasValue && item.Id.CompareTo(beforeId.Value) < 0)))
+            .Where(item => !before.HasValue || item.CreatedAt < before.Value ||
+                (item.CreatedAt == before.Value && beforeId.HasValue && item.Id.CompareTo(beforeId.Value) < 0))
             .OrderByDescending(item => item.CreatedAt).ThenByDescending(item => item.Id)
             .Take(scanLimit)
             .ToListAsync(cancellationToken);
@@ -865,6 +920,15 @@ public class AdminUiController : ControllerBase
                 });
         }));
 
+        if (home)
+        {
+            var healthResults = new HashSet<string>(StringComparer.Ordinal);
+            activity = activity.OrderByDescending(item => item.OccurredAt).ThenByDescending(item => item.Id)
+                .Where(item => !item.IsRoutine &&
+                    (!(item.Action == "health.smoke" || item.Label.Equals("Health check", StringComparison.OrdinalIgnoreCase)) ||
+                     healthResults.Add(JsonSerializer.Serialize(new[] { item.ActorUserId, item.ProviderId, item.Source, item.Label, item.State, item.Detail }))))
+                .ToList();
+        }
         var ordered = activity.OrderByDescending(item => item.OccurredAt).ThenByDescending(item => item.Id).Take(limit + 1).ToArray();
         var actorIds = ordered.Select(item => Guid.TryParse(item.ActorUserId, out var id) ? id : (Guid?)null)
             .OfType<Guid>().Distinct().ToArray();
@@ -886,16 +950,18 @@ public class AdminUiController : ControllerBase
         activityTimings.Add(("assembly", Stopwatch.GetTimestamp()));
         HttpContext.RequestServices.GetService<ILogger<AdminUiController>>()?.LogInformation("Activity timing: {Steps}", string.Join(", ",
             activityTimings.Skip(1).Select((item, index) => $"{item.Step} {(int)Stopwatch.GetElapsedTime(activityTimings[index].At, item.At).TotalMilliseconds} ms")));
-        return Ok(new
-        {
+        return Ok(new AdminUiActivityPage(
             items,
-            hasMore = ordered.Length > limit || jobs.Count == scanLimit ||
-                      playlistRuns.Count == scanLimit || matches.Count == scanLimit || audits.Count == scanLimit ||
-                      extensionLogs.Count == scanLimit || downloadArtifacts.Count == scanLimit,
-            nextCursor = items.LastOrDefault()?.OccurredAt,
-            nextCursorId = items.LastOrDefault()?.Id
-        });
+            ordered.Length > limit || jobs.Count == scanLimit ||
+                playlistRuns.Count == scanLimit || matches.Count == scanLimit || audits.Count == scanLimit ||
+                extensionLogs.Count == scanLimit || downloadArtifacts.Count == scanLimit,
+            items.LastOrDefault()?.OccurredAt,
+            items.LastOrDefault()?.Id));
     }
+
+    internal async Task<AdminUiActivityPage?> ReadHomeActivityAsync(CancellationToken cancellationToken = default) =>
+        await ReadActivityAsync(24, null, null, cancellationToken, "mine", home: true)
+            is OkObjectResult { Value: AdminUiActivityPage page } ? page : null;
 
     private static string FormatBytes(long length)
     {
@@ -2147,4 +2213,13 @@ public sealed record AdminUiActivityItem(
     string? JobId = null,
     string? Recovery = null,
     string? ActionHref = null,
-    string? ActionLabel = null);
+    string? ActionLabel = null)
+{
+    public bool IsRoutine => ActivityPresentation.IsRoutine(Label, State, Severity, Action);
+}
+
+internal sealed record AdminUiActivityPage(
+    [property: System.Text.Json.Serialization.JsonPropertyName("items")] AdminUiActivityItem[] Items,
+    [property: System.Text.Json.Serialization.JsonPropertyName("hasMore")] bool HasMore,
+    [property: System.Text.Json.Serialization.JsonPropertyName("nextCursor")] DateTimeOffset? NextCursor,
+    [property: System.Text.Json.Serialization.JsonPropertyName("nextCursorId")] string? NextCursorId);

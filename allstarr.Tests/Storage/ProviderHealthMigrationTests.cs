@@ -346,6 +346,15 @@ public sealed class ProviderHealthMigrationTests
         Assert.Equal("CREATE UNIQUE INDEX \"IX_promotion_profiles_OwnerUserId\" ON \"promotion_profiles\" (\"OwnerUserId\")",
             CollapseSql(Assert.Single(after, row => row.Type == "index" && row.Name == "IX_promotion_profiles_OwnerUserId").Sql));
 
+        string[] homeActivityIndexes = ["IX_home_notable_jobs", "IX_home_notable_audits"];
+        Assert.DoesNotContain(before, row => homeActivityIndexes.Contains(row.Name));
+        Assert.Equal(homeActivityIndexes.Order(StringComparer.Ordinal), after.Where(row => homeActivityIndexes.Contains(row.Name))
+            .Select(row => row.Name).Order(StringComparer.Ordinal));
+        Assert.Equal(CollapseSql($"CREATE INDEX \"IX_home_notable_jobs\" ON \"durable_jobs\" (\"OwnerUserId\", \"UpdatedAt\", \"Id\") WHERE {HomeActivityPolicy.Jobs}"),
+            CollapseSql(Assert.Single(after, row => row.Type == "index" && row.Name == "IX_home_notable_jobs").Sql));
+        Assert.Equal(CollapseSql($"CREATE INDEX \"IX_home_notable_audits\" ON \"audit_events\" (\"ActorUserId\", \"CreatedAt\", \"Id\") WHERE {HomeActivityPolicy.Audits}"),
+            CollapseSql(Assert.Single(after, row => row.Type == "index" && row.Name == "IX_home_notable_audits").Sql));
+
         var oldSchema = before
             .Where(row => row.Name is not "job_attempts" and not "IX_job_attempts_JobId_AttemptNumber")
             .Select(row => row.Name == "runtime_settings" ? row with
@@ -357,7 +366,7 @@ public sealed class ProviderHealthMigrationTests
             .Order(StringComparer.Ordinal)
             .ToArray();
         var newSchema = after
-            .Where(row => row.Name is not publicLinkIndex and not publicSnapshotIndex and not subjectIndex and not "IX_health_smoke_runs_CreatedAt" and not "IX_health_smoke_runs_OwnerUserId" && !keptObjects.Contains(row.Name) && !adoptionObjects.Contains(row.Name) && row.Name != storageIdentity && row.Name != queueTable && row.Name != userDataTable && row.Name != healthTable && !backupObjects.Contains(row.Name) && !reportObjects.Contains(row.Name) && !sharedFavoriteObjects.Contains(row.Name) && !alertObjects.Contains(row.Name) && !promotionObjects.Contains(row.Name) && !profileObjects.Contains(row.Name) && !migrationObjects.Contains(row.Name) && !lyricsRefreshObjects.Contains(row.Name))
+            .Where(row => row.Name is not publicLinkIndex and not publicSnapshotIndex and not subjectIndex and not "IX_health_smoke_runs_CreatedAt" and not "IX_health_smoke_runs_OwnerUserId" && !keptObjects.Contains(row.Name) && !adoptionObjects.Contains(row.Name) && row.Name != storageIdentity && row.Name != queueTable && row.Name != userDataTable && row.Name != healthTable && !backupObjects.Contains(row.Name) && !reportObjects.Contains(row.Name) && !sharedFavoriteObjects.Contains(row.Name) && !alertObjects.Contains(row.Name) && !promotionObjects.Contains(row.Name) && !profileObjects.Contains(row.Name) && !migrationObjects.Contains(row.Name) && !lyricsRefreshObjects.Contains(row.Name) && !homeActivityIndexes.Contains(row.Name))
             .Select(NormalizeSchemaObject)
             .Order(StringComparer.Ordinal)
             .ToArray();

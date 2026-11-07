@@ -348,28 +348,8 @@ public sealed class DurablePlaylistProjectionReader(
         Guid? ownerUserId, IReadOnlyCollection<Guid> playlistLinkIds, Guid viewerUserId,
         CancellationToken cancellationToken = default)
     {
-        if (playlistLinkIds.Count == 0) return (0, 0);
-        await using var database = await factory.CreateDbContextAsync(cancellationToken);
-        var query = database.PlaylistSourceSnapshots.AsNoTracking().Where(item =>
-            playlistLinkIds.Contains(item.PlaylistLinkId) && item.PublishedAt.HasValue);
-        if (ownerUserId.HasValue) query = query.Where(item => item.OwnerUserId == ownerUserId.Value);
-        var snapshots = await query.GroupBy(item => item.PlaylistLinkId)
-            .Select(group => group.OrderByDescending(item => item.SnapshotVersion)
-                .ThenByDescending(item => item.RetrievedAt).First()).ToArrayAsync(cancellationToken);
-        if (snapshots.Length == 0) return (0, 0);
-        var access = await libraryAccess.ResolveUserAsync(viewerUserId, cancellationToken);
-        var providerOrder = providerGateway == null ? null : access.Context?.Actor is { } actor
-            ? await providerGateway.GetPlayableProviderOrderAsync(actor, cancellationToken) : [];
-        var playable = 0;
-        var unresolved = 0;
-        foreach (var snapshot in snapshots)
-        {
-            var projection = await ProjectAsync(database, snapshot, viewerUserId, cancellationToken,
-                access, includeHistory: false, retainedProviderOrder: providerOrder);
-            playable += projection.PlayableCount;
-            unresolved += projection.MissingCount;
-        }
-        return (playable, unresolved);
+        var projections = await ReadByLinkIdsAsync(ownerUserId, playlistLinkIds, cancellationToken, viewerUserId);
+        return (projections.Values.Sum(item => item.PlayableCount), projections.Values.Sum(item => item.MissingCount));
     }
 
     internal Task<BackendLibraryAccessContext> ResolveRetentionAccessAsync(Guid ownerUserId,
