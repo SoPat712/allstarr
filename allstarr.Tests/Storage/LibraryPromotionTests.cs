@@ -164,7 +164,7 @@ public sealed partial class LibraryPromotionTests : IAsyncLifetime
     {
         var first = await service.StartAsync(Context, Request());
         Assert.Equal(first.Id, (await service.StartAsync(Context, Request())).Id);
-        await Assert.ThrowsAsync<InvalidOperationException>(() => service.StartAsync(Context, Request() with { RootId = Guid.NewGuid() }));
+        await Assert.ThrowsAsync<PromotionException>(() => service.StartAsync(Context, Request() with { RootId = Guid.NewGuid() }));
         await using var db = factory.CreateDbContext();
         Assert.Single(await db.Set<PromotionRunRecord>().ToArrayAsync());
         Assert.Single(await db.Jobs.Where(item => item.Type == LibraryPromotionService.JobType).ToArrayAsync());
@@ -177,7 +177,7 @@ public sealed partial class LibraryPromotionTests : IAsyncLifetime
         var artifact = await db.Set<ProviderDownloadArtifactEntity>().SingleAsync();
         artifact.State = ProviderDownloadArtifactState.Pending;
         await db.SaveChangesAsync();
-        await Assert.ThrowsAsync<InvalidOperationException>(() => service.PreviewAsync(Context, Request()));
+        await Assert.ThrowsAsync<PromotionException>(() => service.PreviewAsync(Context, Request()));
         artifact.State = ProviderDownloadArtifactState.Verified;
         artifact.OwnerUserId = null;
         await db.SaveChangesAsync();
@@ -240,9 +240,9 @@ public sealed partial class LibraryPromotionTests : IAsyncLifetime
         Assert.Contains("MusicBrainz tags and cover", preview.Steps);
         Assert.EndsWith("00 - Song.flac", preview.DestinationPath);
         Assert.Equal(17, preview.Size);
+        var run = await service.StartAsync(Context, Request());
         Directory.CreateDirectory(Path.GetDirectoryName(preview.DestinationPath)!);
         await File.WriteAllTextAsync(preview.DestinationPath, "unowned");
-        var run = await service.StartAsync(Context, Request());
         await ExecuteAsync();
         Assert.Equal("Failed", (await service.GetAsync(Context, run.Id)).Outcome);
         Assert.Equal("unowned", await File.ReadAllTextAsync(preview.DestinationPath));
@@ -269,7 +269,7 @@ public sealed partial class LibraryPromotionTests : IAsyncLifetime
         Assert.Equal("Cancelled", (await service.GetAsync(Context, run.Id)).Outcome);
         Assert.False(Directory.Exists(Path.Combine(directory, "workspaces", "promotions", run.Id.ToString("N"))));
         Assert.True(File.Exists(Path.Combine(directory, "workspaces", "source", "song.flac")));
-        await Assert.ThrowsAsync<InvalidOperationException>(() => service.ApproveAsync(Context, run.Id, "Too late"));
+        await Assert.ThrowsAsync<PromotionException>(() => service.ApproveAsync(Context, run.Id, "Too late"));
     }
 
     [Fact]

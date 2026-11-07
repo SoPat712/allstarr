@@ -22,6 +22,8 @@ async function fixture(page: Page, admin = true, inherited = false) {
   if (inherited) state.personal = structuredClone(state.household.values);
   await page.route("**/api/admin/library-promotions/**", async route => {
     const path = new URL(route.request().url()).pathname, method = route.request().method();
+    if (path.endsWith("/folders")) return route.fulfill({ json: { available: true, reason: null, folders: [] } });
+    if (path.endsWith("/setup")) return route.fulfill({ json: { ready: true, allowedBaseConfigured: true, reason: null, rootId: "00000000-0000-0000-0000-000000000001" } });
     if (path.endsWith("/roots")) return route.fulfill({ json: [{ id: "00000000-0000-0000-0000-000000000001", name: "Music" }] });
     if (path.endsWith("/preview")) {
       const { script } = route.request().postDataJSON(); state.previews.push(script);

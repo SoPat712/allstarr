@@ -328,3 +328,13 @@ For exact procedures, see [configuration](operations/configuration.md), [storage
 Visible dashboard pages reconcile changes automatically within about five seconds, including updates made in other tabs or by background work. Returning to a tab or reconnecting refreshes its data while retaining the displayed rows. Refresh buttons show progress only when you use them; automatic refreshes stay quiet. Unsaved form edits are preserved.
 
 Home’s stored-song totals count unique existing cache paths and active managed kept files, including a separately configured Kept folder. Removed or missing files are excluded.
+
+## Adding to your library
+
+Allstarr needs write access to the music folder Jellyfin reads. In **Settings › Library › Where and who**, an administrator can see Jellyfin's music folders and whether Allstarr can write to each one. Choose a folder to approve it.
+
+If the container cannot reach the folder, mount it once, for example with `- /path/to/music:/music` in Compose. The host path must be the music folder on the machine running Allstarr. If Jellyfin is on another machine, make that folder accessible to the Allstarr host first. Map Jellyfin's folder to its path inside Allstarr (for example `/music`) in these settings, then choose **Use this library folder**. Allstarr verifies write access with a temporary probe file and removes it.
+
+`Promotion__AllowedBase` is optional. When configured, approved folders and mappings must stay below that absolute directory inside the container. Approval rejects path traversal and symbolic links. Allstarr writes songs only inside approved folders.
+
+Kept songs remain playable and downloadable while adding to the library is not set up. Quality and naming settings remain available. Existing kept copies retain their filenames; naming changes apply to new copies.

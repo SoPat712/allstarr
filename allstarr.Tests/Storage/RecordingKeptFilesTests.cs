@@ -218,7 +218,7 @@ public sealed partial class RecordingKeptFilesTests : IAsyncLifetime
     public async Task ChangedVerifiedBytesCannotBePublished()
     {
         await File.WriteAllBytesAsync(artifact.SourcePath, new byte[audio.Length]);
-        await Assert.ThrowsAsync<InvalidOperationException>(() => Service().PublishAsync(Request()));
+        await Assert.ThrowsAsync<ProviderDownloadArtifactChangedException>(() => Service().PublishAsync(Request()));
         await using var db = new AllstarrDbContext(database.Options);
         Assert.Empty(await db.ManagedFiles.ToArrayAsync());
     }

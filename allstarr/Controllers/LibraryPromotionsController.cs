@@ -1,5 +1,7 @@
+using System.Text.RegularExpressions;
 using allstarr.Core.Enrichment;
 using allstarr.Core.Protocols;
+using allstarr.Core.Operations;
 using allstarr.Filters;
 using allstarr.Services.Admin;
 using Microsoft.AspNetCore.Mvc;
@@ -10,15 +12,46 @@ namespace allstarr.Controllers;
 [Route("api/admin/library-promotions")]
 [ServiceFilter(typeof(AdminPortFilter))]
 public sealed class LibraryPromotionsController(LibraryPromotionService promotions, PromotionRoots roots,
-    AdminProtocolExecutionContextFactory contexts) : ControllerBase
+    AdminProtocolExecutionContextFactory contexts, ILogger<LibraryPromotionsController>? logger = null,
+    PromotionLibraryFolders? libraryFolders = null) : ControllerBase
 {
     [HttpGet("roots")]
-    public Task<IActionResult> Roots(CancellationToken token) => ExecuteAsync(token, async (_, _) =>
-        (await roots.ReadAsync(token)).Select(item => new { item.Id, item.Name }));
+    public Task<IActionResult> Roots(CancellationToken token) => ExecuteAsync(token, async (session, _) =>
+        (await roots.ReadAsync(token)).Select(item => session.IsAdministrator
+            ? (object)new { item.Id, item.Name, item.Path, item.BackendPath }
+            : new { item.Id, item.Name }));
+
+    [HttpGet("folders")]
+    public Task<IActionResult> Folders(CancellationToken token) => ExecuteAsync(token, async (session, _) =>
+    {
+        if (!session.IsAdministrator) throw new UnauthorizedAccessException();
+        return libraryFolders == null ? new PromotionLibraryFolderList(false, "backend-unavailable", [])
+            : await libraryFolders.ReadAsync(session, token);
+    });
+
+    [HttpGet("setup")]
+    public Task<IActionResult> Setup(CancellationToken token) => ExecuteAsync(token, (_, _) => roots.SetupAsync(token: token));
 
     [HttpPut("roots")]
     public Task<IActionResult> SaveRoots([FromBody] PromotionRoot[] request, CancellationToken token) => ExecuteAsync(token,
-        async (session, _) => { await roots.SaveAsync(session.AllstarrUserId!.Value, request, token); return new { saved = true }; });
+        async (session, _) =>
+        {
+            if (!session.IsAdministrator) throw new UnauthorizedAccessException();
+            var approved = await roots.ReadAsync(token);
+            var discovery = request.Length == 0 || libraryFolders == null
+                ? new PromotionLibraryFolderDiscovery(false, "backend-unavailable", [])
+                : await libraryFolders.DiscoverAsync(session, token);
+            var sources = discovery.Folders.Select(folder => folder.BackendPath).ToHashSet(StringComparer.Ordinal);
+            var verified = request.Select(root =>
+            {
+                var source = root.BackendPath ?? root.Path;
+                if (sources.Contains(source)) return root with { BackendPath = source };
+                if (approved.Any(item => PromotionRoots.SameLocation(item, root))) return root;
+                throw new ArgumentException("Choose a discovered music folder before approving its local path.");
+            }).ToArray();
+            await roots.SaveAsync(session.AllstarrUserId!.Value, verified, token, sources);
+            return new { saved = true };
+        });
 
     [HttpPost("preview")]
     public Task<IActionResult> Preview([FromBody] PromoteSongRequest request, CancellationToken token) => ExecuteAsync(token,
@@ -102,11 +135,19 @@ public sealed class LibraryPromotionsController(LibraryPromotionService promotio
             var result = await action(session, context);
             return accepted ? Accepted(result) : Ok(result);
         }
-        catch (UnauthorizedAccessException) { return StatusCode(403, new { error = "The account or library path is not authorized for this promotion." }); }
+        catch (PromotionException error) { return StatusCode(error.Status, new { error = error.Message, reason = error.Reason }); }
+        catch (UnauthorizedAccessException) { return StatusCode(403, new { error = new PromotionException(PromotionFailure.NotAuthorized).Message, reason = "not-authorized" }); }
         catch (KeyNotFoundException) { return NotFound(); }
-        catch (ArgumentException) { return BadRequest(new { error = "The promotion request or root configuration is invalid." }); }
-        catch (Exception error) when (error is IOException or InvalidOperationException)
-        { return Conflict(new { error = "The source, destination or promotion changed. Review the current status before trying again." }); }
+        catch (ArgumentException) { return BadRequest(new { error = "The promotion request or root configuration is invalid.", reason = "invalid-request" }); }
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
+        catch (Exception error)
+        {
+            var redacted = Regex.Replace(error.Message, @"\b(?:Bearer|Basic)\s+\S+", "<redacted>", RegexOptions.IgnoreCase);
+            var message = Regex.Replace(SafeOperationalText.Sanitize(redacted) ?? "Unexpected failure",
+                """(["'])(?:[A-Za-z]:)?[\\/].*?\1|(?:https?://|(?:[A-Za-z]:)?[\\/])[^\s"'<>]+""", "<redacted-path>");
+            logger?.LogError("Promotion failed: {ErrorType}: {Message}", error.GetType().Name, message);
+            return StatusCode(500, new { error = "The promotion could not be completed. Try again or ask an administrator to check the server logs.", reason = "unexpected-error" });
+        }
     }
 }
 

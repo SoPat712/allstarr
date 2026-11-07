@@ -30,7 +30,7 @@ public sealed partial class LibraryPromotionService
     {
         if (!await CanAddDirectlyAsync(context, token)) throw new UnauthorizedAccessException("This listener must request approval.");
         var result = await StartOrRequestAsync(context, request, token);
-        return result.Run ?? throw new InvalidOperationException("This album has an open request; follow its status.");
+        return result.Run ?? throw new PromotionException(PromotionFailure.InvalidRequest);
     }
 
     public async Task<PromotionStartResult> StartOrRequestAsync(ProtocolExecutionContext context, PromoteSongRequest request,
@@ -49,7 +49,7 @@ public sealed partial class LibraryPromotionService
             if (previous != null)
             {
                 if (previous.RequestJson != JsonSerializer.Serialize(request))
-                    throw new InvalidOperationException("This request key already belongs to a different promotion.");
+                    throw new PromotionException(PromotionFailure.PromotionChanged);
                 return new(await GetAsync(context, previous.Id, token), null);
             }
             if (!(await libraryAccess.ResolveAsync(context, token)).Allows(request.BackendLibraryId)) throw new UnauthorizedAccessException();
@@ -148,7 +148,7 @@ public sealed partial class LibraryPromotionService
             var administrator = await PromotionProfiles.RequireUserAsync(db, context, token, administrator: true);
             var pending = await OwnedRequestAsync(db, context, id, token);
             if (pending.State is "approved" or "added") return await GetRequestAsync(context, id, token);
-            if (pending.State != "pending") throw new InvalidOperationException("Only pending requests can be approved.");
+            if (pending.State != "pending") throw new PromotionException(PromotionFailure.PromotionChanged);
             var access = await libraryAccess.ResolveUserAsync(pending.RequesterUserId, token);
             var ownerContext = access.Context ?? throw new UnauthorizedAccessException("The requester's library access is unavailable.");
             await PromotionProfiles.RequireUserAsync(db, ownerContext, token);
@@ -196,7 +196,7 @@ public sealed partial class LibraryPromotionService
             await using var db = await factory.CreateDbContextAsync(token);
             var user = await PromotionProfiles.RequireUserAsync(db, context, token, administrator: state == "declined");
             var request = await OwnedRequestAsync(db, context, id, token);
-            if (request.State != "pending") throw new InvalidOperationException("Only pending requests can be declined or cancelled.");
+            if (request.State != "pending") throw new PromotionException(PromotionFailure.PromotionChanged);
             DecideRequest(db, request, state, user.Id, string.IsNullOrWhiteSpace(note) ? null : SafeOperationalText.Sanitize(note.Trim(), 500));
             await db.SaveChangesAsync(token);
             return request;
@@ -220,7 +220,7 @@ public sealed partial class LibraryPromotionService
         {
             var songs = await promotionCatalog.ResolveAsync(context, request.RecordingId, unit, token);
             if (songs.Count is 0 or > 256 || songs.Any(song => song.CanonicalRecordingId is null || song.CanonicalRecordingId == Guid.Empty))
-                throw new InvalidOperationException("A bounded release tracklist with recording identities is required.");
+                throw new PromotionException(PromotionFailure.InvalidRequest);
             return songs.DistinctBy(song => song.CanonicalRecordingId).ToArray();
         }
         var recording = await db.CanonicalRecordings.AsNoTracking().SingleOrDefaultAsync(item => item.Id == request.RecordingId, token)
@@ -288,7 +288,7 @@ public sealed partial class LibraryPromotionService
     private static async Task LinkApprovedRequestAsync(AllstarrDbContext db, Guid id, PromotionRunRecord run, Guid approver, CancellationToken token)
     {
         var request = await db.PromotionRequests.SingleAsync(item => item.Id == id && item.RequesterUserId == run.OwnerUserId, token);
-        if (request.State != "pending") throw new InvalidOperationException("The request is no longer pending.");
+        if (request.State != "pending") throw new PromotionException(PromotionFailure.PromotionChanged);
         request.RunId = run.Id;
         DecideRequest(db, request, "approved", approver, null);
     }

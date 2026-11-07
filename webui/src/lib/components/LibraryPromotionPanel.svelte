@@ -7,15 +7,17 @@
   import RowsSkeleton from "./patterns/RowsSkeleton.svelte";
   import MediaArtwork from "./MediaArtwork.svelte";
   import ConfirmDialog from "./ConfirmDialog.svelte";
+  import EmptyState from "./patterns/EmptyState.svelte";
+  import { promotionSetupHint } from "$lib/promotion-setup";
   import { Button } from "./ui/button";
   import type { LibraryRequest, PromotionPreview, PromotionRun } from "$lib/library-promotion-api";
   import type { ProviderDefinition } from "$lib/api";
   import { canCancelPromotion, promotionRequestStatus, requestLibraryFact, frequency, promotionArtwork, promotionProgress, promotionTimeline, qualityWording, songStatus, sourceLabel, sourceName, sourceQuality } from "$lib/library-promotion-presentation";
 
   let { open = $bindable(false), preview, run, title: fallbackTitle = "Add to library", description: fallbackDescription = "", cover, loading = false, error = "", busy = false,
-    requestReceipt, administrator = false, onapprove, ondecline, oncancelrequest, onstart, oncancel, onreview, onPrevious, onNext, onclose, providers = [], copyActions }: {
+    requestReceipt, administrator = false, setupRequired = false, onapprove, ondecline, oncancelrequest, onstart, oncancel, onreview, onPrevious, onNext, onclose, providers = [], copyActions }: {
     open?: boolean; preview?: PromotionPreview | null; run?: PromotionRun | null; title?: string; description?: string; cover?: string | null;
-    loading?: boolean; error?: string; busy?: boolean;
+    loading?: boolean; error?: string; busy?: boolean; setupRequired?: boolean;
     requestReceipt?: LibraryRequest | null; administrator?: boolean;
     onapprove?: () => Promise<void>; ondecline?: (note?: string) => Promise<void>; oncancelrequest?: () => Promise<void>;
     onstart?: (unit: "album" | "song") => void;
@@ -84,6 +86,9 @@
 {#snippet albumArtwork()}<MediaArtwork url={coverUrl} loading="eager" />{/snippet}
 <SidePanel bind:open {title} {description} {onPrevious} {onNext} {onclose} artwork={simpleRequest ? undefined : albumArtwork} inlineFooter={simpleRequest} width={380} minimumContentWidth={560} wrapTitle navigationLabel={run ? "run" : "song"}>
   <div class="promotion-details" class:request-details={simpleRequest}>
+    {#if setupRequired}<EmptyState title={promotionSetupHint} description="Allstarr needs write access to the music folder Jellyfin reads.">
+      {#snippet action()}{#if administrator}<Button variant="outline" href="#/settings/adding-to-library">Open library settings</Button>{:else}<p class="request-context">Ask an administrator to set it up.</p>{/if}{/snippet}
+    </EmptyState>{/if}
     {#if loading}<RowsSkeleton count={5} />{/if}
     {#if error}<p class="notice-error" role="alert">{error}</p>{/if}
     {#if actionError && !reasonOpen && !cancelOpen && !declineOpen}<p class="notice-error" role="alert">{actionError}</p>{/if}

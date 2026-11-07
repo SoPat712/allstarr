@@ -136,8 +136,11 @@ public sealed class ProviderDownloadArtifactResolverTests : IDisposable
         Assert.Single(store.Artifacts);
     }
 
-    [Fact]
-    public async Task FindByJob_RejectsArtifactChangedAfterVerification()
+    [Theory]
+    [InlineData("content")]
+    [InlineData("length")]
+    [InlineData("missing")]
+    public async Task FindByJob_RejectsArtifactChangedAfterVerification(string change)
     {
         var store = new MemoryStore();
         var resolver = Resolver(store);
@@ -146,12 +149,13 @@ public sealed class ProviderDownloadArtifactResolverTests : IDisposable
         var verified = Encoding.UTF8.GetBytes("verified-audio");
         var path = Write(workspace.Reference, "track.flac", verified);
         await resolver.ResolveAsync(workspace.Reference, Output("track.flac", verified));
-        await File.WriteAllBytesAsync(path, Encoding.UTF8.GetBytes("modified-audio"));
+        if (change == "missing") File.Delete(path);
+        else await File.WriteAllBytesAsync(path, Encoding.UTF8.GetBytes(change == "length" ? "short" : "modified-audio"));
 
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        var exception = await Assert.ThrowsAsync<ProviderDownloadArtifactChangedException>(() =>
             resolver.FindByJobAsync(request.DurableJobId, request.ProviderId));
 
-        Assert.Contains("content changed", exception.Message, StringComparison.Ordinal);
+        Assert.Contains(change == "missing" ? "missing" : $"{change} changed", exception.Message, StringComparison.Ordinal);
     }
 
     [Fact]

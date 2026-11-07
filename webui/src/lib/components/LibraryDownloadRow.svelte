@@ -11,7 +11,9 @@
 
   let { file, copies, storage, provider, providerName, quality, qualities, warnings = [], lowerQuality = false,
     size, lifecycle, expanded = false, copiesId, selected = false, busy = false, moving = false,
-    selection = false, checked = false, inLibrary = false, oncheck, onopen, ontoggle, onkeep, onrelease, onremove, ondeletion }: {
+    selection = false, checked = false, inLibrary = false, oncheck, onopen, ontoggle, onkeep, onrelease, onremove, ondeletion, onadd, addUnavailable = "" }: {
+    onadd?: () => void;
+    addUnavailable?: string;
     inLibrary?: boolean;
     selection?: boolean;
     checked?: boolean;
@@ -74,7 +76,7 @@
   <td class="lifecycle-cell"><span title={lifecycle}>{lifecycle}</span>{#if file.publicationState === "Imported"}<small>Imported original · read-only</small>{/if}</td>
   <td class="size-cell"><span>{size}</span><span class="sr-only">Updated {relativeTime(file.lastModified)}</span></td>
   <td class="download-actions library-download-actions">
-    <LibraryDownloadActions {file} {storage} {busy} {moving} {onkeep} {onrelease} {onremove} {ondeletion} />
+    <LibraryDownloadActions {file} {storage} {busy} {moving} {onkeep} {onrelease} {onremove} {ondeletion} {onadd} {addUnavailable} />
   </td>
 </tr>
 

@@ -1189,7 +1189,20 @@ export type MatchTarget = {
   warnings?: string[];
 };
 
+export type SongPlaylistIdentity = {
+  canonicalRecordingId?: string | null;
+  providerId?: string | null;
+  externalId?: string | null;
+  protocol?: string | null;
+  backendInstanceId?: string | null;
+  backendItemId?: string | null;
+};
+
 export type ManagedDownload = {
+  canonicalRecordingId?: string | null;
+  protocol?: string | null;
+  backendInstanceId?: string | null;
+  backendItemId?: string | null;
   keptBy?: { displayName: string; isViewer: boolean; reasons: string[] }[];
   lastPlayedAt?: string | null;
   path: string;
@@ -2522,6 +2535,13 @@ export const playlistLinks = {
   list: () => json<{ playlistLinks: PlaylistLink[] }>("/api/admin/playlist-links"),
   removalPreview: (id: string) =>
     json<PlaylistRemovalPreview>(`/api/admin/playlist-links/${encodeURIComponent(id)}/in-apps/removal-preview`),
+  membership: (song: SongPlaylistIdentity, signal?: AbortSignal) => {
+    const query = new URLSearchParams();
+    for (const [key, value] of Object.entries(song)) {
+      if (value != null && value !== "") query.set(key, value);
+    }
+    return json<{ playlists: Array<{ id: string; name: string }> }>(`/api/admin/playlist-links/membership?${query}`, { signal });
+  },
   removeFromApps: (id: string, expectedRevision: number) =>
     json<{ inApps: false; revision: number }>(`/api/admin/playlist-links/${encodeURIComponent(id)}/in-apps`, {
       method: "DELETE",

@@ -164,6 +164,8 @@
               initialSearch: routeQuery.get("search") ?? "",
               initialReview: routeQuery.get("review") ?? "",
             }
+          : route === "/library/kept"
+            ? { administrator }
           : route === "/library/cached"
             ? { storage: "cache" }
             : route === "/library/to-library"

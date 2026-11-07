@@ -61,7 +61,7 @@ public sealed partial class LibraryPromotionService(IDbContextFactory<AllstarrDb
             throw new UnauthorizedAccessException("This backend library is unavailable to you.");
         var source = await SourceAsync(db, context.Principal!.UserId, request, token);
         var plan = await PlanAsync(db, context, request, source, token);
-        var destination = Destination(root.Path, plan);
+        var destination = Destination(root.Path, plan, requireAvailable: true);
         var profile = (await (profiles ?? new PromotionProfiles(factory)).GetMineAsync(context, token)).Values;
         var song = new Song
         {
@@ -106,7 +106,7 @@ public sealed partial class LibraryPromotionService(IDbContextFactory<AllstarrDb
                 item.OwnerUserId == owner && item.RequestKey == request.RequestKey, token);
             if (existing != null)
             {
-                if (existing.RequestJson != json) throw new InvalidOperationException("This request key already belongs to a different promotion.");
+                if (existing.RequestJson != json) throw new PromotionException(PromotionFailure.PromotionChanged);
                 return await GetAsync(context, existing.Id, token);
             }
             if (!(await libraryAccess.ResolveAsync(context, token)).Allows(request.BackendLibraryId))
@@ -114,7 +114,7 @@ public sealed partial class LibraryPromotionService(IDbContextFactory<AllstarrDb
             var source = await SourceAsync(db, owner, request, token);
             var root = await roots.RequireAsync(request.RootId, token);
             var plan = await PlanAsync(db, context, request, source, token);
-            Destination(root.Path, plan);
+            Destination(root.Path, plan, requireAvailable: true);
             await using var transaction = await db.Database.BeginTransactionAsync(token);
             var id = Guid.CreateVersion7();
             var queued = await jobs.EnqueueInExistingTransactionAsync(db, new DurableJobEnqueueRequest<Guid>(
@@ -164,7 +164,7 @@ public sealed partial class LibraryPromotionService(IDbContextFactory<AllstarrDb
             var current = await GetAsync(context, id, token);
             if (current.Tracks.Count > 0)
             {
-                if (current.Tracks.Count != 1) throw new InvalidOperationException("Choose the song to review.");
+                if (current.Tracks.Count != 1) throw new PromotionException(PromotionFailure.InvalidRequest);
                 return await ReviewAsync(context, id, current.Tracks[0].RecordingId, "add-anyway", reason, token);
             }
         }
@@ -175,7 +175,7 @@ public sealed partial class LibraryPromotionService(IDbContextFactory<AllstarrDb
         {
             await using var db = await factory.CreateDbContextAsync(token);
             var run = await OwnedAsync(db, context, id, token);
-            if (run.Outcome != "Needs review") throw new InvalidOperationException("Only a run needing quality review can be approved.");
+            if (run.Outcome != "Needs review") throw new PromotionException(PromotionFailure.PromotionChanged);
             await using var transaction = await db.Database.BeginTransactionAsync(token);
             var queued = await jobs.EnqueueInExistingTransactionAsync(db, new DurableJobEnqueueRequest<Guid>(
                 JobType, $"promotion:{id:N}:approved", id, run.OwnerUserId, MaxAttempts: 3), token);
@@ -242,7 +242,7 @@ public sealed partial class LibraryPromotionService(IDbContextFactory<AllstarrDb
             if (access.Context == null || !access.Access.Allows(request.BackendLibraryId))
                 throw new UnauthorizedAccessException("The owner's backend library access is unavailable.");
             var root = await roots.RequireAsync(request.RootId, token);
-            if (root.Path != run.RootPath) throw new InvalidOperationException("The approved root changed; start a new promotion.");
+            if (root.Path != run.RootPath) throw new PromotionException(PromotionFailure.PromotionChanged);
             var workspace = Workspace(id);
             var path = Path.Combine(workspace, "song" + plan.Track.Extension);
 
@@ -277,7 +277,7 @@ public sealed partial class LibraryPromotionService(IDbContextFactory<AllstarrDb
                 await Begin("Copy");
                 var source = await SourceAsync(db, run.OwnerUserId, request, token);
                 if (source.ContentSha256 != run.SourceSha256 || source.Length != run.SourceLength)
-                    throw new IOException("The selected original changed.");
+                    throw new PromotionException(PromotionFailure.SourceChanged);
                 Directory.CreateDirectory(workspace);
                 PromotionRoots.RejectLinks(workspace);
                 if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(workspace, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
@@ -411,10 +411,10 @@ public sealed partial class LibraryPromotionService(IDbContextFactory<AllstarrDb
         PromoteSongRequest request, CancellationToken token)
     {
         var item = await db.Set<ProviderDownloadArtifactEntity>().AsNoTracking().SingleOrDefaultAsync(value => value.Id == request.ArtifactId, token)
-            ?? throw new InvalidOperationException("Choose a verified complete kept or cached original; streaming fragments cannot be promoted.");
+            ?? throw new PromotionException(PromotionFailure.SourceChanged);
         if (item.State is not (ProviderDownloadArtifactState.Verified or ProviderDownloadArtifactState.Placed) ||
             item.VerifiedAt == default || item.SupersededAt != null || item.Length <= 0)
-            throw new InvalidOperationException("Only verified complete originals can be promoted; streaming fragments are excluded.");
+            throw new PromotionException(PromotionFailure.SourceChanged);
         var kept = await (from route in db.Set<RecordingKeptRouteEntity>().AsNoTracking()
                           join file in db.ManagedFiles.AsNoTracking() on route.ManagedFileId equals file.Id
                           where route.SourceArtifactId == item.Id && route.CanonicalRecordingId == request.RecordingId && file.RemovedAt == null &&
@@ -424,18 +424,21 @@ public sealed partial class LibraryPromotionService(IDbContextFactory<AllstarrDb
         if (kept == null && !await db.ProviderTrackIdentities.AnyAsync(value => value.CanonicalRecordingId == request.RecordingId &&
             value.ProviderId == item.ProviderId && value.ExternalId == item.SourceExternalTrackId &&
             value.ResourceKind == ProviderResourceKind.Track && value.Verification == ProviderIdentityVerification.Verified, token))
-            throw new InvalidOperationException("The complete original is not verified for this recording.");
+            throw new PromotionException(PromotionFailure.SourceChanged);
         if (kept != null)
         {
+            await VerifyAsync(kept.CanonicalPath, item.ContentSha256, item.Length, token);
             using var scope = scopes.CreateScope();
             await scope.ServiceProvider.GetRequiredService<FilePlacementService>().VerifyOwnedFileAsync(EfManagedFileOwnershipStore.Map(kept)!, token);
         }
-        var resolved = kept == null ? await artifacts.FindByJobAsync(item.DurableJobId, item.ProviderId, token) : null;
+        VerifiedProviderDownloadArtifact? resolved;
+        try { resolved = kept == null ? await artifacts.FindByJobAsync(item.DurableJobId, item.ProviderId, token) : null; }
+        catch (ProviderDownloadArtifactChangedException) { throw new PromotionException(PromotionFailure.SourceChanged); }
         if (kept == null && (resolved?.Id != item.Id || item.State != ProviderDownloadArtifactState.Verified))
-            throw new InvalidOperationException("The verified complete original is unavailable.");
+            throw new PromotionException(PromotionFailure.SourceChanged);
         var path = kept?.CanonicalPath ?? resolved!.SourcePath;
         PromotionRoots.RejectLinks(path);
-        await VerifyAsync(path, item.ContentSha256, item.Length, token);
+        if (kept == null) await VerifyAsync(path, item.ContentSha256, item.Length, token);
         return new(item.Id, item.WorkspaceRecordId, path, item.ContentSha256, item.Length, item.OwnerUserId,
             item.DurableJobId, item.ProviderId, item.ProviderAccountId, item.State, kept?.Id ?? item.ManagedFileId)
         { SourceExternalTrackId = item.SourceExternalTrackId };
@@ -514,10 +517,11 @@ public sealed partial class LibraryPromotionService(IDbContextFactory<AllstarrDb
         return result.RelativePath ?? throw new ArgumentException("The promotion naming script does not produce a safe relative path.");
     }
 
-    private static string Destination(string root, PromotionPlan plan)
+    private static string Destination(string root, PromotionPlan plan, bool requireAvailable = false)
     {
         var path = PromotionNaming.ContainedPath(root, RelativePath(plan));
         PromotionRoots.RejectLinks(path);
+        if (requireAvailable && File.Exists(path)) throw new PromotionException(PromotionFailure.DestinationExists);
         return path;
     }
 
@@ -550,9 +554,14 @@ public sealed partial class LibraryPromotionService(IDbContextFactory<AllstarrDb
     private static async Task VerifyAsync(string path, string hash, long length, CancellationToken token)
     {
         PromotionRoots.RejectLinks(path);
-        await using var stream = File.OpenRead(path);
-        if (stream.Length != length || Convert.ToHexStringLower(await SHA256.HashDataAsync(stream, token)) != hash)
-            throw new IOException("The saved working file changed; promotion stopped without publishing it.");
+        try
+        {
+            await using var stream = File.OpenRead(path);
+            if (stream.Length != length || Convert.ToHexStringLower(await SHA256.HashDataAsync(stream, token)) != hash)
+                throw new PromotionException(PromotionFailure.SourceChanged);
+        }
+        catch (Exception error) when (error is FileNotFoundException or DirectoryNotFoundException)
+        { throw new PromotionException(PromotionFailure.SourceChanged); }
     }
 
     private static async Task AuthorizeAsync(AllstarrDbContext db, ProtocolExecutionContext context, CancellationToken token)

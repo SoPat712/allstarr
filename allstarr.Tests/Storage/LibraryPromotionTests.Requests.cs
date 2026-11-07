@@ -206,7 +206,7 @@ public sealed partial class LibraryPromotionTests
         var declined = await batch.DeclineRequestAsync(administrator, pending.Id, "  We already have this edition.  ");
         Assert.Equal("declined", declined.State);
         Assert.Equal("We already have this edition.", declined.DeclineNote);
-        await Assert.ThrowsAsync<InvalidOperationException>(() => batch.ApproveRequestAsync(administrator, pending.Id));
+        await Assert.ThrowsAsync<PromotionException>(() => batch.ApproveRequestAsync(administrator, pending.Id));
         await using var db = factory.CreateDbContext();
         var notice = Assert.Single(await db.AuditEvents.Where(item => item.Category == "library-promotion").ToArrayAsync());
         Assert.Equal(owner, notice.ActorUserId);
@@ -244,7 +244,7 @@ public sealed partial class LibraryPromotionTests
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() => batch.ApproveRequestAsync(Context, pending.Id));
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() => batch.DeclineRequestAsync(Context, pending.Id, null));
         await batch.ApproveRequestAsync(administrator, pending.Id);
-        await Assert.ThrowsAsync<InvalidOperationException>(() => batch.CancelRequestAsync(Context, pending.Id));
+        await Assert.ThrowsAsync<PromotionException>(() => batch.CancelRequestAsync(Context, pending.Id));
         await Assert.ThrowsAsync<ArgumentException>(() => batch.ListRequestsAsync(Context, "unknown"));
     }
 

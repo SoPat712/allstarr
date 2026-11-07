@@ -10,7 +10,10 @@ public sealed record PromotionTrackCounts(int Total, int Added, int NeedsLook);
 public sealed record PromotionListPage(IReadOnlyList<PromotionReceipt> Items, string? NextCursor, PromotionListCounts Counts);
 public sealed record PromotionKeptItem(string Path, Guid RecordingId, string? BackendLibraryId, bool InLibrary);
 public sealed record PromotionKeptPage(IReadOnlyList<PromotionKeptItem> Items, string? BackendLibraryId,
-    IReadOnlyList<string> BackendLibraryIds, Guid? RootId, int AlreadyInLibrary);
+    IReadOnlyList<string> BackendLibraryIds, Guid? RootId, int AlreadyInLibrary)
+{
+    public PromotionSetup? Setup { get; init; }
+}
 
 public sealed record PromotionReceipt(Guid Id, Guid JobId, string Step, string Outcome, string Reason,
     Guid? ManagedFileId, Guid? ApprovedByUserId, string? ApprovalReason, IReadOnlyList<PromotionTrack> Tracks,

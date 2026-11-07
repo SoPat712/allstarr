@@ -5,12 +5,13 @@
   import type { ProviderDefinition } from "$lib/api";
   import { newReportRequestId } from "$lib/support";
   import { toast } from "$lib/toasts";
+  import { promotionPanelFailure } from "$lib/promotion-setup";
   import LibraryPromotionPanel from "./LibraryPromotionPanel.svelte";
 
   let { open = $bindable(false), recordingId, backendLibraryId = "", rootId = "00000000-0000-0000-0000-000000000000",
-    title = "Add to library", description = "", cover, providers = [], copyActions, onPrevious, onNext, onclose, onrequestchange }: {
+    title = "Add to library", description = "", cover, providers = [], administrator = false, setupRequired = false, copyActions, onPrevious, onNext, onclose, onrequestchange }: {
     open?: boolean; recordingId: string; backendLibraryId?: string; rootId?: string; title?: string;
-    description?: string; cover?: string | null; providers?: ProviderDefinition[]; copyActions?: Snippet;
+    description?: string; cover?: string | null; providers?: ProviderDefinition[]; administrator?: boolean; setupRequired?: boolean; copyActions?: Snippet;
     onPrevious?: () => void; onNext?: () => void; onclose?: () => void; onrequestchange?: () => Promise<void>;
   } = $props();
   let preview = $state<PromotionPreview | null>(null), pending = $state<LibraryRequest | null>(null);
@@ -18,10 +19,12 @@
   let controller: AbortController | undefined;
   let pollController: AbortController | undefined;
   let polling = false;
-  const identity = $derived(`${recordingId}:${backendLibraryId}:${rootId}`);
+  let missingSetup = $state(false);
+  const identity = $derived(`${recordingId}:${backendLibraryId}:${rootId}:${setupRequired}`);
   async function load() {
     controller?.abort(); pollController?.abort(); const next = new AbortController(); controller = next;
-    preview = null; pending = null; loading = true; error = "";
+    preview = null; pending = null; loading = true; error = ""; missingSetup = setupRequired;
+    if (missingSetup) { loading = false; return; }
     const value: PromotionRequest = { recordingId, backendLibraryId, rootId, requestKey: newReportRequestId(), unit: "album" };
     request = value;
     try {
@@ -34,7 +37,7 @@
         const requests = await libraryPromotions.requests("pending", next.signal);
         if (!next.signal.aborted) pending = requests.find(item => item.recordingId === recordingId || item.unit === "album" && item.title === plan.album.title && item.artist === plan.album.artist) ?? null;
       }
-    } catch (cause) { if (!next.signal.aborted) error = cause instanceof Error ? cause.message : "The album preview could not be loaded."; }
+    } catch (cause) { if (!next.signal.aborted) { const state = promotionPanelFailure(cause); error = state.error; missingSetup = state.setupRequired; } }
     finally { if (!next.signal.aborted) loading = false; }
   }
   async function start(unit: "album" | "song") {
@@ -44,7 +47,7 @@
       const result = preview?.canAddDirectly === false ? await libraryPromotions.createRequest({ ...request, unit }) : await libraryPromotions.start({ ...request, unit });
       if ("requested" in result) { pending = result.request; toast.success("Album requested."); await onrequestchange?.(); }
       else { toast.success(unit === "album" ? "Adding the album to your library." : "Adding this song to your library."); window.location.hash = `#/library/to-library?run=${encodeURIComponent(result.id)}`; }
-    } catch (cause) { error = cause instanceof Error ? cause.message : "The album could not be started. Try again."; }
+    } catch (cause) { const state = promotionPanelFailure(cause); error = state.error; missingSetup = state.setupRequired; if (missingSetup) preview = null; }
     finally { busy = false; }
   }
   async function cancelRequest() {
@@ -73,4 +76,4 @@
   onMount(() => { const timer = setInterval(() => void pollRequest(), 2500); return () => { clearInterval(timer); pollController?.abort(); }; });
 </script>
 
-<LibraryPromotionPanel bind:open {preview} requestReceipt={pending} {providers} {title} {description} {cover} {loading} {error} {busy} {copyActions} onstart={start} oncancelrequest={cancelRequest} {onPrevious} {onNext} {onclose} />
+<LibraryPromotionPanel bind:open {preview} requestReceipt={pending} {providers} {title} {description} {cover} {loading} {error} {busy} {administrator} setupRequired={missingSetup} {copyActions} onstart={start} oncancelrequest={cancelRequest} {onPrevious} {onNext} {onclose} />

@@ -107,7 +107,7 @@ public sealed partial class LibraryPromotionTests
         Assert.Equal("Placed", review.Tracks[1].Outcome);
         Assert.Contains(review.Tracks[1].Steps, step => step.Name == "Lyrics" && step.Outcome == "None fits");
         await using (var db = factory.CreateDbContext()) Assert.Single(await db.ManagedFiles.ToArrayAsync());
-        await Assert.ThrowsAsync<InvalidOperationException>(() => batch.ReviewAsync(Context, run.Id, recordingId, "add-anyway", "Accept source"));
+        await Assert.ThrowsAsync<PromotionException>(() => batch.ReviewAsync(Context, run.Id, recordingId, "add-anyway", "Accept source"));
         await batch.ReviewAsync(Context, run.Id, recordingId, "skip", null);
         await ExecuteBatchAsync(batch);
         var placed = await batch.GetAsync(Context, run.Id);

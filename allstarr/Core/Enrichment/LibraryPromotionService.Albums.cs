@@ -59,9 +59,9 @@ public sealed partial class LibraryPromotionService
         var profile = (await (profiles ?? new PromotionProfiles(factory)).GetMineAsync(context, token)).Values;
         var root = await roots.RequireAsync(request.RootId == Guid.Empty ? profile.LibraryRootId ?? Guid.Empty : request.RootId, token);
         var songs = savedSongs ?? await promotionCatalog!.ResolveAsync(context, request.RecordingId, Unit(request, profile), token);
-        if (songs.Count is 0 or > 256) throw new InvalidOperationException("A bounded release tracklist is required.");
+        if (songs.Count is 0 or > 256) throw new PromotionException(PromotionFailure.InvalidRequest);
         var opened = songs.FirstOrDefault(song => song.CanonicalRecordingId == request.RecordingId)
-            ?? throw new InvalidOperationException("The release does not contain the opened recording.");
+            ?? throw new PromotionException(PromotionFailure.InvalidRequest);
         var already = 0;
         foreach (var song in songs.DistinctBy(song => song.CanonicalRecordingId))
             if (song.CanonicalRecordingId is { } id && await AlreadyInLibraryAsync(db, context, library,
@@ -143,7 +143,7 @@ public sealed partial class LibraryPromotionService
             var existing = await db.Set<PromotionRunRecord>().SingleOrDefaultAsync(item => item.OwnerUserId == owner && item.RequestKey == request.RequestKey, token);
             if (existing != null)
             {
-                if (existing.RequestJson != json) throw new InvalidOperationException("This request key already belongs to another promotion.");
+                if (existing.RequestJson != json) throw new PromotionException(PromotionFailure.PromotionChanged);
                 HydrateTracks(existing);
                 return existing;
             }
@@ -152,7 +152,7 @@ public sealed partial class LibraryPromotionService
             var root = await roots.RequireAsync(request.RootId == Guid.Empty ? profile.LibraryRootId ?? Guid.Empty : request.RootId, token);
             var songs = savedSongs ?? await promotionCatalog!.ResolveAsync(context, request.RecordingId, Unit(request, profile), token);
             if (songs.Count is 0 or > 256 || songs.Any(song => song.CanonicalRecordingId is null || song.CanonicalRecordingId == Guid.Empty))
-                throw new InvalidOperationException("A bounded release tracklist with recording identities is required.");
+                throw new PromotionException(PromotionFailure.InvalidRequest);
             var tracks = new List<PromotionTrack>();
             foreach (var song in songs.DistinctBy(song => song.CanonicalRecordingId))
             {
@@ -217,12 +217,12 @@ public sealed partial class LibraryPromotionService
         {
             await using var db = await factory.CreateDbContextAsync(token);
             var run = await OwnedAsync(db, context, runId, token);
-            var album = ReadAlbum(run) ?? throw new InvalidOperationException("This promotion has no per-song review.");
+            var album = ReadAlbum(run) ?? throw new PromotionException(PromotionFailure.InvalidRequest);
             var track = album.Tracks.SingleOrDefault(item => item.RecordingId == recordingId) ?? throw new KeyNotFoundException();
-            if (run.Outcome == "Cancelled" || track.Outcome != "Needs review") throw new InvalidOperationException("This song is not awaiting review.");
+            if (run.Outcome == "Cancelled" || track.Outcome != "Needs review") throw new PromotionException(PromotionFailure.PromotionChanged);
             if (action == "add-anyway" && (track.ArtifactId == null || track.Step != "Quality" || track.QualityCheck == null ||
                 track.QualityCheck.Verdict is "standard" or "true-hi-res"))
-                throw new InvalidOperationException("A quality-floor failure cannot be overridden.");
+                throw new PromotionException(PromotionFailure.InvalidRequest);
             if (action == "skip") { track.Outcome = "Skipped"; track.Reason = "Skipped by the reviewer."; }
             else if (action == "add-anyway")
             {
@@ -260,7 +260,7 @@ public sealed partial class LibraryPromotionService
         var access = await libraryAccess.ResolveUserAsync(run.OwnerUserId, token);
         if (access.Context == null || !access.Access.Allows(request.BackendLibraryId)) throw new UnauthorizedAccessException();
         var root = await roots.RequireAsync(request.RootId == Guid.Empty ? album.Profile.LibraryRootId ?? Guid.Empty : request.RootId, token);
-        if (root.Path != run.RootPath) throw new InvalidOperationException("The approved root changed.");
+        if (root.Path != run.RootPath) throw new PromotionException(PromotionFailure.PromotionChanged);
         async Task Persist()
         {
             if (!await jobs.IsExecutionCurrentAsync(execution.Claim, token)) throw new OperationCanceledException();

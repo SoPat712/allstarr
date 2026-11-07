@@ -35,10 +35,12 @@ export type PromotionPreview = {
   alreadyInLibrary: number; destinationPath: string; bestCopies: PromotionSource[];
   profileSteps: PromotionProfileStep[];
 };
-export type KeptPromotionContext = { items: { path: string; recordingId: string; backendLibraryId: string | null; inLibrary: boolean }[]; backendLibraryId: string | null; rootId: string | null; alreadyInLibrary: number };
+export type PromotionSetup = { ready: boolean; allowedBaseConfigured: boolean; reason: string | null; rootId: string | null };
+export type KeptPromotionContext = { items: { path: string; recordingId: string; backendLibraryId: string | null; inLibrary: boolean }[]; backendLibraryId: string | null; rootId: string | null; alreadyInLibrary: number; setup?: PromotionSetup };
 const base = "/api/admin/library-promotions";
 const post = (body?: unknown): RequestInit => ({ method: "POST", headers: { "Content-Type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
 export const libraryPromotions = {
+  setup: () => json<PromotionSetup>(`${base}/setup`),
   kept: () => json<KeptPromotionContext>(`${base}/kept`),
   preview: (request: PromotionRequest, signal?: AbortSignal) => json<PromotionPreview>(`${base}/preview`, { ...post(request), signal }),
   start: (request: PromotionRequest) => json<PromotionStart>(base, post(request)),

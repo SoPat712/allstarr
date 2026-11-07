@@ -5,6 +5,8 @@ using allstarr.Core.Music;
 
 namespace allstarr.Core.Downloads;
 
+public sealed class ProviderDownloadArtifactChangedException(string message) : InvalidOperationException(message);
+
 public sealed class ProviderDownloadArtifactResolver(IProviderDownloadArtifactStore store, ProviderDownloadWorkspaceOptions options,
     IProviderAudioVerifier? audioVerifier = null)
 {
@@ -337,10 +339,10 @@ public sealed class ProviderDownloadArtifactResolver(IProviderDownloadArtifactSt
         var path = Contained(workspaceRoot, NormalizeArtifactReference(item.RelativePath));
         RejectPathSymlinks(workspaceRoot, path);
         if (!File.Exists(path))
-            throw new InvalidOperationException("The verified provider download artifact is missing.");
+            throw new ProviderDownloadArtifactChangedException("The verified provider download artifact is missing.");
         var info = new FileInfo(path);
         if (info.Length != item.Length)
-            throw new InvalidOperationException("The verified provider download artifact length changed.");
+            throw new ProviderDownloadArtifactChangedException("The verified provider download artifact length changed.");
         await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 128 * 1024,
             FileOptions.Asynchronous | FileOptions.SequentialScan);
         var hash = await SHA256.HashDataAsync(stream, cancellationToken);
@@ -354,7 +356,7 @@ public sealed class ProviderDownloadArtifactResolver(IProviderDownloadArtifactSt
             throw new InvalidOperationException("The stored provider download artifact checksum is invalid.", exception);
         }
         if (expected.Length != SHA256.HashSizeInBytes || !CryptographicOperations.FixedTimeEquals(hash, expected))
-            throw new InvalidOperationException("The verified provider download artifact content changed.");
+            throw new ProviderDownloadArtifactChangedException("The verified provider download artifact content changed.");
         return Result(item, path);
     }
 

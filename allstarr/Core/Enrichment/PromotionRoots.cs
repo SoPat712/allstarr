@@ -5,7 +5,8 @@ using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Core.Enrichment;
 
-public sealed record PromotionRoot(Guid Id, string Name, string Path);
+public sealed record PromotionRoot(Guid Id, string Name, string Path, string? BackendPath = null);
+public sealed record PromotionSetup(bool Ready, bool AllowedBaseConfigured, string? Reason, Guid? RootId);
 
 public sealed class PromotionRoots(IDurableRuntimeSettings settings, IDbContextFactory<AllstarrDbContext> factory,
     IConfiguration configuration)
@@ -15,37 +16,88 @@ public sealed class PromotionRoots(IDurableRuntimeSettings settings, IDbContextF
     public async Task<PromotionRoot[]> ReadAsync(CancellationToken token = default) =>
         JsonSerializer.Deserialize<PromotionRoot[]>((string)(await settings.GetAsync(Key, token)).Value) ?? [];
 
-    public async Task SaveAsync(Guid actor, PromotionRoot[] roots, CancellationToken token = default)
+    public async Task SaveAsync(Guid actor, PromotionRoot[] roots, CancellationToken token = default,
+        IReadOnlySet<string>? discoveredBackendPaths = null)
     {
         await using var db = await factory.CreateDbContextAsync(token);
         if (!await db.Users.AnyAsync(item => item.Id == actor && item.Enabled && item.IsAdmin, token))
             throw new UnauthorizedAccessException("Administrator permissions required.");
         if (roots.Length > 16 || roots.Select(item => item.Id).Distinct().Count() != roots.Length)
             throw new ArgumentException("Choose at most sixteen distinct library roots.");
-        foreach (var root in roots) Validate(root);
-        await settings.ApplyBatchAsync([new(Key, JsonSerializer.Serialize(roots))], "promotion", actor, token);
+        var approved = await ReadAsync(token);
+        foreach (var root in roots)
+        {
+            if ((!AllowedBaseConfigured || !string.IsNullOrWhiteSpace(root.BackendPath)) &&
+                (string.IsNullOrWhiteSpace(root.BackendPath) || discoveredBackendPaths?.Contains(root.BackendPath) != true) &&
+                !approved.Any(item => SameLocation(item, root)))
+                throw new ArgumentException("Choose a discovered music folder before approving its local path.");
+            Validate(root);
+        }
+        var normalized = roots.Select(root => root with { Path = System.IO.Path.GetFullPath(root.Path) }).ToArray();
+        await settings.ApplyBatchAsync([new(Key, JsonSerializer.Serialize(normalized))], "promotion", actor, token);
     }
+
+    internal static bool SameLocation(PromotionRoot left, PromotionRoot right) =>
+        left.Id == right.Id && left.Path == right.Path && left.BackendPath == right.BackendPath;
 
     public async Task<PromotionRoot> RequireAsync(Guid id, CancellationToken token)
     {
-        var root = (await ReadAsync(token)).SingleOrDefault(item => item.Id == id)
-            ?? throw new InvalidOperationException("This library root is no longer approved.");
-        Validate(root);
+        var approved = await ReadAsync(token);
+        if (approved.Length == 0) throw new PromotionException(PromotionFailure.LibraryFolderNotSet);
+        var root = (id == Guid.Empty ? approved.FirstOrDefault() : approved.SingleOrDefault(item => item.Id == id))
+            ?? throw new PromotionException(PromotionFailure.LibraryFolderUnavailable);
+        try { Validate(root); }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException)
+        { throw new PromotionException(PromotionFailure.LibraryFolderUnavailable); }
         return root;
+    }
+
+    private bool AllowedBaseConfigured => configuration["Promotion:AllowedBase"] is { } allowed &&
+        !string.IsNullOrWhiteSpace(allowed) && System.IO.Path.IsPathFullyQualified(allowed);
+
+    public async Task<PromotionSetup> SetupAsync(Guid? rootId = null, CancellationToken token = default)
+    {
+        try
+        {
+            var root = await RequireAsync(rootId ?? Guid.Empty, token);
+            return new(true, AllowedBaseConfigured, null, root.Id);
+        }
+        catch (PromotionException error)
+        { return new(false, AllowedBaseConfigured, error.Reason, null); }
     }
 
     private void Validate(PromotionRoot root)
     {
-        var allowed = configuration["Promotion:AllowedBase"];
         if (root.Id == Guid.Empty || string.IsNullOrWhiteSpace(root.Name) || root.Name.Length > 100 ||
-            string.IsNullOrWhiteSpace(allowed) || !System.IO.Path.IsPathFullyQualified(allowed) ||
+            string.IsNullOrWhiteSpace(root.Path) ||
             !System.IO.Path.IsPathFullyQualified(root.Path))
-            throw new ArgumentException("A named root inside the configured allowed base is required.");
-        var path = Contained(allowed, root.Path);
+            throw new ArgumentException("A named, fully qualified library root is required.");
+        ValidateDirectory(root.Path);
+    }
+
+    internal void ValidateDirectory(string path)
+    {
+        var allowed = configuration["Promotion:AllowedBase"];
+        if (!string.IsNullOrWhiteSpace(allowed))
+        {
+            if (!System.IO.Path.IsPathFullyQualified(allowed))
+                throw new ArgumentException("The optional allowed base must be fully qualified.");
+            path = Contained(allowed, path);
+        }
+        else path = System.IO.Path.GetFullPath(path);
         RejectLinks(path);
         if (!Directory.Exists(path)) throw new ArgumentException("The library root must already exist.");
         var probe = System.IO.Path.Combine(path, $".write-check-{Guid.NewGuid():N}");
         using var stream = new FileStream(probe, FileMode.CreateNew, FileAccess.Write, FileShare.None, 1, FileOptions.DeleteOnClose);
+    }
+
+    internal bool IsWithinAllowedBase(string path)
+    {
+        var allowed = configuration["Promotion:AllowedBase"];
+        if (string.IsNullOrWhiteSpace(allowed)) return true;
+        if (!System.IO.Path.IsPathFullyQualified(allowed)) return false;
+        try { Contained(allowed, path); return true; }
+        catch (Exception error) when (error is ArgumentException or IOException or UnauthorizedAccessException) { return false; }
     }
 
     internal static string Contained(string root, string path)

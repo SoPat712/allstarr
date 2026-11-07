@@ -1,4 +1,5 @@
 import { json } from "./api-client";
+import type { PromotionSetup } from "./library-promotion-api";
 
 export type PromotionProfile = {
   namingScript: string;
@@ -26,7 +27,9 @@ export type NamingPreview = {
   examples: { libraryTrackId: string | null; recordingId: string | null; title: string; kind: string; relativePath: string | null; errors: NamingError[] }[];
   errors: NamingError[];
 };
-export type PromotionRoot = { id: string; name: string };
+export type PromotionRoot = { id: string; name: string; path?: string; backendPath?: string | null };
+export type PromotionFolder = { name: string; backendPath: string; path: string; mapped: boolean; reachable: boolean; writable: boolean; status: string; rootId: string | null };
+export type PromotionFolders = { available: boolean; reason: string | null; folders: PromotionFolder[] };
 const base = "/api/admin/library-promotions/profiles";
 const put = (body: unknown): RequestInit => ({ method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 export const promotionProfiles = {
@@ -36,4 +39,7 @@ export const promotionProfiles = {
   saveHousehold: (profile: HouseholdPromotionProfile) => json<HouseholdPromotionProfile>(`${base}/household`, put(profile)),
   preview: (script: string, signal?: AbortSignal) => json<NamingPreview>(`${base}/preview`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ script }), signal }),
   roots: () => json<PromotionRoot[]>("/api/admin/library-promotions/roots"),
+  folders: () => json<PromotionFolders>("/api/admin/library-promotions/folders"),
+  setup: () => json<PromotionSetup>("/api/admin/library-promotions/setup"),
+  saveRoots: (roots: (PromotionRoot & { path: string })[]) => json("/api/admin/library-promotions/roots", put(roots)),
 };

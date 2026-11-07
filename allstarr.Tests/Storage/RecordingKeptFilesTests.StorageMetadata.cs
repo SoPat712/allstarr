@@ -145,6 +145,7 @@ public sealed partial class RecordingKeptFilesTests
 
     [Theory]
     [InlineData(null, "Check.flac")]
+    [InlineData(0, "Check.flac")]
     [InlineData(4, "04 - Check.flac")]
     public async Task PublicationRetainsCatalogFieldsAndOmitsMissingTrackPrefix(int? track, string filename)
     {
@@ -159,7 +160,7 @@ public sealed partial class RecordingKeptFilesTests
         await using var db = factory.CreateDbContext();
         var metadata = JsonSerializer.Deserialize<KeptRecordingMetadata>(
             (await db.Set<RecordingKeptRouteEntity>().SingleAsync()).DisplayMetadataJson!)!;
-        Assert.Equal(track, metadata.Track);
+        Assert.Equal(track is > 0 ? track : null, metadata.Track);
         Assert.Equal("FLO and friends", metadata.AlbumArtist);
         Assert.Equal("deezer", metadata.Artwork?.ProviderId);
         Assert.Equal("source-track", metadata.Artwork?.ExternalId);
@@ -168,6 +169,24 @@ public sealed partial class RecordingKeptFilesTests
         Assert.Null(legacy.Track);
         Assert.Null(legacy.AlbumArtist);
         Assert.Null(legacy.Artwork);
+    }
+
+    [Theory]
+    [InlineData("{artist}/{album}/{title} - {track:00}", "FLO", "FLO/Access All Areas/Check.flac")]
+    [InlineData("{album}/{artist} - {title}", "", "Access All Areas/Check.flac")]
+    [InlineData("{artist}/{title}", "", "Check.flac")]
+    [InlineData("{artist}/{album}/{track:00} - {title}", "FLO", "FLO/Access All Areas/Check.flac")]
+    [InlineData("{artist}/{title}", "Unknown Mortal Orchestra", "Unknown Mortal Orchestra/Check.flac")]
+    public async Task NewKeptCopiesOmitUnknownFieldsAndTheirSeparators(string template, string artist, string expected)
+    {
+        placement.PathTemplate = template;
+        var published = await Service().PublishAsync(Request() with
+        {
+            Track = new("Check", artist, "Access All Areas"),
+            Metadata = new("Check", [string.IsNullOrWhiteSpace(artist) ? "Unknown artist" : artist], "Access All Areas")
+        });
+        Assert.Equal(expected, Path.GetRelativePath(placement.RootPath, published.Path).Replace('\\', '/'));
+        Assert.Equal(audio, await File.ReadAllBytesAsync(published.Path));
     }
 
     private async Task<JsonElement> StorageMetadataRowsAsync()

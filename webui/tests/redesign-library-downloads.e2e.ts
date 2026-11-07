@@ -217,9 +217,7 @@ for (const viewport of [{ width: 1280, theme: "light" }, { width: 1280, theme: "
     await page.emulateMedia({ colorScheme: viewport.theme, reducedMotion: "reduce" });
     await mockLibrary(page);
     await page.route("**/api/admin/playlist-links", route => json(route, { playlistLinks: [{ id: "road", name: "On the Road" }] }));
-    await page.route("**/api/admin/playlist-links/road", route => json(route, {
-      tracks: [{ providerRoutes: [{ providerId: "apple-download", externalId: file.externalId }] }],
-    }));
+    await page.route("**/api/admin/playlist-links/membership?**", route => json(route, { playlists: [{ id: "road", name: "On the Road" }] }));
     await page.goto("/#/library/kept");
     const list = page.getByRole("region", { name: "Kept songs", exact: true });
     await expectPageSurface(list);
@@ -241,7 +239,7 @@ for (const viewport of [{ width: 1280, theme: "light" }, { width: 1280, theme: "
     const panel = page.getByRole("dialog", { name: file.album, exact: true });
     await expect(panel).toContainText("1064 kbps");
     await expect(panel.getByRole("region", { name: "In your playlists", exact: true })).toBeVisible();
-    await expect(panel.getByRole("link", { name: "On the Road", exact: true })).toHaveAttribute("href", "#/library/playlists?id=road");
+    await expect(panel.getByRole("link", { name: "On the Road", exact: true })).toHaveAttribute("href", "#/library/playlists?playlist=road");
     await expect(panel.getByText("Source ID", { exact: true })).not.toBeVisible();
     await expect(panel.getByText("Filename", { exact: true })).not.toBeVisible();
     await panel.getByText("Copy details", { exact: true }).click();
@@ -312,13 +310,11 @@ test("Cross-service copies share a row and song details show real playlist membe
     managedCount: 2, diagnosticCount: 0, totalSizeFormatted: "58 MB", count: 2,
   }));
   await page.route("**/api/admin/playlist-links", route => json(route, { playlistLinks: [{ id: "road", name: "On the Road" }] }));
-  await page.route("**/api/admin/playlist-links/road", route => json(route, {
-    tracks: [{ providerRoutes: [{ providerId: "apple-download", externalId: file.externalId }] }],
-  }));
+  await page.route("**/api/admin/playlist-links/membership?**", route => json(route, { playlists: [{ id: "road", name: "On the Road" }] }));
   await page.goto("/#/library/cached");
   await expect(page.locator(".downloads-table-scroll > table > tbody > .download-row")).toHaveCount(1);
   await expect(page.getByRole("button", { name: "Show 2 copies of Take On Me", exact: true })).toBeVisible();
   await expect(page.locator(".download-row .source-name")).toContainText("Apple Music + Deezer");
   await page.getByRole("button", { name: "Open song details for Take On Me", exact: true }).click();
-  await expect(page.getByRole("dialog").getByRole("link", { name: "On the Road", exact: true })).toHaveAttribute("href", "#/library/playlists?id=road");
+  await expect(page.getByRole("dialog").getByRole("link", { name: "On the Road", exact: true })).toHaveAttribute("href", "#/library/playlists?playlist=road");
 });

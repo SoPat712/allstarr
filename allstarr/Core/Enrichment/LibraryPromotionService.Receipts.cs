@@ -86,7 +86,8 @@ public sealed partial class LibraryPromotionService
                 item.CanonicalRecordingId, library, known.Contains(item.CanonicalRecordingId)))
             .Concat(imported.Select(item => new PromotionKeptItem($"imported/{item.Id:D}", item.RecordingId,
                 library, known.Contains(item.RecordingId)))).DistinctBy(item => item.Path).ToArray();
-        return new(items, library, libraries, profile.LibraryRootId, items.Count(item => item.InLibrary));
+        var setup = await roots.SetupAsync(profile.LibraryRootId, token);
+        return new(items, library, libraries, setup.RootId, items.Count(item => item.InLibrary)) { Setup = setup };
     }
 
     private async Task<List<PromotionReceipt>> ProjectReceiptsAsync(AllstarrDbContext db,

@@ -1,7 +1,9 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import type { PromotionSetup } from "$lib/library-promotion-api";
+  import EmptyState from "$lib/components/patterns/EmptyState.svelte";
   import { ApiError } from "$lib/api-client";
-  import { promotionProfiles, type ApprovalRoles, type HouseholdPromotionProfile, type NamingError, type NamingPreview, type PersonalPromotionProfile, type PromotionProfile, type PromotionRoot } from "$lib/promotion-profile-api";
+  import { promotionProfiles, type ApprovalRoles, type HouseholdPromotionProfile, type NamingError, type NamingPreview, type PersonalPromotionProfile, type PromotionProfile, type PromotionRoot, type PromotionFolders, type PromotionFolder } from "$lib/promotion-profile-api";
   import { createNamingPreview } from "$lib/promotion-preview";
   import { createProfileSave, type ProfileScope } from "$lib/promotion-profile-save";
   import { Button } from "$lib/components/ui/button";
@@ -13,6 +15,7 @@
   import RowsSkeleton from "$lib/components/patterns/RowsSkeleton.svelte";
 
   let { administrator }: { administrator: boolean } = $props();
+  let setup = $state<PromotionSetup | null>(null), folderPath = $state(""), selectedFolder = $state<PromotionFolder | null>(null), discovery = $state<PromotionFolders | null>(null), folderBusy = $state(false), folderError = $state("");
   let mine = $state<PersonalPromotionProfile | null>(null), household = $state<HouseholdPromotionProfile | null>(null);
   let roots = $state<PromotionRoot[]>([]), scope = $state<ProfileScope>("me");
   let loading = $state(true), loadError = $state(""), previewError = $state(""), previewPending = $state(false);
@@ -100,10 +103,24 @@
     scriptOpen = true;
     requestAnimationFrame(() => { scriptInput?.focus(); scriptInput?.setSelectionRange(error.position, error.position + Math.max(1, error.length)); });
   }
+  async function approveFolder() {
+    if (!folderPath.trim() || folderBusy || !selectedFolder || roots.some(root => !root.path)) return;
+    folderBusy = true; folderError = "";
+    try {
+      const id = selectedFolder.rootId ?? crypto.randomUUID();
+      await promotionProfiles.saveRoots([...roots.filter(root => root.id !== id).map(root => ({ ...root, path: root.path! })),
+        { id, name: selectedFolder.name, path: folderPath.trim(), backendPath: selectedFolder.backendPath }]);
+      roots = await promotionProfiles.roots(); setup = await promotionProfiles.setup(); discovery = await promotionProfiles.folders();
+      selectedFolder = null;
+      update({ libraryRootId: id });
+    } catch (cause) { folderError = message(cause); }
+    finally { folderBusy = false; }
+  }
   async function load() {
     loading = true; loadError = "";
     try {
-      const [personal, folders, shared] = await Promise.all([promotionProfiles.mine(), promotionProfiles.roots(), administrator ? promotionProfiles.household() : Promise.resolve(null)]);
+      const [personal, folders, shared, state, locations] = await Promise.all([promotionProfiles.mine(), promotionProfiles.roots(), administrator ? promotionProfiles.household() : Promise.resolve(null), promotionProfiles.setup(), administrator ? promotionProfiles.folders().catch(() => null) : Promise.resolve(null)]);
+      setup = state; discovery = locations && Array.isArray(locations.folders) ? locations : null;
       mine = personal; roots = folders; household = shared ?? personal.householdDefault;
       validScripts.add(personal.values.namingScript); validScripts.add(household.values.namingScript);
       requestPreview();
@@ -162,7 +179,31 @@
       </section>
     </div>
     <section class="settings-card" aria-labelledby="promotion-where"><header><h3 id="promotion-where">Where and who</h3></header>
+      {#if !roots.length}<div class="folder-setup"><EmptyState title="No library folder yet" description="Allstarr needs write access to the music folder Jellyfin reads.">
+        {#snippet action()}{#if !administrator}<p class="muted">Ask an administrator to set it up.</p>{/if}{/snippet}
+      </EmptyState></div>{/if}
+      {#if administrator}<div class="folder-setup">
+        {#if discovery?.folders.length}
+          {#each discovery.folders as folder (folder.backendPath)}
+            <div class="folder-option"><strong>{folder.name}</strong><code>{folder.backendPath}</code>
+              <p class="muted">{folder.writable ? "Allstarr can add songs here" : "Allstarr can't reach this folder"}</p>
+              {#if folder.mapped}<p class="muted">Path inside Allstarr: <code>{folder.path}</code></p>{/if}
+              <Button variant="outline" onclick={() => { selectedFolder = folder; folderPath = folder.path; folderError = ""; }}>{folder.rootId ? "Edit folder mapping" : "Choose or map folder"}</Button>
+            </div>
+          {/each}
+        {:else}<p class="muted">Jellyfin's music folders could not be read. Check the backend connection, then reload these settings.</p>{/if}
+        {#if !discovery?.folders.some(folder => folder.writable)}<p class="muted">Mount the music folder in the Allstarr container once, for example <code>- /path/to/music:/music</code>, then map it here.</p>{/if}
+        <a href="https://github.com/SoPat712/allstarr/blob/dev/docs/user-guide.md#adding-to-your-library" target="_blank" rel="noreferrer">Library setup guide</a>
+        {#if selectedFolder}<form class="folder-form" onsubmit={event => { event.preventDefault(); void approveFolder(); }}>
+          <label>Path inside Allstarr<input bind:value={folderPath} required placeholder="/music" /></label>
+          <p class="muted">Must be an existing writable folder. {setup?.allowedBaseConfigured ? "The server also restricts it to the configured allowed base." : ""}</p>
+          <Button type="submit" variant="outline" disabled={folderBusy || !folderPath.trim()}>Use this library folder</Button>
+          {#if folderError}<p role="status" class="muted">{folderError}</p>{/if}
+        </form>{/if}
+      </div>{/if}
+      {#if roots.length}
       <div class="settings-row"><div><strong>Library folder</strong><small>One of the folders Jellyfin reads</small></div><SelectField label="Library folder" value={profile.libraryRootId ?? ""} options={[{ value: "", label: "Default library folder" }, ...roots.map(root => ({ value: root.id, label: root.name })), ...(profile.libraryRootId && !roots.some(root => root.id === profile.libraryRootId) ? [{ value: profile.libraryRootId, label: "Previously selected folder" }] : [])]} onchange={value => update({ libraryRootId: value || null })} /></div>
+      {/if}
       <div class="settings-row"><div><strong>Default unit</strong><small>What “Add to library” adds from a song</small></div><ThreeDetentSwitch label="Default unit" value={profile.defaultUnit} options={[{ value: "album", label: "Whole album" }, { value: "song", label: "Just the song" }]} onchange={value => update({ defaultUnit: value })} /></div>
       {@render toggle("afterAdding", "After adding", "Move playlists, mixes, hearts and plays to the library copy")}
       {#if administrator && scope === "household"}<div class="settings-row"><div><strong>Who adds without approval</strong><small>Everyone else sends a request to an admin</small></div><SelectField label="Who adds without approval" value={household.addWithoutApproval} options={[{ value: "admins-and-trusted-listeners", label: "Admins and trusted listeners" }, { value: "admins", label: "Admins" }]} onchange={value => { if (household) household = { ...household, addWithoutApproval: value as ApprovalRoles }; dirty.add(scope); scheduleSave(); }} /></div>{/if}
@@ -171,6 +212,12 @@
 {/if}
 
 <style>
+  .folder-setup, .folder-form { display: grid; min-width: 0; gap: var(--space-3); padding: var(--space-4); }
+  .folder-form { padding: 0; }
+  .folder-option { display: grid; min-width: 0; gap: var(--space-2); }
+  .folder-option code { overflow-wrap: anywhere; color: var(--color-ink-muted); font-size: var(--text-xs); }
+  .folder-form label { display: grid; gap: var(--space-2); color: var(--color-ink-muted); font-size: var(--text-sm); }
+  .folder-form input { width: 100%; min-width: 0; padding: var(--space-3); border: 1px solid var(--color-edge); border-radius: var(--radius-md); background: var(--color-panel-raised); color: var(--color-ink); }
   .promotion-settings { display: grid; min-width: 0; gap: var(--space-4); }
   .profile-context, .save-status, .muted { margin: 0; color: var(--color-ink-muted); font-size: var(--text-xs); }
   .profile-toolbar { align-items: start; }

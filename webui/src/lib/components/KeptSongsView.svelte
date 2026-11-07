@@ -28,6 +28,9 @@
   import FilterSegments from "./patterns/FilterSegments.svelte";
   import { readFilter, writeFilter } from "./patterns/helpers";
 
+  import { promotionSetupHint } from "$lib/promotion-setup";
+
+  let { administrator = false }: { administrator?: boolean } = $props();
   type Removal = { kind: "one" | "release"; file: ManagedDownload } | { kind: "all" }
     | { kind: "delete-kept"; file: ManagedDownload; preview: KeptCopyDeletionPreview; requestId: string };
 
@@ -78,6 +81,9 @@
   });
   const lossless = $derived(allGroups.filter(group => group.files.some(file => /^(flac|alac|wavpack|ape|pcm_)/i.test(file.codec))).length);
   const libraryCount = $derived(context && files.every(file => context?.items.some(item => item.path === file.path)) ? allGroups.filter(group => group.files.some(file => context?.items.some(item => item.path === file.path && item.inLibrary))).length : null);
+  const setupRequired = $derived(context?.setup?.reason === "library-folder-not-set");
+  const addUnavailable = $derived(context?.setup?.ready === false);
+  const addHint = $derived(setupRequired ? promotionSetupHint : addUnavailable ? "The approved library folder is unavailable" : "");
   const selectedIndex = $derived(navigationFiles.findIndex(file => file.path === selectedFile?.path));
   function warnings(copies: ManagedDownload[]) {
     return [...new Map(copies.map(qualityWarning).filter(value => value !== null).map(value => [value.label, value])).values()];
@@ -152,7 +158,7 @@
     finally { action = ""; }
   }
   async function startSelected() {
-    if (busy) return;
+    if (busy || addUnavailable) return;
     busy = true; bulkError = "";
     let lastId = "";
     const startedAlbums = new Set<string>();
@@ -191,11 +197,11 @@
     inLibrary={copies.some(copy => context?.items.some(item => item.path === copy.path && item.inLibrary))} selected={open && copies.some(copy => copy.path === selectedFile?.path)} selection={selecting && !physicalCopy} checked={selectionCopies(copies).some(copy => chosen.includes(copy.path))} oncheck={checked => selectSong(copies, checked)}
     expanded={expanded.includes(groupKey)} {copiesId} busy={Boolean(action)} onopen={() => openSong(file)}
     ontoggle={copies.length > 1 && !physicalCopy ? () => expanded = expanded.includes(groupKey) ? expanded.filter(key => key !== groupKey) : [...expanded, groupKey] : undefined}
-    onkeep={() => {}} onrelease={() => confirm({ kind: "release", file })} onremove={() => confirm({ kind: "one", file })} ondeletion={() => void previewDeletion(file)} />
+    onadd={() => openSong(file)} addUnavailable={addHint} onkeep={() => {}} onrelease={() => confirm({ kind: "release", file })} onremove={() => confirm({ kind: "one", file })} ondeletion={() => void previewDeletion(file)} />
 {/snippet}
 
 <section class="promotion-page" class:panel-open={open} aria-label="Kept songs">
-  <header class="promotion-page-heading"><h2>Kept songs</h2><div class="heading-actions"><Button size="sm" class="rounded-full" variant="outline" disabled={busy || Boolean(action)} onclick={() => { if (!selecting) selecting = true; else if (chosen.length) { bulkError = ""; bulkOpen = true; } }} >Add selected to library</Button>
+  <header class="promotion-page-heading"><h2>Kept songs</h2><div class="heading-actions"><Button size="sm" class="rounded-full" variant="outline" title={addHint} disabled={loading || busy || Boolean(action) || addUnavailable} onclick={() => { if (!selecting) selecting = true; else if (chosen.length) { bulkError = ""; bulkOpen = true; } }} >Add selected to library</Button>
     <DropdownMenu.Root><DropdownMenu.Trigger class="icon-button library-download-menu" aria-label="Actions for kept songs"><MoreHorizontal size={18} aria-hidden="true" /></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content class="bits-menu" align="end" sideOffset={6}>
       <DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => void refresh()}>Refresh</DropdownMenu.Item>
       <DropdownMenu.Item class="bits-menu-item" onSelect={() => controlsOpen = !controlsOpen}>{controlsOpen ? "Hide search and sort" : "Search and sort"}</DropdownMenu.Item>
@@ -203,6 +209,7 @@
     </DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root>
   </div></header>
   {#if loading}<RowsSkeleton count={5} />{:else}
+    {#if addHint}<p class="selection-note">{addHint}</p>{/if}
     {#if panelError}<p role="alert" class="notice-error">{panelError}</p>{/if}
     {#if error}<ErrorState title="Library status is unavailable" detail={error} onretry={refresh} />{/if}
     <PageStatus label="Kept totals" items={[{ label: `${allGroups.length} kept`, emphasis: true }, ...(files.length > allGroups.length ? [{ label: countLabel(files.length, "copy", "copies") }] : []), { label: `${lossless} lossless` }, ...(libraryCount === null ? [] : [{ label: `${libraryCount} already in your library` }]), ...(data?.diagnosticCount ? [{ label: `${data.diagnosticCount} need review`, tone: "warn" as const }] : [])]} />
@@ -233,7 +240,7 @@
     </div>{:else if files.length}<EmptyState title="No songs match these filters" description="Try another source, search, or filter.">{#snippet action()}<Button variant="outline" onclick={resetFilters}>Show all songs</Button>{/snippet}</EmptyState>{:else}<EmptyState title="No kept songs" description="Use Keep on a cached song to save it permanently." />{/if}
   {/if}
 </section>
-{#if selectedFile}<LibraryPromotionAddPanel bind:open recordingId={request?.recordingId ?? ""} backendLibraryId={request?.backendLibraryId} rootId={request?.rootId} {providers} title={selectedFile.album || selectedFile.title} description={selectedFile.artist} cover={selectedFile.artworkUrl} onPrevious={selectedIndex > 0 ? () => openSong(navigationFiles[selectedIndex - 1]) : undefined} onNext={selectedIndex >= 0 && selectedIndex < navigationFiles.length - 1 ? () => openSong(navigationFiles[selectedIndex + 1]) : undefined}>
+{#if selectedFile}<LibraryPromotionAddPanel bind:open recordingId={request?.recordingId ?? ""} backendLibraryId={request?.backendLibraryId} rootId={request?.rootId} {providers} {administrator} {setupRequired} title={selectedFile.album || selectedFile.title} description={selectedFile.artist} cover={selectedFile.artworkUrl} onPrevious={selectedIndex > 0 ? () => openSong(navigationFiles[selectedIndex - 1]) : undefined} onNext={selectedIndex >= 0 && selectedIndex < navigationFiles.length - 1 ? () => openSong(navigationFiles[selectedIndex + 1]) : undefined}>
   {#snippet copyActions()}<section class="kept-copy" aria-label="Kept copy"><h3 class="sec-label">Kept copy</h3><p>{providerDisplayName(providers, selectedFile?.provider)} · {qualityDetails(selectedFile!).join(" · ")} · {selectedFile?.sizeFormatted}</p><p>{selectedFile?.publicationState === "Imported" ? "Imported original · read-only" : selectedFile?.explicitlyKept ? "Your Keep" : selectedFile?.referenceCount ? "Household" : "No active references"}{selectedFile?.referenceCount ? ` · ${countLabel(selectedFile.referenceCount, "reference")}` : ""}</p><p class="copy-path">{selectedFile?.path}</p>
     <details class="copy-facts"><summary>Copy details</summary><p>Never removed by cache cleanup.</p><p>{selectedFile?.explicitlyKept ? "Your Keep protects this copy. Other household interests also stay protected when you stop keeping." : selectedFile?.publicationState === "Imported" ? "This imported original is read-only." : selectedFile?.referenceCount ? "Household interests protect this copy." : "This copy has no active household references."}</p>
       {#if qualityWarning(selectedFile!)}<p class="copy-warning">{qualityWarning(selectedFile!)?.label}: {qualityWarning(selectedFile!)?.detail}</p>{/if}
@@ -247,7 +254,7 @@
         <dt>Updated</dt><dd><time datetime={selectedFile?.lastModified} title={selectedFile?.lastModified}>{relativeTime(selectedFile!.lastModified)}</time></dd><dt>Filename</dt><dd>{selectedFile?.fileName}</dd>
       </dl>
     </details>
-    <SongPlaylistMembership file={selectedFile!} {open} />
+    <SongPlaylistMembership file={{ ...selectedFile!, canonicalRecordingId: context?.items.find(item => item.path === selectedFile?.path)?.recordingId ?? selectedFile?.canonicalRecordingId }} {open} />
     <div class="kept-copy-actions"><LibraryDownloadActions file={selectedFile!} storage="kept" busy={Boolean(action)} onkeep={() => {}} onrelease={() => confirm({ kind: "release", file: selectedFile! })} onremove={() => confirm({ kind: "one", file: selectedFile! })} ondeletion={() => void previewDeletion(selectedFile!)} /></div>
   </section>{/snippet}
 </LibraryPromotionAddPanel>{/if}

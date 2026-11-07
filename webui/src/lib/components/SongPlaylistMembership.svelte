@@ -1,39 +1,41 @@
 <script lang="ts">
-  import { playlistLinks, type ManagedDownload } from "$lib/api";
+  import { playlistLinks, type ManagedDownload, type SongPlaylistIdentity } from "$lib/api";
   import { canonicalProviderId } from "$lib/sources";
 
   let { file, open = false }: { file: ManagedDownload; open?: boolean } = $props();
   let playlists = $state<{ id: string; name: string }[]>([]);
   let loading = $state(false), unavailable = $state(false);
+  const identityKey = $derived(JSON.stringify({
+    canonicalRecordingId: file.canonicalRecordingId ?? null,
+    providerId: file.provider ? canonicalProviderId(file.provider) : null,
+    externalId: file.externalId ?? null,
+    protocol: file.protocol ?? null,
+    backendInstanceId: file.backendInstanceId ?? null,
+    backendItemId: file.backendItemId ?? null,
+  } satisfies SongPlaylistIdentity));
 
   $effect(() => {
-    const song = file;
     if (!open) return;
+    const song = JSON.parse(identityKey) as SongPlaylistIdentity;
+    const request = new AbortController();
     let active = true;
     playlists = []; loading = true; unavailable = false;
     void (async () => {
       try {
-        const links = (await playlistLinks.list()).playlistLinks ?? [];
-        const found: { id: string; name: string }[] = [];
-        for (const link of links) {
-          if (!active) return;
-          const detail = await playlistLinks.details(link.id);
-          if (detail.tracks?.some(track => track.providerRoutes?.some(route => canonicalProviderId(route.providerId) === canonicalProviderId(song.provider ?? "") && route.externalId === song.externalId)))
-            found.push({ id: link.id, name: link.name });
-        }
-        if (active) playlists = found;
+        const result = await playlistLinks.membership(song, request.signal);
+        if (active) playlists = result.playlists;
       } catch { if (active) unavailable = true; }
       finally { if (active) loading = false; }
     })();
-    return () => { active = false; };
+    return () => { active = false; request.abort(); };
   });
 </script>
 
 <section aria-label="In your playlists" aria-busy={loading}>
   <h3>In your playlists</h3>
   {#if loading}<p class="empty-playlists">Loading playlists…</p>
-  {:else}{#each playlists as playlist (playlist.id)}<a class="playlist-link" href={`#/library/playlists?id=${encodeURIComponent(playlist.id)}`}>{playlist.name}<span aria-hidden="true">›</span></a>
-  {:else}<p class="empty-playlists">{unavailable ? "Playlist membership could not be loaded." : "No playlists found for this copy."}</p>{/each}{/if}
+  {:else}{#each playlists as playlist (playlist.id)}<a class="playlist-link" href={`#/library/playlists?playlist=${encodeURIComponent(playlist.id)}`}>{playlist.name}<span aria-hidden="true">›</span></a>
+  {:else}<p class="empty-playlists">{unavailable ? "Playlist membership could not be loaded." : "Not in any of your playlists"}</p>{/each}{/if}
 </section>
 
 <style>

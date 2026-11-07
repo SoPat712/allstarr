@@ -69,7 +69,7 @@ public sealed partial class RecordingKeptFiles(
             [publication.Track.Artist], publication.Track.Album);
         display = display with
         {
-            Track = display.Track ?? publication.Track.Track,
+            Track = (display.Track ?? publication.Track.Track) is > 0 and var number ? number : null,
             AlbumArtist = display.AlbumArtist ?? publication.Track.AlbumArtist
         };
         var track = publication.Track with { Track = display.Track, AlbumArtist = display.AlbumArtist };
@@ -121,7 +121,7 @@ public sealed partial class RecordingKeptFiles(
                 var extension = Path.GetExtension(source.SourcePath);
                 var placementRequest = new ManagedFilePlacementRequest(
                     new(placement.RootId, Path.GetFullPath(placement.RootPath), null), source.SourcePath,
-                    KeptPathTemplate(placement.PathTemplate, track.Track), track with { Extension = string.IsNullOrWhiteSpace(extension) ? ".bin" : extension },
+                    KeptPathTemplate(placement.PathTemplate, track), track with { Extension = string.IsNullOrWhiteSpace(extension) ? ".bin" : extension },
                     null, ManagedFileScopeKey.Create(null, placement.RootId), true, true, source.ContentSha256, source.Length)
                 {
                     ReferenceKey = pendingKey,

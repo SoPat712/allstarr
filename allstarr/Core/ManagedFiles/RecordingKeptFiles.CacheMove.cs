@@ -58,11 +58,11 @@ public sealed partial class RecordingKeptFiles
             if (await FindKeepAsync(db, claim.JobId, claim.OwnerUserId, claim.AttemptNumber, token) == null) throw Denied();
             await ValidateCachedKeepSourceAsync(db, proof.OwnerUserId,
                 new(proof.Payload.ProviderId, ProviderResourceKind.Track, proof.Payload.ExternalId), cached, token);
+            var track = new ManagedTrackPathValues(proof.Payload.Metadata.Title, proof.Payload.Metadata.Artists[0],
+                proof.Payload.Metadata.Album, proof.Payload.Metadata.AlbumArtist, Track: proof.Payload.Metadata.Track,
+                Extension: Path.GetExtension(source));
             var destination = candidate?.File.CanonicalPath ?? Path.Combine(Path.GetFullPath(placement.RootPath),
-                ManagedPathTemplate.Render(KeptPathTemplate(placement.PathTemplate, proof.Payload.Metadata.Track),
-                    new(proof.Payload.Metadata.Title, proof.Payload.Metadata.Artists[0], proof.Payload.Metadata.Album,
-                        proof.Payload.Metadata.AlbumArtist, Track: proof.Payload.Metadata.Track,
-                        Extension: Path.GetExtension(source))));
+                ManagedPathTemplate.Render(KeptPathTemplate(placement.PathTemplate, track), track));
             if (candidate == null && (File.Exists(destination) || await db.ManagedFiles.AnyAsync(item => item.CanonicalPath == destination, token)))
                 destination = Path.Combine(Path.GetDirectoryName(destination)!, $"{Path.GetFileNameWithoutExtension(destination)}-{claim.JobId:N}{Path.GetExtension(destination)}");
             owned = candidate == null ? new()

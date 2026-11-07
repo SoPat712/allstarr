@@ -4,12 +4,14 @@
   import { Button } from "$lib/components/ui/button";
   import { DropdownMenu } from "$lib/components/ui/dropdown-menu";
 
-  let { file, storage, busy = false, moving = false, placement = "row", onkeep, onrelease, onremove, ondeletion }: {
+  let { file, storage, busy = false, moving = false, placement = "row", onkeep, onrelease, onremove, ondeletion, onadd, addUnavailable = "" }: {
     file: ManagedDownload;
     storage: "cache" | "kept";
     busy?: boolean;
     moving?: boolean;
     placement?: "row" | "panel" | "menu";
+    onadd?: () => void;
+    addUnavailable?: string;
     onkeep: () => void;
     onrelease: () => void;
     onremove: () => void;
@@ -50,6 +52,7 @@
             {#snippet child({ props })}<a {...props} href={downloads.fileUrl(file.path, storage)}>Download</a>{/snippet}
           </DropdownMenu.Item>
         {/if}
+        {#if onadd}<DropdownMenu.Item class="bits-menu-item" disabled={busy || Boolean(addUnavailable)} title={addUnavailable} onSelect={onadd}>Add to library</DropdownMenu.Item>{/if}
         {#if file.removable}
           {#if file.explicitlyKept}<DropdownMenu.Item class="bits-menu-item danger-item" disabled={busy} onSelect={onrelease}>Stop keeping</DropdownMenu.Item>
           {:else}<DropdownMenu.Item class="bits-menu-item danger-item" disabled={busy || moving} onSelect={onremove}>Remove</DropdownMenu.Item>{/if}

@@ -191,7 +191,7 @@
 </section>
 <LibraryPromotionPanel bind:open run={selected} requestReceipt={selectedRequest} preview={requestPreview} {administrator} onapprove={approveRequest} ondecline={declineRequest} oncancelrequest={() => cancelRequest()} {providers} title="Library addition" loading={panelLoading} error={panelError} {busy} onreview={review} oncancel={cancel} onclose={() => { ++panelRevision; panelController?.abort(); pollController?.abort(); }} onPrevious={selectedIndex > 0 ? () => openRun(rows[selectedIndex - 1].id, rows[selectedIndex - 1]) : undefined} onNext={selectedIndex >= 0 && selectedIndex < rows.length - 1 ? () => openRun(rows[selectedIndex + 1].id, rows[selectedIndex + 1]) : undefined} />
 
-{#if initialRecording}<LibraryPromotionAddPanel bind:open={addOpen} recordingId={initialRecording} {providers} onrequestchange={() => refresh()} />{/if}
+{#if initialRecording}<LibraryPromotionAddPanel bind:open={addOpen} recordingId={initialRecording} {providers} {administrator} onrequestchange={() => refresh()} />{/if}
 
 <style>
   .promotion-page { display: grid; min-width: 0; align-content: start; justify-items: start; gap: 18px; }
