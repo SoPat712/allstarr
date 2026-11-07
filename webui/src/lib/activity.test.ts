@@ -344,14 +344,6 @@ describe("activity overview details", () => {
       expect(isRoutineActivity({ ...item(label, "Done"), label, kind: "job", state: "succeeded" })).toBe(false);
   });
 
-  it("uses the server routine flag and preserves problems during waiting states", () => {
-    expect(isRoutineActivity({ ...item("one", "Routine"), label: "New maintenance name", isRoutine: true })).toBe(true);
-    expect(isRoutineActivity({ ...item("two", "Problem"), label: "Background task", isRoutine: false })).toBe(false);
-    expect(isRoutineActivity({ ...item("three", "Waiting"), state: "waiting" })).toBe(true);
-    for (const state of ["deferred", "RetryScheduled"])
-      expect(isRoutineActivity({ ...item("four", "Problem"), label: "Background task", state, severity: "warning" })).toBe(false);
-  });
-
   it("pairs a listen receipt with its work without merging other listeners or songs", () => {
     const work = { ...item("work", "Evening song"), kind: "job", label: "Record a listen", action: "playback.signal", correlationId: "listen", state: "succeeded", actorUserId: "one" };
     const sent = { ...work, id: "sent", kind: "scrobble", label: "Scrobble recorded", action: "scrobble.delivered", state: "delivered", sourceTitle: "Evening song" };

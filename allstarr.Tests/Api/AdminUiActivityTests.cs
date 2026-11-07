@@ -21,7 +21,7 @@ using Moq;
 
 namespace allstarr.Tests;
 
-public sealed partial class AdminUiActivityTests
+public sealed class AdminUiActivityTests
 {
     [Theory]
     [InlineData("approved", "Your request for Album was approved.")]

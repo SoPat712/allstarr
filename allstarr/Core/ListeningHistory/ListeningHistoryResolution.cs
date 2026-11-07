@@ -13,8 +13,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Core.Intelligence;
 
-internal sealed record ListeningHistoryResolutionPayload(IntelligenceScope Scope, int Cursor = 0, int RetryOffset = 0,
-    int? Total = null, string? Summary = null, double? ThroughputPerSecond = null);
+internal sealed record ListeningHistoryResolutionPayload(IntelligenceScope Scope, int Cursor = 0, int RetryOffset = 0);
 
 public sealed partial class ListeningHistoryResolution(
     IDbContextFactory<AllstarrDbContext> factory,
@@ -97,7 +96,7 @@ public sealed partial class ListeningHistoryResolution(
             .OrderByDescending(item => item.CreatedAt).ThenByDescending(item => item.Id).Select(item => (Guid?)item.Id).FirstOrDefaultAsync(token);
         await jobs.EnqueueInExistingTransactionAsync(db, new DurableJobEnqueueRequest<ListeningHistoryResolutionPayload>(
             JobTypeName, $"history-styles:{scope.Protocol}:{scope.BackendInstanceId}:{previous}", new(scope), scope.OwnerUserId,
-            Priority: -100), token);
+            Priority: -100, MaxDeferrals: 10000), token);
         await db.SaveChangesAsync(token);
         await transaction.CommitAsync(token);
     }
@@ -120,7 +119,6 @@ public sealed partial class ListeningHistoryResolution(
         var saved = execution.Claim.Payload.Deserialize<ListeningHistoryResolutionPayload>();
         if (saved == null || saved.Scope.OwnerUserId != execution.Claim.OwnerUserId)
             return DurableJobCompletion.Failure("history_resolution_scope_invalid", "The saved listener is unavailable.");
-        var initialCursor = saved.Cursor;
         await using var db = await factory.CreateDbContextAsync(token);
         if (!await IntelligencePolicyService.OwnsBackendAsync(db, saved.Scope, token))
             return DurableJobCompletion.Failure("history_resolution_listener_unavailable", "The saved listener is unavailable.");
@@ -132,7 +130,7 @@ public sealed partial class ListeningHistoryResolution(
         var context = Execution();
         var access = await libraryAccess.ResolveAsync(context, token);
         if (!access.Succeeded)
-            return DurableJobCompletion.Defer("history_resolution_library_unavailable", "Waiting for the listener's library access.", useBackoff: true);
+            return DurableJobCompletion.Defer("history_resolution_library_unavailable", "Waiting for the listener's library access.", TimeSpan.FromMinutes(1));
         using var traffic = new HistoryRequestBudget();
         var started = (timeProvider ?? TimeProvider.System).GetTimestamp();
         var reasons = new Dictionary<string, int>();
@@ -145,7 +143,6 @@ public sealed partial class ListeningHistoryResolution(
         var tracksByRecording = tracks.Where(track => track.CanonicalRecordingId != null)
             .GroupBy(track => track.CanonicalRecordingId!.Value).ToDictionary(group => group.Key, group => group.ToArray());
         var groups = state.Groups.Where(group => !state.Completed.Contains(group.Key)).ToArray();
-        var total = saved.Cursor + groups.Length;
         var scope = new TrackMatchScope(user.Id, user.BackendInstanceId, null, 2, 1, access.LibraryIds.ToHashSet());
         var remaining = new List<IGrouping<string, ListeningEventRecord>>();
         for (var offset = 0; offset < groups.Length; offset += LocalBatchSize)
@@ -210,14 +207,10 @@ public sealed partial class ListeningHistoryResolution(
         var summary = JsonSerializer.Serialize(reasons);
         logger?.LogInformation("History resolution {JobId}: reasons {Reasons}; matched by tier {MatchedByTier}; HTTP calls {HttpCalls}",
             execution.Claim.JobId, summary, JsonSerializer.Serialize(reasons.Where(item => item.Key.StartsWith("matched-", StringComparison.Ordinal)).ToDictionary()), traffic.Calls);
-        await ReportProgressAsync();
+        await execution.ReportProgressAsync(new("history-resolution", summary, saved.Cursor), token);
         if (remaining.Count > attempted || needsRetry)
-        {
-            if (saved.Cursor > initialCursor && !needsRetry)
-                return DurableJobCompletion.Continue(TimeSpan.FromMinutes(1));
-            return DurableJobCompletion.Defer("history_resolution_blocked", "Waiting for music sources to resolve more past songs.",
-                retryDelay, useBackoff: true);
-        }
+            return DurableJobCompletion.Defer("history_resolution_continuing", "Saved progress; more past songs remain.",
+                retryDelay is { } delay && delay > TimeSpan.FromMinutes(1) ? delay : TimeSpan.FromMinutes(1));
         retained = null;
         return DurableJobCompletion.Success();
 
@@ -287,12 +280,7 @@ public sealed partial class ListeningHistoryResolution(
 
         async Task SaveAsync(IReadOnlyCollection<Resolution> batch)
         {
-            foreach (var item in batch)
-            {
-                reasons[item.Reason] = reasons.GetValueOrDefault(item.Reason) + 1;
-                if (reasons[item.Reason] <= 3) logger?.LogDebug("History outcome {Reason}: {Title}", item.Reason, item.Group.First().Title);
-            }
-            var next = ProgressPayload(saved.Cursor + batch.Count(item => !item.Retry));
+            var next = saved with { Cursor = saved.Cursor + batch.Count(item => !item.Retry) };
             var json = payloadPolicy.SerializeAndValidate(next);
             var checkpoint = batch.Any(item => !item.Retry);
             for (var retry = 0; checkpoint; retry++)
@@ -304,7 +292,6 @@ public sealed partial class ListeningHistoryResolution(
                     if (await write.Jobs.Where(item => item.Id == execution.Claim.JobId && item.State == DurableJobState.Running &&
                         item.AttemptCount == execution.Claim.AttemptNumber && item.CancellationRequestedAt == null)
                         .ExecuteUpdateAsync(update => update.SetProperty(item => item.PayloadJson, json)
-                            .SetProperty(item => item.DeferralCount, 0)
                             .SetProperty(item => item.UpdatedAt, clock.UtcNow)
                             .SetProperty(item => item.Revision, item => item.Revision + batch.Count), token) != 1)
                         throw new DurableJobExecutionChangedException();
@@ -384,43 +371,13 @@ public sealed partial class ListeningHistoryResolution(
             }
             foreach (var item in batch)
             {
+                reasons[item.Reason] = reasons.GetValueOrDefault(item.Reason) + 1;
+                if (reasons[item.Reason] <= 3) logger?.LogDebug("History outcome {Reason}: {Title}", item.Reason, item.Group.First().Title);
                 if (item.Canonical is { } id) matchedRecordings.Add(id);
                 if (!item.Retry) state.Completed.Add(item.Group.Key);
             }
             if (checkpoint || reasons.Values.Sum() % 100 == 0)
-                await ReportProgressAsync();
-        }
-
-        ListeningHistoryResolutionPayload ProgressPayload(int cursor)
-        {
-            var elapsed = (timeProvider ?? TimeProvider.System).GetElapsedTime(started).TotalSeconds;
-            var rate = elapsed > 0 ? (cursor - initialCursor) / elapsed : 0;
-            return saved with
-            {
-                Cursor = cursor,
-                Total = total,
-                Summary = JsonSerializer.Serialize(reasons),
-                ThroughputPerSecond = rate is > 0 and < 10000 ? rate : null
-            };
-        }
-
-        async Task ReportProgressAsync()
-        {
-            var next = ProgressPayload(saved.Cursor);
-            if (next != saved)
-            {
-                var json = payloadPolicy.SerializeAndValidate(next);
-                await using var write = await factory.CreateDbContextAsync(token);
-                if (await write.Jobs.Where(item => item.Id == execution.Claim.JobId && item.State == DurableJobState.Running &&
-                    item.AttemptCount == execution.Claim.AttemptNumber && item.CancellationRequestedAt == null)
-                    .ExecuteUpdateAsync(update => update.SetProperty(item => item.PayloadJson, json)
-                        .SetProperty(item => item.UpdatedAt, clock.UtcNow)
-                        .SetProperty(item => item.Revision, item => item.Revision + 1), token) != 1)
-                    throw new DurableJobExecutionChangedException();
-                saved = next;
-            }
-            await execution.ReportProgressAsync(new("history-resolution", saved.Summary ?? "{}", saved.Cursor, total,
-                ThroughputPerSecond: saved.ThroughputPerSecond), token);
+                await execution.ReportProgressAsync(new("history-resolution", JsonSerializer.Serialize(reasons), saved.Cursor), token);
         }
     }
 

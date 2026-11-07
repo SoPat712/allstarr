@@ -28,10 +28,9 @@ export function isProblem(item: ActivityItem) {
 
 /** Plumbing that succeeded: useful when asked for, noise in a list of what happened. */
 export function isRoutineActivity(item: ActivityItem) {
-  if (item.isRoutine !== undefined) return item.isRoutine;
   const routine = /background.?task|runtime settings source use|record[\s_-]+(?:a[\s_-]+)?listen|playback\.signal|track.?identity|canonical.?recording|history.?resolution/i.test(item.label);
   const waiting = ["pending", "waiting", "deferred", "retryscheduled"].includes(item.state.toLowerCase().replaceAll(/[-_ ]/g, ""));
-  return !isProblem(item) && (routine || waiting);
+  return routine && (waiting || !isProblem(item));
 }
 
 export function dayLabel(value: string, now = new Date(), options: { weekday?: boolean } = {}) {
