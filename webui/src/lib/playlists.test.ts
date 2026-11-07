@@ -8,6 +8,8 @@ import {
   isReviewTrack,
   isServiceMix,
   canRemovePlaylistFromApps,
+  playlistRemovalConfirmation,
+  playlistRestoredMessage,
   isPlaylistMix,
   isPlaylistInApps,
   orderPlaylistSources,
@@ -56,6 +58,32 @@ const playlist = (values: Partial<PlaylistLink>): PlaylistLink => ({
 });
 
 describe("playlist presentation", () => {
+  it("states the exact linked removal consequences without extra songs", () => {
+    expect(playlistRemovalConfirmation("Evening mix", 0)).toEqual({
+      title: "Remove “Evening mix” from your apps?",
+      description: "Jellyfin and your music apps stop showing it. Spotify and your saved matches stay; you can add it back.",
+      userAddedSummary: "",
+    });
+  });
+
+  it("includes the exact Jellyfin song warning only when there are extra songs", () => {
+    expect(playlistRemovalConfirmation("Evening mix", 2)).toEqual({
+      title: "Remove “Evening mix” from your apps?",
+      description: "Jellyfin and your music apps stop showing it. Spotify and your saved matches stay; you can add it back.",
+      userAddedSummary: "It also has 2 songs you added in Jellyfin; Undo brings them back.",
+    });
+    expect(playlistRemovalConfirmation("Evening mix", 1).userAddedSummary)
+      .toBe("It also has 1 song you added in Jellyfin; Undo brings it back.");
+  });
+
+  it("reports songs that could not be restored when adding a playlist back", () => {
+    expect(playlistRestoredMessage("Evening mix", 0)).toBe("Evening mix added back to your apps");
+    expect(playlistRestoredMessage("Evening mix", 1))
+      .toBe("Evening mix added back to your apps. 1 song could not be restored.");
+    expect(playlistRestoredMessage("Evening mix", 2))
+      .toBe("Evening mix added back to your apps. 2 songs could not be restored.");
+  });
+
   it("offers rebuilding only for linked Jellyfin playlists", () => {
     expect(canRebuildInJellyfin(playlist({ targetProtocol: "Jellyfin" }))).toBe(true);
     expect(canRebuildInJellyfin(playlist({ targetProtocol: "jellyfin", importMode: "oneTime" }))).toBe(false);

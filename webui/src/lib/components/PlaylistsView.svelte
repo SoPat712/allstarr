@@ -21,6 +21,7 @@
   import { Button, buttonVariants } from "$lib/components/ui/button";
   import { ChevronDown, MoreHorizontal, Server } from "@lucide/svelte";
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
+  import PlaylistRemovalDialog from "$lib/components/PlaylistRemovalDialog.svelte";
 
   import MediaArtwork from "$lib/components/MediaArtwork.svelte";
   import ProviderMark from "$lib/components/ProviderMark.svelte";
@@ -40,6 +41,7 @@
     type PlaylistCopy,
     type PlaylistDetails,
     type PlaylistLink,
+    type PlaylistRemovalPreview,
     type PlaylistTrack,
     type ProviderDefinition,
   } from "$lib/api";
@@ -58,6 +60,7 @@
     isPlaylistInApps,
     jellyfinPlaylistWarning,
     playlistOutcomeLabel,
+    playlistRestoredMessage,
     runBounded,
     scheduleCadence,
     scheduleZoneLabel,
@@ -75,7 +78,9 @@
   let consent = $state<PlaylistConsentStatus | null>(null);
   let removingMix = $state<{ id: string; name: string } | null>(null);
   let removingPlaylist = $state<PlaylistLink | null>(null);
-  const removalName = $derived(removingPlaylist?.name ?? removingMix?.name);
+  let removalPreview = $state<PlaylistRemovalPreview | null>(null);
+  let removalPreviewLoading = $state(false), removalPreviewError = $state("");
+  let removalPreviewRequest = 0;
   let removing = $state(false), removeError = $state("");
   let rebuildingPlaylist = $state<PlaylistLink | null>(null);
   let rebuilding = $state(false), rebuildError = $state("");
@@ -547,11 +552,32 @@
   function confirmRemoval(playlist: PlaylistLink) {
     removeError = "";
     if (isServiceMix(playlist)) removingMix = playlist;
-    else if (canRemovePlaylistFromApps(playlist)) removingPlaylist = playlist;
+    else if (canRemovePlaylistFromApps(playlist)) {
+      removingPlaylist = playlist;
+      void loadRemovalPreview();
+    }
+  }
+
+  async function loadRemovalPreview() {
+    if (!removingPlaylist || removing) return;
+    const target = removingPlaylist;
+    const request = ++removalPreviewRequest;
+    removalPreview = null;
+    removalPreviewLoading = true;
+    removalPreviewError = "";
+    try {
+      const preview = await playlistLinks.removalPreview(target.id);
+      if (request === removalPreviewRequest && removingPlaylist?.id === target.id) removalPreview = preview;
+    } catch (cause) {
+      if (request === removalPreviewRequest && removingPlaylist?.id === target.id)
+        removalPreviewError = cause instanceof Error ? cause.message : "Songs added in Jellyfin could not load. Try again.";
+    } finally {
+      if (request === removalPreviewRequest) removalPreviewLoading = false;
+    }
   }
 
   async function removePlaylist() {
-    if (!removingPlaylist || removing) return;
+    if (!removingPlaylist || removing || !removalPreview || removalPreviewLoading || removalPreviewError) return;
     const target = removingPlaylist;
     removing = true;
     removeError = "";
@@ -564,8 +590,9 @@
         label: "Undo",
         run: async () => {
           try {
-            await playlistLinks.addToApps(target.id, removed.revision);
+            const restored = await playlistLinks.addToApps(target.id, removed.revision);
             await refresh();
+            toast.success(playlistRestoredMessage(target.name, restored.skippedItemCount));
           } catch (cause) {
             toast.error(cause instanceof Error ? cause.message : "The playlist could not be restored. Try again.");
           }
@@ -1017,7 +1044,18 @@
   />
 {/if}
 
-<ConfirmDialog bind:open={() => Boolean(removingMix || removingPlaylist), value => { if (!value) { removingMix = null; removingPlaylist = null; } }} title={`Remove ${removalName ?? "this playlist"} from your apps?`} description={`${removalName ?? "This playlist"} leaves your apps for you. Its source is unchanged. Saved matches stay, so adding it back is quick.`} confirmLabel="Remove from my apps" disabled={removing} closeOnConfirm={false} error={removeError} onConfirm={() => removingPlaylist ? removePlaylist() : removeMix()} />
+<ConfirmDialog bind:open={() => Boolean(removingMix), value => { if (!value) removingMix = null; }} title={`Remove ${removingMix?.name ?? "this playlist"} from your apps?`} description={`${removingMix?.name ?? "This playlist"} leaves your apps for you. Its source is unchanged. Saved matches stay, so adding it back is quick.`} confirmLabel="Remove from my apps" disabled={removing} closeOnConfirm={false} error={removeError} onConfirm={removeMix} />
+<PlaylistRemovalDialog
+  bind:open={() => Boolean(removingPlaylist), value => { if (!value) { removingPlaylist = null; removalPreview = null; removalPreviewError = ""; removalPreviewRequest++; removalPreviewLoading = false; } }}
+  name={removingPlaylist?.name ?? "this playlist"}
+  preview={removalPreview}
+  loading={removalPreviewLoading}
+  previewError={removalPreviewError}
+  disabled={removing}
+  error={removeError}
+  onRetry={loadRemovalPreview}
+  onConfirm={removePlaylist}
+/>
 <ConfirmDialog
   bind:open={() => Boolean(rebuildingPlaylist), value => { if (!value && !rebuilding) rebuildingPlaylist = null; }}
   title="Rebuild this playlist in Jellyfin?"

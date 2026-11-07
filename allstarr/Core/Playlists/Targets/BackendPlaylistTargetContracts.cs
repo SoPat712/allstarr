@@ -171,16 +171,15 @@ public sealed record BackendPlaylistWriteRequest
         string? expectedFingerprint = null,
         IEnumerable<string>? syncOwnedBackendItemIds = null,
         bool removeStaleSyncOwnedItems = false,
-        string? recoveryPlaylistId = null)
+        string? recoveryPlaylistId = null,
+        bool preserveDuplicateItems = false)
     {
         if (!Enum.IsDefined(mode)) throw new ArgumentOutOfRangeException(nameof(mode));
         Metadata = metadata ?? throw new ArgumentNullException(nameof(metadata));
         if (string.IsNullOrWhiteSpace(metadata.Name)) throw new ArgumentException("A playlist name is required.", nameof(metadata));
         Mode = mode;
-        OrderedBackendItemIds = orderedBackendItemIds
-            .Where(id => !string.IsNullOrWhiteSpace(id))
-            .Distinct(StringComparer.Ordinal)
-            .ToArray();
+        var orderedIds = orderedBackendItemIds.Where(id => !string.IsNullOrWhiteSpace(id));
+        OrderedBackendItemIds = (preserveDuplicateItems ? orderedIds : orderedIds.Distinct(StringComparer.Ordinal)).ToArray();
         IdempotencyKey = string.IsNullOrWhiteSpace(idempotencyKey)
             ? throw new ArgumentException("An idempotency key is required.", nameof(idempotencyKey))
             : idempotencyKey;

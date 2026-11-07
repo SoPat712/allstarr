@@ -10,6 +10,7 @@ using allstarr.Services.Admin;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Moq;
 
 namespace allstarr.Tests;
 
@@ -42,7 +43,7 @@ public sealed partial class PlaylistOrchestrationIntegrationTests
     }
 
     [Fact]
-    public async Task PlaylistImportRestoresTheRetainedLinkAndUsesANewMaterializationJob()
+    public async Task PlaylistImportRestoresTheRetainedLinkAndSavedSettings()
     {
         await MarkCreatedDestinationAsync();
         await using (var setup = await _factory.CreateDbContextAsync())
@@ -66,7 +67,7 @@ public sealed partial class PlaylistOrchestrationIntegrationTests
         Assert.Equal(_link, restored.GetProperty("id").GetGuid());
         Assert.True(restored.GetProperty("enabled").GetBoolean());
         Assert.Equal("keepAll", restored.GetProperty("trackRetention").GetString());
-        Assert.NotEqual(Guid.Empty, restored.GetProperty("initialJobId").GetGuid());
+        Assert.Equal("p2", restored.GetProperty("targetPlaylistId").GetString());
         await using var verify = await _factory.CreateDbContextAsync();
         Assert.Single(await verify.PlaylistLinks.ToArrayAsync());
         Assert.Single(await verify.TrackMatches.ToArrayAsync());
@@ -78,6 +79,12 @@ public sealed partial class PlaylistOrchestrationIntegrationTests
     public async Task PlaylistAppActionsDenyCrossUserRequestsAndResumeRequiresReadd()
     {
         await MarkCreatedDestinationAsync();
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            (await db.PlaylistLinks.SingleAsync()).TargetPlaylistId = "target-created";
+            await db.SaveChangesAsync();
+        }
+        _target.DeleteStatus = BackendPlaylistTargetStatus.Success;
         var controller = AppController(_service);
         Assert.IsType<UnauthorizedObjectResult>(await WithoutSession());
         foreach (var administrator in new[] { false, true })
@@ -115,7 +122,8 @@ public sealed partial class PlaylistOrchestrationIntegrationTests
     private PlaylistLinksController AppController(PlaylistOrchestrationService service, IPlaylistPersistenceService? persistence = null)
     {
         var clock = new Clock(_now);
-        var controller = new PlaylistLinksController(_factory, persistence!, null!, _trackMatches, service,
+        var controller = new PlaylistLinksController(_factory, persistence!,
+            new(_factory, new TestBackendLibraryAccess(_factory, "music")), _trackMatches, service,
             null!, null!, null!, null!, null!, null!, null!, clock, null!, new(_factory, clock), null!, null!, null!, null!);
         controller.ControllerContext = new() { HttpContext = new DefaultHttpContext() };
         controller.HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] = new AdminAuthSession
@@ -190,7 +198,7 @@ public sealed partial class PlaylistOrchestrationIntegrationTests
         Assert.False(removed.Enabled);
         Assert.Null(removed.TargetPlaylistId);
         Assert.Empty(backend.Playlists);
-        Assert.Single(backend.Requests);
+        Assert.Contains(backend.Requests, item => item.Path == "Items/target-created");
         await using var verify = await _factory.CreateDbContextAsync();
         Assert.Equal(2, await verify.PlaylistLinks.CountAsync());
         Assert.True((await verify.PlaylistLinks.SingleAsync(item => item.Id == otherLink)).Enabled);
@@ -215,37 +223,78 @@ public sealed partial class PlaylistOrchestrationIntegrationTests
     }
 
     [Fact]
-    public async Task PlaylistReaddUsesKeptLinkAndPublishedMatchesWithoutReadingSource()
+    public async Task PlaylistReaddRestoresSnapshotOrderManualSongsMetadataAndSyncOwnership()
     {
         await MarkCreatedDestinationAsync();
         _source.Snapshot = Snapshot("restore-source", Entry(0, "one", "source-1", "One"));
         await _service.RunAsync(Context(), new(_link, 9102));
-        var backend = new BackendPlaylistTargetTests.JellyfinFakeBackend("target-created", "Provider Mix", ["local-1"]);
+        var backend = new BackendPlaylistTargetTests.JellyfinFakeBackend("target-created", "My name", ["manual", "local-1", "manual", "local-2"])
+        { ExistingArtwork = [1, 2, 3], UseArtworkHashTag = true, EmptyNewPlaylistArtwork = true };
+        backend.Playlists["target-created"].Description = "My description";
         var service = JellyfinService(backend);
         long revision;
-        await using (var db = await _factory.CreateDbContextAsync()) revision = (await db.PlaylistLinks.SingleAsync()).Revision;
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var link = await db.PlaylistLinks.SingleAsync();
+            var schedule = new JobScheduleRecord
+            {
+                Id = Guid.CreateVersion7(),
+                OwnerUserId = _user,
+                JobType = DurableScheduleEngine.PlaylistSyncJobType,
+                CronExpression = "0 4 * * *",
+                TimeZoneId = "UTC",
+                Enabled = true,
+                NextRunAt = _now.AddDays(1),
+                CreatedAt = _now,
+                UpdatedAt = _now
+            };
+            db.JobSchedules.Add(schedule);
+            link.ScheduleId = schedule.Id;
+            revision = link.Revision;
+            await db.SaveChangesAsync();
+        }
+        var preview = await service.PreviewAppRemovalAsync(Context(), _link);
+        Assert.Equal(["manual", "manual", "local-2"], preview.UserAddedSongs.Select(item => item.BackendItemId));
+        var sourceCalls = _source.CollectCalls;
         var removed = await service.RemoveFromAppsAsync(Context(), _link, revision);
+        await using var captured = await _factory.CreateDbContextAsync();
+        var snapshot = await captured.ExternalMetadataSnapshots.SingleAsync(item => item.ResourceKind == "playlist-app-removal" && item.ProviderRevision == "removed");
+        var payloadBefore = snapshot.PayloadJson;
+        var saved = JsonSerializer.Deserialize<PlaylistAppSnapshot>(payloadBefore)!;
+        Assert.Equal(["manual", "local-1", "manual", "local-2"], saved.Playlist.Members.Select(item => item.BackendItemId));
+        Assert.Equal([false, true, false, false], saved.Entries.Select(item => item.AddedBySync));
+        Assert.Equal("My name", saved.Playlist.Name);
+        Assert.Equal("My description", saved.Playlist.Description);
+        Assert.NotNull(saved.Playlist.ArtworkReference);
         var restored = await service.RestoreToAppsAsync(Context(), _link, removed.Revision);
         Assert.True(restored.Link.Enabled);
         Assert.Equal(_link, restored.Link.Id);
-        Assert.NotNull(restored.JobId);
+        Assert.Null(restored.JobId);
+        Assert.Equal(0, restored.SkippedItemCount);
+        Assert.Equal("p2", restored.Link.TargetPlaylistId);
         await using var check = await _factory.CreateDbContextAsync();
-        var job = await check.Jobs.SingleAsync(item => item.Id == restored.JobId);
-        var payload = JsonSerializer.Deserialize<PlaylistMaterializationJobPayload>(job.PayloadJson)!;
-        Assert.Equal((await check.PlaylistSourceSnapshots.SingleAsync()).Id, payload.SourceSnapshotId);
         var matchIds = await check.TrackMatches.Select(item => item.Id).ToArrayAsync();
-        var sourceCalls = _source.CollectCalls;
-        await service.RunAsync(Context(), new(_link, payload.Generation, payload.SourceSnapshotId));
         Assert.Equal(sourceCalls, _source.CollectCalls);
         Assert.Equal(matchIds, await check.TrackMatches.Select(item => item.Id).ToArrayAsync());
         Assert.Single(await check.PlaylistLinks.ToArrayAsync());
         Assert.Single(await check.AuditEvents.Where(item => item.Action == "added-to-apps").ToArrayAsync());
-        Assert.Equal(["local-1"], backend.Playlists.Values.Single().Members);
+        Assert.Equal(["manual", "local-1", "manual", "local-2"], backend.Playlists.Values.Single().Members);
+        Assert.Equal("My name", backend.Playlists.Values.Single().Name);
+        Assert.Equal("My description", backend.Playlists.Values.Single().Description);
+        Assert.Equal(new byte[] { 1, 2, 3 }, backend.ExistingArtwork);
+        Assert.True((await check.PlaylistTargetMemberships.SingleAsync()).Active);
+        Assert.True((await check.JobSchedules.SingleAsync()).Enabled);
+        Assert.NotNull((await check.JobSchedules.SingleAsync()).NextRunAt);
+        Assert.Equal(payloadBefore, (await check.ExternalMetadataSnapshots.AsNoTracking().SingleAsync(item => item.Id == snapshot.Id)).PayloadJson);
         var current = await check.PlaylistLinks.AsNoTracking().SingleAsync();
         var removedAgain = await service.RemoveFromAppsAsync(Context(), _link, current.Revision);
         await service.RestoreToAppsAsync(Context(), _link, removedAgain.Revision);
-        Assert.Equal(4, await check.ExternalMetadataSnapshots.CountAsync(item => item.ResourceKind == "playlist-app-removal"));
+        Assert.Equal(6, await check.ExternalMetadataSnapshots.CountAsync(item => item.ResourceKind == "playlist-app-removal"));
         Assert.Equal(matchIds, await check.TrackMatches.Select(item => item.Id).ToArrayAsync());
+        Assert.True((await check.PlaylistLinks.AsNoTracking().SingleAsync()).Enabled);
+        var resumed = await service.RunAsync(Context(), new(_link, 9107));
+        Assert.True(resumed.State is PlaylistSyncState.Succeeded or PlaylistSyncState.PartiallySucceeded);
+        Assert.Equal(sourceCalls + 1, _source.CollectCalls);
     }
 
     [Theory]
@@ -264,21 +313,42 @@ public sealed partial class PlaylistOrchestrationIntegrationTests
         Assert.Empty(backend.Requests);
     }
 
-    [Fact]
-    public async Task PlaylistRemovalRefusesNativeDestinationsAndStaleRevisions()
+    [Theory]
+    [InlineData(PlaylistDestinationMode.New)]
+    [InlineData(PlaylistDestinationMode.Existing)]
+    public async Task PlaylistRemovalAllowsOwnedSyncedDestinationsAndListAgrees(PlaylistDestinationMode destinationMode)
     {
         var backend = new BackendPlaylistTargetTests.JellyfinFakeBackend("native", "Native playlist", []);
         await using (var db = await _factory.CreateDbContextAsync())
         {
             var link = await db.PlaylistLinks.SingleAsync();
             link.TargetPlaylistId = "native";
-            link.DestinationMode = PlaylistDestinationMode.Existing;
+            link.DestinationMode = destinationMode;
+            link.ProviderAccountId = null;
             await db.SaveChangesAsync();
         }
-        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            JellyfinService(backend).RemoveFromAppsAsync(Context(), _link, 0));
-        Assert.Equal("This playlist was not created by Allstarr, so it cannot be removed from your apps here.", error.Message);
-        Assert.Empty(backend.Requests);
+        Assert.True(await ListedCanRemoveAsync());
+        var removed = await JellyfinService(backend).RemoveFromAppsAsync(Context(), _link, 0);
+        Assert.False(removed.Enabled);
+        Assert.Null(removed.TargetPlaylistId);
+        Assert.False(await ListedCanRemoveAsync());
+    }
+
+    [Fact]
+    public async Task PlaylistRemovalRequiresAnOwnedSourceLink()
+    {
+        var controller = AppController(_service);
+        var nativeId = Guid.CreateVersion7();
+        Assert.IsType<NotFoundResult>(await controller.PreviewAppRemoval(nativeId, default));
+        Assert.IsType<NotFoundResult>(await controller.RemoveFromApps(nativeId, new(0), default));
+        Assert.Equal(0, _target.TotalCalls);
+        Assert.Equal(0, _target.DeleteCalls);
+    }
+
+    [Fact]
+    public async Task PlaylistRemovalRejectsStaleRevisions()
+    {
+        var backend = new BackendPlaylistTargetTests.JellyfinFakeBackend("native", "Native playlist", []);
         await using var setup = await _factory.CreateDbContextAsync();
         var owned = await setup.PlaylistLinks.SingleAsync();
         owned.DestinationMode = PlaylistDestinationMode.New;
@@ -287,6 +357,117 @@ public sealed partial class PlaylistOrchestrationIntegrationTests
         await Assert.ThrowsAsync<DbUpdateConcurrencyException>(() =>
             JellyfinService(backend).RemoveFromAppsAsync(Context(), _link, 0));
         Assert.Empty(backend.Requests);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task PlaylistRemovalRefusesSharedDestinationsAcrossOwnersAndListAgrees(bool otherOwner)
+    {
+        await using var db = await _factory.CreateDbContextAsync();
+        var link = await db.PlaylistLinks.SingleAsync();
+        link.ProviderAccountId = null;
+        link.TargetPlaylistId = "shared";
+        var copy = Link();
+        copy.Id = Guid.CreateVersion7();
+        copy.SourcePlaylistIdHash = new string('c', 64);
+        copy.TargetPlaylistId = "shared";
+        if (otherOwner)
+        {
+            var user = new UserRecord
+            {
+                Id = Guid.CreateVersion7(),
+                BackendType = "jellyfin",
+                BackendInstanceId = "backend",
+                BackendPrincipalId = "other",
+                DisplayName = "Other",
+                Enabled = true,
+                CreatedAt = _now,
+                UpdatedAt = _now,
+                LastSeenAt = _now
+            };
+            db.Users.Add(user);
+            copy.OwnerUserId = user.Id;
+            copy.ProviderAccountId = null;
+        }
+        db.PlaylistLinks.Add(copy);
+        await db.SaveChangesAsync();
+        Assert.False(await ListedCanRemoveAsync());
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => _service.RemoveFromAppsAsync(Context(), _link, 0));
+        Assert.Contains("Another listener", error.Message);
+        Assert.Equal(0, _target.TotalCalls);
+        Assert.Equal(0, _target.DeleteCalls);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task PlaylistRemovalRefusesUnsyncedImportsAndUnassignedDestinations(bool oneTime)
+    {
+        await using var db = await _factory.CreateDbContextAsync();
+        var link = await db.PlaylistLinks.SingleAsync();
+        link.ProviderAccountId = null;
+        link.ImportMode = oneTime ? PlaylistImportMode.OneTime : PlaylistImportMode.Linked;
+        link.TargetPlaylistId = oneTime ? "native" : null;
+        await db.SaveChangesAsync();
+        Assert.False(await ListedCanRemoveAsync());
+        await Assert.ThrowsAsync<InvalidOperationException>(() => _service.RemoveFromAppsAsync(Context(), _link, 0));
+        Assert.Equal(0, _target.TotalCalls);
+        Assert.Equal(0, _target.DeleteCalls);
+    }
+
+    [Fact]
+    public async Task PlaylistUndoSkipsMissingBackendItemsAndReportsTheirCount()
+    {
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            (await db.PlaylistLinks.SingleAsync()).TargetPlaylistId = "old";
+            await db.SaveChangesAsync();
+        }
+        var backend = new BackendPlaylistTargetTests.JellyfinFakeBackend("old", "My playlist", ["local-2", "missing", "local-1"]);
+        var service = JellyfinService(backend);
+        var removed = await service.RemoveFromAppsAsync(Context(), _link, 0);
+        backend.MissingItemIds.Add("missing");
+        var result = Assert.IsType<OkObjectResult>(await AppController(service).AddToApps(_link, new(removed.Revision), default));
+        var response = JsonSerializer.SerializeToElement(result.Value);
+        Assert.Equal(1, response.GetProperty("skippedItemCount").GetInt32());
+        Assert.Equal(["local-2", "local-1"], backend.Playlists.Values.Single().Members);
+        Assert.True(response.GetProperty("enabled").GetBoolean());
+    }
+
+    private async Task<bool> ListedCanRemoveAsync()
+    {
+        var persistence = new Mock<IPlaylistPersistenceService>();
+        await using var db = await _factory.CreateDbContextAsync();
+        persistence.Setup(item => item.ListLinksAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(await db.PlaylistLinks.Where(item => item.Id == _link).ToArrayAsync());
+        var response = Assert.IsType<OkObjectResult>(await AppController(_service, persistence.Object).List(default));
+        return JsonSerializer.SerializeToElement(response.Value).GetProperty("playlistLinks")[0].GetProperty("canRemoveFromApps").GetBoolean();
+    }
+
+    [Fact]
+    public async Task PlaylistRemovalCommitsItsSnapshotBeforeDeletingAndCanRetryAfterAnInterruptedDelete()
+    {
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            (await db.PlaylistLinks.SingleAsync()).TargetPlaylistId = "existing";
+            await db.SaveChangesAsync();
+        }
+        _target.SeedMetadata("existing", "My playlist", "Description", ["local-2", "manual", "local-1"]);
+        _target.BeforeDelete = async () =>
+        {
+            await using var verify = await _factory.CreateDbContextAsync();
+            var saved = await verify.ExternalMetadataSnapshots.SingleAsync(item => item.ResourceKind == "playlist-app-removal");
+            var snapshot = JsonSerializer.Deserialize<PlaylistAppSnapshot>(saved.PayloadJson)!;
+            Assert.Equal(["local-2", "manual", "local-1"], snapshot.Playlist.Members.Select(item => item.BackendItemId));
+        };
+        await Assert.ThrowsAsync<PlaylistAppRemovalException>(() => _service.RemoveFromAppsAsync(Context(), _link, 0));
+        _target.BeforeDelete = null;
+        _target.ReadStatus = BackendPlaylistTargetStatus.NotFound;
+        _target.DeleteStatus = BackendPlaylistTargetStatus.NotFound;
+        var removed = await _service.RemoveFromAppsAsync(Context(), _link, 0);
+        Assert.False(removed.Enabled);
+        Assert.Null(removed.TargetPlaylistId);
     }
 
     [Fact]

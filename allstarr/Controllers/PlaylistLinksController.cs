@@ -539,6 +539,8 @@ public sealed partial class PlaylistLinksController(
                 .Where(item => item.OwnerUserId == session.AllstarrUserId || session.IsAdministrator)
                 .Select(item => item.ExternalIdHash).ToArrayAsync(cancellationToken);
             var removedKeys = removed.ToHashSet(StringComparer.Ordinal);
+            var sharedIds = (await PlaylistAppRemoval.SharedDestinations(db).Select(item => item.Id)
+                .ToArrayAsync(cancellationToken)).ToHashSet();
             var projectionsByLink = await projections.ReadByLinkIdsAsync(
                 session.IsAdministrator ? null : session.AllstarrUserId,
                 links.Select(item => item.Id).ToArray(),
@@ -547,7 +549,8 @@ public sealed partial class PlaylistLinksController(
             {
                 playlistLinks = links.Select(link =>
                     ToListDto(link, projectionsByLink.GetValueOrDefault(link.Id),
-                        !removedKeys.Contains(PlaylistAppRemoval.Key(link.Id)), link.OwnerUserId == session.AllstarrUserId))
+                        !removedKeys.Contains(PlaylistAppRemoval.Key(link.Id)),
+                        link.OwnerUserId == session.AllstarrUserId && !sharedIds.Contains(link.Id)))
             });
         });
     }
@@ -695,7 +698,7 @@ public sealed partial class PlaylistLinksController(
                 if (await PlaylistAppRemoval.FindAsync(db, record, cancellationToken) != null)
                 {
                     var restored = await orchestration.RestoreToAppsAsync(context, record.Id, record.Revision, cancellationToken);
-                    return Ok(ToDto(restored.Link, restored.JobId));
+                    return Ok(ToDto(restored.Link, restored.JobId, skippedItemCount: restored.SkippedItemCount, restoredToApps: true));
                 }
             }
             var generation = Math.Max(1, record.CreatedAt.UtcTicks);
@@ -1405,7 +1408,7 @@ public sealed partial class PlaylistLinksController(
         ? $"/api/admin/playlist-sources/{accountId}/playlists/{Uri.EscapeDataString(playlistId)}/artwork"
         : $"/api/admin/playlist-sources/public/{Uri.EscapeDataString(providerId)}/playlists/{Uri.EscapeDataString(playlistId)}/artwork";
 
-    private static object ToDto(PlaylistLinkRecord value, Guid? initialJobId = null, int? retentionQueued = null) => new { id = value.Id, enabled = value.Enabled, providerAccountId = value.ProviderAccountId, sourceProviderId = value.SourceProviderId, sourcePlaylistId = value.SourcePlaylistId, followNewest = value.SourceProviderId == "listenbrainz" && value.SourcePlaylistId.StartsWith("createdfor:", StringComparison.Ordinal), targetProtocol = value.TargetProtocol, targetBackendInstanceId = value.TargetBackendInstanceId, mode = value.Mode.ToString().ToLowerInvariant(), projectionMode = value.ProjectionMode.ToString().ToLowerInvariant(), materializationMode = value.MaterializationMode.ToString().ToLowerInvariant(), importMode = LowerCamel(value.ImportMode.ToString()), trackRetention = LowerCamel(value.TrackRetention.ToString()), scheduleId = value.ScheduleId, targetPlaylistId = value.TargetPlaylistId, targetCredentialReferenceId = value.TargetCredentialReferenceId, mirrorStaleEntries = value.MirrorStaleEntries, preserveManualEntries = value.PreserveManualEntries, syncName = value.SyncName, syncDescription = value.SyncDescription, syncArtwork = value.SyncArtwork, ruleVersion = value.RuleVersion, policyVersion = value.PolicyVersion, revision = value.Revision, virtualPlaylistId = PlaylistVirtualizationService.CreateProtocolId(value.Id), initialJobId, retentionQueued };
+    private static object ToDto(PlaylistLinkRecord value, Guid? initialJobId = null, int? retentionQueued = null, int skippedItemCount = 0, bool restoredToApps = false) => new { id = value.Id, enabled = value.Enabled, providerAccountId = value.ProviderAccountId, sourceProviderId = value.SourceProviderId, sourcePlaylistId = value.SourcePlaylistId, followNewest = value.SourceProviderId == "listenbrainz" && value.SourcePlaylistId.StartsWith("createdfor:", StringComparison.Ordinal), targetProtocol = value.TargetProtocol, targetBackendInstanceId = value.TargetBackendInstanceId, mode = value.Mode.ToString().ToLowerInvariant(), projectionMode = value.ProjectionMode.ToString().ToLowerInvariant(), materializationMode = value.MaterializationMode.ToString().ToLowerInvariant(), importMode = LowerCamel(value.ImportMode.ToString()), trackRetention = LowerCamel(value.TrackRetention.ToString()), scheduleId = value.ScheduleId, targetPlaylistId = value.TargetPlaylistId, targetCredentialReferenceId = value.TargetCredentialReferenceId, mirrorStaleEntries = value.MirrorStaleEntries, preserveManualEntries = value.PreserveManualEntries, syncName = value.SyncName, syncDescription = value.SyncDescription, syncArtwork = value.SyncArtwork, ruleVersion = value.RuleVersion, policyVersion = value.PolicyVersion, revision = value.Revision, virtualPlaylistId = PlaylistVirtualizationService.CreateProtocolId(value.Id), initialJobId, retentionQueued, skippedItemCount, restoredToApps };
     private static string MixArtworkUrl(Guid id, int generation) => $"/api/admin/mixes/{id}/cover?v={generation}";
 
     private object ToListDto(PlaylistLinkRecord value, DurablePlaylistProjection? projection, bool inApps, bool ownCopy) => new

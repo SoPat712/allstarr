@@ -136,6 +136,26 @@ public sealed class JellyfinPlaylistTarget : IBackendPlaylistTarget
         return new(BackendPlaylistTargetStatus.Success, null, response.Status);
     }
 
+    public async Task<BackendPlaylistTargetResult<IReadOnlyList<BackendPlaylistMember>>> ReadItemsAsync(
+        BackendPlaylistTargetContext context, IReadOnlyList<string> backendItemIds, CancellationToken cancellationToken)
+    {
+        var members = new List<BackendPlaylistMember>();
+        foreach (var batch in backendItemIds.Distinct(StringComparer.Ordinal).Chunk(100))
+        {
+            var response = await SendAsync(context, HttpMethod.Get,
+                $"Users/{Escape(context.VerifiedPrincipalId)}/Items?Ids={Csv(batch)}&Fields=RunTimeTicks&Limit=100",
+                null, cancellationToken);
+            if (!response.IsSuccess) return ConvertFailure<IReadOnlyList<BackendPlaylistMember>>(response);
+            using var document = JsonDocument.Parse(response.Body!);
+            members.AddRange(document.RootElement.GetPropertyOrDefault("Items").EnumerateArrayOrEmpty()
+                .Select(item => new BackendPlaylistMember(
+                    item.StringOrNull("Id") ?? throw new JsonException("Jellyfin item has no Id."),
+                    durationMilliseconds: MillisecondsFromTicks(item.Int64OrNull("RunTimeTicks")),
+                    nativeEntryJson: item.GetRawText())));
+        }
+        return new(BackendPlaylistTargetStatus.Success, members);
+    }
+
     public async Task<BackendPlaylistTargetResult<BackendPlaylistSnapshot>> ReadAsync(
         BackendPlaylistTargetContext context,
         string backendPlaylistId,
@@ -143,29 +163,33 @@ public sealed class JellyfinPlaylistTarget : IBackendPlaylistTarget
     {
         var metadataResponse = await SendAsync(context, HttpMethod.Get, $"Users/{Escape(context.VerifiedPrincipalId)}/Items/{Escape(backendPlaylistId)}", null, cancellationToken);
         if (!metadataResponse.IsSuccess) return ConvertFailure<BackendPlaylistSnapshot>(metadataResponse);
-        var membersResponse = await SendAsync(context, HttpMethod.Get,
-            $"Playlists/{Escape(backendPlaylistId)}/Items?UserId={Escape(context.VerifiedPrincipalId)}&Fields=RunTimeTicks",
-            null, cancellationToken);
-        if (!membersResponse.IsSuccess) return ConvertFailure<BackendPlaylistSnapshot>(membersResponse);
-
         using var metadata = JsonDocument.Parse(metadataResponse.Body!);
-        using var members = JsonDocument.Parse(membersResponse.Body!);
         var root = metadata.RootElement;
-        var memberList = members.RootElement.GetPropertyOrDefault("Items").EnumerateArrayOrEmpty()
-            .Select(item => new BackendPlaylistMember(
+        var memberList = new List<BackendPlaylistMember>();
+        int? reportedCount = null;
+        while (true)
+        {
+            var membersResponse = await SendAsync(context, HttpMethod.Get,
+                $"Playlists/{Escape(backendPlaylistId)}/Items?UserId={Escape(context.VerifiedPrincipalId)}&Fields=RunTimeTicks&StartIndex={memberList.Count}&Limit=200",
+                null, cancellationToken);
+            if (!membersResponse.IsSuccess) return ConvertFailure<BackendPlaylistSnapshot>(membersResponse);
+            using var members = JsonDocument.Parse(membersResponse.Body!);
+            var page = members.RootElement.GetPropertyOrDefault("Items").EnumerateArrayOrEmpty().ToArray();
+            reportedCount = members.RootElement.Int64OrNull("TotalRecordCount") is { } count && count is >= 0 and <= int.MaxValue
+                ? (int)count : null;
+            memberList.AddRange(page.Select(item => new BackendPlaylistMember(
                 item.StringOrNull("Id") ?? throw new JsonException("Jellyfin playlist member has no Id."),
                 item.StringOrNull("PlaylistItemId"),
-                MillisecondsFromTicks(item.Int64OrNull("RunTimeTicks"))))
-            .ToArray();
+                MillisecondsFromTicks(item.Int64OrNull("RunTimeTicks")), item.GetRawText())));
+            if (reportedCount.HasValue ? memberList.Count >= reportedCount : page.Length < 200) break;
+            if (page.Length == 0)
+                return new(BackendPlaylistTargetStatus.BackendFailure, ErrorCode: "incomplete-playlist-response");
+        }
         var name = root.StringOrNull("Name") ?? backendPlaylistId;
         var description = root.StringOrNull("Overview");
         var artwork = root.GetPropertyOrDefault("ImageTags").StringOrNull("Primary");
-        var reportedCount = members.RootElement.Int64OrNull("TotalRecordCount") is { } count &&
-                            count is >= 0 and <= int.MaxValue
-            ? (int)count
-            : memberList.Length;
         var duration = MillisecondsFromTicks(root.Int64OrNull("RunTimeTicks")) ??
-                       (memberList.Length == 0
+                       (memberList.Count == 0
                            ? 0
                            : memberList.All(item => item.DurationMilliseconds.HasValue)
                                ? memberList.Sum(item => item.DurationMilliseconds!.Value)
@@ -173,8 +197,8 @@ public sealed class JellyfinPlaylistTarget : IBackendPlaylistTarget
         var fingerprint = BackendPlaylistSnapshot.ComputeFingerprint(backendPlaylistId, name, memberList, description, artwork);
         return new(BackendPlaylistTargetStatus.Success,
             new(backendPlaylistId, name, memberList, fingerprint, null, description, artwork,
-                reportedCount, duration),
-            membersResponse.Status);
+                reportedCount ?? memberList.Count, duration),
+            metadataResponse.Status);
     }
 
     public async Task<bool> CanWriteAsync(BackendPlaylistTargetContext context, string backendPlaylistId,

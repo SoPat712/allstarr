@@ -59,6 +59,7 @@ public sealed class MigrationCollection
     public Guid? LinkId { get; set; }
     public Guid? SnapshotId { get; set; }
     public Guid? ReceiptRunId { get; set; }
+    public bool RestoreSavedPlaylist { get; set; }
     public DateTimeOffset? CreateStartedAt { get; set; }
     public string[]? DestinationIdsBefore { get; set; }
     public string? Error { get; set; }
@@ -496,8 +497,18 @@ public sealed partial class CollectionMigrationService(IDbContextFactory<Allstar
         {
             var link = await playlists.GetLinkAsync(execution, collection.LinkId!.Value, token);
             if (await PlaylistAppRemoval.FindAsync(db, link, token) != null)
+            {
+                collection.RestoreSavedPlaylist = true;
+                row.PayloadJson = JsonSerializer.Serialize(collection);
+                await SaveAsync(db, record, run, token);
                 link = (await orchestration.RestoreToAppsAsync(execution, link.Id, link.Revision, token,
                     enqueueMaterialization: false)).Link;
+            }
+            if (collection.RestoreSavedPlaylist && link.TargetPlaylistId != null)
+            {
+                collection.State = "applied";
+                return;
+            }
             if (run.MakePlaylists && link.TargetPlaylistId == null)
             {
                 var target = targets.Resolve(run.Protocol);

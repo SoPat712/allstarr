@@ -508,6 +508,42 @@ public sealed partial class BackendPlaylistTargetTests
     }
 
     [Fact]
+    public async Task JellyfinPlaylistSnapshotReadsEveryPageAndPreservesRepeatedSongs()
+    {
+        var ids = Enumerable.Range(0, 430).Select(index => $"song-{index % 123}").ToArray();
+        var backend = new JellyfinFakeBackend("p1", "My playlist", ids);
+        var target = new JellyfinPlaylistTarget(new HttpClient(backend), new Uri("https://jellyfin.test/"));
+        var result = await target.ReadAsync(Context(), "p1", default);
+        Assert.True(result.IsSuccess);
+        Assert.Equal(ids, result.Value!.Members.Select(item => item.BackendItemId));
+        Assert.Equal(3, backend.Requests.Count(item => item.Path == "Playlists/p1/Items"));
+    }
+
+    [Fact]
+    public async Task JellyfinPlaylistItemChecksSkipMissingSongsAcrossBatches()
+    {
+        var ids = Enumerable.Range(0, 205).Select(index => $"song-{index}").ToArray();
+        var backend = new JellyfinFakeBackend("p1", "Mix", []);
+        backend.MissingItemIds.Add("song-101");
+        var target = new JellyfinPlaylistTarget(new HttpClient(backend), new Uri("https://jellyfin.test/"));
+        var result = await target.ReadItemsAsync(Context(), ids, default);
+        Assert.True(result.IsSuccess);
+        Assert.Equal(ids.Where(id => id != "song-101"), result.Value!.Select(item => item.BackendItemId));
+        Assert.Equal(3, backend.Requests.Count);
+    }
+
+    [Fact]
+    public async Task JellyfinPlaylistItemChecksKeepEveryExistingEntryKind()
+    {
+        var backend = new JellyfinFakeBackend("p1", "Mix", []);
+        backend.ItemTypes["video"] = "MusicVideo";
+        var target = new JellyfinPlaylistTarget(new HttpClient(backend), new Uri("https://jellyfin.test/"));
+        var result = await target.ReadItemsAsync(Context(), ["song", "video"], default);
+        Assert.True(result.IsSuccess);
+        Assert.Equal(["song", "video"], result.Value!.Select(item => item.BackendItemId));
+    }
+
+    [Fact]
     public async Task Jellyfin_playlist_list_uses_standard_primary_image_tag()
     {
         var backend = new JellyfinFakeBackend("p1", "Mix", []) { ListArtwork = true };
@@ -861,6 +897,8 @@ public sealed partial class BackendPlaylistTargetTests
 
         private readonly string _initialId;
         public bool EmptyNewPlaylistArtwork { get; set; }
+        public HashSet<string> MissingItemIds { get; } = [];
+        public Dictionary<string, string> ItemTypes { get; } = [];
 
         public Dictionary<string, PlaylistState> Playlists { get; } = [];
         public ConcurrentQueue<RequestRecord> Requests { get; } = new();
@@ -906,6 +944,13 @@ public sealed partial class BackendPlaylistTargetTests
                     var id = parts[3];
                     return Json(new { Id = id, Name = Playlists[id].Name, Overview = Playlists[id].Description, ImageTags = new { Primary = UseArtworkHashTag ? ArtworkTag : Playlists[id].Artwork ? "art" : null } });
                 }
+                if (query.ContainsKey("Ids"))
+                    return Json(new
+                    {
+                        Items = SplitCsv(query, "Ids").Where(id => !MissingItemIds.Contains(id) &&
+                                (!query.TryGetValue("IncludeItemTypes", out var types) || types.Contains(ItemTypes.GetValueOrDefault(id, "Audio"))))
+                            .Select(id => new { Id = id, Name = $"Song {id}", Type = ItemTypes.GetValueOrDefault(id, "Audio") }).ToArray()
+                    });
                 return Json(new
                 {
                     Items = Playlists.Select(pair => new
@@ -920,11 +965,15 @@ public sealed partial class BackendPlaylistTargetTests
             if (request.Method == HttpMethod.Get && path.StartsWith("Playlists/", StringComparison.Ordinal) && path.EndsWith("/Items", StringComparison.Ordinal))
             {
                 var id = path.Split('/')[1];
+                var playlistMembers = Playlists[id].Members.Skip(query.TryGetValue("StartIndex", out var start) ? int.Parse(start.Single()) : 0)
+                    .Take(query.TryGetValue("Limit", out var limit) ? int.Parse(limit.Single()) : int.MaxValue);
                 return Json(new
                 {
-                    Items = Playlists[id].Members.Select(item => new
+                    Items = playlistMembers.Select(item => new
                     {
                         Id = item,
+                        Name = $"Song {item}",
+                        Artists = new[] { "Artist" },
                         PlaylistItemId = $"entry-{item}",
                         RunTimeTicks = 180_000L * TimeSpan.TicksPerMillisecond
                     }).ToArray(),

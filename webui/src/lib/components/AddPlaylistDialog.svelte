@@ -24,6 +24,7 @@
   import {
     orderPlaylistSources,
     playlistBehaviorSummary,
+    playlistSkippedSongsMessage,
   } from "$lib/playlists";
 
   type ImportMode = "oneTime" | "linked";
@@ -492,6 +493,8 @@
     const selections = chosenPlaylists.length ? [...chosenPlaylists] : [null];
     let completed = 0;
     let schedulesFailed = 0;
+    let skippedItemCount = 0;
+    let restored = 0;
     try {
       for (const choice of selections) {
         const link = await playlistLinks.create({
@@ -514,7 +517,9 @@
           syncDescription: true,
           syncArtwork: true,
         });
-        if (importMode === "linked" && !link.scheduleId) {
+        skippedItemCount += link.skippedItemCount ?? 0;
+        if (link.restoredToApps) restored++;
+        if (importMode === "linked" && !link.scheduleId && !link.restoredToApps) {
           const cronExpression = ({
             hourly: "0 * * * *",
             daily: "0 3 * * *",
@@ -539,7 +544,10 @@
         }
       }
       open = false;
-      await onSaved(`${completed > 1 ? `${countLabel(completed, "playlist")} started` : importMode === "oneTime" ? "Playlist import started" : "Playlist linked and initial import started"}. ${completedSummary}${schedulesFailed ? ` ${countLabel(schedulesFailed, "automatic schedule could not", "automatic schedules could not")} be saved. Open the playlist’s sync settings to try again.` : ""}`);
+      const message = restored === completed
+        ? `${completed > 1 ? countLabel(completed, "playlist") : "Playlist"} added back to your apps.`
+        : `${completed > 1 ? `${countLabel(completed, "playlist")} started` : importMode === "oneTime" ? "Playlist import started" : "Playlist linked and initial import started"}. ${completedSummary}`;
+      await onSaved(`${message}${skippedItemCount ? ` ${playlistSkippedSongsMessage(skippedItemCount)}` : ""}${schedulesFailed ? ` ${countLabel(schedulesFailed, "automatic schedule could not", "automatic schedules could not")} be saved. Open the playlist’s sync settings to try again.` : ""}`);
     } catch (cause) {
       error = `${completed ? `${countLabel(completed, "playlist")} started. ` : ""}${cause instanceof Error ? cause.message : "Playlist could not be linked."}`;
     } finally {

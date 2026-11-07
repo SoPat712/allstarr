@@ -38,6 +38,25 @@ export function canRemovePlaylistFromApps(
   return link.importMode === "linked" && link.inApps !== false && link.canRemoveFromApps === true && !isServiceMix(link);
 }
 
+export function playlistRemovalConfirmation(name: string, userAddedCount: number) {
+  return {
+    title: `Remove “${name}” from your apps?`,
+    description: "Jellyfin and your music apps stop showing it. Spotify and your saved matches stay; you can add it back.",
+    userAddedSummary: userAddedCount > 0
+      ? `It also has ${countLabel(userAddedCount, "song")} you added in Jellyfin; Undo brings ${userAddedCount === 1 ? "it" : "them"} back.`
+      : "",
+  };
+}
+
+export function playlistRestoredMessage(name: string, skippedItemCount: number) {
+  const restored = `${name} added back to your apps`;
+  return skippedItemCount > 0 ? `${restored}. ${playlistSkippedSongsMessage(skippedItemCount)}` : restored;
+}
+
+export function playlistSkippedSongsMessage(skippedItemCount: number) {
+  return skippedItemCount > 0 ? `${countLabel(skippedItemCount, "song")} could not be restored.` : "";
+}
+
 export type PlaylistSort = "name" | "tracks" | "coverage" | "updated";
 export type TrackSort = "position" | "title" | "duration" | "route";
 export type TrackRouteFilter = "all" | PlaylistTrack["routeKind"] | "review";

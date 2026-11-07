@@ -17,6 +17,10 @@ public sealed partial class MigrationWizardFlowTests
         var link = await before.PlaylistLinks.SingleAsync();
         var matchIds = await before.TrackMatches.OrderBy(item => item.Id).Select(item => item.Id).ToArrayAsync();
         var scheduleId = link.ScheduleId;
+        var savedMembers = new BackendPlaylistMember[] { new("manual", "manual"), new("local-one", "local-one") };
+        destination = destination! with { Members = savedMembers };
+        target.Setup(item => item.ReadItemsAsync(It.IsAny<BackendPlaylistTargetContext>(), It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new BackendPlaylistTargetResult<IReadOnlyList<BackendPlaylistMember>>(BackendPlaylistTargetStatus.Success, savedMembers));
         target.Setup(item => item.DeleteAsync(It.IsAny<BackendPlaylistTargetContext>(), "destination", It.IsAny<CancellationToken>()))
             .ReturnsAsync(() =>
             {
@@ -38,6 +42,7 @@ public sealed partial class MigrationWizardFlowTests
         Assert.True((await after.JobSchedules.SingleAsync()).Enabled);
         Assert.Equal(matchIds, await after.TrackMatches.OrderBy(item => item.Id).Select(item => item.Id).ToArrayAsync());
         Assert.Equal("destination", restored.TargetPlaylistId);
+        Assert.Equal(["manual", "local-one"], destination!.Members.Select(item => item.BackendItemId));
         Assert.Single(await after.AuditEvents.Where(item => item.Action == "added-to-apps").ToArrayAsync());
     }
 }

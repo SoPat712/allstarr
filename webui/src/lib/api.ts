@@ -775,6 +775,10 @@ export type PlaylistLinkMetrics = {
 
 export type PlaylistCopy = { id: string; name: string; originalPlaylistId: string; originalTargetPlaylistId?: string | null; backendInstanceId: string; createdAt: string };
 
+export type PlaylistRemovalPreview = {
+  userAddedSongs: { backendItemId: string; name: string; artist: string | null }[];
+};
+
 export type PlaylistLink = {
   id: string;
   virtualPlaylistId?: string;
@@ -2516,6 +2520,8 @@ export const releaseInbox = {
 
 export const playlistLinks = {
   list: () => json<{ playlistLinks: PlaylistLink[] }>("/api/admin/playlist-links"),
+  removalPreview: (id: string) =>
+    json<PlaylistRemovalPreview>(`/api/admin/playlist-links/${encodeURIComponent(id)}/in-apps/removal-preview`),
   removeFromApps: (id: string, expectedRevision: number) =>
     json<{ inApps: false; revision: number }>(`/api/admin/playlist-links/${encodeURIComponent(id)}/in-apps`, {
       method: "DELETE",
@@ -2523,7 +2529,7 @@ export const playlistLinks = {
       body: JSON.stringify({ expectedRevision }),
     }),
   addToApps: (id: string, expectedRevision: number) =>
-    json<PlaylistLink>(`/api/admin/playlist-links/${encodeURIComponent(id)}/in-apps`, {
+    json<PlaylistLink & { skippedItemCount: number }>(`/api/admin/playlist-links/${encodeURIComponent(id)}/in-apps`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ expectedRevision }),
@@ -2633,7 +2639,7 @@ export const playlistLinks = {
     syncName: boolean;
     syncDescription: boolean;
     syncArtwork: boolean;
-  }) => json<{ id: string; initialJobId?: string | null; scheduleId?: string | null }>("/api/admin/playlist-links", {
+  }) => json<{ id: string; initialJobId?: string | null; scheduleId?: string | null; skippedItemCount?: number; restoredToApps?: boolean }>("/api/admin/playlist-links", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),

@@ -172,7 +172,7 @@ public sealed class PlaylistPersistenceService : IPlaylistPersistenceService
         if (existing != null)
         {
             if (existing.ImportMode == PlaylistImportMode.Linked && input.ImportMode == PlaylistImportMode.Linked &&
-                existing.DestinationMode == PlaylistDestinationMode.New && input.TargetPlaylistId == null &&
+                input.TargetPlaylistId == null &&
                 await PlaylistAppRemoval.FindAsync(db, existing, cancellationToken) != null)
                 return existing;
             if (existing.DestinationMode != (input.TargetPlaylistId == null ? PlaylistDestinationMode.New : PlaylistDestinationMode.Existing) ||

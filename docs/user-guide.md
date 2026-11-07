@@ -239,6 +239,10 @@ The **Mapped** view preserves source order among tracks visible under your liste
 
 Each source account and playlist has one link per backend; public sources have a separate account-free scope for each owner. Repeating the same import reuses that link; a different import behavior, new/existing destination choice, or selected existing destination is rejected with instructions to edit or remove the current link. Removing a link leaves its backend playlist intact.
 
+**Remove from my apps** is available for your playlists that Allstarr keeps in sync with Jellyfin, including Spotify playlists linked to a Jellyfin playlist you already had. It stops syncing and removes the Jellyfin playlist from your music apps. Spotify, your saved matches, and your settings stay. The confirmation lists any songs you added in Jellyfin. **Undo**, or importing the same playlist again with **Keep in sync**, restores its name, description, artwork, and song order, including those extra songs, then resumes syncing. Songs that are no longer available in Jellyfin are skipped, and the message tells you how many.
+
+This action is unavailable when another playlist link uses the same Jellyfin playlist, even for another listener. Playlists imported once and Jellyfin playlists without a source link do not offer it.
+
 When synchronization removes stale songs, it removes only memberships it added. A song already present before an import stays yours, including a former synchronized song that you manually add back after its removal.
 
 An accepted match is reusable across playlist sync, search, playback, and later rematches. A matched local item is returned as the complete native backend object. A genuinely external item keeps a stable virtual identity and provider label.

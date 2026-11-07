@@ -2891,12 +2891,14 @@ public sealed partial class PlaylistOrchestrationIntegrationTests(ITestOutputHel
     {
         public BackendPlaylistTargetStatus DeleteStatus { get; set; } = BackendPlaylistTargetStatus.Unsupported;
         public int DeleteCalls { get; private set; }
-        public Task<BackendPlaylistTargetResult<bool>> DeleteAsync(BackendPlaylistTargetContext context,
+        public Func<Task>? BeforeDelete { get; set; }
+        public async Task<BackendPlaylistTargetResult<bool>> DeleteAsync(BackendPlaylistTargetContext context,
             string backendPlaylistId, CancellationToken cancellationToken)
         {
+            if (BeforeDelete != null) await BeforeDelete();
             DeleteCalls++;
             if (DeleteStatus == BackendPlaylistTargetStatus.Success) LastSnapshot = null;
-            return Task.FromResult(new BackendPlaylistTargetResult<bool>(DeleteStatus, DeleteStatus == BackendPlaylistTargetStatus.Success));
+            return new BackendPlaylistTargetResult<bool>(DeleteStatus, DeleteStatus == BackendPlaylistTargetStatus.Success);
         }
         public BackendPlaylistFamily Family => BackendPlaylistFamily.Jellyfin;
         public bool CanWriteArtwork { get; set; }
