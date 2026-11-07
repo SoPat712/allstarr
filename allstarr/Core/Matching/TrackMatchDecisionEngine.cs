@@ -162,7 +162,7 @@ public sealed class TrackMatchPolicy
 
 public sealed class TrackMatchDecisionEngine
 {
-    public const string AlgorithmVersion = "library-primary-v29";
+    public const string AlgorithmVersion = "library-primary-v30";
     private const double ScoreEpsilon = 0.0000001;
 
     private readonly TrackMatchPolicy _policy;
@@ -314,7 +314,8 @@ public sealed class TrackMatchDecisionEngine
                 .ThenByDescending(candidate => candidate.Score.Confidence)
                 .ToArray()
             : eligible
-                .OrderBy(candidate => candidate.Priority.Rank)
+                .OrderByDescending(candidate => candidate.Candidate.IsLocal && IsAcceptanceQualified(candidate.Score))
+                .ThenBy(candidate => candidate.Priority.Rank)
                 .ThenByDescending(candidate => candidate.Score.Confidence)
                 .ThenBy(candidate => candidate.Score.LibraryTrackId)
                 .ToArray();

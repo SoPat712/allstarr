@@ -6,6 +6,20 @@ namespace allstarr.Tests;
 public class FuzzyMatcherTests
 {
     [Theory]
+    [InlineData('\u2010')]
+    [InlineData('\u2011')]
+    public void SoundtrackFilmNamesAgreeAcrossTypographicHyphens(char hyphen)
+    {
+        var album = SelfLoveMatchFixture.LibraryAlbum.Replace('\u2010', hyphen);
+        Assert.Equal("Self Love (Metro Boomin & Coi Leray)",
+            FuzzyMatcher.WithoutSoundtrackAlbumAnnotation(SelfLoveMatchFixture.Title, album));
+        Assert.Equal("Self Love (Another Film)",
+            FuzzyMatcher.WithoutSoundtrackAlbumAnnotation("Self Love (Another Film)", album));
+        Assert.Equal("Self Love (Instrumental)",
+            FuzzyMatcher.WithoutSoundtrackAlbumAnnotation("Self Love (Instrumental)", album));
+    }
+
+    [Theory]
     [InlineData("Self Love (Spider-Man: Across the Spider-Verse)", "Self Love")]
     [InlineData("Self Love (Instrumental)", "Self Love (Instrumental)")]
     [InlineData("Self Love (Another Film)", "Self Love (Another Film)")]

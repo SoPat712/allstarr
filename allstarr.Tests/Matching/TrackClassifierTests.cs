@@ -8,6 +8,88 @@ namespace allstarr.Tests;
 
 public sealed class TrackClassifierTests
 {
+    [Fact]
+    public void QualifiedLibraryProjectionDoesNotRequireAStreamingFallback()
+    {
+        var owner = Guid.NewGuid();
+        var source = Identity(Guid.NewGuid(), "spotify", "source");
+        var snapshot = new ExternalMetadataSnapshotRecord
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = owner,
+            BackendInstanceId = "backend",
+            ProviderId = "spotify",
+            SnapshotVersion = 1,
+            PayloadJson = SelfLoveMatchFixture.Payload
+        };
+        var track = SelfLoveMatchFixture.Local(owner, "backend");
+
+        var projection = TrackRouteProjector.Project(snapshot, null, null, source, [track], [source], []);
+
+        Assert.Equal(TrackMatchState.Accepted, projection.ReviewState);
+        Assert.Equal(track.Id, projection.LibraryTrack?.Id);
+        Assert.Empty(projection.Classification.ProviderRoutes);
+    }
+
+    [Fact]
+    public void UnavailableStoredPinCannotBeReplacedByAnotherCanonicalLibraryCopy()
+    {
+        var owner = Guid.NewGuid();
+        var canonical = Guid.NewGuid();
+        var source = Identity(canonical, "spotify", "source");
+        var other = SelfLoveMatchFixture.Local(owner, "backend");
+        other.CanonicalRecordingId = canonical;
+        var decision = Decision(Guid.NewGuid(), TrackMatchState.Pinned, 1, .88);
+        decision.CanonicalRecordingId = canonical;
+
+        var projection = TrackRouteProjector.Project(new ExternalMetadataSnapshotRecord
+        { OwnerUserId = owner, BackendInstanceId = "backend" }, decision, null, source, [other], [source], []);
+
+        Assert.Null(projection.LibraryTrack);
+        Assert.Equal(TrackMatchState.Pinned, decision.State);
+        Assert.NotEqual(other.Id, decision.LibraryTrackId);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("version")]
+    [InlineData("duration")]
+    [InlineData("isrc")]
+    public void SelfLoveCanonicalProjectionRequiresQualifiedLibraryEvidence(string? conflict)
+    {
+        var owner = Guid.NewGuid();
+        var recording = Guid.NewGuid();
+        var source = Identity(recording, "spotify", "source");
+        var apple = Identity(recording, "apple-musickit", "1700522647");
+        var deezer = Identity(recording, "deezer", "fallback");
+        var snapshot = new ExternalMetadataSnapshotRecord
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = owner,
+            BackendInstanceId = "backend",
+            ProviderId = "spotify",
+            SnapshotVersion = 1,
+            PayloadJson = SelfLoveMatchFixture.Payload
+        };
+        var track = SelfLoveMatchFixture.Local(owner, "backend");
+        track.CanonicalRecordingId = recording;
+        if (conflict == "version") track.Title += " (Live)";
+        if (conflict == "duration") track.DurationMilliseconds = 240000;
+        if (conflict == "isrc")
+        {
+            track.Isrc = "USAAA2600002";
+            snapshot.PayloadJson = snapshot.PayloadJson.Replace("\"IsExplicit\":false", "\"IsExplicit\":false,\"Isrc\":\"USAAA2600001\"");
+        }
+
+        var projection = TrackRouteProjector.Project(snapshot, null, null, source, [track], [source, deezer, apple],
+            ["apple-musickit", "deezer"]);
+
+        Assert.Equal(TrackMatchState.Accepted, projection.ReviewState);
+        Assert.Equal(conflict == null ? track.Id : (Guid?)null, projection.LibraryTrack?.Id);
+        Assert.Equal(new[] { "apple-musickit", "deezer" }, projection.Classification.ProviderRoutes.Select(item => item.ProviderId));
+        Assert.Equal(conflict == null ? null : "apple-musickit", projection.PrimaryProviderRoute?.ProviderId);
+    }
+
     [Theory]
     [InlineData(ProviderUseMode.ManualOnly)]
     [InlineData(ProviderUseMode.Off)]

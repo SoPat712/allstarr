@@ -18,7 +18,7 @@ using Moq;
 
 namespace allstarr.Tests;
 
-public sealed class LibraryIndexServiceTests : IAsyncLifetime
+public sealed partial class LibraryIndexServiceTests : IAsyncLifetime
 {
     private SqliteTestDatabase _database = null!;
     private TestDbContextFactory _factory = null!;
@@ -520,7 +520,7 @@ public sealed class LibraryIndexServiceTests : IAsyncLifetime
         Assert.Equal(canonicalId, rescanned.CanonicalRecordingId);
 
         await using var verification = await _factory.CreateDbContextAsync();
-        Assert.Equal(2, await verification.LibraryTracks.CountAsync());
+        Assert.Single(await verification.LibraryTracks.ToListAsync());
         Assert.Empty(await verification.RecordingIdentifiers.ToListAsync());
         Assert.All(await verification.LibraryTracks.ToListAsync(), track => Assert.Equal(1, track.AcceptedDecisionVersion));
         Assert.True((await verification.CanonicalRecordings.FindAsync(canonicalId))!.IsProvisional);

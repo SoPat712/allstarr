@@ -25,6 +25,55 @@ public sealed class TrackMatchRefreshTests(ITestOutputHelper output)
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
+    public async Task SelfLoveAutomaticMatchingUsesTheLibraryItemBeforeApple(bool rematch)
+    {
+        await using var fixture = await Fixture.CreateAsync(SelfLoveMatchFixture.Payload);
+        var local = SelfLoveMatchFixture.Local(fixture.Owner, "backend");
+        await using (var db = fixture.Factory.CreateDbContext())
+        {
+            db.LibraryTracks.Add(local);
+            if (rematch) db.TrackMatches.Add(new TrackMatchRecord
+            {
+                Id = Guid.NewGuid(),
+                OwnerUserId = fixture.Owner,
+                ExternalSnapshotId = fixture.SnapshotId,
+                CanonicalRecordingId = fixture.Recording,
+                State = TrackMatchState.Accepted,
+                Confidence = .9568,
+                Threshold = .88,
+                DecisionVersion = 1,
+                SourceSnapshotVersion = 1,
+                MatcherVersion = "previous",
+                PolicyVersion = "automatic",
+                CandidateResultsJson = JsonSerializer.Serialize(new[]
+                {
+                    new TrackMatchCandidateScore(Guid.NewGuid(), "external", .9568, [], [],
+                        ProviderTrackIds: new Dictionary<string, string> { ["apple-musickit"] = "1700522647" }, IsLocal: false)
+                })
+            });
+            await db.SaveChangesAsync();
+        }
+
+        if (rematch)
+            Assert.True((await fixture.Service.RematchSnapshotAsync(new(fixture.Owner, false), fixture.SnapshotId, "library-rematch")).Succeeded);
+        else
+        {
+            var result = Assert.Single(await fixture.Service.MatchSourceTracksAsync(
+                [new("spotify", "source", SelfLoveMatchFixture.Title, SelfLoveMatchFixture.Artist,
+                    SelfLoveMatchFixture.Album, 189466, null, null, "1")], "library-match"));
+            Assert.Equal(SelfLoveMatchFixture.BackendItemId, result.LocalBackendItemId);
+        }
+        await using var saved = fixture.Factory.CreateDbContext();
+        var decision = await saved.TrackMatches.OrderByDescending(item => item.DecisionVersion).FirstAsync();
+        Assert.Equal(TrackMatchState.Accepted, decision.State);
+        Assert.Equal(local.Id, decision.LibraryTrackId);
+        Assert.Equal("library-primary-v30", decision.MatcherVersion);
+        if (rematch) Assert.Contains(JsonSerializer.Deserialize<TrackMatchCandidateScore[]>(decision.CandidateResultsJson)!, item => !item.IsLocal);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
     [InlineData(null)]
     public async Task CleanOnlyRematchUsesStoredLocalRecordingRating(bool? explicitness)
     {

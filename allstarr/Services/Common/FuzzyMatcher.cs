@@ -232,12 +232,15 @@ public static partial class FuzzyMatcher
 
     internal static string WithoutSoundtrackAlbumAnnotation(string title, string? album)
     {
-        var normalizedAlbum = " " + NormalizeForMatching(album ?? "") + " ";
+        static string NormalizeContext(string value) =>
+            NormalizeForMatching(value.Replace('\u2010', '-').Replace('\u2011', '-'));
+
+        var normalizedAlbum = " " + NormalizeContext(album ?? "") + " ";
         if (!normalizedAlbum.Contains(" soundtrack ", StringComparison.Ordinal)) return title;
         return WhitespaceRegex().Replace(BracketedTitlePartRegex().Replace(title, match =>
         {
             var annotation = match.Groups[1].Value;
-            var normalized = NormalizeForMatching(annotation);
+            var normalized = NormalizeContext(annotation);
             return normalized.Length > 0 && RecordingVersionTags(annotation).Count == 0 &&
                    normalizedAlbum.Contains(" " + normalized + " ", StringComparison.Ordinal) ? " " : match.Value;
         }), " ").Trim();

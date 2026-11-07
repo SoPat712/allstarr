@@ -13,6 +13,84 @@ namespace allstarr.Tests;
 
 public sealed partial class TrackIdentityServiceTests
 {
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task SharedLibraryRecordingLinksUseCurrentAccessInsteadOfScannerOwnership(bool visible, bool focused)
+    {
+        var local = await SeedLinkLibraryTrackAsync("Jung Kook", null, 210000);
+        await using (var db = _factory.CreateDbContext())
+        {
+            (await db.LibraryTracks.SingleAsync()).OwnerUserId = _userB;
+            await db.SaveChangesAsync();
+        }
+        var source = await SeedLinkSourceAsync();
+        var access = new TestBackendLibraryAccess(_factory, "music");
+        access.Permissions[_userA] = new BackendLibraryAccess(true, visible ? ["music"] : []);
+        var service = new TrackIdentityService(_factory, _storageState, _clock, libraryAccess: access);
+
+        var result = await service.LinkLibraryRecordingsAsync(Actor(_userA), "shared-library", source,
+            focused ? local.Id : null);
+
+        Assert.Equal(visible ? 1 : 0, result.Linked);
+        await using var saved = _factory.CreateDbContext();
+        Assert.Equal(visible ? source : (Guid?)null, (await saved.LibraryTracks.SingleAsync()).CanonicalRecordingId);
+    }
+
+    [Fact]
+    public async Task SharedLibraryBackfillQueuesTheAuthorizedListenerWithoutAnOwnedIndexRow()
+    {
+        await SeedLinkLibraryTrackAsync("Jung Kook", null, 210000);
+        await using (var db = _factory.CreateDbContext())
+        {
+            (await db.LibraryTracks.SingleAsync()).OwnerUserId = _userB;
+            await db.SaveChangesAsync();
+        }
+        var access = new TestBackendLibraryAccess(_factory, "music");
+        access.Permissions[_userB] = new(true, []);
+        access.Permissions[_userC] = new(true, []);
+        var options = new DurableJobOptions();
+        var jobs = new DurableJobQueue(_factory, options, new JobPayloadPolicy(options), _clock);
+
+        Assert.Equal(1, await new LibraryRecordingLinkQueue(_factory, jobs, access).EnqueuePendingAsync(default));
+
+        await using var saved = _factory.CreateDbContext();
+        Assert.Equal(_userA, (await saved.Jobs.SingleAsync()).OwnerUserId);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SharedPromotionConfirmationUsesTheListenersCurrentLibraryAccess(bool visible)
+    {
+        var source = await SeedLinkSourceAsync();
+        var local = await SeedLinkLibraryTrackAsync("Jung Kook", null, 210000);
+        await using (var db = _factory.CreateDbContext())
+        {
+            var row = await db.LibraryTracks.SingleAsync();
+            row.OwnerUserId = _userB;
+            row.CanonicalRecordingId = source;
+            await db.SaveChangesAsync();
+        }
+        var access = new TestBackendLibraryAccess(_factory, "music");
+        access.Permissions[_userA] = new(true, visible ? ["music"] : []);
+        var options = new DurableJobOptions();
+        var jobs = new DurableJobQueue(_factory, options, new JobPayloadPolicy(options), _clock);
+        await jobs.EnqueueAsync(new DurableJobEnqueueRequest<LibraryRecordingLinkPayload>(LibraryRecordingLinkQueue.JobType,
+            "promotion", new(_userA) { RecordingIds = [source], BackendLibraryId = "music" }, _userA));
+        var claim = await jobs.ClaimNextAsync("library-link-worker", [LibraryRecordingLinkQueue.JobType]);
+        var service = new TrackIdentityService(_factory, _storageState, _clock, libraryAccess: access);
+        var handler = new LibraryRecordingLinkJobHandler(service, _factory, _clock, libraryAccess: access);
+
+        var result = await handler.ExecuteAsync(new(claim!, Mock.Of<IServiceProvider>()), default);
+
+        Assert.Equal(visible ? DurableJobCompletionKind.Succeeded : DurableJobCompletionKind.Deferred, result.Kind);
+        await using var saved = _factory.CreateDbContext();
+        Assert.Equal(local.Id, (await saved.LibraryTracks.SingleAsync()).Id);
+    }
+
     [Fact]
     public async Task LibraryRecordingLink_StoredIdentityConnectsAnExistingLocalIdentifier()
     {

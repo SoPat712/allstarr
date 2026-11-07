@@ -202,8 +202,9 @@ public sealed partial class TrackRematchAllIntegrationTests
             var copy = Local(Guid.NewGuid(), owner, "Self Love", clock.UtcNow);
             copy.BackendItemId = $"copy-{index}";
             copy.FilePath = $"/music/{index}.flac";
-            copy.Album = "Metro Boomin Presents Spider-Man: Across the Spider-Verse (Soundtrack From and Inspired by the Motion Picture)";
-            copy.Artist = "Metro Boomin, Coi Leray";
+            copy.Album = SelfLoveMatchFixture.LibraryAlbum;
+            copy.Artist = SelfLoveMatchFixture.Artist;
+            copy.DurationMilliseconds = 189466;
             copy.SourceModifiedAt = clock.UtcNow.AddDays(index - 3);
             copy.CanonicalRecordingId = Guid.NewGuid();
             return copy;
@@ -222,10 +223,10 @@ public sealed partial class TrackRematchAllIntegrationTests
                 snapshot.PayloadJson = JsonSerializer.Serialize(new
                 {
                     Title = index == 2 ? "Self Love (Instrumental)" :
-                    "Self Love (Spider-Man: Across the Spider-Verse)",
-                    Artist = "Metro Boomin, Coi Leray",
-                    Album = "Metro Boomin Presents Spider-Man: Across the Spider-Verse (Soundtrack From and Inspired by the Motion Picture)",
-                    DurationMilliseconds = 180_000
+                    SelfLoveMatchFixture.Title,
+                    Artist = SelfLoveMatchFixture.Artist,
+                    Album = SelfLoveMatchFixture.Album,
+                    DurationMilliseconds = 189466
                 });
                 var previousId = snapshot.Id;
                 if (newerSnapshot && index < 2)
@@ -237,7 +238,9 @@ public sealed partial class TrackRematchAllIntegrationTests
                     db.ExternalMetadataSnapshots.Add(previous);
                 }
                 db.ExternalMetadataSnapshots.Add(snapshot);
-                db.TrackMatches.Add(Decision(previousId, owner, null, externalRecording, TrackMatchState.Accepted, clock.UtcNow.AddMinutes(-1)));
+                var decision = Decision(previousId, owner, null, externalRecording, TrackMatchState.Accepted, clock.UtcNow.AddMinutes(-1));
+                decision.MatcherVersion = "library-primary-v29";
+                db.TrackMatches.Add(decision);
             }
             db.ManualTrackOverrides.Add(new ManualTrackOverrideRecord
             {

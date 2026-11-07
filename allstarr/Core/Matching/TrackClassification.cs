@@ -124,11 +124,12 @@ public static class TrackRouteProjector
             providerOrder,
             scopedLibrary.Ids, providerPolicy, snapshot.ProviderId);
         scopedLibrary.ById.TryGetValue(classification.LibraryTrackId ?? Guid.Empty, out var local);
+        var matchingSource = TrackSnapshotMetadata.MatchingSource(snapshot, sourceIdentity);
         if (local == null && manual == null && decision?.State is not (TrackMatchState.Pinned or TrackMatchState.Rejected) &&
-            classification.ProviderRoutes.Count > 0 && snapshot.OwnerUserId != Guid.Empty &&
+            snapshot.OwnerUserId != Guid.Empty &&
             providerPolicy?.IsAutomatic(sourceIdentity?.ProviderId ?? snapshot.ProviderId) != false)
         {
-            if (TrackSnapshotMetadata.MatchingSource(snapshot, sourceIdentity) is { } source)
+            if (matchingSource is { } source)
             {
                 var scope = new TrackMatchScope(snapshot.OwnerUserId, snapshot.BackendInstanceId, null, 2,
                     Math.Max(1, snapshot.SnapshotVersion), scopedLibrary.LibraryIds);
@@ -150,11 +151,16 @@ public static class TrackRouteProjector
         }
         canonicalId ??= local?.CanonicalRecordingId;
         if (local == null && manual == null &&
+            decision?.State is not (TrackMatchState.Pinned or TrackMatchState.Rejected) &&
             classification.PrimaryProviderRoute?.IsManual != true &&
             classification.ReviewState is TrackMatchState.Accepted or TrackMatchState.Pinned &&
             canonicalId.HasValue)
         {
             local = scopedLibrary.FirstByRecording.GetValueOrDefault(canonicalId.Value);
+            if (local != null &&
+                (matchingSource != null && !LocalCopyPreference.KnownRecordingMatches(matchingSource, LocalCopyPreference.ToCandidate(local)) ||
+                 providerPolicy?.Preferences.ExplicitFilter == "CleanOnly" &&
+                 TrackMatchSignals.Explicitness(LocalCopyPreference.ToCandidate(local)) != false)) local = null;
             if (local != null) classification = classification with { LibraryTrackId = local.Id };
         }
         return new(classification, canonicalId, local, identities);

@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Storage;
+using allstarr.Core.Protocols;
 using allstarr.Services.Common;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
@@ -22,13 +23,15 @@ public sealed partial class TrackIdentityService
         EnsureStorageReady();
         _ = actor.EffectiveUserId ?? throw new UnauthorizedAccessException("Library linking requires a user.");
         correlationId = ProviderContractValidation.RequiredText(correlationId, nameof(correlationId), 100);
+        var access = _libraryAccess == null ? null :
+            await _libraryAccess.ResolveUserAsync(actor.EffectiveUserId.Value, cancellationToken);
         LibraryLinkCandidates candidates;
         LibraryLinkPlan[] plans;
         await using (var discovery = await _contextFactory.CreateDbContextAsync(cancellationToken))
         {
             discovery.ChangeTracker.QueryTrackingBehavior = QueryTrackingBehavior.NoTracking;
             await ValidateActorAsync(discovery, actor, cancellationToken);
-            candidates = await ReadLibraryLinkCandidatesAsync(discovery, actor, recordingId, libraryTrackId, null, null, cancellationToken);
+            candidates = await ReadLibraryLinkCandidatesAsync(discovery, actor, recordingId, libraryTrackId, null, null, access, cancellationToken);
             var prepared = new List<LibraryLinkPlan>();
             foreach (var recording in candidates.Recordings)
             {
@@ -57,7 +60,7 @@ public sealed partial class TrackIdentityService
                     var version = await ReadLibraryLinkDataVersionAsync(db, cancellationToken);
                     await ValidateActorAsync(db, actor, cancellationToken);
                     var prepared = await ReadLibraryLinkCandidatesAsync(db, actor, null, libraryTrackId,
-                        recordingIds, null, cancellationToken);
+                        recordingIds, null, access, cancellationToken);
                     var preparedPlans = prepared.Recordings.Select(item => PlanLibraryLink(prepared, item, libraryTrackId))
                         .OfType<LibraryLinkPlan>().ToArray();
                     if (preparedPlans.Length == 0) { applied = true; continue; }
@@ -68,7 +71,7 @@ public sealed partial class TrackIdentityService
                     {
                         // Only the prepared pairs are reloaded under the writer lock; changed snapshots retry outside it.
                         var current = await ReadLibraryLinkCandidatesAsync(db, actor, null, libraryTrackId,
-                            recordingIds, libraryIds, cancellationToken);
+                            recordingIds, libraryIds, access, cancellationToken);
                         foreach (var recording in current.Recordings)
                         {
                             cancellationToken.ThrowIfCancellationRequested();
@@ -97,11 +100,17 @@ public sealed partial class TrackIdentityService
 
     private async Task<LibraryLinkCandidates> ReadLibraryLinkCandidatesAsync(AllstarrDbContext db,
         ProviderActorContext actor, Guid? recordingId, Guid? libraryTrackId, Guid[]? recordingIds, Guid[]? libraryIds,
-        CancellationToken cancellationToken)
+        BackendLibraryAccessContext? access, CancellationToken cancellationToken)
     {
         var user = actor.EffectiveUserId!.Value;
-        var focusTrack = libraryTrackId.HasValue ? await db.LibraryTracks.AsNoTracking().SingleOrDefaultAsync(
-            item => item.Id == libraryTrackId.Value && item.OwnerUserId == user, cancellationToken) : null;
+        var accessibleIds = access == null ? null : LibraryTrackAccess.Query(db, access).Select(item => item.Id);
+        var libraryQuery = accessibleIds == null
+            ? db.LibraryTracks.Where(item => item.OwnerUserId == user)
+            : db.LibraryTracks.Where(item => accessibleIds.Contains(item.Id));
+        libraryQuery = db.ChangeTracker.QueryTrackingBehavior == QueryTrackingBehavior.TrackAll
+            ? libraryQuery.AsTracking() : libraryQuery.AsNoTracking();
+        var focusTrack = libraryTrackId.HasValue ? await libraryQuery.AsNoTracking().SingleOrDefaultAsync(
+            item => item.Id == libraryTrackId.Value, cancellationToken) : null;
         if (libraryTrackId.HasValue && focusTrack == null) return EmptyLibraryLinkCandidates();
         if (recordingId.HasValue)
         {
@@ -145,7 +154,6 @@ public sealed partial class TrackIdentityService
             .ToArrayAsync(cancellationToken);
         var snapshotsBySource = snapshots.ToLookup(item => (item.ProviderId, item.ExternalIdHash));
         var linksByRecording = links.ToLookup(item => item.CanonicalRecordingId);
-        var libraryQuery = db.LibraryTracks.Where(item => item.OwnerUserId == user);
         if (libraryIds != null)
             libraryQuery = libraryQuery.Where(item => libraryIds.Contains(item.Id));
         else if (recordingId.HasValue || recordingIds != null || libraryTrackId.HasValue)

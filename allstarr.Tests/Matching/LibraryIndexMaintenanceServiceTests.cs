@@ -39,6 +39,37 @@ public sealed class LibraryIndexMaintenanceServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task MaintenanceResolvesTheRegisteredLibraryIndexAndCleansSharedItems()
+    {
+        var first = Identity(Guid.NewGuid(), "jellyfin", "first");
+        var second = Identity(Guid.NewGuid(), "jellyfin", "second");
+        var original = Track(first, _now);
+        var duplicate = Track(second, _now);
+        duplicate.BackendItemId = original.BackendItemId;
+        await using (var db = _factory.CreateDbContext())
+        {
+            db.Users.AddRange(first, second);
+            db.LibraryTracks.AddRange(original, duplicate);
+            await db.SaveChangesAsync();
+        }
+        var storage = new DurableStorageState(_database.StorageOptions);
+        storage.Set(DurableStorageReadiness.Ready, "fixture");
+        var access = new TestBackendLibraryAccess(_factory, "music");
+        var index = new LibraryIndexService(_factory, storage, _clock,
+            new TrackIdentityService(_factory, storage, _clock), access);
+        await using var services = new ServiceCollection().AddSingleton<ILibraryIndexService>(index).BuildServiceProvider();
+        using var maintenance = ActivatorUtilities.CreateInstance<LibraryIndexMaintenanceService>(services,
+            _factory, Queue(), storage, _clock, NullLogger<LibraryIndexMaintenanceService>.Instance, access,
+            new LibraryIndexDiagnostics(_factory, _clock, NullLogger<LibraryIndexDiagnostics>.Instance));
+
+        await maintenance.EnqueueStaleIndexesAsync(default);
+
+        await using var saved = _factory.CreateDbContext();
+        Assert.Single(await saved.LibraryTracks.ToArrayAsync());
+        Assert.True(await saved.AuditEvents.AnyAsync(item => item.Action == "track.consolidated"));
+    }
+
+    [Fact]
     public async Task EnqueueStaleIndexes_UsesNewestExactSubsonicCredential()
     {
         var userId = Guid.CreateVersion7();

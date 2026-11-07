@@ -10,6 +10,79 @@ namespace allstarr.Tests;
 
 public sealed class TrackMatchDecisionEngineTests(ITestOutputHelper output)
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void SelfLoveLibraryItemWinsWithDuplicateRowsAndStreamingRoutes(bool reverse)
+    {
+        var scope = Scope();
+        var locals = Enumerable.Range(0, 3).Select(_ =>
+            LocalCopyPreference.ToCandidate(SelfLoveMatchFixture.Local(scope.UserId, scope.BackendInstanceId))).ToArray();
+        LocalTrackMatchCandidate[] candidates = [SelfLoveMatchFixture.External(scope.BackendInstanceId), .. locals];
+        if (reverse) Array.Reverse(candidates);
+
+        var decision = new TrackMatchDecisionEngine().Decide(scope, SelfLoveMatchFixture.Source(), candidates,
+            providerPriority: ["apple-musickit", "deezer"]);
+
+        Assert.Equal(TrackMatchReviewState.Accepted, decision.State);
+        Assert.Contains(decision.SelectedLibraryTrackId, locals.Select(item => (Guid?)item.LibraryTrackId));
+        Assert.Equal(SelfLoveMatchFixture.BackendItemId, decision.SelectedBackendItemId);
+        Assert.True(decision.Candidates[0].IsLocal);
+        Assert.Equal(1, decision.Confidence);
+        Assert.All(decision.Candidates.Where(item => item.IsLocal), item =>
+            Assert.Equal(1, item.Components!["acceptanceQualified"]));
+    }
+
+    [Theory]
+    [InlineData("version")]
+    [InlineData("explicit")]
+    [InlineData("duration")]
+    [InlineData("isrc")]
+    [InlineData("recording")]
+    public void SelfLoveLibraryPreferenceKeepsConflictingEvidenceIneligible(string conflict)
+    {
+        var scope = Scope();
+        var source = SelfLoveMatchFixture.Source();
+        var local = LocalCopyPreference.ToCandidate(SelfLoveMatchFixture.Local(scope.UserId, scope.BackendInstanceId));
+        var external = SelfLoveMatchFixture.External(scope.BackendInstanceId);
+        switch (conflict)
+        {
+            case "version": local = local with { Title = "Self Love (Live)" }; break;
+            case "explicit": local = local with { IsExplicit = true }; break;
+            case "duration": local = local with { DurationMilliseconds = 240000 }; break;
+            case "isrc":
+                source = source with { Isrc = external.Isrc };
+                local = local with { Isrc = "USAAA2600001" };
+                break;
+            case "recording":
+                source = source with { MusicBrainzRecordingId = Guid.NewGuid().ToString(), MusicBrainzRecordingIsrcs = [external.Isrc!] };
+                local = local with { Isrc = "USAAA2600001" };
+                break;
+        }
+
+        var decision = new TrackMatchDecisionEngine().Decide(scope, source, [local, external],
+            providerPriority: ["apple-musickit", "deezer"]);
+
+        Assert.Equal(TrackMatchReviewState.Accepted, decision.State);
+        Assert.Equal(external.LibraryTrackId, decision.SelectedLibraryTrackId);
+        Assert.Equal(0, decision.Candidates.Single(item => item.IsLocal).Components!["acceptanceQualified"]);
+    }
+
+    [Fact]
+    public void SelfLoveManualProviderPinKeepsItsTargetWhenLibraryCopiesExist()
+    {
+        var scope = Scope();
+        var source = SelfLoveMatchFixture.Source();
+        var local = LocalCopyPreference.ToCandidate(SelfLoveMatchFixture.Local(scope.UserId, scope.BackendInstanceId));
+        var external = SelfLoveMatchFixture.External(scope.BackendInstanceId);
+
+        var decision = new TrackMatchDecisionEngine().Decide(scope, source, [local, external],
+            new(scope.UserId, source.ProviderId, source.ExternalId, external.LibraryTrackId), ["apple-musickit", "deezer"]);
+
+        Assert.Equal(TrackMatchReviewState.Pinned, decision.State);
+        Assert.Equal(external.LibraryTrackId, decision.SelectedLibraryTrackId);
+    }
+
     [Fact]
     public void OrdinaryTitleContainingCleanDoesNotImplyAContentChoice()
     {

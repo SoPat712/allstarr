@@ -367,7 +367,8 @@ public sealed class LibraryIndexMaintenanceService(
     DurableStorageState storageState,
     IPlatformClock clock,
     ILogger<LibraryIndexMaintenanceService> logger, IBackendLibraryAccessResolver libraryAccess,
-    LibraryIndexDiagnostics diagnostics, BackgroundTaskActivity? taskActivity = null) : BackgroundService
+    LibraryIndexDiagnostics diagnostics, BackgroundTaskActivity? taskActivity = null,
+    ILibraryIndexService? libraryIndex = null) : BackgroundService
 {
     private static readonly TimeSpan RefreshInterval = LocalLibraryAvailability.RefreshInterval;
 
@@ -401,6 +402,13 @@ public sealed class LibraryIndexMaintenanceService(
 
     internal async Task<int> EnqueueStaleIndexesAsync(CancellationToken cancellationToken)
     {
+        if (libraryIndex is LibraryIndexService concreteLibraryIndex)
+        {
+            var summary = await concreteLibraryIndex.ConsolidateJellyfinDuplicatesAsync(cancellationToken);
+            if (summary.GroupsConsolidated > 0 || summary.RowsRemoved > 0 || summary.GroupsDeferred > 0)
+                logger.LogInformation("Reconciled Jellyfin library index duplicates: {GroupsConsolidated} groups, {RowsRemoved} rows removed, {GroupsDeferred} groups deferred",
+                    summary.GroupsConsolidated, summary.RowsRemoved, summary.GroupsDeferred);
+        }
         await jobs.ReconcileLibraryIndexesAsync(cancellationToken);
         await using var db = await factory.CreateDbContextAsync(cancellationToken);
         var identities = await db.Users.AsNoTracking()
@@ -442,9 +450,13 @@ public sealed class LibraryIndexMaintenanceService(
                     await jobs.CloseUnavailableLibraryIndexesAsync(identity.Id, payload, failure.ErrorCode, cancellationToken);
                 continue;
             }
-            var lastIndexedAt = await db.LibraryTracks.AsNoTracking()
-                .Where(track => track.OwnerUserId == identity.Id && track.Protocol == identity.BackendType &&
-                    track.BackendInstanceId == identity.BackendInstanceId)
+            var indexedTracks = db.LibraryTracks.AsNoTracking()
+                .Where(track => track.Protocol == identity.BackendType &&
+                    track.BackendInstanceId == identity.BackendInstanceId);
+            indexedTracks = identity.BackendType == "subsonic"
+                ? indexedTracks.Where(track => track.OwnerUserId == identity.Id)
+                : indexedTracks.Where(track => access.LibraryIds.Contains(track.BackendLibraryId));
+            var lastIndexedAt = await indexedTracks
                 .MaxAsync(track => (DateTimeOffset?)track.IndexedAt, cancellationToken);
             if (lastIndexedAt.HasValue && now - lastIndexedAt.Value < RefreshInterval) continue;
 

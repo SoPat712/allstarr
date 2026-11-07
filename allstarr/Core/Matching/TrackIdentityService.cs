@@ -5,6 +5,7 @@ using allstarr.Core.Capabilities;
 using allstarr.Core.Operations;
 using allstarr.Core.Storage;
 using allstarr.Core.Settings;
+using allstarr.Core.Protocols;
 using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Core.Matching;
@@ -198,19 +199,22 @@ public sealed partial class TrackIdentityService : ITrackIdentityService, ITrack
     private readonly IPlatformClock _clock;
     private readonly IProviderRegistry? _registry;
     private readonly IEffectiveProviderPolicyResolver? _providerPolicies;
+    private readonly IBackendLibraryAccessResolver? _libraryAccess;
 
     public TrackIdentityService(
         IDbContextFactory<AllstarrDbContext> contextFactory,
         DurableStorageState storageState,
         IPlatformClock clock,
         IProviderRegistry? registry = null,
-        IEffectiveProviderPolicyResolver? providerPolicies = null)
+        IEffectiveProviderPolicyResolver? providerPolicies = null,
+        IBackendLibraryAccessResolver? libraryAccess = null)
     {
         _contextFactory = contextFactory;
         _storageState = storageState;
         _clock = clock;
         _registry = registry;
         _providerPolicies = providerPolicies;
+        _libraryAccess = libraryAccess;
     }
 
     private async Task<bool> CanAutomaticallyLinkAsync(ProviderActorContext actor, string providerId,

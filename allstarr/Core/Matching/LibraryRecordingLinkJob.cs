@@ -4,6 +4,7 @@ using allstarr.Core.Jobs;
 using allstarr.Core.ManagedFiles;
 using allstarr.Core.Operations;
 using allstarr.Core.Storage;
+using allstarr.Core.Protocols;
 using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Core.Matching;
@@ -15,7 +16,8 @@ public sealed record LibraryRecordingLinkPayload(Guid UserId)
     public bool RemoveKeptCopy { get; init; }
 }
 
-public sealed class LibraryRecordingLinkQueue(IDbContextFactory<AllstarrDbContext> factory, DurableJobQueue jobs)
+public sealed class LibraryRecordingLinkQueue(IDbContextFactory<AllstarrDbContext> factory, DurableJobQueue jobs,
+    IBackendLibraryAccessResolver? libraryAccess = null)
 {
     public const string JobType = "recording.library-link";
     internal const string CompletionAction = "library-recording-link.complete";
@@ -24,12 +26,14 @@ public sealed class LibraryRecordingLinkQueue(IDbContextFactory<AllstarrDbContex
     {
         await using var db = await factory.CreateDbContextAsync(cancellationToken);
         var users = await db.Users.AsNoTracking().Where(user => user.Enabled &&
-            db.LibraryTracks.Any(track => track.OwnerUserId == user.Id) &&
+            (libraryAccess != null || db.LibraryTracks.Any(track => track.OwnerUserId == user.Id)) &&
             !db.AuditEvents.Any(item => item.ActorUserId == user.Id && item.Action == CompletionAction))
             .Select(user => user.Id).ToArrayAsync(cancellationToken);
         var queued = 0;
         foreach (var user in users)
         {
+            if (libraryAccess != null && !await LibraryTrackAccess.Query(db,
+                    await libraryAccess.ResolveUserAsync(user, cancellationToken)).AnyAsync(cancellationToken)) continue;
             var receipt = await jobs.EnqueueAsync(new DurableJobEnqueueRequest<LibraryRecordingLinkPayload>(
                 JobType, "existing-library", new(user), user, Priority: -100,
                 CorrelationId: "library-recording-link"), cancellationToken);
@@ -40,7 +44,8 @@ public sealed class LibraryRecordingLinkQueue(IDbContextFactory<AllstarrDbContex
 }
 
 public sealed class LibraryRecordingLinkJobHandler(ITrackIdentityService identities,
-    IDbContextFactory<AllstarrDbContext> factory, IPlatformClock clock, RecordingKeptFiles? kept = null) : IDurableJobHandler
+    IDbContextFactory<AllstarrDbContext> factory, IPlatformClock clock, RecordingKeptFiles? kept = null,
+    IBackendLibraryAccessResolver? libraryAccess = null) : IDurableJobHandler
 {
     public string JobType => LibraryRecordingLinkQueue.JobType;
 
@@ -59,6 +64,8 @@ public sealed class LibraryRecordingLinkJobHandler(ITrackIdentityService identit
             var promotionActor = new ProviderActorContext(ProviderActorKind.SystemJob, null,
                 durableJobId: execution.Claim.JobId, actingForUserId: user);
             var listener = await db.Users.AsNoTracking().SingleAsync(item => item.Id == user && item.Enabled, cancellationToken);
+            var accessible = libraryAccess == null ? db.LibraryTracks.Where(item => item.OwnerUserId == user) :
+                LibraryTrackAccess.Query(db, await libraryAccess.ResolveUserAsync(user, cancellationToken));
             var confirmed = new List<Guid>();
             foreach (var recordingId in recordings.Distinct())
             {
@@ -67,7 +74,7 @@ public sealed class LibraryRecordingLinkJobHandler(ITrackIdentityService identit
                 await identities.LinkLibraryRecordingsAsync(promotionActor, execution.Claim.CorrelationId,
                     recording.Id, cancellationToken: cancellationToken);
                 recording = await identities.ResolveRecordingAsync(promotionActor, recordingId.ToString("D"), cancellationToken) ?? recording;
-                var linked = await db.LibraryTracks.AsNoTracking().AnyAsync(item => item.OwnerUserId == user &&
+                var linked = await accessible.AsNoTracking().AnyAsync(item =>
                     item.BackendInstanceId == listener.BackendInstanceId && item.BackendLibraryId == payload.BackendLibraryId &&
                     item.CanonicalRecordingId == recording.Id, cancellationToken);
                 if (!linked) return DurableJobCompletion.Defer("library_recording_scan_pending",

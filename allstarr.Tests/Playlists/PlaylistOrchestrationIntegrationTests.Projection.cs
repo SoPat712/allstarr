@@ -14,6 +14,46 @@ namespace allstarr.Tests;
 public sealed partial class PlaylistOrchestrationIntegrationTests
 {
     [Fact]
+    public async Task SelfLovePublishedPlaylistUsesTheSameLibraryPrimaryAsCurrentPlayback()
+    {
+        _source.Snapshot = Snapshot("self-love", Entry(0, "one", "source-1", SelfLoveMatchFixture.Title) with
+        {
+            Artists = ["Metro Boomin", "Coi Leray"],
+            Album = SelfLoveMatchFixture.Album,
+            DurationMilliseconds = 189466
+        });
+        await _service.RunAsync(Context(), new(_link, 1));
+        await using (var db = _factory.CreateDbContext())
+        {
+            var match = await db.TrackMatches.OrderByDescending(item => item.DecisionVersion).FirstAsync();
+            match.LibraryTrackId = null;
+            match.State = TrackMatchState.Accepted;
+            match.CanonicalRecordingId = _canonical;
+            match.Confidence = .9568;
+            var local = await db.LibraryTracks.SingleAsync(item => item.Id == _trackOne);
+            local.CanonicalRecordingId = null;
+            local.Title = "Self Love";
+            local.Artist = SelfLoveMatchFixture.Artist;
+            local.Album = SelfLoveMatchFixture.LibraryAlbum;
+            local.DurationMilliseconds = 189466;
+            local.BackendItemId = SelfLoveMatchFixture.BackendItemId;
+            local.ProviderIdsJson = """{"musicbrainzalbum":"release"}""";
+            var apple = ProviderIdentity("1700522647");
+            apple.ProviderId = "apple-musickit";
+            db.ProviderTrackIdentities.Add(apple);
+            await db.SaveChangesAsync();
+        }
+        var reader = new DurablePlaylistProjectionReader(_factory, new TestBackendLibraryAccess(_factory, "music"));
+
+        var detail = Assert.IsType<DurablePlaylistProjection>(await reader.ReadByLinkIdAsync(_user, _link));
+        var bulk = await reader.ReadByLinkIdsAsync(_user, [_link]);
+
+        Assert.Equal(SelfLoveMatchFixture.BackendItemId, Assert.Single(detail.Entries).BackendItemId);
+        Assert.Equal(SelfLoveMatchFixture.BackendItemId, Assert.Single(bulk[_link].Entries).BackendItemId);
+        Assert.Equal("local", Assert.Single(detail.Entries).RouteKind);
+    }
+
+    [Fact]
     public async Task PublishedPlaylistReadersPreferUnlinkedLibraryCopiesOverAnAutomaticProviderRoute()
     {
         _source.Snapshot = Snapshot("library-copies", Entry(0, "one", "source-1", "One"));

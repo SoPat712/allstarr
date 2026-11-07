@@ -1,10 +1,27 @@
 using System.Text.Json;
 using allstarr.Core.Storage;
+using allstarr.Services.Common;
 
 namespace allstarr.Core.Matching;
 
 internal static class LocalCopyPreference
 {
+    internal static bool KnownRecordingMatches(ExternalTrackMatchSnapshot source, LocalTrackMatchCandidate candidate,
+        int durationToleranceSeconds = 8) =>
+        (string.IsNullOrWhiteSpace(source.Isrc) || string.IsNullOrWhiteSpace(candidate.Isrc) ||
+         FuzzyMatcher.IdentifiersEqual(source.Isrc, candidate.Isrc)) &&
+        (string.IsNullOrWhiteSpace(TrackMatchSignals.RecordingIdentity(source)) ||
+         string.IsNullOrWhiteSpace(TrackMatchSignals.RecordingIdentity(candidate)) ||
+         FuzzyMatcher.IdentifiersEqual(TrackMatchSignals.RecordingIdentity(source), TrackMatchSignals.RecordingIdentity(candidate))) &&
+        (source.MusicBrainzRecordingIsrcs is not { Count: > 0 } || string.IsNullOrWhiteSpace(candidate.Isrc) ||
+         TrackMatchSignals.MusicBrainzIsrcMatches(source, candidate)) &&
+        (!source.IsExplicit.HasValue || !TrackMatchSignals.Explicitness(candidate).HasValue ||
+         source.IsExplicit == TrackMatchSignals.Explicitness(candidate)) &&
+        (!TrackMatchSignals.DurationMismatch(source, candidate, durationToleranceSeconds) ||
+         TrackMatchSignals.MusicBrainzIsrcMatches(source, candidate) && TrackMatchSignals.ExactRecordingFieldsMatch(source, candidate) ||
+         TrackMatchSignals.WeakDurationIdentityMatches(source, candidate) && TrackMatchSignals.WeakDurationAlbumMatches(source, candidate)) &&
+        TrackMatchSignals.RecordingVersionsMatch(source, candidate, durationToleranceSeconds);
+
     internal static int FormatRank(string? format) => format?.ToLowerInvariant() switch
     {
         ".flac" or ".wav" or ".wave" or ".aiff" or ".aif" or ".ape" or ".wv" => 2,

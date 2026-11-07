@@ -203,6 +203,27 @@ public sealed class TrackMatchesCurrentTargetTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task CanonicalSelfLoveCurrentUsesLibraryBeforeAppleWithoutAStoredDecision()
+    {
+        var canonical = Guid.NewGuid();
+        var identity = Identity(canonical, "spotify", "source", source.ExternalIdHash);
+        var apple = Identity(canonical, "apple-musickit", "1700522647", new string('b', 64));
+        source.ProviderTrackIdentityId = identity.Id;
+        source.PayloadJson = SelfLoveMatchFixture.Payload;
+        var track = SelfLoveMatchFixture.Local(owner, "fixture");
+        review = new([source], [], [], [track], [identity, apple]);
+        gateway.Setup(item => item.GetPlayableProviderOrderAsync(It.IsAny<ProviderActorContext>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(["apple-musickit", "deezer"]);
+
+        var target = (await Read()).GetProperty("target");
+
+        Assert.True(target.GetProperty("isLocal").GetBoolean());
+        Assert.Equal(track.Id, target.GetProperty("libraryTrackId").GetGuid());
+        Assert.Equal(SelfLoveMatchFixture.BackendItemId, target.GetProperty("backendItemId").GetString());
+        gateway.Verify(item => item.GetExactSongAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), It.IsAny<string>()), Times.Never);
+    }
+
+    [Fact]
     public async Task ForeignSourceCannotTriggerATargetMetadataRead()
     {
         source.OwnerUserId = Guid.NewGuid();

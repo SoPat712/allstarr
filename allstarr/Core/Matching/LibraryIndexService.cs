@@ -145,6 +145,25 @@ public sealed partial class LibraryIndexService : ILibraryIndexService
         LibraryTrackIndexInput input,
         CancellationToken cancellationToken = default)
     {
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                return await UpsertCoreAsync(executionContext, input, cancellationToken);
+            }
+            catch (DbUpdateException exception) when (attempt < 2 &&
+                (DbErrors.IsUniqueViolation(exception) || DbErrors.IsTransientConflict(exception)))
+            {
+                // Another scanner may have won the identity race; re-read and apply the observation.
+            }
+        }
+    }
+
+    private async Task<IndexedLibraryTrack> UpsertCoreAsync(
+        ProtocolExecutionContext executionContext,
+        LibraryTrackIndexInput input,
+        CancellationToken cancellationToken)
+    {
         var principal = RequireScope(executionContext, input.BackendLibraryId);
         ValidateInput(input);
         EnsureStorageReady();
@@ -164,18 +183,34 @@ public sealed partial class LibraryIndexService : ILibraryIndexService
             throw new KeyNotFoundException("The canonical recording does not exist.");
         }
 
-        var record = await db.LibraryTracks.SingleOrDefaultAsync(track =>
-            track.OwnerUserId == principal.UserId &&
-            track.BackendLibraryId == input.BackendLibraryId &&
+        if (string.Equals(principal.BackendType, "jellyfin", StringComparison.OrdinalIgnoreCase))
+        {
+            await PrepareJellyfinUpsertAsync(principal.BackendInstanceId, input.BackendItemId,
+                input.BackendLibraryId, input.CanonicalRecordingId, executionContext.CorrelationId, cancellationToken);
+        }
+
+        var recordQuery = db.LibraryTracks.Where(track =>
             track.BackendInstanceId == principal.BackendInstanceId &&
-            track.BackendItemId == input.BackendItemId,
-            cancellationToken);
+            track.BackendItemId == input.BackendItemId &&
+            track.Protocol == principal.BackendType);
+        var record = string.Equals(principal.BackendType, "jellyfin", StringComparison.OrdinalIgnoreCase)
+            ? await recordQuery
+                .OrderByDescending(track => track.BackendLibraryId == input.BackendLibraryId)
+                .ThenByDescending(track => track.OwnerUserId == principal.UserId)
+                .ThenBy(track => track.Id)
+                .FirstOrDefaultAsync(cancellationToken)
+            : await recordQuery.SingleOrDefaultAsync(track =>
+                track.OwnerUserId == principal.UserId &&
+                track.BackendLibraryId == input.BackendLibraryId,
+                cancellationToken);
         var now = _clock.UtcNow;
         var created = record == null;
         var previous = created ? null : TrackFingerprint(record!);
         record ??= new LibraryTrackRecord
         {
-            Id = Guid.CreateVersion7(),
+            Id = string.Equals(principal.BackendType, "jellyfin", StringComparison.OrdinalIgnoreCase)
+                ? DeterministicJellyfinTrackId(principal.BackendInstanceId, input.BackendItemId)
+                : Guid.CreateVersion7(),
             OwnerUserId = principal.UserId,
             BackendLibraryId = input.BackendLibraryId,
             Protocol = principal.BackendType,
