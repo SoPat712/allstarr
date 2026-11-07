@@ -951,7 +951,7 @@
           </div>
         {:else}<EmptyState title={providers.length ? "No sources in this view" : "No services connected"} description={providers.length ? "Choose another filter or search for a source." : "Connect a service so Allstarr can find songs you don't have."}>{#snippet icon()}<Radio size={24} />{/snippet}</EmptyState>{/each}
       </div>
-      {#if administrator}{#await import("$lib/components/ExtensionsView.svelte") then { default: ExtensionsView }}<ExtensionsView view="attention" onchanged={refresh} />{/await}{/if}
+      {#if administrator}{#await import("$lib/components/ExtensionsView.svelte") then { default: ExtensionsView }}<ExtensionsView view="attention" extensionId={pageId} onchanged={refresh} />{/await}{/if}
     {/if}
   </section>
 

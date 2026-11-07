@@ -19,11 +19,13 @@
   import { Badge } from "$lib/components/ui/badge";
   import { Button, buttonVariants } from "$lib/components/ui/button";
   import ExtensionSessionPanel from "$lib/components/ExtensionSessionPanel.svelte";
+  import ItemRow from "$lib/components/patterns/ItemRow.svelte";
+  import StatePill from "$lib/components/patterns/StatePill.svelte";
   import ProviderArtwork from "$lib/components/ProviderArtwork.svelte";
   import SearchField from "$lib/components/SearchField.svelte";
   import SegmentedNav from "$lib/components/SegmentedNav.svelte";
   import SelectField from "$lib/components/SelectField.svelte";
-  import { availablePackages, currentPackages, extensionFailureReason, extensionReviewAction, valueChanges } from "$lib/extensions";
+  import { availablePackages, currentPackages, extensionAttentionRow, extensionFailureReason, extensionReviewAction, valueChanges } from "$lib/extensions";
   import { humanize, sourceDescription } from "$lib/sources";
 
   let {
@@ -693,17 +695,47 @@
   {#if view === "package"}<Skeleton class="panel skeleton-panel extension-skeleton" aria-label="Loading extension" aria-busy="true" />{/if}
 {:else if view === "attention"}
   {#if attention.length || dataUnavailable}
-    <section class="extension-attention" aria-labelledby="extension-attention-title">
-      <div class="extension-attention-heading">
-        <h3 id="extension-attention-title">Extensions that need you</h3>
-        {#if bulkTargets > 1}<Button variant="outline" disabled={Boolean(action)} onclick={() => void startBulk()}>{action === "bulk" ? "Getting updates…" : `Update and review all (${bulkTargets})`}</Button>{/if}
+    <section class="service-rows" aria-labelledby="extensions-title">
+      <div class="group-heading">
+        <h3 id="extensions-title" class="group-label">{attention.length && attention.every(item => updateFor(item)) ? `Extension updates · ${attention.length}` : `Extensions · ${attention.length} need you`}</h3>
+        {#if bulkTargets > 1}<Button variant="outline" size="sm" disabled={Boolean(action)} onclick={() => void startBulk()}>{action === "bulk" ? "Getting updates…" : `Update and review all (${bulkTargets})`}</Button>{/if}
       </div>
       {#if dataUnavailable}<p class="degraded-banner" role="status">{extensionDataUnavailable}</p>{/if}
-
       {#if attention.length}
-        <ul class="source-list extension-list" aria-label="Extensions that need you">
-          {#each attention as item (item.id)}{@render packageRow(item, true)}{/each}
-        </ul>
+        <div role="list" aria-label="Extensions" data-sveltekit-keepfocus data-sveltekit-noscroll>
+          {#each attention as item (item.id)}
+            {@const update = updateFor(item)}
+            {@const row = extensionAttentionRow(item, update, packages.find(entry => entry.id === item.previousPackageId))}
+            <div class="source-row" role="listitem" title={row.subtitle}>
+              <ItemRow title={item.displayName} subtitle={row.subtitle} href={`#/sources/services/${encodeURIComponent(item.extensionId)}`} actionLabel={`Open ${item.displayName}`} selected={extensionId === item.extensionId}>
+                {#snippet leading()}<ProviderArtwork id={item.extensionId} definition={definition(item)} decorative />{/snippet}
+                {#snippet pill()}<StatePill tone={row.tone} text={row.pill} />{/snippet}
+                {#snippet trailing()}
+                  {#if update}<Button variant="outline" size="sm" disabled={Boolean(action)} onclick={() => void stage(update)}>{action === `install:${update.id}` ? "Verifying…" : "Update"}</Button>
+                  {:else if row.action === "review"}<Button variant="outline" size="sm" disabled={Boolean(action)} onclick={() => void openReview(item)}>{action === `review-load:${item.id}` ? "Loading review…" : "Review"}</Button>
+                  {:else if row.action === "retry"}<Button variant="outline" size="sm" disabled={Boolean(action)} onclick={() => void retryPackage(item)}>{action === `retry:${item.id}` ? "Retrying…" : "Retry"}</Button>
+                  {:else}<Button variant="outline" size="sm" disabled={Boolean(action)} onclick={() => item.state.toLowerCase() === "disabled" && item.hasPermissions ? confirmPermissionReview(item) : void confirmActivation(item)}>Enable</Button>{/if}
+                {/snippet}
+                {#snippet menu()}
+                  <DropdownMenu.Root>
+                    <DropdownMenu.Trigger class="icon-button" aria-label="Manage extension" title={`More actions for ${item.displayName}`}><MoreHorizontal size={18} aria-hidden="true" /></DropdownMenu.Trigger>
+                    <DropdownMenu.Portal>
+                      <DropdownMenu.Content class="bits-menu" sideOffset={6} align="end">
+                        {#if item.permissionReviewRequired && update}<DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => void openReview(item)}>Review permissions</DropdownMenu.Item>{/if}
+                        {#if item.active}<DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => void run(item.id, () => extensions.disable(item), "Extension disabled.")}>Disable</DropdownMenu.Item>{/if}
+                        {#if item.hasPermissions && item.state.toLowerCase() === "active"}<DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => confirmPermissionReview(item)}>Review access</DropdownMenu.Item>{/if}
+                        {#if item.hasPermissions && item.state.toLowerCase() === "disabled"}<DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => confirmPermissionReview(item)}>Review and enable</DropdownMenu.Item>{/if}
+                        {#if item.state.toLowerCase() === "failed"}<DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => void retryPackage(item)}>Retry</DropdownMenu.Item>{/if}
+                        <DropdownMenu.Separator />
+                        <DropdownMenu.Item class="bits-menu-item danger-item" disabled={Boolean(action)} onSelect={() => confirmRemoval(item)}>Uninstall</DropdownMenu.Item>
+                      </DropdownMenu.Content>
+                    </DropdownMenu.Portal>
+                  </DropdownMenu.Root>
+                {/snippet}
+              </ItemRow>
+            </div>
+          {/each}
+        </div>
       {/if}
     </section>
   {/if}
@@ -843,6 +875,22 @@
   </AlertDialog.Root>
 
 <style>
+  .service-rows { overflow: hidden; border: 1px solid var(--color-edge); border-radius: var(--radius-lg); }
+  .service-rows .source-row { display: block; padding: 0; border: 0; }
+  .source-row + .source-row { border-top: 1px solid var(--color-edge); }
+  .source-row :global(.icon-button) { width: var(--control-sm); height: var(--control-sm); }
+  .group-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2) var(--space-3); padding: var(--space-2) var(--space-4); background: var(--color-panel-raised); }
+  .group-label { margin: 0; color: var(--color-ink-muted); font-size: var(--text-xs); font-weight: 500; }
+  @media (max-width: 600px) {
+    .group-label { flex-basis: 100%; }
+    .source-row :global(.item-row) { gap: var(--space-1); padding-inline: var(--space-2); }
+    .source-row :global(.row-copy) { min-width: 6ch; font-size: var(--text-xs); }
+    .source-row :global(.row-controls) { flex-shrink: 0; }
+    .source-row :global(.item-row:has(.row-controls > [data-slot="button"]) .row-pill) { display: none; }
+    .source-row :global(.row-controls [data-slot="button"]) { padding-inline: var(--space-1); }
+    .source-row :global(.row-chevron) { display: none; }
+  }
+
   .extension-row { display: block; container-type: inline-size; }
   .extension-layout { display: grid; grid-template-columns: 2.5rem minmax(16ch, 1fr) auto; align-items: center; gap: var(--space-2) var(--space-4); }
   .extension-layout > :global(.provider-art) { display: grid; width: 2.5rem; height: 2.5rem; align-self: start; place-items: center; border-radius: var(--radius-md); background: var(--color-surface-raised); color: var(--color-ink-muted); }

@@ -87,6 +87,24 @@ export function extensionFailureReason(reasonCode?: string | null) {
     "The extension failed before it could start. Retry the package or install it again.";
 }
 
+export function extensionAttentionRow(item: ExtensionPackage, update?: ExtensionStoreItem, previous?: ExtensionPackage) {
+  const state = item.state.toLowerCase();
+  const review = item.permissionReviewRequired || state === "reviewrequired";
+  const change = update ? `${item.version} → ${update.version}` : previous ? `${previous.version} → ${item.version}` : "";
+  const action = update ? "update" : review ? "review" : state === "failed" ? "retry" : "enable";
+  if (update || review || state === "staged") return {
+    subtitle: change ? `Update ${change}${review ? " · asks for new access" : ""}` : review ? "Access needs review" : "Ready to enable",
+    pill: review ? "New access" : change ? "New version" : "Off",
+    tone: review ? "warn" as const : "neutral" as const,
+    action,
+  };
+  if (state === "failed") return {
+    subtitle: `Couldn't load: ${extensionFailureReason(item.failureCode)}`,
+    pill: "Failed", tone: "stop" as const, action,
+  };
+  return { subtitle: "Turned off", pill: "Off", tone: "neutral" as const, action };
+}
+
 export function verificationHost(url?: string | null) {
   if (!url) return "";
   try {

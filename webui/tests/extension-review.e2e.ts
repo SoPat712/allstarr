@@ -86,7 +86,7 @@ for (const scenario of [
 
   await page.goto("#/sources/services");
   if (scenario.update) {
-    await page.getByRole("button", { name: "Update 0.9.0 → 1.0.0", exact: true }).click();
+    await page.getByRole("button", { name: "Update", exact: true }).click();
   } else {
     await page.getByRole("button", { name: "Add extension" }).click();
     const catalog = page.getByRole("dialog", { name: "Add an extension", exact: true });
@@ -94,6 +94,8 @@ for (const scenario of [
   }
   const review = page.getByRole("dialog", { name: "Review permissions", exact: true });
   await expect(review).toBeVisible();
+  await expect(page).toHaveURL(/#\/sources\/services$/);
+  await expect(page.locator("[data-side-panel]")).toHaveCount(0);
   await expect(review.getByRole("heading", { name: "What it can do" })).toBeVisible();
   await expect(review.getByRole("list", { name: "Requested network hosts" })).toContainText("music.example.test");
   expect(activations).toBe(0);
@@ -109,7 +111,7 @@ for (const scenario of [
     await expect(review.getByRole("alert")).toHaveText("Runtime could not start.");
     await expect(review.getByRole("button", { name: "Try again", exact: true })).toBeEnabled();
     await review.getByRole("button", { name: "Close review", exact: true }).click();
-    await page.locator(".extension-row").getByRole("button", { name: "Enable", exact: true }).click();
+    await page.getByRole("list", { name: "Extensions", exact: true }).getByRole("listitem").getByRole("button", { name: "Enable", exact: true }).click();
     const turnOn = page.getByRole("alertdialog", { name: "Turn on Lumen Audio?", exact: true });
     await expect(turnOn.getByRole("list", { name: "Approved network hosts" })).toContainText("music.example.test");
     await turnOn.getByRole("button", { name: "Turn on", exact: true }).click();
@@ -121,7 +123,7 @@ for (const scenario of [
   expect(activations).toBe(keepOff ? 0 : retryFromRow ? 2 : 1);
   if (keepOff) {
     await expect(page.getByRole("status").filter({ hasText: "Lumen Audio updated. It stays off." })).toBeVisible();
-    await expect(page.locator(".extension-row").getByRole("button", { name: "Enable", exact: true })).toBeVisible();
+    await expect(page.getByRole("list", { name: "Extensions", exact: true }).getByRole("listitem").getByRole("button", { name: "Enable", exact: true })).toBeVisible();
     return;
   }
   const notification = page.getByRole("status").filter({ hasText: scenario.update ? "Lumen Audio updated and enabled." : "Lumen Audio installed and enabled." });

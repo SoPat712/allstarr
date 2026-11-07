@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  extensionReviewAction, availablePackages, compareVersions, currentPackages, extensionFailureReason, renewalFailureText, sessionReasonText, sessionSummary, valueChanges,
+  extensionAttentionRow, extensionReviewAction, availablePackages, compareVersions, currentPackages, extensionFailureReason, renewalFailureText, sessionReasonText, sessionSummary, valueChanges,
   verificationHost,
 } from "./extensions";
 import type { ExtensionPackage, ExtensionStoreItem } from "./api";
@@ -10,6 +10,40 @@ const pkg = (overrides: Partial<ExtensionPackage> = {}): ExtensionPackage => ({
   state: "active", active: true, installed: true, permissionReviewRequired: false,
   hasPermissions: true,
   stagedAt: "2026-01-01T00:00:00Z", revision: 1, ...overrides,
+});
+
+describe("extension attention rows", () => {
+  const update = { version: "1.4.17" } as ExtensionStoreItem;
+
+  it("describes updates with only the version change", () => {
+    expect(extensionAttentionRow(pkg({ version: "1.4.16" }), update)).toEqual({
+      subtitle: "Update 1.4.16 → 1.4.17", pill: "New version", tone: "neutral", action: "update",
+    });
+    expect(extensionAttentionRow(pkg({ version: "1.4.16", permissionReviewRequired: true }), update)).toEqual({
+      subtitle: "Update 1.4.16 → 1.4.17 · asks for new access", pill: "New access", tone: "warn", action: "update",
+    });
+  });
+
+  it("describes a downloaded update using its previous version", () => {
+    expect(extensionAttentionRow(pkg({ version: "1.4.17", state: "ReviewRequired" }), undefined, pkg({ version: "1.4.16" })))
+      .toEqual({ subtitle: "Update 1.4.16 → 1.4.17 · asks for new access", pill: "New access", tone: "warn", action: "review" });
+  });
+
+  it.each([
+    [{ permissionReviewRequired: true }, "Access needs review", "New access", "warn", "review"],
+    [{ state: "ReviewRequired" }, "Access needs review", "New access", "warn", "review"],
+    [{ state: "failed", failureCode: "activation_failed" }, "Couldn't load: The extension could not be enabled.", "Failed", "stop", "retry"],
+    [{ state: "staged" }, "Ready to enable", "Off", "neutral", "enable"],
+    [{ state: "disabled", hasPermissions: true }, "Turned off", "Off", "neutral", "enable"],
+    [{ state: "disabled", hasPermissions: false }, "Turned off", "Off", "neutral", "enable"],
+  ] as const)("maps %j to one fact and one state", (overrides, subtitle, pill, tone, action) => {
+    expect(extensionAttentionRow(pkg(overrides))).toEqual({ subtitle, pill, tone, action });
+  });
+
+  it("uses safe failure wording for unknown reasons", () => {
+    expect(extensionAttentionRow(pkg({ state: "failed", failureCode: "internal_detail" })).subtitle)
+      .toBe(`Couldn't load: ${extensionFailureReason("internal_detail")}`);
+  });
 });
 
 it("compares dotted extension versions", () => {

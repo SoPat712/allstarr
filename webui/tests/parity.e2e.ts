@@ -2684,7 +2684,7 @@ test("extension review scrolls long permission lists", async ({ page }) => {
   }));
 
   await page.goto("#/settings/extensions");
-  await page.getByRole("button", { name: "Review permissions" }).click();
+  await page.getByRole("list", { name: "Extensions", exact: true }).getByRole("button", { name: "Review", exact: true }).click();
   const review = page.getByRole("dialog", { name: "Review permissions" });
   await expect(review).toBeVisible();
   const body = review.locator(".extension-review-body");
@@ -2755,6 +2755,13 @@ test("extension updates can be reviewed together", async ({ page }) => {
   });
 
   await page.goto("#/settings/extensions");
+  const compactRows = page.getByRole("list", { name: "Extensions", exact: true }).getByRole("listitem");
+  await expect(compactRows).toHaveCount(3);
+  for (const row of await compactRows.all()) {
+    await expect(row.locator(".item-row")).toHaveCount(1);
+    await expect(row.locator(".row-controls > [data-slot=button]")).toHaveCount(1);
+    await expect(row.locator("input, .extension-session, .source-row-capabilities")).toHaveCount(0);
+  }
   await page.getByRole("button", { name: "Update and review all (3)" }).click();
   const review = page.getByRole("dialog", { name: "Update and review extensions" });
   const rows = review.getByRole("list", { name: "Extensions to approve" }).locator(":scope > li");
@@ -2845,17 +2852,17 @@ test("extension updates explain access changes on mobile", async ({ page }) => {
   });
 
   await page.goto("#/settings/extensions");
-  await page.getByRole("button", { name: "Review permissions" }).click();
+  await page.getByRole("list", { name: "Extensions", exact: true }).getByRole("button", { name: "Review", exact: true }).click();
   let review = page.getByRole("dialog", { name: "Review permissions" });
   await expect(review).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(review).toBeHidden();
-  await page.getByRole("button", { name: "Review permissions" }).click();
+  await page.getByRole("list", { name: "Extensions", exact: true }).getByRole("button", { name: "Review", exact: true }).click();
   review = page.getByRole("dialog", { name: "Review permissions" });
   await review.getByRole("button", { name: "Close review" }).click();
   await expect(review).toBeHidden();
   expect(cancellationRequests).toBe(0);
-  await page.getByRole("button", { name: "Review permissions" }).click();
+  await page.getByRole("list", { name: "Extensions", exact: true }).getByRole("button", { name: "Review", exact: true }).click();
   review = page.getByRole("dialog", { name: "Review permissions" });
   await expect(review.getByText("Update from 1.0.0 to 2.0.0")).toBeVisible();
   await expect(review.getByText("New access", { exact: false })).toBeVisible();
@@ -2906,7 +2913,7 @@ test("failed extension packages can be retried without automatic activation", as
   });
 
   await page.goto("#/integrations/extensions");
-  const row = page.locator(".extension-row");
+  const row = page.getByRole("list", { name: "Extensions", exact: true }).getByRole("listitem");
   await expect(row).toContainText("The extension failed runtime validation before it could start.");
   await row.getByRole("button", { name: "Manage extension" }).click();
   await expect(page.getByRole("menuitem", { name: "Retry" })).toBeVisible();
@@ -2914,7 +2921,7 @@ test("failed extension packages can be retried without automatic activation", as
   await page.keyboard.press("Escape");
   await row.getByRole("button", { name: "Retry" }).click();
   await expect.poll(() => retryRequests).toBe(1);
-  await expect(row.getByRole("button", { name: "Review permissions" })).toBeVisible();
+  await expect(row.getByRole("button", { name: "Review", exact: true })).toBeVisible();
   await expect(page.getByRole("status").filter({ hasText: "Review permissions before enabling" })).toBeVisible();
   expect(activationRequests).toBe(0);
 });
@@ -2960,9 +2967,9 @@ test("disabled extensions with permissions require a fresh review before enablin
   });
 
   await page.goto("#/integrations/extensions");
-  const row = page.locator(".extension-row");
-  await expect(row.getByRole("button", { name: "Review and enable" })).toBeVisible();
-  await row.getByRole("button", { name: "Review and enable" }).click();
+  const row = page.getByRole("list", { name: "Extensions", exact: true }).getByRole("listitem");
+  await expect(row.getByRole("button", { name: "Enable", exact: true })).toBeVisible();
+  await row.getByRole("button", { name: "Enable", exact: true }).click();
   const review = page.getByRole("dialog", { name: "Review permissions", exact: true });
   await expect(review).toBeVisible();
   await expect(page.getByRole("alertdialog")).toHaveCount(0);
@@ -2999,7 +3006,7 @@ test("activation closes its confirmation before a delayed extension refresh", as
   });
 
   await page.goto("#/integrations/extensions");
-  const row = page.locator(".extension-row");
+  const row = page.getByRole("list", { name: "Extensions", exact: true }).getByRole("listitem");
   await row.getByRole("button", { name: "Enable" }).click();
   const activation = page.getByRole("alertdialog", { name: "Turn on Lumen Audio?" });
   await activation.getByRole("button", { name: "Turn on" }).click();
@@ -3285,7 +3292,7 @@ test("extension updates stay beside the shared management menu", async ({ page }
   }));
 
   await page.goto("#/settings/extensions");
-  const actions = page.locator(".extension-actions");
+  const actions = page.getByRole("list", { name: "Extensions", exact: true }).locator(".row-controls");
   await expect(actions.getByRole("button", { name: "Update" })).toBeInViewport();
   await actions.getByRole("button", { name: "Manage extension" }).click();
   await expect(page.getByRole("menuitem", { name: /^(Disable|Pause)$/ })).toBeVisible();
@@ -9693,7 +9700,7 @@ test("Desktop playback, task and review previews", async ({ page }, testInfo) =>
     id: "network", permissionKind: "network", permissionValue: "https://music.example.test/", required: true, decision: "pending",
   }] }));
   await page.goto("#/settings/extensions");
-  await page.getByRole("button", { name: "Review permissions", exact: true }).click();
+  await page.getByRole("list", { name: "Extensions", exact: true }).getByRole("button", { name: "Review", exact: true }).click();
   await expect(page.getByRole("dialog", { name: "Review permissions", exact: true })).toBeVisible();
   await testInfo.attach("desktop-review", { body: await page.screenshot({ fullPage: true }), contentType: "image/png" });
   await page.keyboard.press("Escape");

@@ -109,7 +109,7 @@ for (const [width, theme] of appearances) for (const state of ["expanded", "coll
       await expect(page.locator(".mapping-rows")).toHaveCSS("border-radius", "14px");
     }
     await drawer(page, state);
-    if (screen.name === "sources-services") await expect(page.locator(".extension-attention")).toContainText("Deezer");
+    if (screen.name === "sources-services") await expect(page.getByRole("list", { name: "Extensions", exact: true, includeHidden: true })).toContainText("Deezer");
     if (screen.name === "for-you-mix") {
       const cards = page.locator(".mix-shelf .mix-card");
       await expect(cards).toHaveCount(8);
@@ -143,7 +143,7 @@ for (const [width, theme] of appearances) for (const state of ["expanded", "coll
         expect((await tabs.boundingBox())!.x + (await tabs.boundingBox())!.width).toBeLessThanOrEqual((await panel.boundingBox())!.x);
       }
     }
-    if (screen.name === "sources-services") await expect(page.locator(".extension-attention")).toContainText("Deezer");
+    if (screen.name === "sources-services") await expect(page.getByRole("list", { name: "Extensions", exact: true, includeHidden: true })).toContainText("Deezer");
     if (screen.name === "for-you-mix") await expect(panel.getByRole("list", { name: "Songs", exact: true }).getByRole("listitem")).toHaveCount(8);
     await page.evaluate(async () => { await document.fonts.ready; });
     await mkdir("../artifacts/shared-design/after-panels", { recursive: true });
@@ -221,25 +221,26 @@ test("panel mode follows drawer changes and resizing while it stays open", async
 });
 
 
-test("source cards and filter pills adapt to narrow containers on desktop", async ({ page }) => {
+test("source rows and filter pills adapt to narrow containers on desktop", async ({ page }) => {
   await page.setViewportSize({ width: 1180, height: 900 });
   await page.emulateMedia({ colorScheme: "dark", reducedMotion: "reduce" });
   await fixture(page);
   await page.goto("/#/sources/services");
-  const section = page.locator(".extension-attention");
+  const section = page.getByRole("list", { name: "Extensions", exact: true });
   await expect(section).toBeVisible();
   await section.evaluate(element => { element.style.width = "440px"; });
-  const layout = section.locator(".extension-layout");
-  await expect(layout).toBeVisible();
-  const boxes = await layout.evaluate(element => {
+  const row = section.locator(".item-row");
+  await expect(row).toBeVisible();
+  await expect(row.locator(".row-controls > [data-slot=button]")).toHaveCount(1);
+  await expect(row.locator(".state-pill")).toHaveText("New version");
+  await expect(section.locator(".extension-session, .source-row-capabilities, input")).toHaveCount(0);
+  const boxes = await row.evaluate(element => {
     const box = (selector: string) => element.querySelector(selector)!.getBoundingClientRect().toJSON();
-    return { row: element.getBoundingClientRect().toJSON(), icon: box(".provider-art"), title: box(".extension-title"), description: box(".extension-copy > p"), capabilities: box(".source-row-capabilities"), controls: box(".extension-controls") };
+    return { row: element.getBoundingClientRect().toJSON(), icon: box(".row-leading"), title: box(".row-copy h3"), controls: box(".row-controls") };
   });
   expect(boxes.title.left).toBeGreaterThan(boxes.icon.right);
-  expect(boxes.description.top).toBeGreaterThanOrEqual(boxes.title.bottom);
-  expect(boxes.description.left).toBeCloseTo(boxes.row.left, 0);
-  expect(boxes.description.width).toBeCloseTo(boxes.row.width, 0);
-  expect(boxes.controls.top).toBeGreaterThanOrEqual(boxes.capabilities.bottom);
+  expect(boxes.controls.right).toBeLessThanOrEqual(boxes.row.right);
+  expect(boxes.title.width).toBeGreaterThanOrEqual(80);
   const filters = page.locator(".source-toolbar .filter-segments");
   await filters.evaluate(element => { element.style.maxWidth = "220px"; });
   expect(await filters.locator("button").evaluateAll(elements => new Set(elements.map(element => element.getBoundingClientRect().top)).size)).toBeGreaterThan(1);

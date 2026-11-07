@@ -8189,26 +8189,6 @@
     font-size: var(--text-sm);
   }
 
-  .extension-attention {
-    display: grid;
-    gap: var(--space-3);
-  }
-
-  .extension-attention-heading {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-2) var(--space-3);
-  }
-
-  .extension-attention-heading > h3 {
-    margin: 0;
-    color: var(--color-ink);
-    font-size: var(--text-md);
-    font-weight: 600;
-  }
-
   .service-extension .extension-package {
     border-top: 1px solid var(--color-edge);
     border-radius: 0;
