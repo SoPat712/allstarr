@@ -1,15 +1,16 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
 
-  let { label = "Advanced", description = "", open = $bindable(false), children }: {
+  let { label = "Advanced", description = "", open = $bindable(false), class: className = "", children }: {
     label?: string;
     description?: string;
     open?: boolean;
+    class?: string;
     children?: Snippet;
   } = $props();
 </script>
 
-<details class="settings-fold" bind:open>
+<details class={`settings-fold ${className}`} bind:open>
   <summary>{label}{#if description}<span class="sr-only">: {description}</span>{/if}</summary>
   {@render children?.()}
 </details>

@@ -780,7 +780,7 @@
   .legend-swatch { width: 9px; height: 9px; border-radius: 2px; }
   .mapping-pagination, .mapping-pagination > div { display: flex; align-items: center; gap: var(--space-2); }
   .mapping-pagination { justify-content: space-between; padding-block: var(--space-3); color: var(--color-ink-muted); font-size: var(--text-xs); }
-  .mapping-heading h2 { margin: 0; font-size: 1.5rem; }
+  .mapping-heading h2 { margin: 0; font-size: var(--text-section); }
   .matches-controls { display: grid; gap: var(--space-3); margin-bottom: var(--space-4); min-width: 0; }
   .matches-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); min-width: 0; }
   .matches-toolbar :global(.matches-search) { min-width: 280px; flex: 1 1 280px; }

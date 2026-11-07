@@ -9,13 +9,11 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
   await expect(page.getByRole("dialog").getByRole("list", { name: "Songs", exact: true }).getByRole("listitem")).toHaveCount(songs.length);
   await capture(page, "mix", width, theme); await page.goBack(); await expect(page.getByRole("dialog")).toHaveCount(0);
 });
-test("Mix explanation is a keyboard disclosure with honest legacy details", async ({ page }) => {
+test("Mix explanation is omitted when recipe evidence is unavailable", async ({ page }) => {
   await mockForYou(page); await page.goto("/#/for-you?mix=daily-1");
-  const summary = page.getByText("How this mix is made", { exact: true });
-  await summary.focus(); await page.keyboard.press("Space");
-  await expect(page.getByText("Refresh this mix to see its recipe details.", { exact: true })).toBeVisible();
-  await page.keyboard.press("Space");
-  await expect(page.getByText("Refresh this mix to see its recipe details.", { exact: true })).toBeHidden();
+  await expect(page.getByRole("dialog")).toBeVisible();
+  await expect(page.getByText("How this mix is made", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("Refresh this mix to see its recipe details.", { exact: true })).toHaveCount(0);
 });
 test("Song feedback and preference undo", async ({ page }) => {
   const state = await mockForYou(page); await page.goto("/#/for-you?mix=daily-1");

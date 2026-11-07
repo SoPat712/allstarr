@@ -1,5 +1,28 @@
 import { describe, expect, it } from "vitest";
-import { homeSourceHealth, listenTrend, nextScheduledWork, playbackMeta, playbackProgress, playbackSourceIssues, summarizeHome, type HomeSnapshot } from "./home";
+import { homeSourceHealth, listenTrend, nextScheduledWork, playbackMeta, playbackProgress, playbackSourceIssues, recentHomeActivity, summarizeHome, type HomeSnapshot } from "./home";
+import type { ActivityItem } from "./api";
+
+describe("Home recent activity", () => {
+  const check = (id: string, detail = "4 passed, 3 not checked", actorUserId = "one"): ActivityItem => ({
+    id, kind: "job", label: "Health check", action: "health.smoke", state: "succeeded", detail,
+    actorUserId, occurredAt: `2026-11-06T12:0${id}:00Z`,
+  } as ActivityItem);
+
+  it("keeps the latest identical health result and makes room for other work", () => {
+    const saved = { ...check("1"), id: "saved", kind: "caching", label: "Saved a song", action: "cache.save" };
+    expect(recentHomeActivity([check("2"), saved, check("4"), check("3")]).map(item => item.id)).toEqual(["4", "saved"]);
+  });
+
+  it("preserves different health results, listeners and unrelated work", () => {
+    expect(recentHomeActivity([check("4"), check("3", "1 failed"), check("2", undefined, "two"),
+      { ...check("1"), label: "Update playlist", action: "playlist.sync" }])).toHaveLength(4);
+  });
+
+  it("filters routine work and keeps a failed background task", () => {
+    const task = { ...check("1"), label: "Background task", action: "", state: "succeeded" };
+    expect(recentHomeActivity([task, { ...task, id: "failed", state: "failed", severity: "error" }]).map(item => item.id)).toEqual(["failed"]);
+  });
+});
 
 describe("Home wording", () => {
   it("shows the signed change from last week", () => {

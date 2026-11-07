@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { formatLocalDateTime } from "$lib/dates";
   import type { Snippet } from "svelte";
   import SidePanel from "./patterns/SidePanel.svelte";
   import ItemRow from "./patterns/ItemRow.svelte";
@@ -87,7 +88,7 @@
     {#if error}<p class="notice-error" role="alert">{error}</p>{/if}
     {#if actionError && !reasonOpen && !cancelOpen && !declineOpen}<p class="notice-error" role="alert">{actionError}</p>{/if}
     {#if requestReceipt}
-      <p class="request-context">{#if administrator}Requested by {requestReceipt.requester?.displayName || "a listener"} · <time datetime={requestReceipt.createdAt}>{new Date(requestReceipt.createdAt).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</time>{:else}{promotionRequestStatus(requestReceipt.state).text}{/if}</p>
+      <p class="request-context">{#if administrator}Requested by {requestReceipt.requester?.displayName || "a listener"} · <time datetime={requestReceipt.createdAt}>{formatLocalDateTime(requestReceipt.createdAt)}</time>{:else}{promotionRequestStatus(requestReceipt.state).text}{/if}</p>
       {#if requestReceipt.declineNote}<p class="request-context">{requestReceipt.declineNote}</p>{/if}
     {/if}
     {#if preview && album && (preview.canAddDirectly !== false || administrator && requestReceipt)}

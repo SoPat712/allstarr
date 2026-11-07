@@ -379,7 +379,7 @@ for (const [width, theme] of [[1280, "light"], [1280, "dark"], [390, "light"]] a
     if (name === "taste") {
       await expect(page.getByRole("switch", { name: "Private listening (pause learning)", exact: true })).toBeVisible();
       await expect(page.getByRole("switch", { name: "Use imported history", exact: true })).toBeVisible();
-      await expect(page.locator(".taste-details > summary")).toHaveText("See the details▾");
+      await expect(page.locator(".taste-details > summary")).toHaveText("See the details");
     }
     if (name === "recap") {
       await expect(page.getByRole("radiogroup", { name: "Stats period", exact: true }).getByRole("radio")).toHaveCount(5);

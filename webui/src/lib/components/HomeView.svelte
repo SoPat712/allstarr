@@ -4,7 +4,7 @@
   import { CircleCheck, CircleDashed, Headphones, KeyRound, Music, Pause } from "@lucide/svelte";
   import { adminUrl } from "$lib/admin-url";
   import { home, listeningStats, mixes, releaseInbox, settings, downloads, matchReview, playlistLinks, sources, activityWork, type ActivityTask, type MatchReviewResponse, type ListeningStats, type MixCard, type ReleaseInboxEntry, type StorageOverview } from "$lib/api";
-  import { humanize, relativeTime, isRoutineActivity, isProblem, activityHeadline } from "$lib/activity";
+  import { humanize, relativeTime, activityHeadline } from "$lib/activity";
   import ProviderMark from "$lib/components/ProviderMark.svelte";
   import ActivityStatusIcon from "$lib/components/ActivityStatusIcon.svelte";
   import PageStatus from "$lib/components/patterns/PageStatus.svelte";
@@ -18,7 +18,7 @@
   import RecapBars from "$lib/components/RecapBars.svelte";
   import { listeningTime, recapTimeline } from "$lib/intelligence";
   import { Button } from "$lib/components/ui/button";
-  import { homeSourceHealth, listenTrend, playbackMeta, playbackProgress, playbackSourceIssues, summarizeHome, type HomeSnapshot } from "$lib/home";
+  import { homeSourceHealth, listenTrend, playbackMeta, playbackProgress, playbackSourceIssues, recentHomeActivity, summarizeHome, type HomeSnapshot } from "$lib/home";
   import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
   import { findProviderDefinition, formatPlaybackSource, providerDisplayName } from "$lib/sources";
   import { reportHref } from "$lib/support";
@@ -206,11 +206,11 @@
     return name ? `${name} · ` : "";
   };
 
-  const visibleActivity = $derived((snapshot?.activity ?? []).filter((item) => !isRoutineActivity(item) && (isProblem(item) || !/record[\s_-]+(?:a[\s_-]+)?listen/i.test(item.label))).slice(0, 4));
+  const visibleActivity = $derived(recentHomeActivity(snapshot?.activity ?? []));
 
   const attention = $derived.by(() => {
     if (!snapshot || !summary) return [];
-    const items: Array<{ key: string; title: string; detail: string; href: string; action: string }> = [];
+    const items: Array<{ key: string; title: string; detail: string; consequence?: string; href: string; action: string }> = [];
     if (summary.unresolved > 0)
       items.push({
         key: "unresolved",
@@ -232,7 +232,8 @@
       items.push({
         key: "health:sources",
         title: countLabel(failingNames.length, "source is failing checks", "sources are failing checks"),
-        detail: failingNames.join(", ") + ". Playback falls back to the others.",
+        detail: failingNames.join(", ") + ".",
+        consequence: "Playback falls back to the others.",
         href: "#/sources/services",
         action: "Review sources",
       });
@@ -343,7 +344,7 @@
   {#if attention.length}
     {@const item = attention[0]}
     <section class="attention-banner" aria-label="Needs your attention">
-      <div title={`${item.title} · ${item.detail}`}><strong>{item.title}</strong><span class="desktop-attention">{" · "}{item.detail}</span><span class="phone-attention">{item.key === "health:sources" ? phoneSourceNames : item.detail}</span></div>
+      <div title={`${item.title} · ${item.detail}${item.consequence ? " " + item.consequence : ""}`}><strong>{item.title}</strong><span class="desktop-attention">{" · "}{item.detail}</span>{#if item.consequence}<span class="attention-consequence">{item.consequence}</span>{/if}<span class="phone-attention">{item.key === "health:sources" ? phoneSourceNames : item.detail}</span></div>
       <Button variant="outline" size="sm" href={item.href}>{item.action}</Button>
     </section>
   {/if}
@@ -404,15 +405,17 @@
   .playback-state { margin-left: 0; display: inline-flex; align-items: center; gap: 4px; font-size: .74rem; color: var(--color-ink-muted); }
   .playback-state.complete { color: var(--success); }
   .playback-controls :global([data-slot="button"]) { padding: 0; height: 24px; font-size: .74rem; }
-  .attention-banner { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-radius: var(--radius-lg); background: var(--warning-container); color: var(--on-warning-container); }
+  .attention-banner { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-radius: var(--radius-md); background: var(--warning-container); color: var(--color-ink); }
   .attention-banner > div { display: flex; align-items: baseline; gap: 3px; min-width: 0; flex: 1; font-size: .78rem; white-space: nowrap; overflow: hidden; }
   .attention-banner strong { flex: none; }
+  .attention-banner strong { color: var(--warning); }
+  .attention-consequence { flex: none; }
   .desktop-attention { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
   .attention-banner > :global(a) { flex: none; }
   .phone-attention, .phone-kpi, .week-numbers > .phone-trend { display: none; }
   .muted { color: var(--color-ink-muted); font-size: var(--text-sm); }
   .week-panel { padding: 14px 16px; }
-  .week-panel, .recent-panel { border: 1px solid var(--color-edge); border-radius: var(--radius-lg); }
+  .week-panel, .recent-panel { border: 1px solid var(--color-edge); border-radius: var(--radius-list); }
   header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
   h2 { font-size: .98rem; font-weight: 600; }
   header :global([data-slot="button"]) { flex: none; }
@@ -444,7 +447,7 @@
     .attention-banner > div { display: block; white-space: normal; }
     .attention-banner > :global(a) { justify-self: start; }
     .phone-attention { display: block; }
-    .desktop-attention { display: none; }
+    .desktop-attention, .attention-consequence { display: none; }
     .now-playing-card.compact-playing { grid-template-columns: 56px minmax(0, 1fr); gap: 12px; }
     .compact-playing .now-playing-artwork { width: 56px; align-self: start; }
     .compact-playing .now-playing-title { padding-right: 80px; }

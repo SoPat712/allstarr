@@ -3,3 +3,8 @@ export function sidePanelLayout(viewportWidth: number, contentWidth: number, opt
   const width = viewportWidth < 900 ? viewportWidth : options.width === undefined ? preferredWidth : Math.min(options.width, viewportWidth * .4);
   return { width, docked: viewportWidth >= 900 && contentWidth - width >= (options.minimumContentWidth ?? 520) };
 }
+
+export function sidePanelResizeWidth(requestedWidth: number, defaultWidth: number, contentWidth: number) {
+  const maximum = Math.max(defaultWidth, contentWidth - 360);
+  return Math.min(maximum, Math.max(defaultWidth, Number.isFinite(requestedWidth) ? requestedWidth : defaultWidth));
+}

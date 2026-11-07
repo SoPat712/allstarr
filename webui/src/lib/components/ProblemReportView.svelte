@@ -91,7 +91,7 @@
 </script>
 
 <section class="settings-content report-view" aria-label="Report a problem">
-  <header class="panel-heading"><div><h2>{receipt ? "Report saved" : "Tell us what went wrong"}</h2><p>Reports stay inside Allstarr for your administrator to review.</p></div><div class="panel-heading-actions"><Button variant="secondary" href={back}>{receipt ? "Back to music" : "Cancel"}</Button></div></header>
+  <header class="panel-heading"><div><h2>{receipt ? "Report saved" : "Tell us what went wrong"}</h2><p>Reports stay inside Allstarr for your administrator to review.</p></div><div class="panel-heading-actions"><Button variant="text" href={back}>{receipt ? "Back to music" : "Cancel"}</Button></div></header>
   <PageStatus label="Report status" items={[
     { label: receipt ? "Saved for your administrator" : selector ? "Song report" : "General report" },
     { label: receipt ? "Available in Activity → Reports" : selector ? loading ? "Loading song details…" : contextError ? "Song details need attention" : "Song details are included" : "Add a note about what happened" },

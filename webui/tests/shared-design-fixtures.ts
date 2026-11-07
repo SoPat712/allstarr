@@ -112,7 +112,7 @@ export async function panelFixture(page: Page) {
 
 export async function settingsFixture(page: Page, libraryFailure = false) {
   const writes: Record<string, unknown>[] = [];
-  let config = { clientApi: { enabled: false }, backendType: "Jellyfin", operatorSettings: { "Backend:MusicLibraryIds": "music", "Cors:AllowedOrigins": "https://app.invalid" }, audio: { quality: "CdLossless" }, jellyfin: { url: "http://media.invalid:8096" }, matching: { localPreferencePercent: 7 } };
+  let config = { clientApi: { enabled: false }, backendType: "Jellyfin", operatorSettings: { "Backend:MusicLibraryIds": "music", "Cors:AllowedOrigins": "https://app.invalid" }, audio: { quality: "CdLossless" }, odesli: { enabled: true, rateLimitMs: 1000 }, jellyfin: { url: "http://media.invalid:8096" }, matching: { localPreferencePercent: 7 } };
   await page.route("**/api/admin/**", async route => {
     const path = new URL(route.request().url()).pathname;
     const reply = (json: unknown) => route.fulfill({ json });
@@ -129,6 +129,8 @@ export async function settingsFixture(page: Page, libraryFailure = false) {
       ] }, { id: "operator", label: "Library", fields: [
         { key: "BACKEND_MUSIC_LIBRARY_IDS", label: "Libraries to use", type: "text", valuePath: "operatorSettings.Backend:MusicLibraryIds", requiresRestart: true },
         { key: "CORS_ALLOWED_ORIGINS", label: "Browser origins", type: "text", valuePath: "operatorSettings.Cors:AllowedOrigins", requiresRestart: true },
+        { key: "ODESLI_ENABLED", label: "Find the same song on other services", type: "toggle", valuePath: "odesli.enabled" },
+        { key: "ODESLI_RATE_LIMIT_MS", label: "Wait between song.link lookups (milliseconds)", type: "number", valuePath: "odesli.rateLimitMs" },
       ] },
     ] });
     if (path.endsWith("/preferences")) {

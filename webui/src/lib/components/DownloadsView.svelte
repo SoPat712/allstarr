@@ -229,6 +229,7 @@
 
 {#snippet songRow(file: ManagedDownload, copies: ManagedDownload[], key: string, copiesId: string)}
   <LibraryDownloadRow {file} {copies} {storage} provider={provider(file.provider)} providerName={[...new Set(copies.map(copy => providerName(copy.provider)))].join(" + ")}
+    qualities={[...new Map(copies.map(copy => [qualityLine(copy), { label: qualityLine(copy), lower: lowerQuality(copy) }])).values()]}
     quality={[...new Set(copies.map(qualityLine))].map((line, index) => index && line.startsWith(`${file.codec} `) ? line.slice(file.codec.length + 1) : line).join(" · ")} warnings={warnings(copies)} lowerQuality={copies.some(lowerQuality)}
     size={groupSize(copies)} lifecycle={lifecycle(copies)} expanded={expanded.includes(key)} {copiesId}
     selected={panelOpen && selectedFile?.path === file.path} busy={Boolean(action)} moving={movingPaths.includes(file.path)}
@@ -338,7 +339,7 @@
 <style>
   .library-downloads { min-width: 0; }
   .library-downloads-heading { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding-bottom: var(--space-3); }
-  h2 { margin: 0; font-size: 1.5rem; }
+  h2 { margin: 0; font-size: var(--text-section); }
   .library-downloads-heading-actions { display: flex; flex: 0 0 auto; align-items: center; gap: var(--space-2); }
   .library-downloads-heading-actions :global(.danger-text) { color: var(--danger); }
   .downloads-status { padding-bottom: var(--space-4); }
@@ -354,11 +355,11 @@
   th button { min-height: var(--control-sm); border: 0; padding: 0; background: transparent; color: inherit; cursor: pointer; font: inherit; text-align: left; white-space: nowrap; }
   th[aria-sort="ascending"] button, th[aria-sort="descending"] button { color: var(--color-signal-text); font-weight: 600; }
   .song-heading { padding-left: var(--space-4); }
-  .source-heading { width: 140px; }
+  .source-heading { width: 160px; }
   .lifecycle-heading { width: 120px; }
   .size-heading { width: 108px; text-align: right; }
-  .quality-heading { width: 170px; }
-  .actions-heading { width: 176px; }
+  .quality-heading { width: 210px; }
+  .actions-heading { width: 116px; }
   .copies-row[hidden] { display: none; }
   .copies-row > td { border-bottom: 1px solid var(--color-edge); padding: var(--space-3); background: var(--color-panel-raised); }
   .copies-explanation { margin: 0 0 var(--space-2); padding-inline: var(--space-3); color: var(--color-ink-muted); font-size: var(--text-xs); }

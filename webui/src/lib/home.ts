@@ -5,8 +5,10 @@ import type {
   RuntimeStatus,
   HomeOverview,
   ActivityTask,
+  ActivityItem,
 } from "./api";
 import { formatPlaybackSource } from "./sources";
+import { isProblem, isRoutineActivity } from "./activity";
 
 export type HomeSnapshot = {
   providerCatalog?: ProviderDefinition[];
@@ -17,6 +19,18 @@ export type HomeSnapshot = {
   stats?: HomeOverview["stats"];
   failures: string[];
 };
+
+export function recentHomeActivity(items: ActivityItem[]) {
+  const checks = new Set<string>();
+  return items.toSorted((a, b) => b.occurredAt.localeCompare(a.occurredAt)).filter(item => {
+    if (isRoutineActivity(item) || !isProblem(item) && /record[\s_-]+(?:a[\s_-]+)?listen/i.test(item.label)) return false;
+    if (item.action !== "health.smoke" && !/^health check$/i.test(item.label)) return true;
+    const key = JSON.stringify([item.actorUserId, item.providerId, item.source, item.label, item.displayName, item.state, item.detail]);
+    if (checks.has(key)) return false;
+    checks.add(key);
+    return true;
+  }).slice(0, 4);
+}
 
 export function listenTrend(current: number, previous: number) {
   const change = current - previous;

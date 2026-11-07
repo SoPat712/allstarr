@@ -264,7 +264,7 @@
   {:else}
     {#if error}<p class="notice-error" role="alert">{error}</p>{/if}
     <div class="plays-list">
-    {#if days.length}<div class="play-headings" aria-hidden="true"><span>Song</span><div class="play-columns"><span>Played from</span><span>Start</span><span>Result</span><span>When</span></div></div>{/if}
+    {#if days.length}<div class="play-headings table-heading" aria-hidden="true"><span>Song</span><div class="play-columns"><span>Played from</span><span>Start</span><span>Result</span><span>When</span></div></div>{/if}
     {#each days as day (day.label)}
       <section class="event-log-day" aria-label={day.label}>
         <h2>{day.label}</h2>
@@ -308,7 +308,7 @@
       </DropdownMenu.Root>
     {/snippet}
     {#if selectedRuns.length > 1}
-      <nav class="play-runs" aria-label="Plays of this song">{#each selectedRuns as run}<Button variant={run.id === expanded ? "secondary" : "ghost"} onclick={() => toggle(run)}>{clock(run.startedAt)} · {playOutcome(run.outcome).label}</Button>{/each}</nav>
+      <nav class="play-runs" aria-label="Plays of this song">{#each selectedRuns as run}<Button variant={run.id === expanded ? "secondary" : "text"} onclick={() => toggle(run)}>{clock(run.startedAt)} · {playOutcome(run.outcome).label}</Button>{/each}</nav>
     {/if}
                 <div class="play-detail" id={`play-${expanded}`} aria-busy={detailBusy}>
                   {#if detailBusy && !detail}<p role="status">Loading start steps…</p>{/if}
@@ -338,7 +338,7 @@
                           {#if reportNote.length >= 450}<small>{reportNote.length}/500</small>{/if}
                           <div class="play-actions">
                             <Button variant="secondary" size="sm" type="submit" disabled={actionBusy}>Send report</Button>
-                            <Button variant="secondary" size="sm" disabled={actionBusy} onclick={() => reportOpen = false}>Cancel</Button>
+                            <Button variant="text" size="sm" disabled={actionBusy} onclick={() => reportOpen = false}>Cancel</Button>
                           </div>
                         </form>
                       {/if}
@@ -375,8 +375,9 @@
   .play-source, .play-start-time { display: grid; gap: var(--space-1); min-width: 0; }
   .play-source > span { display: flex; align-items: center; gap: var(--space-1); }
   .play-result { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .play-headings .play-columns { font: inherit; letter-spacing: inherit; }
   .play-columns time { white-space: nowrap; font-variant-numeric: tabular-nums; }
-  .play-headings { padding: var(--space-2) var(--space-4); background: var(--color-panel); color: var(--color-ink-muted); font-size: var(--text-xs); text-transform: uppercase; }
+  .play-headings { padding: var(--space-2) var(--space-4); background: var(--color-panel); color: var(--color-ink-muted); font-size: var(--text-table-heading); text-transform: uppercase; }
   .play-headings > span { grid-column: 1 / 3; }
   .play-detail { display: grid; gap: var(--space-4); }
   :global(.play-forget) { color: var(--danger); }

@@ -86,7 +86,7 @@
   .row-leading :global(.media-art) { width: 100%; height: 100%; }
   .row-leading :global(img) { width: 100%; height: 100%; object-fit: cover; }
   .row-copy { min-width: 0; flex: 1; }
-  h3 { overflow: hidden; margin: 0; color: var(--color-ink); font-size: var(--text-sm); font-weight: 600; line-height: 1.4; text-overflow: ellipsis; white-space: nowrap; }
+  h3 { overflow: hidden; margin: 0; color: var(--color-ink); font-size: var(--text-sm); font-weight: 500; line-height: 1.4; text-overflow: ellipsis; white-space: nowrap; }
   p { overflow: hidden; margin: var(--space-1) 0 0; color: var(--color-ink-muted); font-size: var(--text-xs); line-height: 1.45; text-overflow: ellipsis; white-space: nowrap; }
   .row-chips { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1); margin-top: var(--space-2); }
   .row-control { position: relative; z-index: 2; }

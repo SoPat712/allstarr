@@ -1,4 +1,5 @@
 <script lang="ts">
+  import AdvancedFold from "$lib/components/patterns/AdvancedFold.svelte";
   import RefreshButton from "$lib/components/RefreshButton.svelte";
   import { countLabel, countNoun } from "$lib/count-label";
   import { toast } from "$lib/toasts";
@@ -651,7 +652,7 @@
         </DropdownMenu.Root>
       {/if}{/snippet}
       {#snippet artwork()}<MediaArtwork class="hero-art" url={details?.artworkUrl} loading="eager" />{/snippet}
-      {#snippet footer()}{#if selected}<div class="playlist-panel-footer"><Button variant="text" class="library-danger" disabled={!isServiceMix(selected)} title={isServiceMix(selected) ? undefined : "Removal is not available for this playlist yet."} onclick={() => { removeError = ""; removingMix = selected; }}>Remove from my apps</Button><div>{#if canRebuildInJellyfin(selected)}<Button variant="outline" disabled={Boolean(action)} onclick={() => confirmRebuild(selected)}>Rebuild…</Button>{/if}<Button disabled={Boolean(action) || !selected.enabled || !details} onclick={() => void run("sync")}>Sync now</Button></div></div>{/if}{/snippet}
+      {#snippet footer()}{#if selected}<div class="playlist-panel-footer">{#if isServiceMix(selected)}<Button variant="destructive-text" onclick={() => { removeError = ""; removingMix = selected; }}>Remove from my apps</Button>{/if}<div>{#if canRebuildInJellyfin(selected)}<Button variant="outline" disabled={Boolean(action)} onclick={() => confirmRebuild(selected)}>Rebuild…</Button>{/if}<Button disabled={Boolean(action) || !selected.enabled || !details} onclick={() => void run("sync")}>Sync now</Button></div></div>{/if}{/snippet}
       {#if detailLoading && !details}
         <RowsSkeleton count={5} />
       {:else if detailError && !details}
@@ -674,7 +675,7 @@
         <div class="playlist-match-summary"><strong>{details.reviewCount + details.unresolvedCount ? countLabel(details.reviewCount + details.unresolvedCount, "song needs a look", "songs need a look") : `All ${countLabel(details.trackCount, "match is settled", "matches are settled")}`}</strong><span>{details.reviewCount + details.unresolvedCount ? "Review these songs in Matches." : "None of this playlist’s songs need a look."} <Button variant="text" size="sm" href="#/library/matches">Open in Matches</Button></span></div>
         {#key selected.id}<PlaylistSyncSettings playlist={selected} schedule={details.schedule ?? null} sourceName={providerName(selected.sourceProviderId)} {targetName} onPlaylist={value => playlists = playlists.map(item => item.id === value.id ? value : item)} onSchedule={(value, id) => { if (details?.id === id) details = { ...details, schedule: value }; }} />{/key}
         <dl class="playlist-panel-facts"><dt>Last synced</dt><dd>{relativeTime(selected.lastRunAt, "Not yet")}</dd><dt>Source</dt><dd>{providerName(selected.sourceProviderId)}</dd></dl>
-        <details class="playlist-more" bind:open={songsOpen}><summary>Songs and activity · {countLabel(details.trackCount, "song")}</summary>
+        <AdvancedFold class="playlist-more" label={`Songs and activity · ${countLabel(details.trackCount, "song")}`} bind:open={songsOpen}>
         {#if exportError}<p class="field-error" role="alert">{exportError}</p>{/if}
 
         <section class="playlist-overview" aria-label="Playlist summary">
@@ -779,7 +780,7 @@
           ]} />
           <Popover.Root>
             <Popover.Trigger
-              class={`${buttonVariants({ variant: "secondary" })} track-column-trigger`}
+              class="select-trigger track-column-trigger"
               aria-label={`Choose track columns, ${visibleTrackColumnCount} optional columns shown`}
             >
               Columns <ChevronDown size={16} aria-hidden="true" />
@@ -928,7 +929,7 @@
             {#if !detailLoading}<p>Update the playlist to fetch its songs from {providerName(details.sourceProviderId)}.</p>{/if}
           </div>
         {/if}
-        </details>
+        </AdvancedFold>
       {:else}<EmptyState title="Select a playlist" />{/if}
     </SidePanel>
   </section>
@@ -984,18 +985,27 @@
 <style>
   .library-playlists { min-width: 0; }.library-list { min-width: 0; }
   .library-heading, .library-actions, .library-search { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
-  .library-heading { justify-content: space-between; margin-bottom: var(--space-3); }.library-heading h2 { margin: 0; font-size: 1.5rem; }
+  .library-heading { justify-content: space-between; margin-bottom: var(--space-3); }.library-heading h2 { margin: 0; font-size: var(--text-section); }
   .library-filters { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-3); margin-block: var(--space-4); }.library-search { flex: 1 1 360px; min-width: 0; flex-wrap: nowrap; }.library-search > :global(:first-child) { min-width: 0; flex: 1 1 0; }.library-search :global(.select-root) { flex: 0 0 auto; }.library-search :global(.select-trigger) { width: auto; gap: var(--space-2); padding-inline: var(--space-2); background: var(--color-panel); color: var(--color-ink); font-size: .8125rem; white-space: nowrap; }
   .playlist-row { display: block; min-height: 0; min-width: 0; padding: 0; border: 0; }.playlist-panel-tools { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--space-2); }.hero-route, .playlist-copy-note { margin: 0; font-size: var(--text-xs); color: var(--color-ink-muted); }
   .playlist-warning { margin-block: var(--space-3); border-radius: var(--radius-md); padding: var(--space-3); background: color-mix(in srgb, var(--warning) 12%, var(--color-panel)); color: var(--warning); font-size: var(--text-sm); }
   .playlist-kpis { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-2); margin-block: var(--space-4); }.playlist-kpis > div { background: var(--color-panel-raised); border-radius: var(--radius-md); padding: var(--space-3); }.playlist-kpis strong { display: block; font-size: 1.35rem; }.playlist-kpis small { color: var(--color-ink-muted); font-size: var(--text-xs); }
   .playlist-match-summary { display: grid; justify-items: start; border: 1px solid var(--color-edge); border-radius: var(--radius-md); padding: var(--space-3); margin-bottom: var(--space-5); font-size: var(--text-sm); }
   .playlist-panel-facts { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: var(--space-3); margin-block: var(--space-5); font-size: var(--text-xs); }.playlist-panel-facts dt { color: var(--color-ink-muted); }.playlist-panel-facts dd { text-align: right; margin: 0; }
-  .playlist-more { --detail-gutter: 0px; min-width: 0; }
-  .playlist-more > summary { min-height: 44px; cursor: pointer; font-size: var(--text-sm); padding-block: var(--space-3); }.playlist-more :global(.playlist-facts) { display: grid; grid-template-columns: 1fr; }.playlist-more :global(.track-toolbar) { display: flex; flex-wrap: wrap; }.playlist-more :global(.track-scroll) { max-height: min(60dvh, 32rem); overflow: auto; }
+  :global(.playlist-more) { --detail-gutter: 0px; min-width: 0; max-width: 100%; }
+  :global(.playlist-more) .playlist-facts { display: grid; grid-template-columns: 1fr; }
+  :global(.playlist-more) .track-toolbar { display: flex; min-width: 0; align-items: center; flex-wrap: wrap; }
+  .track-toolbar :global(.search-field) { flex: 1 1 200px; }
+  .track-toolbar :global(.select-root) { flex: none; }
+  .track-toolbar :global(.select-trigger) { width: auto; flex: none; white-space: nowrap; }
+  :global(.playlist-more) .track-table, :global(.playlist-more) .track-scroll { width: 100%; min-width: 0; max-width: 100%; }
+  :global(.playlist-more) .track-scroll { max-height: min(60dvh, 32rem); overflow: auto; scrollbar-gutter: stable; }
+  @container (min-width: 800px) {
+    .track-data-table { min-width: 100%; }
+  }
   .playlist-panel-footer { display: flex; justify-content: space-between; align-items: center; gap: var(--space-2); width: 100%; min-width: 0; }.playlist-panel-footer > div { display: flex; align-items: center; gap: var(--space-2); margin-left: auto; }.playlist-panel-footer :global([data-slot="button"]) { padding-inline: var(--space-2); font-size: .75rem; }
   :global(.library-danger) { color: var(--danger); }
-  @media (max-width: 899px) { .library-search { flex-wrap: wrap; }.library-search > :global(:first-child) { flex-basis: 100%; }.playlist-more :global(.review-filter-button), .playlist-more :global(.schedule-edit-button), .playlist-more :global(.track-menu-trigger) { min-width: 44px; min-height: 44px; } }
+  @media (max-width: 899px) { .library-search { flex-wrap: wrap; }.library-search > :global(:first-child) { flex-basis: 100%; }:global(.playlist-more) :global(.review-filter-button), :global(.playlist-more) :global(.schedule-edit-button), :global(.playlist-more) :global(.track-menu-trigger) { min-width: 44px; min-height: 44px; } }
   @media (max-width: 380px) { .playlist-panel-footer :global([data-slot="button"]) { padding-inline: var(--space-1); font-size: .6875rem; } }
 
 </style>

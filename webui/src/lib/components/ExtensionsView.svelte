@@ -838,7 +838,7 @@
         </div>
       {/if}
       {#if dialogError}<p class="notice-error" role="alert">{dialogError}</p>{/if}
-      <footer class="dialog-actions"><AlertDialog.Cancel class={buttonVariants({ variant: "secondary" })} disabled={Boolean(action)}>Cancel</AlertDialog.Cancel><Button variant={activatePackage || reviewAccessPackage ? "default" : "destructive"} disabled={Boolean(action) || Boolean(activatePackage && !activationAccessReady)} onclick={() => void confirm()}>{action ? reviewAccessPackage ? "Stopping…" : activatePackage ? "Turning on…" : "Removing…" : reviewAccessPackage ? "Stop and review" : activatePackage ? "Turn on" : removePackage ? "Uninstall" : "Remove registry"}</Button></footer>
+      <footer class="dialog-actions"><AlertDialog.Cancel class={buttonVariants({ variant: "text" })} disabled={Boolean(action)}>Cancel</AlertDialog.Cancel><Button variant={activatePackage || reviewAccessPackage ? "default" : "destructive"} disabled={Boolean(action) || Boolean(activatePackage && !activationAccessReady)} onclick={() => void confirm()}>{action ? reviewAccessPackage ? "Stopping…" : activatePackage ? "Turning on…" : "Removing…" : reviewAccessPackage ? "Stop and review" : activatePackage ? "Turn on" : removePackage ? "Uninstall" : "Remove registry"}</Button></footer>
     </AlertDialog.Content></AlertDialog.Portal>
   </AlertDialog.Root>
 

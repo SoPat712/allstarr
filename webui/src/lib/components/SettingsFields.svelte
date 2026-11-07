@@ -1,5 +1,6 @@
 <script lang="ts">
   import { Lock } from "@lucide/svelte";
+  import type { Snippet } from "svelte";
   import { settings, type ConfigField, type ConfigSection, type PlaybackStart } from "$lib/api";
   import { settingValue, splitLibraryIds, joinLibraryIds } from "$lib/settings-fields";
   import { fieldValue, playbackStartOptions } from "$lib/settings";
@@ -17,7 +18,7 @@
   import AudioQualityField from "$lib/components/AudioQualityField.svelte";
   import AdvancedFold from "$lib/components/patterns/AdvancedFold.svelte";
 
-  let { section, config, onChanged = () => {} }: { section: ConfigSection; config: Record<string, unknown>; onChanged?: () => void | Promise<void> } = $props();
+  let { section, config, footer, embedded = false, onChanged = () => {} }: { section: ConfigSection; config: Record<string, unknown>; footer?: Snippet; embedded?: boolean; onChanged?: () => void | Promise<void> } = $props();
   let edits = $state<Record<string, { value: string; base: string }>>({});
   let solverTesting = $state(false);
   let libraries = $state<{ id: string; name: string }[] | null>(null);
@@ -147,16 +148,16 @@
   onDestroy(() => { abort.abort(); clearTimeout(qualityTimer); });
 </script>
 
-<form class="settings-card settings-disclosure" aria-label={`${section.label} settings`} onsubmit={event => event.preventDefault()}>
+<svelte:element this={embedded ? "div" : "form"} role={embedded ? "group" : undefined} class="settings-card settings-disclosure" aria-label={`${section.label} settings`} onsubmit={(event: SubmitEvent) => event.preventDefault()}>
   <header><div><h3>{section.label}</h3>{#if section.id === "links"}<p>Find links to the same song across your enabled services.</p>{/if}</div></header>
   {#if externallyChanged}<div class="degraded-banner" role="status"><p><strong>Someone else changed these settings.</strong> Your unsaved edits are kept.</p><Button variant="outline" type="button" onclick={() => { edits = {}; drafts = {}; error = ""; }}>Reload server values</Button></div>{/if}
   <div class="settings-fields">
     {#each section.fields as field (field.key)}
+      {@const hint = help[field.key] || (field.helpText && !field.helpText.startsWith("Saved in the data folder") ? field.helpText : "")}
       <div class="setting-field settings-row" class:wide-control={field.type === "audio-quality" || field.key === "PLAYBACK_START_PREFERENCE"} class:quality-row={field.type === "audio-quality"}>
         <div class:sr-only={field.type === "audio-quality"}>
           <label for={`${id}-${field.key}`}><strong>{label(field)}</strong></label>
-          {#if !locked(field) && (help[field.key] || field.helpText && !field.helpText.startsWith("Saved in the data folder"))}<small>{help[field.key] || field.helpText}</small>{/if}
-          {#if !locked(field) && field.requiresRestart}<small class="restart-note">· Restarts Allstarr</small>{/if}
+          {#if !locked(field) && (hint || field.requiresRestart)}<small>{hint}{#if field.requiresRestart}<span class="restart-note"> · Restarts Allstarr</span>{/if}</small>{/if}
           {#if saved[field.key]}<small class="setting-saved" role="status">✓ Saved</small>{/if}
         </div>
         {#if locked(field)}
@@ -207,7 +208,8 @@
   </div>
   {#if section.fields.some(field => field.type === "audio-quality")}<AdvancedFold label="Exact quality asked from each service"><ul class="requested-qualities">{#each requestedQualities as quality}<li>{quality}</li>{/each}</ul></AdvancedFold>{/if}
   {#if error}<p role="alert" class="settings-impact notice-error">{error}</p>{/if}
-</form>
+  {@render footer?.()}
+</svelte:element>
 
 <ConfirmDialog bind:open={restartOpen} title={pending?.removing ? pending.field.requiresRestart ? "Remove the key and restart Allstarr?" : "Remove the saved key?" : "Restart Allstarr to apply?"} description={pending?.removing && !pending.field.requiresRestart ? "The saved key is removed. You will need to enter it again to use it." : `Changing ${pending ? label(pending.field).toLowerCase() : "this setting"} needs a restart. Music that is playing will pause briefly. This page reconnects when Allstarr is ready.`} confirmLabel={busy ? "Applying…" : pending?.removing ? pending.field.requiresRestart ? "Remove key and restart" : "Remove key" : "Restart and apply"} confirmVariant={pending?.removing ? "destructive" : "default"} disabled={busy} closeOnConfirm={false} {error} onConfirm={() => pending ? persist(pending.field, pending.value, pending.previous) : undefined} />
 
@@ -216,9 +218,10 @@
   .wide-control.quality-row { grid-template-columns: minmax(0, 1fr) !important; }
   .requested-qualities { margin: 0; padding: var(--space-3) var(--space-6); color: var(--color-ink-muted); font-size: var(--text-sm); }
 
-  .restart-note { color: var(--on-warning-container); }
+  .restart-note { color: var(--warning); }
   .library-choices, .library-fallback { display: grid; gap: var(--space-2); min-width: 0; }
-  .library-choices label { display: flex; align-items: center; gap: var(--space-2); min-height: 44px; }
+  .library-choices label { display: flex; align-items: center; gap: var(--space-2); min-height: 26px; }
+  @media (max-width: 899px), (pointer: coarse) { .library-choices label { min-height: 44px; } }
   .library-choices span { overflow-wrap: anywhere; }
   .matching-preference { min-width: 0; }
   .matching-preference summary { min-height: 44px; padding-block: var(--space-3); cursor: pointer; font-size: var(--text-xs); color: var(--color-ink-muted); }

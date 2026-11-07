@@ -307,7 +307,7 @@
         {/if}
         {#if previewError}<p class="notice-error" role="alert">{previewError}</p>{/if}
       </div>
-      <footer class="dialog-actions"><Button type="button" variant="secondary" disabled={action} onclick={() => void cancel()}>Cancel</Button><Button type="submit" disabled={action || !waiting.length}>{action ? "Please wait…" : previewFiles.length > 1 ? "Import all" : "Import"}</Button></footer>
+      <footer class="dialog-actions"><Button type="button" variant="text" disabled={action} onclick={() => void cancel()}>Cancel</Button><Button type="submit" disabled={action || !waiting.length}>{action ? "Please wait…" : previewFiles.length > 1 ? "Import all" : "Import"}</Button></footer>
     </form>
   </Dialog.Content></Dialog.Portal>
 </Dialog.Root>

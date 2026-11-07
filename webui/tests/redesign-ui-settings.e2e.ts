@@ -64,7 +64,8 @@ for (const [width, theme] of [[1280, "light"], [1280, "dark"], [390, "light"], [
     await fixture(page);
     for (const section of pages) {
       await page.goto(`/#/settings/${section}`);
-      await expect(page.getByLabel("Page status").first()).toBeVisible();
+      if (section === "general") await expect(page.getByRole("heading", { name: "General", exact: true })).toBeVisible();
+      else await expect(page.getByLabel("Page status").first()).toBeVisible();
       await expect(page.getByLabel("Loading items", { exact: true })).toHaveCount(0);
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
       await page.screenshot({ path: `test-results/ui-settings/${section}-${width}-${theme}.png`, fullPage: true });

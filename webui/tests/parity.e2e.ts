@@ -1047,7 +1047,7 @@ for (const width of [390, 1280]) {
       const streamed = details.getByRole("row").filter({ hasText: "Streamed song" });
       await expect(streamed).toContainText("Streams through Allstarr");
       await expect(streamed).not.toContainText(/unresolved|failed|no playable match/i);
-      await expect(details.getByRole("row").filter({ hasText: "Local song" })).toContainText("Local library");
+      await expect(details.getByRole("row").filter({ hasText: "Local song" })).toContainText("In your library");
       await expect(details.getByRole("row").filter({ hasText: "Duplicate song" })).toContainText("Duplicate · not added twice");
       await expect(details.getByRole("row").filter({ hasText: "Unresolved song" })).toContainText("Not playable");
       await streamed.getByRole("button", { name: "Routes for Streamed song" }).click();
@@ -1071,6 +1071,15 @@ for (const width of [390, 1280]) {
         await details.getByRole("button", { name: `Technical details for ${row.title}`, exact: true }).click();
         await expect(page.locator(".track-technical")).toContainText(labels[index]);
         await page.keyboard.press("Escape");
+      }
+      if (width === 1280 && theme === "dark") {
+        await page.evaluate(async () => { await document.fonts.ready; });
+        await page.screenshot({ path: testInfo.outputPath("playlist-panel-default-1280-dark.png") });
+        await details.getByRole("button", { name: "Expand", exact: true }).click();
+        await expect(details).toHaveAttribute("data-expanded", "true");
+        await details.locator(".track-data-table").scrollIntoViewIfNeeded();
+        await page.screenshot({ path: testInfo.outputPath("playlist-panel-expanded-1280-dark.png") });
+        await details.getByRole("button", { name: "Restore", exact: true }).click();
       }
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
       await testInfo.attach("playlist-row-outcomes", { body: await page.screenshot(), contentType: "image/png" });
@@ -2404,7 +2413,7 @@ for (const width of [835, 1280]) for (const theme of ["light", "dark"]) {
     const initial = await sidebar.boundingBox();
     const profile = await page.locator(".profile").boundingBox();
     expect(initial!.height).toBe(844);
-    expect(initial!.width).toBe(width === 835 ? 80 : 248);
+    expect(initial!.width).toBe(width === 835 ? 80 : 200);
     await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
     expect(await page.evaluate(() => window.scrollY)).toBeGreaterThan(844);
     const scrolled = await sidebar.boundingBox();
@@ -2419,9 +2428,9 @@ for (const width of [835, 1280]) for (const theme of ["light", "dark"]) {
     await page.screenshot({ path: test.info().outputPath(`sidebar-long-${width}-${theme}.png`), fullPage: true });
     expect((await sidebar.boundingBox())!.y).toBe(0);
     await page.getByRole("button", { name: width === 835 ? "Expand sidebar" : "Collapse sidebar", exact: true }).click();
-    await expect.poll(async () => (await sidebar.boundingBox())!.width).toBe(width === 835 ? 248 : 80);
+    await expect.poll(async () => (await sidebar.boundingBox())!.width).toBe(width === 835 ? 200 : 80);
     await expect(page.locator(".brand > span:last-child")).toHaveCSS("opacity", width === 835 ? "1" : "0");
-    expect((await page.locator(".workspace").boundingBox())!.x).toBe(width === 835 ? 248 : 80);
+    expect((await page.locator(".workspace").boundingBox())!.x).toBe(width === 835 ? 200 : 80);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await page.screenshot({ path: test.info().outputPath(`sidebar-scrolled-${width}-${theme}.png`) });
   });
@@ -2592,7 +2601,7 @@ for (const [administrator, backend] of [[true, "Jellyfin"], [false, "Navidrome"]
     await expect(nav.getByRole("group", { name: "Main destinations", exact: true }).getByRole("link")).toHaveText(["Home", "Library", "For you", "Sources", "Activity", "Settings"]);
     const secondary = nav.getByRole("group", { name: "Help and connections", exact: true });
     await expect(secondary.getByRole("link")).toHaveText(["Connect apps", "Report a problem"]);
-    await expect(secondary).toHaveCSS("border-top-width", "1px");
+    await expect(secondary).toHaveCSS("border-top-width", "0px");
     expect(await secondary.evaluate(element => Number.parseFloat(getComputedStyle(element).marginTop))).toBeGreaterThan(0);
     await expect(page.locator(".brand small")).toHaveText(backend);
     await expect(page.locator(".profile strong")).toHaveText("Taylor");
@@ -3912,9 +3921,9 @@ test("Cached and Kept keep media facts and actions readable on mobile", async ({
   const panel = page.getByRole("dialog");
   await expect(panel).toContainText("900 kbps");
   await expect(panel).toContainText("1000 KiB");
-  await expect(panel.getByLabel("Song facts", { exact: true }).getByText("Last played", { exact: true })).toBeVisible();
-  await expect(panel.getByLabel("Song facts", { exact: true }).getByText("Not provided", { exact: true })).toBeVisible();
-  await expect(panel.locator(".advanced")).not.toHaveAttribute("open");
+  await expect(panel.getByLabel("Song facts", { exact: true }).getByText("Last played", { exact: true })).toHaveCount(0);
+  await expect(panel.getByLabel("Song facts", { exact: true }).getByText("Not provided", { exact: true })).toHaveCount(0);
+  await expect(panel.locator(".settings-fold")).not.toHaveAttribute("open");
   await expect(panel.getByRole("link", { name: "Download", exact: true })).toBeVisible();
   await panel.getByRole("button", { name: "Close", exact: true }).click();
   const title = "Stay Alive (Prod. SUGA of BTS)";
@@ -5871,7 +5880,7 @@ test("Responsive boundaries preserve navigation and download identity", async ({
     if (width === 900)
       await expect.poll(async () => (await page.locator(".sidebar").boundingBox())?.width ?? 0).toBe(80);
     if (width === 901)
-      await expect.poll(async () => (await page.locator(".sidebar").boundingBox())?.width ?? 0).toBe(248);
+      await expect.poll(async () => (await page.locator(".sidebar").boundingBox())?.width ?? 0).toBe(200);
     if (width === 760) {
       const boxes = await navigation.locator(":scope > :is(a, button)").evaluateAll((links) =>
         links.map((link) => link.getBoundingClientRect().height));
@@ -5937,21 +5946,21 @@ test("Sidebar uses an integrated expander and deterministic slim breakpoint", as
     expander.boundingBox(),
     page.getByRole("link", { name: "Allstarr home" }).boundingBox(),
   ]);
-  expect(expanderBox!.y + expanderBox!.height).toBeLessThanOrEqual(brandBox!.y);
+  expect(expanderBox!.x).toBeGreaterThan(brandBox!.x);
+  expect(expanderBox!.y).toBeLessThan(brandBox!.y + brandBox!.height);
+  expect(expanderBox!.y + expanderBox!.height).toBeGreaterThan(brandBox!.y);
   await expect(page.locator(".desktop-navigation").getByRole("link")).toHaveCount(8);
   await expect(page.locator(".desktop-navigation").getByRole("link", { name: "Connect apps", exact: true })).toBeVisible();
   await expect(page.locator(".desktop-navigation").getByRole("link", { name: "Intelligence" })).toHaveCount(0);
   const libraryIcon = page.locator(".desktop-navigation")
     .getByRole("link", { name: "Library" }).locator("svg");
-  const expandedIcon = await libraryIcon.boundingBox();
   const expandedMark = await expander.locator("svg").innerHTML();
   await expander.click();
   await expect(shell).toHaveClass(/slim/);
   await expect(page.getByRole("button", { name: "Expand sidebar" })).toBeVisible();
   await expect.poll(async () => (await page.locator(".sidebar").boundingBox())?.width ?? 0).toBe(80);
   const collapsedIcon = await libraryIcon.boundingBox();
-  expect(Math.abs((expandedIcon!.x + expandedIcon!.width / 2) -
-    (collapsedIcon!.x + collapsedIcon!.width / 2))).toBeLessThanOrEqual(0.5);
+  expect(Math.abs(collapsedIcon!.x + collapsedIcon!.width / 2 - 40)).toBeLessThanOrEqual(0.5);
   const collapsedMark = await page.getByRole("button", { name: "Expand sidebar" })
     .locator("svg").innerHTML();
   expect(collapsedMark).not.toBe(expandedMark);
@@ -7503,7 +7512,8 @@ for (const width of [320, 390, 1280]) for (const theme of ["light", "dark"]) {
     await retry.getByRole("button", { name: "Retry to saved account", exact: true }).click();
     await expect(page.getByRole("alert").filter({ hasText: "Refresh the delivery" })).toBeVisible();
     expect(resolutions[1]).toMatchObject({ revision: 4, action: "retry", accountRevision: 7 });
-    await panel.getByRole("button", { name: "Refresh delivery", exact: true }).click();
+    await page.getByRole("button", { name: "Refresh", exact: true }).click();
+    await expect(panel).toHaveAttribute("aria-busy", "false");
     await panel.getByRole("button", { name: "Retry", exact: true }).click();
     await retry.getByRole("button", { name: "Retry to saved account", exact: true }).click();
     await expect(panel.getByText("Reconnect song", { exact: true })).toHaveCount(0);
@@ -8350,7 +8360,7 @@ test("Cross-service links explain built-in lookups and preserve the optional mas
   await page.goto("#/settings/general");
   const card = page.getByRole("form", { name: "Song links and extensions settings" });
   await expect(card.getByText("Find links to the same song across your enabled services.", { exact: true })).toBeVisible();
-  await expect(card.getByText("Optional. With a key, the official API is tried first. Leave unchanged to keep it.", { exact: true })).toBeVisible();
+  await expect(card.getByText("Optional. With a key, the official API is tried first. Leave unchanged to keep it.")).toBeVisible();
   const key = card.getByLabel("song.link API key", { exact: true });
   await expect(key).toHaveCount(0);
   await card.getByRole("button", { name: "Change key…", exact: true }).click();
@@ -9685,4 +9695,20 @@ test("Desktop playback, task and review previews", async ({ page }, testInfo) =>
   await page.goto("#/library/mappings");
   await expect(page.getByRole("radiogroup", { name: "Match filters" })).toBeVisible();
   await testInfo.attach("desktop-mappings", { body: await page.screenshot({ fullPage: true }), contentType: "image/png" });
+});
+
+
+test("Mix details keep short local timestamps on desktop", async ({ page }) => {
+  const { appearance, mockForYou } = await import("./for-you-fixtures");
+  await appearance(page, 1280, "dark");
+  const state = await mockForYou(page);
+  state.cards.find(card => card.id === "daily-1")!.updatedAt = "2026-11-06T00:45:59Z";
+  await page.goto("/#/for-you?mix=daily-1");
+  const panel = page.getByRole("dialog", { name: "Blend 1", exact: true });
+  await expect(panel).toBeVisible();
+  await expect(panel.locator(".panel-header-extra")).toContainText("Refreshed Nov");
+  await expect(panel.locator(".panel-header-extra")).not.toContainText("2026");
+  await page.evaluate(async () => { await document.fonts.ready; });
+  await page.screenshot({ path: test.info().outputPath("mix-details-1280-dark.png") });
+  expect(await page.pageErrors()).toEqual([]);
 });

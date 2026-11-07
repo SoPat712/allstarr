@@ -132,6 +132,8 @@ for (const { width, theme } of modes) {
         expect((await now.locator("article").boundingBox())!.height).toBeLessThan(145);
         const banner = page.getByRole("region", { name: "Needs your attention" });
         expect((await banner.boundingBox())!.height).toBeLessThan(80);
+        await expect(banner.locator(".attention-consequence")).toHaveText("Playback falls back to the others.");
+        expect(await banner.locator(".attention-consequence").evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
         expect(await banner.locator("div").evaluate(element => element.clientHeight <= parseFloat(getComputedStyle(element).lineHeight) + 1)).toBe(true);
         await expect(page.locator(".week-chart .grid-line")).toHaveCount(0);
         const plot = (await page.locator(".week-chart .plot").boundingBox())!;

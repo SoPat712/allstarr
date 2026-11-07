@@ -292,7 +292,7 @@
   .kept-copy .copy-warning { color: var(--warning); }
   .quality-check-badge { width: fit-content; max-width: 100%; border: 1px solid var(--color-edge); border-radius: var(--radius-sm); padding: var(--space-1) var(--space-2); color: var(--warning); font-size: var(--text-xs); }
   .promotion-list :global(.row-chips .state-pill) { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
-  h2 { margin: 0; font-size: 1.35rem; font-weight: 600; }
+  h2 { margin: 0; font-size: var(--text-section); font-weight: 600; }
   .promotion-list { overflow: hidden; border: 1px solid var(--color-edge); border-radius: 14px; }
   .kept-song-group + .kept-song-group { border-top: 1px solid var(--color-edge); }
   .kept-song-group > :global(.item-row) { border-bottom: 0; }

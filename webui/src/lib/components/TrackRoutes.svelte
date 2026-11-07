@@ -2,10 +2,10 @@
   import { countLabel } from "$lib/count-label";
   import { ChevronDown } from "@lucide/svelte";
   import { Popover } from "$lib/components/ui/popover";
-  import ProviderMark from "$lib/components/ProviderMark.svelte";
+  import ProviderArtwork from "$lib/components/ProviderArtwork.svelte";
   import type { PlaylistTrack, ProviderDefinition } from "$lib/api";
   import { findProviderDefinition, providerDisplayName } from "$lib/sources";
-  import { isReviewTrack } from "$lib/playlists";
+  import { isReviewTrack, mediaServerName } from "$lib/playlists";
 
   let { track, providers, backend }: {
     track: PlaylistTrack; providers: ProviderDefinition[]; backend: string;
@@ -16,7 +16,7 @@
     ...(track.routeProviderId ? [track.routeProviderId] : []),
     ...track.providerRoutes.map((route) => route.providerId),
   ])]);
-  const name = (id: string) => providerDisplayName(providers, id, id);
+  const name = (id: string) => mediaServerName(id) ?? providerDisplayName(providers, id, "Music source");
   // Different sources can reach the same service (built-in and extension Apple Music); list each service once.
   const services = $derived.by(() => {
     const byName = new Map<string, { id: string; name: string; pinned: boolean; count: number }>();
@@ -33,9 +33,9 @@
 
 {#snippet summary()}
   <span class="route-summary">
-    <strong>{local ? name(backend) : "External [A]"}</strong>
+    <span class="route-service">{#if local || services[0]}<ProviderArtwork id={local ? backend : services[0].id} definition={findProviderDefinition(providers, local ? backend : services[0].id)} label={local ? name(backend) : services[0].name} decorative />{/if}<strong>{local ? name(backend) : "External"}</strong></span>
     <small>{local
-      ? track.targetStatus === "duplicate" ? "Duplicate · not added twice" : "Local library"
+      ? track.targetStatus === "duplicate" ? "Duplicate · not added twice" : "In your library"
       : track.targetStatus === "streamed" ? "Streams through Allstarr"
       : countLabel(routes.length, "mapped provider")}</small>
   </span>
@@ -52,19 +52,19 @@
       <ChevronDown size={14} aria-hidden="true" />
     </Popover.Trigger>
     <Popover.Portal>
-      <Popover.Content class="bits-menu track-routes-panel" sideOffset={6} align="end">
+      <Popover.Content class="bits-menu bits-popover track-routes-panel" sideOffset={6} align="end">
         <header>
           <strong>Where this song plays</strong>
           <small>{local ? `From ${name(backend)} first, then a mapped source` : "Streams through Allstarr from the first available source"}</small>
         </header>
         <ul aria-label={`Mapped providers for ${track.title}`}>
           {#if local}
-            <li><span class="route-tile"><ProviderMark id={backend} definition={findProviderDefinition(providers, backend)} /></span><span>{name(backend)}<small>In your library</small></span></li>
+            <li><ProviderArtwork class="route-tile" id={backend} definition={findProviderDefinition(providers, backend)} label={name(backend)} decorative /><span><strong>{name(backend)}</strong><small>In your library</small></span></li>
           {/if}
           {#each services as service (service.name)}
             <li>
-              <span class="route-tile"><ProviderMark id={service.id} definition={findProviderDefinition(providers, service.id)} /></span>
-              <span>{service.name}<small>{service.pinned ? "Manually chosen" : review ? "Suggested source — check recording" : track.matchState === "accepted" ? "Automatically matched" : "Playback source"}{service.count > 1 ? ` · ${countLabel(service.count, "source")}` : ""}</small></span>
+              <ProviderArtwork class="route-tile" id={service.id} definition={findProviderDefinition(providers, service.id)} label={service.name} decorative />
+              <span><strong>{service.name}</strong><small>{service.pinned ? "Manually chosen" : review ? "Suggested source — check recording" : track.matchState === "accepted" ? "Automatically matched" : "Playback source"}{service.count > 1 ? ` · ${countLabel(service.count, "source")}` : ""}</small></span>
             </li>
           {/each}
         </ul>
@@ -75,12 +75,15 @@
 {/if}
 
 <style>
+  .route-service { display: flex; align-items: center; gap: var(--space-2); }
+  .route-service :global(.provider-art) { width: 18px; height: 18px; flex: none; }
   :global(.track-routes-panel) { display: grid; gap: var(--space-3); }
   :global(.track-routes-panel header) { display: grid; gap: .125rem; }
   :global(.track-routes-panel header strong) { font-size: var(--text-sm); font-weight: 600; }
   :global(.track-routes-panel ul) { display: grid; gap: .25rem; margin: 0; padding: var(--space-3) 0 0; list-style: none; border-top: 1px solid var(--color-edge); }
   :global(.track-routes-panel li) { display: flex; align-items: center; gap: var(--space-3); padding-block: .375rem; font-size: var(--text-sm); }
   :global(.track-routes-panel li small) { display: block; }
+  :global(.track-routes-panel li strong) { display: block; font-weight: 500; }
   :global(.track-routes-panel .route-tile) {
     display: grid; flex: none; width: 2rem; height: 2rem; place-items: center; overflow: hidden;
     border-radius: .5rem; background: color-mix(in srgb, var(--color-ink) 7%, transparent);

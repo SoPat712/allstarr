@@ -180,7 +180,7 @@
     <AlertDialog.Title>Sign out of {item.displayName}?</AlertDialog.Title>
     <AlertDialog.Description>The extension stops using its service until you complete verification again. Its installation, permissions and Source accounts stay as they are.</AlertDialog.Description>
     {#if problem}<p class="notice-error" role="alert">{problem}</p>{/if}
-    <footer class="dialog-actions"><AlertDialog.Cancel class={buttonVariants({ variant: "secondary" })} disabled={Boolean(busy)}>Cancel</AlertDialog.Cancel><Button variant="destructive" disabled={Boolean(busy)} onclick={() => void signOut()}>{busy === "clear" ? "Signing out…" : "Sign out"}</Button></footer>
+    <footer class="dialog-actions"><AlertDialog.Cancel class={buttonVariants({ variant: "text" })} disabled={Boolean(busy)}>Cancel</AlertDialog.Cancel><Button variant="destructive" disabled={Boolean(busy)} onclick={() => void signOut()}>{busy === "clear" ? "Signing out…" : "Sign out"}</Button></footer>
   </AlertDialog.Content></AlertDialog.Portal>
 </AlertDialog.Root>
 

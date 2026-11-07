@@ -17,21 +17,30 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     else state.songs[0].reason = scenario === "historical" ? "Played 31 times · imported 01 Oct 2025–31 Oct 2025" : "Played 31 times, last in Feb 2024";
     await page.goto(`/#/for-you?mix=${kind}`);
     const summary = page.getByText("How this mix is made", { exact: true });
+    if (scenario === "legacy") {
+      await expect(page.getByRole("dialog")).toBeVisible();
+      await expect(summary).toHaveCount(0);
+      await expect(page.locator("details.recipe")).toHaveCount(0);
+      await capture(page, `recipes-${scenario}-collapsed`, width, theme);
+      expect(state.calls.filter(call => call.path.endsWith("/refresh"))).toHaveLength(0); expect(await page.pageErrors()).toEqual([]);
+      if (width === 1280 && theme === "dark") await page.screenshot({ path: test.info().outputPath("mix-recipe-absent-1280-dark.png") });
+      return;
+    }
     await expect(summary).toBeVisible(); expect((await summary.boundingBox())!.height).toBeGreaterThanOrEqual(44);
-    const copy = page.locator("details.recipe").getByText(scenario === "legacy" ? "Refresh this mix to see its recipe details." : evidence.recipe.sentence, { exact: true });
+    await expect(page.locator("details.recipe")).toHaveClass(/settings-fold/);
+    const copy = page.locator("details.recipe").getByText(evidence.recipe.sentence, { exact: true });
     await expect(copy).toBeHidden(); await capture(page, `recipes-${scenario}-collapsed`, width, theme);
     await summary.focus(); await page.keyboard.press("Space"); await expect(copy).toBeVisible();
     if (scenario === "historical") await expect(page.getByText(/Only 4 plays in Allstarr in the last 30 days, so this also uses 214 imported plays from 01 Oct 2025–31 Oct 2025/)).toBeVisible();
-    if (scenario !== "legacy") {
-      await expect(page.getByText("Left out: 3 skipped early · 1 you marked Never.", { exact: true })).toBeVisible();
-      await expect(page.getByText(/^4 plays in Allstarr/)).toBeVisible();
-      await expect(page.getByText(`Looked at 86 songs, 62 fit, ${evidence.shown} in this mix.`, { exact: true })).toBeVisible();
-      await expect(page.getByText(`6 from your music, 2 from your services, at most ${evidence.recipe.artistLimit} per artist.`, { exact: true })).toBeVisible();
-      await expect(page.getByText(/Saved |song identifier|stable song order/)).toHaveCount(0);
-      await expect(page.getByText("2 service lookups failed.", { exact: true })).toHaveCount(scenario === "long-lost" ? 1 : 0);
-      if (scenario === "insufficient") await expect(page.getByText(evidence.shortfall!, { exact: true })).toHaveCount(1);
-    }
+    await expect(page.getByText("Left out: 3 skipped early · 1 you marked Never.", { exact: true })).toBeVisible();
+    await expect(page.getByText(/^4 plays in Allstarr/)).toBeVisible();
+    await expect(page.getByText(`Looked at 86 songs, 62 fit, ${evidence.shown} in this mix.`, { exact: true })).toBeVisible();
+    await expect(page.getByText(`6 from your music, 2 from your services, at most ${evidence.recipe.artistLimit} per artist.`, { exact: true })).toBeVisible();
+    await expect(page.getByText(/Saved |song identifier|stable song order/)).toHaveCount(0);
+    await expect(page.getByText("2 service lookups failed.", { exact: true })).toHaveCount(scenario === "long-lost" ? 1 : 0);
+    if (scenario === "insufficient") await expect(page.getByText(evidence.shortfall!, { exact: true })).toHaveCount(1);
     await capture(page, `recipes-${scenario}-expanded`, width, theme);
+    if (width === 1280 && theme === "dark") await page.screenshot({ path: test.info().outputPath("mix-recipe-expanded-1280-dark.png") });
     if (scenario !== "insufficient") await expect(page.getByText(state.songs[0].reason, { exact: true })).toBeAttached();
     expect(state.calls.filter(call => call.path.endsWith("/refresh"))).toHaveLength(0); expect(await page.pageErrors()).toEqual([]);
   });

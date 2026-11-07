@@ -67,7 +67,7 @@
   const audioMaximum = $derived(Number((config.cache as Record<string, unknown> | undefined)?.audioMaximumGiB ?? 2) * 1024 ** 3);
   const cacheAudioBytes = $derived(typeof cachedSongs?.totalSize === "number" ? cachedSongs.totalSize : null);
   const keptAudioBytes = $derived(typeof keptSongs?.totalSize === "number" ? keptSongs.totalSize : null);
-  const storageItems = $derived([{ label: cacheAudioBytes === null ? "Cached song usage unavailable" : `${bytes(cacheAudioBytes)} cached of ${bytes(audioMaximum)}` }, { label: keptAudioBytes === null ? "Kept song usage unavailable" : `${bytes(keptAudioBytes)} kept` }, { label: "Database size unavailable" }]);
+  const storageItems = $derived([{ label: cacheAudioBytes === null ? "Cached song usage unavailable" : `${bytes(cacheAudioBytes)} cached of ${bytes(audioMaximum)}` }, { label: keptAudioBytes === null ? "Kept song usage unavailable" : `${bytes(keptAudioBytes)} kept` }]);
   const storageSegments = $derived(cacheAudioBytes !== null && keptAudioBytes !== null ? [
     { label: "Cached songs (MiB)", value: Math.round(cacheAudioBytes / 1024 ** 2), tone: "info" as const },
     { label: "Kept songs (MiB)", value: Math.round(keptAudioBytes / 1024 ** 2), tone: "good" as const },
@@ -127,7 +127,7 @@
     {#if loading}<RowsSkeleton count={5} />
     {:else if !schema || error}<ErrorState title="Some settings could not be loaded" detail={error} onretry={refresh} />{/if}
     {#if !loading && schema}
-      {#if ["general", "access", "storage", "setup"].includes(active)}
+      {#if ["access", "storage", "setup"].includes(active)}
         <div class:setup-progress={active === "setup"}><PageStatus segments={active === "storage" ? storageSegments : active === "setup" ? [{ label: "Reviewed", value: onboardingState?.steps?.filter(step => step.state !== "pending").length ?? 0, tone: "info" }, { label: "Left", value: onboardingState?.steps?.filter(step => step.state === "pending").length ?? 0, tone: "neutral" }] : []} items={active === "storage" ? storageItems : active === "setup" ? [{ label: `${onboardingState?.steps?.filter(step => step.state !== "pending").length ?? 0} of ${countLabel(onboardingState?.steps?.length ?? 0, "step")} reviewed or skipped` }, { label: "Playback works while setup is open" }] : [{ label: "Changes save as you make them" }, { label: "Restart changes ask first" }]} /></div>
       {/if}
       {#if active === "appearance"}
@@ -157,8 +157,9 @@
           {#if onboardingState}<Guide state={onboardingState} onChanged={onSetupChanged} embedded={onboardingState.completed} />{:else}<Button variant="outline" onclick={() => onOpenSetup()}>Open setup guide</Button>{/if}
         {:catch}<ErrorState title="This settings page could not be opened" onretry={() => window.location.reload()} />{/await}
       {:else if active === "general"}
-        {#each generalGroups as item (item.id)}<SettingsFields section={item} {config} onChanged={refresh} />{/each}
-        {#if fields.some(field => field.key === "ODESLI_RATE_LIMIT_MS")}<AdvancedFold description="wait between song.link lookups"><SettingsFields section={group("link-timing", "Song link timing", fields.filter(field => field.key === "ODESLI_RATE_LIMIT_MS"))} {config} onChanged={refresh} /></AdvancedFold>{/if}
+        {#each generalGroups as item (item.id)}<SettingsFields section={item} {config} onChanged={refresh}>
+          {#snippet footer()}{#if item.id === "links" && fields.some(field => field.key === "ODESLI_RATE_LIMIT_MS")}<AdvancedFold label="Advanced: wait between song.link lookups"><SettingsFields embedded section={group("link-timing", "Song link timing", fields.filter(field => field.key === "ODESLI_RATE_LIMIT_MS"))} {config} onChanged={refresh} /></AdvancedFold>{/if}{/snippet}
+        </SettingsFields>{/each}
         <p class="settings-muted">Allstarr · beta {__APP_VERSION__}</p>
       {:else if active === "access"}
         {#await import("./AccessSettingsCard.svelte")}<RowsSkeleton count={2} />{:then { default: Access }}<Access kind="backend" /><Access kind="oidc" />{:catch}<ErrorState title="This settings page could not be opened" onretry={() => window.location.reload()} />{/await}

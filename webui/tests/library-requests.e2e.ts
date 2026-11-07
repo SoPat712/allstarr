@@ -69,6 +69,8 @@ async function geometry(page: Page, width: number) {
 }
 
 test("Admin reviews the requester’s profile and approves into adding now", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.addInitScript(() => localStorage.setItem("allstarr.theme", "dark"));
   const state = await fixture(page); await page.goto("/#/library/to-library");
   const group = page.getByRole("region", { name: "Waiting for approval", exact: true });
   await expect(group).toContainText("SZA · requested by Sam · 23 songs");
@@ -78,7 +80,12 @@ test("Admin reviews the requester’s profile and approves into adding now", asy
   await group.getByRole("button", { name: "Review", exact: true }).first().click();
   const panel = page.getByRole("dialog", { name: "SOS", exact: true });
   await expect(panel).toContainText("Requested by Sam"); await expect(panel).toContainText("Requester/SZA");
+  await expect(panel.locator(".request-context time")).toHaveAttribute("datetime", request.createdAt);
+  await expect(panel.locator(".request-context time")).toContainText("Nov 6,");
+  await expect(panel.locator(".request-context time")).not.toContainText("2026");
   await expect(panel).toContainText("What happens · requester’s profile"); await expect(panel).toContainText("Off");
+  await page.evaluate(async () => { await document.fonts.ready; });
+  await page.screenshot({ path: test.info().outputPath("request-panel-1280-dark.png") });
   await panel.getByRole("button", { name: "Approve and add", exact: true }).click();
   await expect(page.getByRole("region", { name: "Adding now", exact: true })).toContainText("SOS");
   await expect(group).not.toContainText("SOS"); await expect(panel.getByRole("progressbar")).toBeVisible();

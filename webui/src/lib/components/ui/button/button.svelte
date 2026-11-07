@@ -5,7 +5,7 @@
 	import "./touch-target.css";
 
 	export const buttonVariants = tv({
-		base: "touch-target rounded-full border border-transparent bg-clip-padding text-sm font-semibold focus-visible:ring-3 focus-visible:ring-ring/40 active:not-aria-[haspopup]:translate-y-px aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 [&_svg:not([class*='size-'])]:size-4 group/button inline-flex shrink-0 items-center justify-center whitespace-nowrap transition-[background-color,color,box-shadow,transform] duration-200 outline-none select-none disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0",
+		base: "touch-target rounded-full border border-transparent bg-clip-padding text-sm font-medium focus-visible:ring-3 focus-visible:ring-ring/40 active:not-aria-[haspopup]:translate-y-px aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 [&_svg:not([class*='size-'])]:size-4 group/button inline-flex shrink-0 items-center justify-center whitespace-nowrap transition-[background-color,color,box-shadow,transform] duration-200 outline-none select-none disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0",
 		variants: {
 			variant: {
 				default: "bg-[var(--color-signal)] text-[var(--color-on-signal)] hover:shadow-[var(--shadow-sm)]",
@@ -13,6 +13,7 @@
 				secondary: "bg-[var(--md-sys-color-secondary-container)] text-[var(--md-sys-color-on-secondary-container)] hover:shadow-[var(--shadow-sm)]",
 				ghost: "bg-transparent text-[var(--color-signal-text)] hover:bg-muted aria-expanded:bg-muted dark:hover:bg-muted/50",
 				text: "bg-transparent text-[var(--color-signal-text)] hover:bg-muted aria-expanded:bg-muted dark:hover:bg-muted/50",
+				"destructive-text": "bg-transparent text-[var(--color-danger)] hover:bg-[color-mix(in_srgb,var(--color-danger)_8%,transparent)] focus-visible:ring-[color-mix(in_srgb,var(--color-danger)_30%,transparent)]",
 				destructive: "bg-[var(--md-sys-color-error)] text-[var(--md-sys-color-on-error)] hover:shadow-[var(--shadow-sm)] focus-visible:ring-[color-mix(in_srgb,var(--color-danger)_30%,transparent)]",
 				link: "text-primary underline-offset-4 hover:underline",
 			},

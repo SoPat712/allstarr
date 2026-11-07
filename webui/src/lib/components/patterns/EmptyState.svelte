@@ -22,7 +22,7 @@
 </div>
 
 <style>
-  .empty-state { display: flex; min-height: 0; flex-direction: column; align-items: flex-start; justify-content: center; border: 1px dashed var(--color-edge-strong); border-radius: var(--radius-list); background: var(--color-panel); gap: var(--space-2); padding: var(--space-4); text-align: left; }
+  .empty-state { display: flex; width: 100%; min-width: 0; min-height: 0; flex-direction: column; align-items: flex-start; justify-content: center; border: 1px dashed var(--color-edge-strong); border-radius: var(--radius-list); background: var(--color-panel); gap: var(--space-2); padding: var(--space-4); text-align: left; }
   .empty-icon { display: grid; width: var(--control-lg); height: var(--control-lg); place-items: center; margin-bottom: var(--space-2); border-radius: var(--radius-lg); background: var(--color-panel-raised); color: var(--color-ink-muted); }
   h3 { margin: 0; color: var(--color-ink); font-size: var(--text-md); font-weight: 600; }
   p { max-width: 36rem; margin: 0; color: var(--color-ink-muted); font-size: var(--text-sm); line-height: 1.5; }

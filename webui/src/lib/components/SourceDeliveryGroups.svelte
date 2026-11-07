@@ -16,11 +16,12 @@
   import { Music2 } from "@lucide/svelte";
   import { toast } from "$lib/toasts";
 
-  let { accounts, accountId = "", targetId = "", refreshKey = "", onConfigure, onloaded, onchanged }: {
+  let { accounts, accountId = "", targetId = "", refreshKey = "", showRefresh = true, onConfigure, onloaded, onchanged }: {
     accounts: ProviderAccount[]; accountId?: string; targetId?: string; refreshKey?: string;
     onConfigure: (account: ProviderAccount) => void;
     onloaded?: (items: ScrobbleDelivery[], complete: boolean) => void;
     onchanged?: () => void;
+    showRefresh?: boolean;
   } = $props();
   let items = $state<ScrobbleDelivery[]>([]), loading = $state(true), busy = $state(false), error = $state("");
   let hasMore = $state(false), before = $state<string>();
@@ -84,7 +85,7 @@
   }
 </script>
 
-<section class="delivery-groups" aria-label="Scrobble delivery" aria-busy={busy}>
+<section class="delivery-groups" aria-label="Scrobble delivery" aria-busy={busy} hidden={!loading && !error && !visible.length && !hasMore && !accountId}>
   {#if error}<ErrorState title="Listens could not be loaded" detail={error} onretry={() => load()} />{/if}
   {#if loading}<RowsSkeleton count={1} />
   {:else if !visible.length && accountId}
@@ -134,7 +135,7 @@
       </div>
     {/each}
   {/if}
-  <RefreshButton disabled={busy} onrefresh={() => load()} label="Refresh delivery" />
+  {#if showRefresh}<RefreshButton disabled={busy} onrefresh={() => load()} label="Refresh delivery" />{/if}
   {#if hasMore}<Button variant="text" disabled={busy} onclick={() => void load(true)}>Load earlier deliveries</Button>{/if}
 </section>
 
@@ -147,6 +148,7 @@
 
 <style>
   .delivery-groups, .delivery-group { display: grid; min-width: 0; gap: var(--space-3); }
+  .delivery-groups[hidden] { display: none; }
   .delivery-actions, .listen-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1); }
   .delivery-reason { margin: 0; padding: var(--space-3); border-radius: var(--radius-md); background: color-mix(in srgb, var(--warning) 10%, var(--color-panel)); font-size: var(--text-sm); overflow-wrap: anywhere; }
   .listen-row { display: flex; gap: var(--space-3); align-items: center; border-bottom: 1px solid var(--color-edge); padding: var(--space-3); }

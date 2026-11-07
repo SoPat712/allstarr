@@ -14,7 +14,7 @@ const groups = [
 
 async function capture(page: Page, name: string, width: number, theme: string) {
   await page.evaluate(async () => { await document.fonts.ready; (document.activeElement as HTMLElement)?.blur(); window.scrollTo(0, 0); });
-  const folder = `../artifacts/shared-design/${capturePhase}`;
+  const folder = `test-results/shared-design/${capturePhase}`;
   await mkdir(folder, { recursive: true });
   await page.screenshot({ path: `${folder}/${name}-${width}-${theme}.png`, fullPage: true });
 }
@@ -28,6 +28,8 @@ async function sharedControls(page: Page, width: number) {
     await expect(scope.locator('[aria-pressed="true"]')).toHaveCount(1);
   } else await expect(header.getByRole("button")).toHaveCount(0);
   if (width === 1280) {
+    expect(await page.evaluate(() => document.fonts.check('400 14px "Roboto"') && document.fonts.check('650 32px "Roboto Flex"'))).toBe(true);
+    await expect(page.locator(".sidebar")).toHaveCSS("width", "200px");
     expect(await page.locator(".workspace-header h1").evaluate(element => ({ size: getComputedStyle(element).fontSize, weight: getComputedStyle(element).fontWeight }))).toEqual({ size: "32px", weight: "650" });
     await expect(page.locator('.desktop-navigation [aria-label="Main destinations"] a')).toHaveText(["Home", "Library", "For you", "Sources", "Activity", "Settings"]);
     await expect(page.locator('.desktop-navigation [aria-label="Help and connections"] a')).toHaveText(["Connect apps", "Report a problem"]);
@@ -36,6 +38,11 @@ async function sharedControls(page: Page, width: number) {
   for (const input of await page.locator('.search-field input[type="search"]').all()) {
     if (!await input.isVisible()) continue;
     expect(await input.evaluate(element => { const style = getComputedStyle(element); return { pill: parseFloat(style.borderRadius) >= 22, border: style.borderTopWidth, background: style.backgroundColor }; })).toEqual({ pill: true, border: "1px", background: "rgba(0, 0, 0, 0)" });
+  }
+  for (const heading of await page.locator("table thead th").all()) {
+    if (!await heading.isVisible()) continue;
+    await expect(heading).toHaveCSS("text-transform", "uppercase");
+    expect(await heading.evaluate(element => parseFloat(getComputedStyle(element).fontSize))).toBeCloseTo(10.88, 2);
   }
   for (const refresh of await page.locator('button[aria-label^="Refresh"]').all()) {
     if (!await refresh.isVisible()) continue;
@@ -114,8 +121,13 @@ for (const width of [1280, 390]) for (const theme of ["dark", "light"] as const)
         }
         for (const fold of await page.locator(".settings-fold > summary").all()) {
           if (!await fold.isVisible()) continue;
-          const label = path === "settings/quality" ? "Exact quality asked from each service" : "Advanced";
+          const label = path === "settings/quality" ? "Exact quality asked from each service" : path === "settings" ? "Advanced: wait between song.link lookups" : path === "for-you?section=taste" ? "See the details" : "Advanced";
           expect(await fold.evaluate(element => ({ marker: getComputedStyle(element).listStyleType, label: element.firstChild?.textContent }))).toEqual({ marker: "none", label });
+        }
+        if (path === "settings") {
+          const links = page.getByRole("form", { name: "Song links and extensions settings", exact: true });
+          await expect(links.locator(":scope > .settings-fold")).toHaveCount(1);
+          if (width === 1280) expect((await page.locator(".settings-nav").boundingBox())!.width).toBe(170);
         }
       }
       await capture(page, path.replace(/[/?=]/g, "-") || "home", width, theme);

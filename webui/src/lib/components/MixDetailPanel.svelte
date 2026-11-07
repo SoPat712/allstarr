@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { formatLocalDateTime } from "$lib/dates";
   import { countLabel } from "$lib/count-label";
   import { onMount } from "svelte";
   import { goto } from "$app/navigation";
@@ -11,6 +12,7 @@
   import RowsSkeleton from "$lib/components/patterns/RowsSkeleton.svelte";
   import ErrorState from "$lib/components/patterns/ErrorState.svelte";
   import PageStatus from "$lib/components/patterns/PageStatus.svelte";
+  import AdvancedFold from "$lib/components/patterns/AdvancedFold.svelte";
   import { Switch } from "$lib/components/ui/switch";
   import { DropdownMenu } from "$lib/components/ui/dropdown-menu";
   import MixCover from "$lib/components/MixCover.svelte";
@@ -134,7 +136,7 @@
 </script>
 <SidePanel open={true} title={mixName(detail?.mix.name ?? "Your mix")} description={detail?.mix.sourceLabel ? `From ${detail.mix.sourceLabel} · kept in sync` : detail ? mixDescription(detail.mix.description, detail.mix.kind) : "Songs picked for you"} onclose={close}>
   {#snippet artwork()}{#if detail}<MixCover mix={detail.mix} songs={detail.songs} />{/if}{/snippet}
-  {#snippet header()}{#if detail}{detail.mix.updatedAt ? `Refreshed ${new Date(detail.mix.updatedAt).toLocaleString(undefined, { weekday: "long", hour: "numeric", minute: "2-digit" })} · ` : ""}{countLabel(detail.songs.length, "song")}{/if}{/snippet}
+  {#snippet header()}{#if detail}{detail.mix.updatedAt ? `Refreshed ${formatLocalDateTime(detail.mix.updatedAt)} · ` : ""}{countLabel(detail.songs.length, "song")}{/if}{/snippet}
   {#snippet menu()}{#if detail?.mix.kind === "custom"}<DropdownMenu.Root><DropdownMenu.Trigger class="icon-button" aria-label="Mix actions"><UiIcon name="more" /></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content class="bits-menu mix-menu" align="end"><DropdownMenu.Item class="bits-menu-item destructive" onSelect={() => deleteOpen = true}>Delete mix</DropdownMenu.Item></DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root>{/if}{/snippet}
   {#if error}<ErrorState title="Couldn't load this mix" detail={error} onretry={load} />{/if}
   {#if !detail && !error}<RowsSkeleton />{:else if detail}
@@ -144,9 +146,8 @@
       <div class="apps-row"><label for="mix-show-apps"><strong>Show in my apps</strong><small id="mix-apps-description">Appears as a playlist in your music apps</small></label><Switch id="mix-show-apps" aria-label="Show in my apps" aria-describedby="mix-apps-description" bind:checked={appsChecked} disabled={busy || !detail.mix.inApps && !detail.mix.appsAllowed} onchange={event => void showInApps(event.currentTarget.checked)} /></div><div class="added-state">{#if detail.mix.inApps}<span>✓ In your apps</span><a href="#/library/playlists">Manage in Playlists</a>{/if}</div>
       {#if !detail.mix.appsAllowed}<p class="muted">Your admin hasn't allowed adding mixes.</p>{/if}
     </div>
-        <details class="recipe settings-card">
-          <summary>How this mix is made</summary>
-          {#if detail.mix.evidence}
+        {#if detail.mix.evidence}
+          <AdvancedFold class="recipe" label="How this mix is made">
             {@const evidence = detail.mix.evidence}
             <div class="recipe-copy">
               <p>{evidence.recipe.sentence}</p>
@@ -163,8 +164,8 @@
               {#if evidence.shortfall && (detail.mix.readiness.ready || evidence.shortfall !== detail.mix.readiness.message)}<p>{evidence.shortfall}</p>{/if}
               {#if evidence.providerFailures}<p>{countLabel(evidence.providerFailures, "service lookup")} failed.</p>{/if}
             </div>
-          {:else}<p class="recipe-copy">Refresh this mix to see its recipe details.</p>{/if}
-        </details>
+          </AdvancedFold>
+        {/if}
 
     {#if !detail.mix.readiness.ready}<div class="explanation"><p>{detail.mix.readiness.message}</p><Button variant="outline" href={nextStep.href}>{nextStep.label}</Button></div>{/if}
     {#if detail.songs.length}<div class="songs-heading"><h3>Songs</h3><span>Picked from</span></div><MixTrackRows songs={detail.songs} {busy} onfeedback={detail.mix.kind === "external" ? undefined : feedback} />{/if}
@@ -188,9 +189,8 @@
   .mix-footer { display: flex; width: 100%; justify-content: space-between; align-items: center; gap: var(--space-3); }
   .songs-heading { display: flex; justify-content: space-between; align-items: center; margin-top: var(--space-5); margin-bottom: var(--space-2); font-size: var(--text-xs); color: var(--color-ink-muted); }
   h3 { font-weight: 600; text-transform: uppercase; letter-spacing: .05em; }
-  .recipe { margin-top: var(--space-3); padding-inline: var(--space-3); }
-  .recipe summary { min-height: 44px; align-content: center; cursor: pointer; font-size: var(--text-sm); }
-  .recipe-copy { font-variant-numeric: tabular-nums; overflow-wrap: anywhere; padding-bottom: var(--space-3); }
+  :global(.recipe) { margin-top: var(--space-3); }
+  .recipe-copy { font-variant-numeric: tabular-nums; overflow-wrap: anywhere; padding: 0 var(--space-4) var(--space-3); }
   .recipe-copy p { margin-block: var(--space-2); }
   .explanation { display: grid; justify-items: start; gap: var(--space-3); margin-top: var(--space-3); }
   @media (max-width: 360px) { .mix-footer { gap: var(--space-2); } .mix-footer :global([data-slot="button"]) { padding-inline: var(--space-2); } }

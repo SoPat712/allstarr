@@ -691,13 +691,15 @@
 {#snippet accountList()}
   {#if filteredAccounts.length}
     {@const groups = [...new Set(filteredAccounts.map(account => account.providerId))].map(id => filteredAccounts.filter(account => account.providerId === id))}
-    <div class="accounts-table-wrap"><table class="accounts-table" aria-label="Accounts"><thead><tr><th>Service</th><th>Account</th><th>Owner</th><th>Shared with</th><th>State</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody>
+    {@const labels = new Map(filteredAccounts.map(item => [item.id, item.customLabel || String(item.configuration?.username || item.configuration?.userName || (item.displayName !== providerDisplayName(providers, item.providerId) ? item.displayName : ""))]))}
+    {@const hasLabels = [...labels.values()].some(Boolean)}
+    <div class="accounts-table-wrap"><table class="accounts-table" aria-label="Accounts"><thead><tr><th>Service</th>{#if hasLabels}<th>Account</th>{/if}<th>Owner</th><th>Shared with</th><th>State</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody>
       {#each groups as group (group[0].providerId)}
         {@const account = group[0]}
         <tr class:account-selected={group.some(item => focusAccount === item.id)} id={`connection-${account.id}`}>
           <td data-label="Service"><a class="account-opener" href={servicePath(account.providerId, account.id)} data-sveltekit-keepfocus data-sveltekit-noscroll aria-label={`Open ${providerDisplayName(providers, account.providerId)} account`}><ProviderArtwork id={account.providerId} definition={provider(account.providerId)} decorative /><strong>{providerDisplayName(providers, account.providerId)}{group.length > 1 ? ` · ${countLabel(group.length, "account")}` : ""}</strong></a></td>
-          <td data-label="Account">{group.map(item => item.customLabel || String(item.configuration?.username || item.configuration?.userName || (item.displayName !== providerDisplayName(providers, item.providerId) ? item.displayName : "Not provided"))).join(", ")}</td>
-          <td data-label="Owner">{[...new Set(group.map(item => item.ownerDisplayName || item.creatorDisplayName || "Unknown"))].join(", ")}</td>
+          {#if hasLabels}<td data-label="Account">{[...new Set(group.map(item => labels.get(item.id)).filter(Boolean))].join(", ")}</td>{/if}
+          <td data-label="Owner">{[...new Set(group.map(item => item.ownerDisplayName || item.creatorDisplayName).filter(Boolean))].join(", ")}</td>
           <td data-label="Shared with">{[...new Set(group.map(item => item.scope === "Shared" ? "Everyone" : `Just ${item.ownerDisplayName || "you"}`))].join(", ")}</td>
           <td data-label="State">{#each [...new Set(group.map(accountState))] as state}<StatePill tone={state === "Working" ? "ok" : state === "Service down" ? "stop" : ["Off", "Connected"].includes(state) ? "neutral" : "warn"} text={state} />{/each}</td>
           <td><div class="account-menus">{#each group as item (item.id)}{#if item.canManage || item.canChangeAudience}{@render accountMenu(item)}{:else}<span class="muted">Read only</span>{/if}{/each}</div></td>
@@ -917,20 +919,19 @@
       <PageStatus separated={accountsPage} label={accountsPage ? "Accounts status" : "Services status"} items={accountsPage
         ? [{ label: countLabel(accounts.length, "account") }, ...(deliverySummary.waiting ? [{ label: `${deliverySummary.waiting.toLocaleString()} waiting`, tone: "warn" as const }] : []), ...(deliverySummary.unsendable ? [{ label: `${deliverySummary.unsendable.toLocaleString()} can't be sent`, tone: "stop" as const, href: "#/sources/accounts?section=scrobble-problems" }] : [])]
         : [{ label: `${mySources.length - needsSetup.length} working` }, { label: `${countLabel(needsSetup.length, "needs", "need")} attention`, tone: needsSetup.length ? "stop" : "neutral" }, { label: `${mySources.length} in use of ${providers.length}` }]} />
-      <div class="sources-heading-actions"><RefreshButton onrefresh={refresh} />
+      <div class="sources-heading-actions"><RefreshButton onrefresh={async () => { await refresh(); if (accountsPage) deliveryRefresh++; }} />
         {#if accountsPage}{#if canConnectAccounts}<Button onclick={() => { connectProviderId = ""; connectOpen = true; }}><Plus size={16} aria-hidden="true" />Connect account</Button>{/if}
         {:else if administrator}<Button onclick={() => addSourceOpen = true}><PackagePlus size={16} aria-hidden="true" />Add extension</Button>{/if}
       </div>
     </header>
     {#if error}<ErrorState title="Source readiness may be stale." detail={error} onretry={refresh} />{/if}
     {#if accountsPage}
-      <div id="scrobble-problems" bind:this={deliverySection} tabindex="-1">{#await import("$lib/components/SourceDeliveryGroups.svelte") then { default: SourceDeliveryGroups }}<SourceDeliveryGroups {accounts} onConfigure={configure} refreshKey={String(deliveryRefresh)} onloaded={(items, complete) => { deliveries = items; deliveryCountComplete = complete; }} onchanged={() => deliveryRefresh++} />{/await}</div>
+      <div id="scrobble-problems" bind:this={deliverySection} tabindex="-1">{#await import("$lib/components/SourceDeliveryGroups.svelte") then { default: SourceDeliveryGroups }}<SourceDeliveryGroups {accounts} showRefresh={false} onConfigure={configure} refreshKey={String(deliveryRefresh)} onloaded={(items, complete) => { deliveries = items; deliveryCountComplete = complete; }} onchanged={() => deliveryRefresh++} />{/await}</div>
       <PlaylistConsent {backend} focus={initialSection === "playlist-editing"} />
       <SearchField hiddenLabel bind:value={search} label="Search accounts" placeholder="Search accounts" />
       {@render accountList()}
       <p class="source-filter-note">Personal accounts belong to one person; shared accounts work for everyone. Passwords and tokens are never shown again after you save them.</p>
     {:else}
-      {#if administrator}{#await import("$lib/components/ExtensionsView.svelte") then { default: ExtensionsView }}<ExtensionsView view="attention" onchanged={refresh} />{/await}{/if}
       <div class="source-toolbar">
         <FilterSegments storageKey="allstarr.sources.filter" label="Filter sources" bind:value={listFilter} options={[
           { id: "attention", label: "Needs attention", count: needsSetup.length }, { id: "in-use", label: "In use", count: mySources.length },
@@ -949,6 +950,7 @@
           </div>
         {:else}<EmptyState title={providers.length ? "No sources in this view" : "No services connected"} description={providers.length ? "Choose another filter or search for a source." : "Connect a service so Allstarr can find songs you don't have."}>{#snippet icon()}<Radio size={24} />{/snippet}</EmptyState>{/each}
       </div>
+      {#if administrator}{#await import("$lib/components/ExtensionsView.svelte") then { default: ExtensionsView }}<ExtensionsView view="attention" onchanged={refresh} />{/await}{/if}
     {/if}
   </section>
 
@@ -1016,6 +1018,7 @@
 {/if}
 
 <style>
+  #scrobble-problems:has(:global(.delivery-groups[hidden])) { display: none; }
   .sources-redesign { display: grid; min-width: 0; gap: var(--space-4); }
   .sources-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--space-3); }
   .sources-heading :global(.status-items [data-tone="stop"]), .sources-heading :global(.status-items [data-tone="stop"] strong) { color: var(--danger); }

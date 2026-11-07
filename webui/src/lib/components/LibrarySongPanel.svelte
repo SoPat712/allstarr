@@ -8,6 +8,7 @@
   import LibraryDownloadActions from "$lib/components/LibraryDownloadActions.svelte";
   import ProviderMark from "$lib/components/ProviderMark.svelte";
   import SidePanel from "$lib/components/patterns/SidePanel.svelte";
+  import AdvancedFold from "$lib/components/patterns/AdvancedFold.svelte";
   import SongPlaylistMembership from "$lib/components/SongPlaylistMembership.svelte";
 
   let { open = $bindable(false), file, storage, provider, providerName, warning, lowerQuality = false,
@@ -51,10 +52,9 @@
       <dt>Quality</dt><dd>{qualityDetails(file).join(" · ") || file.quality}</dd>
       <dt>Size</dt><dd>{file.sizeFormatted}</dd>
       <dt>Saved</dt><dd><time datetime={file.lastModified} title={file.lastModified}>{relativeTime(file.lastModified)}</time></dd>
-      <dt>Last played</dt><dd>Not provided</dd>
     </dl>
     <SongPlaylistMembership {file} {open} />
-    <details class="advanced"><summary><span>Advanced</span><span aria-hidden="true">▾</span></summary><dl>
+    <AdvancedFold><dl>
       <dt>Artist</dt><dd>{file.artist || "Unknown artist"}</dd><dt>Album</dt><dd>{file.album || "Unknown album"}</dd>
       <dt>Duration</dt><dd>{formatDuration(file.durationMilliseconds)}</dd>
       {#if file.externalId}<dt>Source ID</dt><dd class="file-value">{file.externalId}</dd>{/if}
@@ -64,7 +64,7 @@
       {#if file.referenceCount != null}<dt>References</dt><dd>{countLabel(file.referenceCount, "household reference")}</dd>{/if}
       <dt>File size</dt><dd>{countLabel(file.size, "byte")}</dd>
       <dt>Filename</dt><dd class="file-value">{file.fileName}</dd><dt>Path</dt><dd class="file-value">{file.path}</dd>
-    </dl></details>
+    </dl></AdvancedFold>
   </div>
   {#snippet footer()}
     <LibraryDownloadActions {file} {storage} {busy} {moving} placement="panel" {onkeep} {onrelease} {onremove} {ondeletion} />
@@ -87,8 +87,5 @@
   dd { min-width: 0; margin: 0; overflow-wrap: anywhere; }
   .source-name { display: inline-flex; align-items: center; gap: var(--space-2); }
   .source-name :global(.provider-mark) { width: var(--space-4); height: var(--space-4); }
-  .advanced { border-top: 1px solid var(--color-edge); }
-  .advanced > summary { display: flex; align-items: center; justify-content: space-between; min-height: 44px; color: var(--color-signal-text); font-size: var(--text-sm); cursor: pointer; list-style: none; }
-  .advanced > summary::-webkit-details-marker { display: none; }
   .file-value { font-size: var(--text-xs); }
 </style>

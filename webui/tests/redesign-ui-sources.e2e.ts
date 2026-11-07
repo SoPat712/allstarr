@@ -540,7 +540,9 @@ for (const counts of [{ waiting: 1, blocked: 2 }, { waiting: 0, blocked: 1 }, { 
       { id: "notice", kind: "nowplaying", state: "permanentfailure", canResend: false, targetId: "listenbrainz" },
     ] } }));
     await page.goto("#/sources/accounts");
-    await expect(page.getByRole("button", { name: "Refresh delivery", exact: true })).toBeVisible();
+    await expect(page.locator(".delivery-groups")).toHaveAttribute("aria-busy", "false");
+    await expect(page.getByRole("button", { name: "Refresh delivery", exact: true })).toHaveCount(0);
+    if (!counts.waiting && !counts.blocked) await expect(page.getByRole("region", { name: "Scrobble delivery", exact: true })).toBeHidden();
     const status = page.getByRole("region", { name: "Accounts status" });
     if (counts.waiting) await expect(status).toContainText(`${counts.waiting} waiting`);
     else await expect(status).not.toContainText("waiting");

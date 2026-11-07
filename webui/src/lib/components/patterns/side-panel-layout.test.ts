@@ -1,5 +1,18 @@
 import { describe, expect, it } from "vitest";
-import { sidePanelLayout } from "./side-panel-layout";
+import { sidePanelLayout, sidePanelResizeWidth } from "./side-panel-layout";
+
+describe("side sheet resizing", () => {
+  it("keeps the default minimum and leaves 360 pixels for the list", () => {
+    expect(sidePanelResizeWidth(300, 420, 1028)).toBe(420);
+    expect(sidePanelResizeWidth(600, 420, 1028)).toBe(600);
+    expect(sidePanelResizeWidth(900, 420, 1028)).toBe(668);
+  });
+
+  it("ignores damaged saved widths and remains bounded in narrow workspaces", () => {
+    for (const width of [NaN, Infinity, -Infinity]) expect(sidePanelResizeWidth(width, 420, 1028)).toBe(420);
+    expect(sidePanelResizeWidth(600, 420, 700)).toBe(420);
+  });
+});
 
 describe("side sheet layout", () => {
   it("overlays desktops when the expanded drawer leaves too little list space", () => {

@@ -80,7 +80,7 @@
   h2 { font-size: 1.125rem; font-weight: 600; }
   header > span { color: var(--color-ink-muted); font-size: .78rem; }
   .setup-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); grid-auto-rows: 1fr; gap: var(--space-3); }
-  .setup-tile { display: flex; min-width: 0; flex-direction: column; gap: 7px; border: 1px solid var(--color-edge); border-radius: var(--radius-lg); padding: 14px 16px; background: var(--color-panel); }
+  .setup-tile { display: flex; min-width: 0; flex-direction: column; gap: 7px; border: 1px solid var(--color-edge); border-radius: var(--radius-list); padding: 14px 16px; background: var(--color-panel); }
   h3 { color: var(--color-ink-muted); font-size: .74rem; font-weight: 400; text-transform: uppercase; letter-spacing: .05em; }
   .tile-value { min-height: 27px; line-height: 1.2; }
   .tile-number { font: 700 1.45rem/1.1 var(--font-display); font-variant-numeric: tabular-nums; }

@@ -3,6 +3,12 @@ import { render } from "svelte/server";
 import { Button, buttonVariants } from "./components/ui/button";
 
 describe("text buttons", () => {
+  it("gives destructive text actions a full-strength error colour and state layer", () => {
+    const classes = buttonVariants({ variant: "destructive-text" });
+    expect(classes).toContain("text-[var(--color-danger)]");
+    expect(classes).toContain("bg-transparent");
+    expect(classes.split(" ")).not.toContain("opacity-50");
+  });
   it("renders a transparent control with signal text and ghost state layers", () => {
     const html = render(Button, { props: { variant: "text" } }).body;
     expect(html).toContain("text-[var(--color-signal-text)]");
