@@ -114,9 +114,9 @@ for (const viewport of [{ width: 1280, theme: "light" }, { width: 1280, theme: "
       await expect(panel.getByRole("region", { name: "In your playlists", exact: true })).toBeVisible();
       await expect(panel.getByText("Source ID", { exact: true })).not.toBeVisible();
       await expect(panel.getByText("Filename", { exact: true })).not.toBeVisible();
-      await panel.locator(".advanced > summary").click();
+      await panel.locator(".settings-fold > summary").click();
       await expect(panel).toContainText("Take On Me.flac");
-      await panel.locator(".advanced > summary").click();
+      await panel.locator(".settings-fold > summary").click();
       const selected = table.locator("tbody > .download-row.selected");
       await expectSubtleSelection(selected, selected.locator("strong"));
       await expectSingleRowFooter(panel);
