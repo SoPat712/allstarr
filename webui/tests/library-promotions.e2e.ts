@@ -107,7 +107,16 @@ test("kept selections survive a change to search filters", async ({ page }) => {
   await page.getByRole("button", { name: "Actions for kept songs", exact: true }).click();
   await page.getByRole("menuitem", { name: "Search and sort", exact: true }).click();
   await page.getByRole("searchbox", { name: "Filter kept songs", exact: true }).fill("Nicole");
-  await expect(page.locator(".promotion-list .item-row")).toHaveCount(1);
+  const rows = page.getByRole("table", { name: "Kept songs", exact: true }).locator(".library-download-row");
+  await expect(rows).toHaveCount(1);
+  await expect(rows).toContainText("Nicole Kidman");
+  await page.getByRole("radio", { name: "Lower quality 1", exact: true }).click();
+  await expect(page.getByText("No songs match these filters", { exact: true })).toBeVisible();
+  await page.getByRole("radio", { name: "All 5", exact: true }).click();
+  await page.getByRole("searchbox", { name: "Filter kept songs", exact: true }).fill("");
+  await expect(page.getByRole("checkbox", { name: "Select Backseat Freestyle", exact: true })).toBeChecked();
+  await page.getByRole("searchbox", { name: "Filter kept songs", exact: true }).fill("Nicole");
+  await expect(rows).toHaveCount(1);
   await page.getByRole("button", { name: "Add selected to library", exact: true }).click();
   const dialog = page.getByRole("alertdialog", { name: "Add selected albums to your library?", exact: true });
   await expect(dialog).toContainText("1 selected song");

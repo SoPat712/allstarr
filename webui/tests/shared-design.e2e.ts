@@ -99,11 +99,12 @@ for (const width of [1280, 390]) for (const theme of ["dark", "light"] as const)
             expect(await page.locator(".library-download-row").first().locator("td").evaluateAll(cells => cells.every(cell => Math.abs(cell.getBoundingClientRect().bottom - cells[0].getBoundingClientRect().bottom) < 1))).toBe(true);
           }
           if (path === "library/kept" && width === 1280) {
-            await expect(list.locator(".kept-song-group > .item-row")).toHaveCount(2);
-            const centers = await list.locator(".item-row").first().locator(".row-leading, .row-copy, .row-pill, .row-controls").evaluateAll(cells => cells.map(cell => {
+            await expect(list.getByRole("columnheader")).toHaveText(["Song", "Source", "Quality", "Kept by", "Size", "Actions"]);
+            await expect(list.locator(".kept-song-group > .library-download-row")).toHaveCount(2);
+            const centers = await list.locator(".library-download-row").first().locator("td").evaluateAll(cells => cells.map(cell => {
               const box = cell.getBoundingClientRect(); return box.y + box.height / 2;
             }));
-            expect(centers).toHaveLength(4);
+            expect(centers).toHaveLength(6);
             expect(Math.max(...centers) - Math.min(...centers)).toBeLessThanOrEqual(1);
           }
         }

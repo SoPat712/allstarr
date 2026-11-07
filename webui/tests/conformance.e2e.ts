@@ -46,8 +46,17 @@ test("Cached copies flag only the lower-quality copy and omit unknown listening 
   await expect(row.locator(".quality-labels")).toContainText("FLAC 16/44.1");
   await capture(page, "cached");
   expect(await row.locator(".quality-labels").evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+  await page.setViewportSize({ width: 1100, height: 900 });
+  expect(await row.locator(".quality-labels").evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+  expect(await row.locator(".quality-labels > span:not([aria-hidden])").evaluateAll(labels => labels.map(label => {
+    const range = document.createRange(); range.selectNodeContents(label);
+    return [...range.getClientRects()].filter(rect => rect.width > 0).length;
+  })), "common quality labels stay on one line while the group can wrap").toEqual([1, 1]);
+  await page.screenshot({ path: "test-results/conformance/cached-1100-dark.png", fullPage: true });
+  await page.setViewportSize({ width: 1280, height: 900 });
   await row.getByRole("button", { name: "Open song details for Evening song", exact: true }).click();
   const panel = page.getByRole("dialog", { name: "Evening song", exact: true });
+  expect(await row.locator(".quality-labels").evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
   await expect(panel.locator("dt").filter({ hasText: /^Last played$/ })).toHaveCount(0);
   const fold = panel.locator(".settings-fold");
   await fold.locator("summary").click();

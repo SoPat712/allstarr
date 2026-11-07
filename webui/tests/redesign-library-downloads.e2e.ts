@@ -60,6 +60,41 @@ async function mockLibrary(page: Page, options: { cacheOff?: boolean; error?: bo
   return mutations;
 }
 
+for (const width of [1100, 1280]) for (const storage of ["cached", "kept"]) {
+  test(`${storage} titles keep room beside optional columns at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await page.emulateMedia({ colorScheme: "dark", reducedMotion: "reduce" });
+    await page.addInitScript(() => localStorage.setItem("allstarr.theme", "dark"));
+    await mockLibrary(page);
+    await page.goto(`/#/library/${storage}`);
+    const drawer = page.locator(".sidebar-expander");
+    if (await drawer.getAttribute("aria-expanded") !== "true") await drawer.click();
+    await expect(drawer).toHaveAttribute("aria-expanded", "true");
+    await page.getByRole("button", { name: "Show 2 copies of Nicole Kidman", exact: true }).click();
+    for (const open of [false, true]) {
+      if (open) {
+        await page.getByRole("button", { name: "Open song details for Take On Me", exact: true }).click();
+        await expect(page.getByRole("dialog")).toBeVisible();
+      }
+      await expect(page.getByRole("table", { name: "Copies of Nicole Kidman", exact: true })).toBeVisible();
+      const titles = page.locator(".library-download-row .song-title > strong");
+      await expect(titles).toHaveCount(5);
+      await page.evaluate(async () => { await document.fonts.ready; });
+      await page.screenshot({ path: `test-results/library-titles/${storage}-${width}-${open ? "details" : "list"}-dark.png`, fullPage: true });
+      const widths = await titles.evaluateAll(elements => elements.map(element => {
+        return { title: element.textContent, width: element.getBoundingClientRect().width,
+          cell: element.closest("td")!.getBoundingClientRect().width, table: element.closest("table")!.getBoundingClientRect().width };
+      }));
+      expect(widths.filter(item => item.width < 120), "song titles retain at least 120px, including grouped and expanded copies").toEqual([]);
+      expect(await page.locator(".quality-labels > span:not([aria-hidden])").evaluateAll(labels => labels.every(label => {
+        const range = document.createRange(); range.selectNodeContents(label);
+        return [...range.getClientRects()].filter(rect => rect.width > 0).length === 1;
+      })), "common quality values wrap as whole labels").toBe(true);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1);
+    }
+  });
+}
+
 for (const width of [320, 390]) for (const storage of ["cached"]) {
   test(`${storage} actions fit with wider text at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
@@ -125,9 +160,11 @@ for (const viewport of [{ width: 1280, theme: "light" }, { width: 1280, theme: "
         const docked = await panel.getAttribute("data-mode") === "docked";
         await expect(table.locator(".lifecycle-heading")).toBeVisible({ visible: !docked });
         await expect(table.locator(".size-heading")).toBeVisible({ visible: !docked });
-        for (const heading of ["song", "source", "quality", "actions"]) await expect(table.locator(`.${heading}-heading`)).toBeVisible();
+        await expect(table.locator(".source-heading")).toBeVisible({ visible: !docked });
+        for (const heading of ["song", "quality", "actions"]) await expect(table.locator(`.${heading}-heading`)).toBeVisible();
         expect(await table.evaluate(element => element.getBoundingClientRect().width <= element.parentElement!.clientWidth + 1)).toBe(true);
-        const visibleCells = selected.locator(".source-cell, .quality-cell, .download-actions");
+        const visibleCells = selected.locator(".source-cell, .quality-cell, .download-actions").filter({ visible: true });
+        await expect(visibleCells).toHaveCount(docked ? 2 : 3);
         expect(await visibleCells.evaluateAll(elements => elements.every(element => {
           const cell = element.getBoundingClientRect(), container = element.closest(".downloads-table-scroll")!.getBoundingClientRect();
           return cell.x >= container.x - 1 && cell.right <= container.right + 1 && element.scrollWidth <= element.clientWidth;
@@ -147,6 +184,7 @@ for (const viewport of [{ width: 1280, theme: "light" }, { width: 1280, theme: "
       await expect(opener).toBeFocused();
       if (viewport.width === 1280) {
         await expect(table.getByRole("columnheader", { name: "Size", exact: true })).toBeVisible();
+        await expect(table.getByRole("columnheader", { name: "Source", exact: true })).toBeVisible();
         await expectToolbarLayout(page.locator(".downloads-search-sort"), page.getByRole("radiogroup", { includeHidden: true, name: `${storage === "cached" ? "Cached" : "Kept"} song filters` }));
       }
     });

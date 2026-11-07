@@ -226,7 +226,8 @@ test("An accepted job can fail without appearing as a completed backup", async (
   await expect(run).toBeEnabled();
 });
 
-test("Unknown backup facts stay neutral and changed archives cannot be downloaded", async ({ page }) => {
+for (const width of [1280, 390]) test(`Unknown backup facts stay neutral and changed archives cannot be downloaded at ${width}`, async ({ page }) => {
+  await page.setViewportSize({ width, height: 900 });
   const mock = await mockBackups(page);
   await page.route("**/api/admin/storage", route => reply(route, {
     storage: { provider: "Sqlite", readiness: "Ready" }, restorePending: false, backupPolicy: mock.state.policy,
@@ -235,7 +236,7 @@ test("Unknown backup facts stay neutral and changed archives cannot be downloade
     backups: [{ ...artifact, createdAt: "bad-date", verifiedAt: null, bytes: 0, status: "changed", verification: "changed" }],
   }));
   await page.goto("/#/settings/backups");
-  await expect(page.getByText("Size unavailable", { exact: false })).toHaveCount(1);
+  await expect(page.getByText("Size unavailable", { exact: true }).filter({ visible: true })).toHaveCount(1);
   await expect(page.getByText("File changed", { exact: false })).toBeVisible();
   await expect(page.getByRole("link", { name: "Download", exact: true })).toBeDisabled();
   await expect(page.getByRole("link", { name: "Download", exact: true })).not.toHaveAttribute("href");

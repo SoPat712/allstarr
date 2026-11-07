@@ -266,7 +266,7 @@
               {@const copiesId = `${id}-copies-${index}`}
               {@render songRow(group.files[0], group.files, group.key, copiesId)}
               {#if group.files.length > 1}
-                <tr class="copies-row" id={copiesId} hidden={!expanded.includes(group.key)}><td colspan={panelOpen ? 4 : 6}>
+                <tr class="copies-row" id={copiesId} hidden={!expanded.includes(group.key)}><td colspan="6">
                   {#if expanded.includes(group.key)}
                     <p class="copies-explanation">The row action uses the highest-quality copy. Each copy also has its own actions.</p>
                     <LibraryDownloadTable class="copies-table" label={`Copies of ${group.files[0].title || group.files[0].fileName}`} kept={!cached} {sort} {reversed} onsort={toggleSort}>

@@ -67,7 +67,7 @@
   </td>
   <td class="source-cell"><span class="source-name"><ProviderMark id={file.provider || "file"} definition={provider} label={providerName} /><span class="source-label" title={providerName}>{providerName}</span></span></td>
   <td class="quality-cell" class:has-warning={warnings.length > 0}>
-    <span class="quality-labels" title={quality}>{#each qualities ?? [{ label: quality, lower: lowerQuality }] as item, index}{#if index}<span aria-hidden="true"> · </span>{/if}<span class:lower-quality={item.lower}>{item.label}</span>{/each}</span>
+    <span class="quality-labels" title={quality}>{#each qualities ?? [{ label: quality, lower: lowerQuality }] as item, index}{#if index}<span aria-hidden="true">{" · "}</span>{/if}<span class:lower-quality={item.lower}>{item.label}</span>{/each}</span>
     {#each warnings as warning}<span class="quality-check-badge" title={warning.detail}>{warning.label}</span>{/each}
     {#if storage === "kept" && lowerQuality}<span class="quality-check-badge">Below CD quality</span>{/if}
   </td>
@@ -87,7 +87,7 @@
   .song-copy { display: flex; min-width: 0; align-items: center; gap: var(--space-3); }
   .song-selection { position: relative; z-index: 2; display: flex; align-items: center; min-height: var(--control-md); }
   .song-status { display: block; margin-top: var(--space-1); }
-  .song-description { min-width: 0; }
+  .song-description { flex: 1; min-width: 0; }
   .song-title { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
   .song-title > strong { flex: 1; min-width: 0; }
   strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-sm); font-weight: 600; line-height: 1.4; }
@@ -109,8 +109,9 @@
   .copies-toggle :global(svg) { transition: transform var(--motion-standard); }
   .copies-toggle :global(.expanded) { transform: rotate(180deg); }
   .quality-check-badge { width: fit-content; margin-top: var(--space-1); border: 1px solid var(--color-edge); border-radius: var(--radius-sm); padding: var(--space-1) var(--space-2); color: var(--warning); font-size: var(--text-xs); }
-  .quality-labels { font-size: var(--text-xs); }
-  .quality-labels .lower-quality { display: inline-block; width: fit-content; border-radius: 999px; padding: 2px var(--space-2); background: color-mix(in srgb, var(--warning) 18%, var(--color-panel)); color: var(--warning); }
+  .quality-labels { font-size: var(--text-xs); white-space: normal; overflow-wrap: anywhere; }
+  .quality-labels > span:not([aria-hidden]) { display: inline-block; max-width: 100%; }
+  .quality-labels .lower-quality { display: inline-block; width: fit-content; max-width: 100%; border-radius: 999px; padding: 2px var(--space-2); background: color-mix(in srgb, var(--warning) 18%, var(--color-panel)); color: var(--warning); }
   .phone-facts { display: none; }
   @media (max-width: 899px) {
     .library-download-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; border-bottom: 1px solid var(--color-edge); }

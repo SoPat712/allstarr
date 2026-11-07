@@ -40,25 +40,22 @@
   th button { min-height: var(--control-sm); border: 0; padding: 0; background: transparent; color: inherit; cursor: pointer; font: inherit; text-transform: inherit; letter-spacing: inherit; text-align: left; white-space: nowrap; }
   th[aria-sort="ascending"] button, th[aria-sort="descending"] button { color: var(--color-signal-text); font-weight: 600; }
   .song-heading { padding-left: var(--space-4); }
-  .source-heading { width: 160px; }
+  .source-heading { width: 130px; }
   .lifecycle-heading { width: 120px; }
-  .size-heading { width: 108px; text-align: right; }
-  .quality-heading { width: 210px; }
-  .kept .source-heading { width: 130px; }
+  .size-heading { width: 90px; text-align: right; }
+  .quality-heading { width: 150px; }
   .kept .lifecycle-heading { width: 150px; }
-  .kept .quality-heading { width: 150px; }
-  .kept .size-heading { width: 90px; }
   .actions-heading { width: 160px; }
   .copies-table { min-width: 0; border: 1px solid var(--color-edge); }
   @media (min-width: 900px) {
-    @container downloads (max-width: 850px) {
+    @container downloads (max-width: 1000px) {
       .library-downloads-table { min-width: 0; }
       .song-heading { width: auto; padding-left: var(--space-2); }
-      .source-heading, .kept .source-heading { width: 100px; }
-      .quality-heading, .kept .quality-heading { width: 90px; }
+      .source-heading, .kept .source-heading { width: 120px; }
+      .quality-heading, .kept .quality-heading { width: 120px; }
       .actions-heading { width: 128px; }
-      .lifecycle-heading, .size-heading, :global(.lifecycle-cell), :global(.size-cell) { display: none; }
       th, :global(.library-download-row > td) { padding-inline: var(--space-2); }
+      .lifecycle-heading, .kept .lifecycle-heading, .size-heading, :global(.library-download-row > .lifecycle-cell), :global(.library-download-row > .size-cell) { visibility: hidden; width: 0; padding-inline: 0; }
       :global(.library-download-row > td), :global(.song-title > strong) { font-size: var(--text-xs); }
       :global(.song-copy) { gap: var(--space-2); }
       :global(.library-download-art) { width: 36px; height: 36px; }
@@ -66,6 +63,9 @@
       :global(.library-download-actions [data-slot="button"]) { padding-inline: var(--space-2); font-size: var(--text-xs); }
       :global(.library-download-actions [data-slot="button"] svg) { display: none; }
       :global(.library-download-menu) { width: 32px; min-width: 32px; height: 32px; min-height: 32px; }
+    }
+    @container downloads (max-width: 650px) {
+      .source-heading, .kept .source-heading, :global(.library-download-row > .source-cell) { visibility: hidden; width: 0; padding-inline: 0; }
     }
   }
   @media (max-width: 899px) {
