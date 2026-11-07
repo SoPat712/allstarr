@@ -7,6 +7,9 @@ import {
   formatDuration,
   isReviewTrack,
   isServiceMix,
+  canRemovePlaylistFromApps,
+  isPlaylistMix,
+  isPlaylistInApps,
   orderPlaylistSources,
   playlistBehaviorSummary,
   playlistOutcomeLabel,
@@ -57,6 +60,29 @@ describe("playlist presentation", () => {
     expect(canRebuildInJellyfin(playlist({ targetProtocol: "Jellyfin" }))).toBe(true);
     expect(canRebuildInJellyfin(playlist({ targetProtocol: "jellyfin", importMode: "oneTime" }))).toBe(false);
     expect(canRebuildInJellyfin(playlist({ targetProtocol: "subsonic" }))).toBe(false);
+  });
+
+  it("offers linked removal only when the server permits it", () => {
+    const link = playlist({ inApps: true, canRemoveFromApps: true });
+    expect(canRemovePlaylistFromApps(link)).toBe(true);
+    expect(canRemovePlaylistFromApps(playlist({ ...link, enabled: false }))).toBe(true);
+    expect(canRemovePlaylistFromApps({ ...link, canRemoveFromApps: false })).toBe(false);
+    expect(canRemovePlaylistFromApps({ ...link, canRemoveFromApps: undefined })).toBe(false);
+    expect(canRemovePlaylistFromApps({ ...link, inApps: false })).toBe(false);
+    expect(canRemovePlaylistFromApps({ ...link, importMode: "oneTime" })).toBe(false);
+    expect(canRemovePlaylistFromApps({ ...link, sourceProviderId: "lastfm", sourcePlaylistId: "loved" })).toBe(false);
+  });
+
+  it("keeps paused links visible and hides only links removed from apps", () => {
+    const paused = playlist({ id: "paused", enabled: false, inApps: true });
+    const removed = playlist({ id: "removed", inApps: false });
+    const service = playlist({ sourceProviderId: "lastfm", sourcePlaylistId: "loved", enabled: false });
+    expect(isPlaylistInApps(paused)).toBe(true);
+    expect(isPlaylistInApps(removed)).toBe(false);
+    expect(isPlaylistInApps(service)).toBe(false);
+    expect(isPlaylistInApps(playlist({}))).toBe(true);
+    expect(filterPlaylists([paused, removed], "", "all", "name").map(item => item.id)).toEqual(["paused"]);
+    expect(filterPlaylists([paused, removed], "", "paused", "name").map(item => item.id)).toEqual(["paused"]);
   });
 
   it("explains Jellyfin order and expired sign-in failures without warning on one-time imports", () => {
@@ -130,13 +156,16 @@ describe("playlist presentation", () => {
 
   it("includes app mixes in name filtering and sorting only for all states", () => {
     const mix: MixCard & { trackCount: number | null } = { id: "mix", kind: "daily-1", name: "Blend 1", description: "Songs picked for you", section: "madeForYou", sortOrder: 0, sourceLabel: null, recipeVersion: "1", updatedAt: "2026-10-29T04:00:00Z", readiness: { ready: true, message: "Ready" }, inApps: true, appsAllowed: true, coverArtwork: [], trackCount: 20 };
-    const items = [playlist({ name: "Evening" }), mix];
+    const items = [playlist({ name: "Evening", inApps: true }), mix];
+    expect(isPlaylistMix(items[0])).toBe(false);
+    expect(isPlaylistMix(mix)).toBe(true);
     expect(filterPlaylists(items, "", "all", "name").map(item => item.id)).toEqual(["mix", "one"]);
     expect(filterPlaylists(items, "BLEND", "all", "name").map(item => item.id)).toEqual(["mix"]);
     for (const state of ["ready", "attention", "paused"] as const)
       expect(filterPlaylists(items, "blend", state, "name")).toEqual([]);
     expect(filterPlaylists(items, "", "all", "tracks").map(item => item.id)).toEqual(["mix", "one"]);
     expect(filterPlaylists(items, "", "all", "coverage").map(item => item.id)).toEqual(["one", "mix"]);
+    expect(filterPlaylists(items, "source", "attention", "name").map(item => item.id)).toEqual(["one"]);
     expect(filterPlaylists([playlist({ name: "Collection 24" }), playlist({ name: "Collection 9" })], "", "all", "name").map(item => item.name)).toEqual(["Collection 24", "Collection 9"]);
   });
 

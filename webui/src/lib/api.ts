@@ -778,6 +778,8 @@ export type PlaylistLink = {
   id: string;
   virtualPlaylistId?: string;
   enabled: boolean;
+  inApps?: boolean;
+  canRemoveFromApps?: boolean;
   name: string;
   description?: string | null;
   artworkUrl?: string | null;
@@ -2510,6 +2512,18 @@ export const releaseInbox = {
 
 export const playlistLinks = {
   list: () => json<{ playlistLinks: PlaylistLink[] }>("/api/admin/playlist-links"),
+  removeFromApps: (id: string, expectedRevision: number) =>
+    json<{ inApps: false; revision: number }>(`/api/admin/playlist-links/${encodeURIComponent(id)}/in-apps`, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ expectedRevision }),
+    }),
+  addToApps: (id: string, expectedRevision: number) =>
+    json<PlaylistLink>(`/api/admin/playlist-links/${encodeURIComponent(id)}/in-apps`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ expectedRevision }),
+    }),
   rebuild: (id: string) =>
     json<PlaylistLink>(`/api/admin/playlist-links/${encodeURIComponent(id)}/rebuild`, { method: "POST" }),
   copies: (listenerId: string) => json<PlaylistCopy[]>(`/api/admin/listeners/${encodeURIComponent(listenerId)}/playlist-forks`),
@@ -2615,7 +2629,7 @@ export const playlistLinks = {
     syncName: boolean;
     syncDescription: boolean;
     syncArtwork: boolean;
-  }) => json<{ id: string; initialJobId?: string | null }>("/api/admin/playlist-links", {
+  }) => json<{ id: string; initialJobId?: string | null; scheduleId?: string | null }>("/api/admin/playlist-links", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),

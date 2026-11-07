@@ -171,6 +171,10 @@ public sealed class PlaylistPersistenceService : IPlaylistPersistenceService
         var existing = await db.PlaylistLinks.AsNoTracking().SingleOrDefaultAsync(item => item.OwnerUserId == actor.EffectiveUserId && item.ProviderAccountId == input.ProviderAccountId && item.SourceProviderId == providerId && item.SourcePlaylistIdHash == input.SourcePlaylistIdHash && item.TargetProtocol == input.TargetProtocol && item.TargetBackendInstanceId == input.TargetBackendInstanceId, cancellationToken);
         if (existing != null)
         {
+            if (existing.ImportMode == PlaylistImportMode.Linked && input.ImportMode == PlaylistImportMode.Linked &&
+                existing.DestinationMode == PlaylistDestinationMode.New && input.TargetPlaylistId == null &&
+                await PlaylistAppRemoval.FindAsync(db, existing, cancellationToken) != null)
+                return existing;
             if (existing.DestinationMode != (input.TargetPlaylistId == null ? PlaylistDestinationMode.New : PlaylistDestinationMode.Existing) ||
                 existing.ImportMode != input.ImportMode || existing.TrackRetention != input.TrackRetention ||
                 (input.TargetPlaylistId != null && !string.Equals(existing.TargetPlaylistId, input.TargetPlaylistId, StringComparison.Ordinal)))

@@ -46,6 +46,7 @@
   import { relativeTime } from "$lib/activity";
   import {
     canRebuildInJellyfin,
+    canRemovePlaylistFromApps,
     filterPlaylists,
     filterTracks,
     formatDuration,
@@ -53,6 +54,8 @@
     mediaServerName,
     isReviewTrack,
     isServiceMix,
+    isPlaylistMix,
+    isPlaylistInApps,
     jellyfinPlaylistWarning,
     playlistOutcomeLabel,
     runBounded,
@@ -71,6 +74,8 @@
   let playlists = $state<PlaylistLink[]>([]);
   let consent = $state<PlaylistConsentStatus | null>(null);
   let removingMix = $state<{ id: string; name: string } | null>(null);
+  let removingPlaylist = $state<PlaylistLink | null>(null);
+  const removalName = $derived(removingPlaylist?.name ?? removingMix?.name);
   let removing = $state(false), removeError = $state("");
   let rebuildingPlaylist = $state<PlaylistLink | null>(null);
   let rebuilding = $state(false), rebuildError = $state("");
@@ -149,8 +154,8 @@
   const orderCount = $derived(playlists.filter(item => Boolean(jellyfinPlaylistWarning(item, providerName(item.sourceProviderId)))).length);
   const totalSongs = $derived(allPlaylists.reduce((sum, item) => sum + (item.trackCount ?? 0), 0));
   const visiblePlaylists = $derived(filterPlaylists<PlaylistLink | PlaylistMix>(allPlaylists, query, "all", sort).filter(item =>
-    (!sourceFilter || (!("inApps" in item) && item.sourceProviderId === sourceFilter)) &&
-    (stateFilter === "all" || (!("inApps" in item) && (stateFilter === "attention" ? needsLook(item) : stateFilter === "paused" ? !item.enabled : item.enabled && !needsLook(item))))));
+    (!sourceFilter || (!isPlaylistMix(item) && item.sourceProviderId === sourceFilter)) &&
+    (stateFilter === "all" || (!isPlaylistMix(item) && (stateFilter === "attention" ? needsLook(item) : stateFilter === "paused" ? !item.enabled : item.enabled && !needsLook(item))))));
 
   function needsLook(item: PlaylistLink) {
     return !item.enabled || item.metrics.review > 0 || item.unmatchedCount > 0 || item.metrics.rejected > 0 || Boolean(jellyfinPlaylistWarning(item, providerName(item.sourceProviderId))) || item.lastRunCode === "backend_access_missing";
@@ -161,7 +166,7 @@
     if (jellyfinPlaylistWarning(item, providerName(item.sourceProviderId))) return consent?.granted && !consent.needsSignIn && item.lastRunCode?.split(",").some(code => code.trim() === "order") ? "Order fixing" : "Needs a look";
     return needsLook(item) ? "Needs a look" : "Healthy";
   }
-  const panelPlaylists = $derived(visiblePlaylists.filter((item): item is PlaylistLink => !("inApps" in item)));
+  const panelPlaylists = $derived(visiblePlaylists.filter((item): item is PlaylistLink => !isPlaylistMix(item)));
   const panelPosition = $derived(panelPlaylists.findIndex(item => item.id === selectedId));
   const refreshablePlaylists = $derived(playlists.filter((playlist) => playlist.importMode === "linked"));
   const projectedTracks = $derived.by((): PlaylistTrack[] => {
@@ -358,7 +363,7 @@
             ? linksResult.reason.message
             : "Playlists are unavailable.";
       } else {
-        playlists = linksResult.value.playlistLinks.filter(link => link.enabled || !isServiceMix(link));
+        playlists = linksResult.value.playlistLinks.filter(isPlaylistInApps);
         const scheduled = await activityWork.tasks().catch(() => null);
         nextSyncAt = (scheduled?.items ?? []).filter(item => item.enabled && item.runPlaylistLinkId &&
           playlists.some(playlist => playlist.id === item.runPlaylistLinkId) && item.nextRunAt)
@@ -539,6 +544,40 @@
     finally { removing = false; }
   }
 
+  function confirmRemoval(playlist: PlaylistLink) {
+    removeError = "";
+    if (isServiceMix(playlist)) removingMix = playlist;
+    else if (canRemovePlaylistFromApps(playlist)) removingPlaylist = playlist;
+  }
+
+  async function removePlaylist() {
+    if (!removingPlaylist || removing) return;
+    const target = removingPlaylist;
+    removing = true;
+    removeError = "";
+    try {
+      const removed = await playlistLinks.removeFromApps(target.id, target.revision);
+      if (selectedId === target.id) detailOpen = false;
+      playlists = playlists.filter(playlist => playlist.id !== target.id);
+      removingPlaylist = null;
+      toast.success(`${target.name} removed from your apps`, {
+        label: "Undo",
+        run: async () => {
+          try {
+            await playlistLinks.addToApps(target.id, removed.revision);
+            await refresh();
+          } catch (cause) {
+            toast.error(cause instanceof Error ? cause.message : "The playlist could not be restored. Try again.");
+          }
+        },
+      });
+    } catch (cause) {
+      removeError = cause instanceof Error ? cause.message : "The playlist could not be removed. Try again.";
+    } finally {
+      removing = false;
+    }
+  }
+
   async function matchSaved(message: string) {
     toast.success(message);
     await refresh();
@@ -607,7 +646,7 @@
       <div class="library-rows" aria-label="Playlists">
         {#each visiblePlaylists as playlist (playlist.id)}
           <div class="playlist-row">
-          {#if "inApps" in playlist}
+          {#if isPlaylistMix(playlist)}
             <ItemRow title={playlist.name} subtitle={`Mix · in your apps · ${playlist.trackCount ?? "?"} ${playlist.trackCount === 1 ? "song" : "songs"}`} href={`#/for-you?mix=${encodeURIComponent(playlist.id)}`} actionLabel={`Open ${playlist.name} mix`}>
               {#snippet leading()}<MediaArtwork class="playlist-art" url={`/api/admin/mixes/${encodeURIComponent(playlist.id)}/cover?v=${encodeURIComponent(playlist.updatedAt ?? playlist.recipeVersion ?? "")}`} />{/snippet}
               {#snippet menu()}<DropdownMenu.Root><DropdownMenu.Trigger class={buttonVariants({ variant: "text", size: "icon" })} aria-label={`More options for ${playlist.name}`}><MoreHorizontal size={18} /></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content class="bits-menu" align="end"><DropdownMenu.Item class="bits-menu-item library-danger" onSelect={() => { removeError = ""; removingMix = playlist; }}>Remove from my apps</DropdownMenu.Item></DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root>{/snippet}
@@ -616,6 +655,14 @@
             <ItemRow title={playlist.name} subtitle={`${providerName(playlist.sourceProviderId)} → ${providerName(playlist.targetProtocol)} · ${countLabel(playlist.trackCount, "song")}${playlist.routeCoverage.some(route => ["local", playlist.targetProtocol].includes(route.providerId)) ? ` · ${playlist.routeCoverage.filter(route => ["local", playlist.targetProtocol].includes(route.providerId)).reduce((sum, route) => sum + route.count, 0)} from your library` : ""}${hasCopy(playlist) ? " · Your copy" : ""}`} actionLabel={`Open ${playlist.name} playlist details`} selected={playlist.id === selectedId} attention={needsLook(playlist)} onclick={event => void loadDetails(playlist.id, event.currentTarget as HTMLElement)}>
               {#snippet leading()}<MediaArtwork class="playlist-art" url={playlist.artworkUrl} />{/snippet}
               {#snippet pill()}<StatePill tone={needsLook(playlist) ? "warn" : "ok"} text={rowState(playlist)} />{/snippet}
+              {#snippet menu()}{#if isServiceMix(playlist) || canRemovePlaylistFromApps(playlist)}
+                <DropdownMenu.Root>
+                  <DropdownMenu.Trigger class={buttonVariants({ variant: "text", size: "icon" })} aria-label={`More options for ${playlist.name}`}><MoreHorizontal size={18} /></DropdownMenu.Trigger>
+                  <DropdownMenu.Portal><DropdownMenu.Content class="bits-menu" align="end">
+                    <DropdownMenu.Item class="bits-menu-item library-danger" onSelect={() => confirmRemoval(playlist)}>Remove from my apps</DropdownMenu.Item>
+                  </DropdownMenu.Content></DropdownMenu.Portal>
+                </DropdownMenu.Root>
+              {/if}{/snippet}
             </ItemRow>
           {/if}
           </div>
@@ -652,7 +699,7 @@
         </DropdownMenu.Root>
       {/if}{/snippet}
       {#snippet artwork()}<MediaArtwork class="hero-art" url={details?.artworkUrl} loading="eager" />{/snippet}
-      {#snippet footer()}{#if selected}<div class="playlist-panel-footer">{#if isServiceMix(selected)}<Button variant="destructive-text" onclick={() => { removeError = ""; removingMix = selected; }}>Remove from my apps</Button>{/if}<div>{#if canRebuildInJellyfin(selected)}<Button variant="outline" disabled={Boolean(action)} onclick={() => confirmRebuild(selected)}>Rebuild…</Button>{/if}<Button disabled={Boolean(action) || !selected.enabled || !details} onclick={() => void run("sync")}>Sync now</Button></div></div>{/if}{/snippet}
+      {#snippet footer()}{#if selected}<div class="playlist-panel-footer">{#if isServiceMix(selected) || canRemovePlaylistFromApps(selected)}<Button variant="destructive-text" onclick={() => confirmRemoval(selected)}>Remove from my apps</Button>{/if}<div>{#if canRebuildInJellyfin(selected)}<Button variant="outline" disabled={Boolean(action)} onclick={() => confirmRebuild(selected)}>Rebuild…</Button>{/if}<Button disabled={Boolean(action) || !selected.enabled || !details} onclick={() => void run("sync")}>Sync now</Button></div></div>{/if}{/snippet}
       {#if detailLoading && !details}
         <RowsSkeleton count={5} />
       {:else if detailError && !details}
@@ -970,7 +1017,7 @@
   />
 {/if}
 
-<ConfirmDialog bind:open={() => Boolean(removingMix), value => { if (!value) removingMix = null; }} title={`Remove ${removingMix?.name ?? "this playlist"} from your apps?`} description={`${removingMix?.name ?? "This playlist"} leaves your apps for you. Its source is unchanged. Saved matches stay, so adding it back is quick.`} confirmLabel="Remove from my apps" disabled={removing} closeOnConfirm={false} error={removeError} onConfirm={removeMix} />
+<ConfirmDialog bind:open={() => Boolean(removingMix || removingPlaylist), value => { if (!value) { removingMix = null; removingPlaylist = null; } }} title={`Remove ${removalName ?? "this playlist"} from your apps?`} description={`${removalName ?? "This playlist"} leaves your apps for you. Its source is unchanged. Saved matches stay, so adding it back is quick.`} confirmLabel="Remove from my apps" disabled={removing} closeOnConfirm={false} error={removeError} onConfirm={() => removingPlaylist ? removePlaylist() : removeMix()} />
 <ConfirmDialog
   bind:open={() => Boolean(rebuildingPlaylist), value => { if (!value && !rebuilding) rebuildingPlaylist = null; }}
   title="Rebuild this playlist in Jellyfin?"

@@ -534,6 +534,11 @@ public sealed partial class PlaylistLinksController(
         {
             var context = await CreateExecutionAsync(session, cancellationToken);
             var links = await playlists.ListLinksAsync(context, cancellationToken);
+            await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
+            var removed = await PlaylistAppRemoval.Rows(db).AsNoTracking()
+                .Where(item => item.OwnerUserId == session.AllstarrUserId || session.IsAdministrator)
+                .Select(item => item.ExternalIdHash).ToArrayAsync(cancellationToken);
+            var removedKeys = removed.ToHashSet(StringComparer.Ordinal);
             var projectionsByLink = await projections.ReadByLinkIdsAsync(
                 session.IsAdministrator ? null : session.AllstarrUserId,
                 links.Select(item => item.Id).ToArray(),
@@ -541,7 +546,8 @@ public sealed partial class PlaylistLinksController(
             return Ok(new
             {
                 playlistLinks = links.Select(link =>
-                    ToListDto(link, projectionsByLink.GetValueOrDefault(link.Id)))
+                    ToListDto(link, projectionsByLink.GetValueOrDefault(link.Id),
+                        !removedKeys.Contains(PlaylistAppRemoval.Key(link.Id)), link.OwnerUserId == session.AllstarrUserId))
             });
         });
     }
@@ -684,6 +690,14 @@ public sealed partial class PlaylistLinksController(
                 request.TargetCredentialReferenceId, request.MirrorStaleEntries, request.PreserveManualEntries,
                 request.SyncName, request.SyncDescription, request.SyncArtwork, projectionMode, importMode,
                 trackRetention), cancellationToken);
+            await using (var db = await contextFactory.CreateDbContextAsync(cancellationToken))
+            {
+                if (await PlaylistAppRemoval.FindAsync(db, record, cancellationToken) != null)
+                {
+                    var restored = await orchestration.RestoreToAppsAsync(context, record.Id, record.Revision, cancellationToken);
+                    return Ok(ToDto(restored.Link, restored.JobId));
+                }
+            }
             var generation = Math.Max(1, record.CreatedAt.UtcTicks);
             var initial = await jobs.EnqueueAsync(new DurableJobEnqueueRequest<PlaylistMaterializationJobPayload>(
                 "playlist.materialize", $"initial-import:{record.Id:N}",
@@ -779,6 +793,8 @@ public sealed partial class PlaylistLinksController(
             await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
             var tracked = await db.PlaylistLinks.SingleAsync(item =>
                 item.Id == id && item.OwnerUserId == existing.OwnerUserId, cancellationToken);
+            if (await PlaylistAppRemoval.FindAsync(db, tracked, cancellationToken) != null)
+                return Conflict(new { error = "Add this playlist back to your apps before changing its sync settings." });
             if (tracked.Revision != request.ExpectedRevision)
                 throw new DbUpdateConcurrencyException("The playlist changed before its state could be updated.");
             tracked.Enabled = request.Enabled;
@@ -1392,10 +1408,12 @@ public sealed partial class PlaylistLinksController(
     private static object ToDto(PlaylistLinkRecord value, Guid? initialJobId = null, int? retentionQueued = null) => new { id = value.Id, enabled = value.Enabled, providerAccountId = value.ProviderAccountId, sourceProviderId = value.SourceProviderId, sourcePlaylistId = value.SourcePlaylistId, followNewest = value.SourceProviderId == "listenbrainz" && value.SourcePlaylistId.StartsWith("createdfor:", StringComparison.Ordinal), targetProtocol = value.TargetProtocol, targetBackendInstanceId = value.TargetBackendInstanceId, mode = value.Mode.ToString().ToLowerInvariant(), projectionMode = value.ProjectionMode.ToString().ToLowerInvariant(), materializationMode = value.MaterializationMode.ToString().ToLowerInvariant(), importMode = LowerCamel(value.ImportMode.ToString()), trackRetention = LowerCamel(value.TrackRetention.ToString()), scheduleId = value.ScheduleId, targetPlaylistId = value.TargetPlaylistId, targetCredentialReferenceId = value.TargetCredentialReferenceId, mirrorStaleEntries = value.MirrorStaleEntries, preserveManualEntries = value.PreserveManualEntries, syncName = value.SyncName, syncDescription = value.SyncDescription, syncArtwork = value.SyncArtwork, ruleVersion = value.RuleVersion, policyVersion = value.PolicyVersion, revision = value.Revision, virtualPlaylistId = PlaylistVirtualizationService.CreateProtocolId(value.Id), initialJobId, retentionQueued };
     private static string MixArtworkUrl(Guid id, int generation) => $"/api/admin/mixes/{id}/cover?v={generation}";
 
-    private object ToListDto(PlaylistLinkRecord value, DurablePlaylistProjection? projection) => new
+    private object ToListDto(PlaylistLinkRecord value, DurablePlaylistProjection? projection, bool inApps, bool ownCopy) => new
     {
         id = value.Id,
         enabled = value.Enabled,
+        inApps,
+        canRemoveFromApps = ownCopy && inApps && PlaylistAppRemoval.CanRemove(value),
         name = PlaylistVirtualizationService.DisplayName(value.SourceProviderId, projection?.Name ?? "Playlist"),
         description = projection?.Description,
         artworkUrl = PersonalMixService.IsExternalLink(value) ? MixArtworkUrl(value.Id, projection?.SnapshotVersion ?? 0) :

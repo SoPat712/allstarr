@@ -514,7 +514,7 @@
           syncDescription: true,
           syncArtwork: true,
         });
-        if (importMode === "linked") {
+        if (importMode === "linked" && !link.scheduleId) {
           const cronExpression = ({
             hourly: "0 * * * *",
             daily: "0 3 * * *",

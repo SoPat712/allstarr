@@ -2889,6 +2889,15 @@ public sealed partial class PlaylistOrchestrationIntegrationTests(ITestOutputHel
     }
     private sealed class FakeTarget : IBackendPlaylistTarget
     {
+        public BackendPlaylistTargetStatus DeleteStatus { get; set; } = BackendPlaylistTargetStatus.Unsupported;
+        public int DeleteCalls { get; private set; }
+        public Task<BackendPlaylistTargetResult<bool>> DeleteAsync(BackendPlaylistTargetContext context,
+            string backendPlaylistId, CancellationToken cancellationToken)
+        {
+            DeleteCalls++;
+            if (DeleteStatus == BackendPlaylistTargetStatus.Success) LastSnapshot = null;
+            return Task.FromResult(new BackendPlaylistTargetResult<bool>(DeleteStatus, DeleteStatus == BackendPlaylistTargetStatus.Success));
+        }
         public BackendPlaylistFamily Family => BackendPlaylistFamily.Jellyfin;
         public bool CanWriteArtwork { get; set; }
         public byte[]? ArtworkOnlyBytes { get; private set; }

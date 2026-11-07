@@ -22,6 +22,22 @@ export function isServiceMix(link: Pick<PlaylistLink, "sourceProviderId" | "sour
 
 export type PlaylistMix = MixCard & { trackCount: number | null };
 
+export function isPlaylistMix(playlist: PlaylistLink | PlaylistMix): playlist is PlaylistMix {
+  return "kind" in playlist;
+}
+
+export function isPlaylistInApps(
+  link: Pick<PlaylistLink, "sourceProviderId" | "sourcePlaylistId" | "importMode" | "enabled" | "inApps">,
+) {
+  return link.inApps !== false && (link.enabled || !isServiceMix(link));
+}
+
+export function canRemovePlaylistFromApps(
+  link: Pick<PlaylistLink, "sourceProviderId" | "sourcePlaylistId" | "importMode" | "inApps" | "canRemoveFromApps">,
+) {
+  return link.importMode === "linked" && link.inApps !== false && link.canRemoveFromApps === true && !isServiceMix(link);
+}
+
 export type PlaylistSort = "name" | "tracks" | "coverage" | "updated";
 export type TrackSort = "position" | "title" | "duration" | "route";
 export type TrackRouteFilter = "all" | PlaylistTrack["routeKind"] | "review";
@@ -97,12 +113,13 @@ export function filterPlaylists<T extends PlaylistLink | PlaylistMix>(
   const needle = query.trim().toLocaleLowerCase();
   return playlists
     .filter((playlist) => {
+      if (!isPlaylistMix(playlist) && !isPlaylistInApps(playlist)) return false;
       const matchesQuery =
         !needle ||
-        `${playlist.name} ${playlist.description ?? ""} ${"inApps" in playlist ? "" : `${playlist.sourceProviderId} ${playlist.targetProtocol}`}`
+        `${playlist.name} ${playlist.description ?? ""} ${isPlaylistMix(playlist) ? "" : `${playlist.sourceProviderId} ${playlist.targetProtocol}`}`
           .toLocaleLowerCase()
           .includes(needle);
-      if ("inApps" in playlist) return matchesQuery && state === "all";
+      if (isPlaylistMix(playlist)) return matchesQuery && state === "all";
       const matchesState =
         state === "all" ||
         (state === "paused" && !playlist.enabled) ||
@@ -121,9 +138,9 @@ export function filterPlaylists<T extends PlaylistLink | PlaylistMix>(
     .toSorted((left, right) => {
       if (sort === "tracks") return (right.trackCount ?? -1) - (left.trackCount ?? -1);
       if (sort === "coverage")
-        return ("inApps" in right ? 0 : confirmationCoverage(right)) - ("inApps" in left ? 0 : confirmationCoverage(left));
+        return (isPlaylistMix(right) ? 0 : confirmationCoverage(right)) - (isPlaylistMix(left) ? 0 : confirmationCoverage(left));
       if (sort === "updated")
-        return Date.parse(("inApps" in right ? right.updatedAt : right.lastRunAt) ?? "") - Date.parse(("inApps" in left ? left.updatedAt : left.lastRunAt) ?? "");
+        return Date.parse((isPlaylistMix(right) ? right.updatedAt : right.lastRunAt) ?? "") - Date.parse((isPlaylistMix(left) ? left.updatedAt : left.lastRunAt) ?? "");
       return left.name.localeCompare(right.name, undefined, { sensitivity: "base" });
     });
 }

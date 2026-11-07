@@ -37,6 +37,9 @@ public sealed record PlaylistRefreshResult(Guid SnapshotId, int SnapshotVersion,
 
 public interface IPlaylistOrchestrationService
 {
+    Task<PlaylistAppRestoreResult> RestoreToAppsAsync(ProtocolExecutionContext execution, Guid playlistLinkId,
+        long expectedRevision, CancellationToken cancellationToken = default, bool enqueueMaterialization = true) =>
+        throw new NotSupportedException();
     Task<DurableJobCompletion> RepairSpotifyArtworkAsync(ProtocolExecutionContext execution, Guid playlistLinkId,
         CancellationToken cancellationToken = default) => Task.FromResult(
             DurableJobCompletion.Failure("playlist_artwork_unsupported", "Playlist cover repair is unavailable."));
@@ -370,6 +373,12 @@ public sealed partial class PlaylistOrchestrationService : IPlaylistOrchestratio
 
         try
         {
+            await using var writeLock = await _locks.AcquireAsync($"playlist-apps:{link.Id:N}", cancellationToken);
+            await using var currentDb = await _factory.CreateDbContextAsync(cancellationToken);
+            var currentLink = await currentDb.PlaylistLinks.AsNoTracking().SingleAsync(item => item.Id == link.Id, cancellationToken);
+            if (!currentLink.Enabled || currentLink.Revision != link.Revision)
+                return await RecordFailureAsync(runId, link, plan, PlaylistSyncState.Cancelled,
+                    "playlist_changed", null, backendWriteAttempted: false, cancellationToken);
             var target = _targets.Resolve(link.TargetProtocol);
             ProviderPlaylistArtwork? resolvedArtwork = null;
             string? artworkIssue = null;

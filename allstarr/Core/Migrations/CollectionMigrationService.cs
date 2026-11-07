@@ -495,6 +495,9 @@ public sealed partial class CollectionMigrationService(IDbContextFactory<Allstar
         if (collection.Kind == "playlist")
         {
             var link = await playlists.GetLinkAsync(execution, collection.LinkId!.Value, token);
+            if (await PlaylistAppRemoval.FindAsync(db, link, token) != null)
+                link = (await orchestration.RestoreToAppsAsync(execution, link.Id, link.Revision, token,
+                    enqueueMaterialization: false)).Link;
             if (run.MakePlaylists && link.TargetPlaylistId == null)
             {
                 var target = targets.Resolve(run.Protocol);

@@ -14,12 +14,14 @@ public sealed partial class PlaylistOrchestrationService
     public async Task<PlaylistLinkRecord> RebuildAsync(ProtocolExecutionContext execution, Guid playlistLinkId,
         CancellationToken cancellationToken = default)
     {
-        await using var rebuildLock = await _locks.AcquireAsync($"playlist-rebuild:{playlistLinkId:N}", cancellationToken);
+        await using var rebuildLock = await _locks.AcquireAsync($"playlist-apps:{playlistLinkId:N}", cancellationToken);
         await using var db = await _factory.CreateDbContextAsync(cancellationToken);
         var link = await db.PlaylistLinks.AsNoTracking().SingleOrDefaultAsync(item => item.Id == playlistLinkId, cancellationToken)
             ?? throw new KeyNotFoundException("Playlist link not found.");
         if (execution.Principal == null || execution.Principal.UserId != link.OwnerUserId && !execution.Principal.IsAdministrator)
             throw new UnauthorizedAccessException();
+        if (await PlaylistAppRemoval.FindAsync(db, link, cancellationToken) != null)
+            throw new InvalidOperationException("Add this playlist back to your apps before rebuilding it.");
         if (link.ImportMode == PlaylistImportMode.OneTime) throw new InvalidOperationException("Imports keep your own order.");
         if (link.TargetProtocol != "jellyfin" || link.Mode == PlaylistLinkMode.Virtual || link.TargetPlaylistId == null)
             throw new InvalidOperationException("Rebuild requires a mapped Jellyfin playlist.");
@@ -141,6 +143,7 @@ public sealed partial class PlaylistOrchestrationService
                 membership.Revision++;
             }
             current.TargetPlaylistId = stagedId;
+            current.DestinationMode = PlaylistDestinationMode.New;
             current.UpdatedAt = _clock.UtcNow;
             current.Revision++;
             db.AuditEvents.Add(new()
