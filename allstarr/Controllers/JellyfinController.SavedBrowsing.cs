@@ -23,7 +23,7 @@ public partial class JellyfinController
             Guid.TryParse(id, out var library) && Guid.TryParse(parent, out var requested) && library == requested);
     }
 
-    private async Task<IActionResult?> TryReadSavedBrowseAsync(string? types = null, bool facets = false, bool latest = false)
+    private async Task<IActionResult?> TryReadSavedBrowseAsync(string? types = null, bool facets = false)
     {
         if (!string.IsNullOrWhiteSpace(Request.Query["SearchTerm"]) || Request.Query.ContainsKey("Ids")) return null;
         var parent = Request.Query["ParentId"].ToString();
@@ -46,7 +46,7 @@ public partial class JellyfinController
         // Artist routes filter native source media by type, while saved rows are artists themselves.
         if (types != null) genreQueries.Provider["IncludeItemTypes"] = types;
         var providerQuery = new QueryCollection(genreQueries.Provider.ToDictionary(pair => pair.Key, pair => new Microsoft.Extensions.Primitives.StringValues(pair.Value), StringComparer.OrdinalIgnoreCase));
-        var defaultLimit = latest ? 10 : artistList ? 50 : 20;
+        var defaultLimit = artistList ? 50 : 20;
         var filter = new JellyfinProviderQuery(providerQuery, defaultLimit: defaultLimit, membership: true);
         var additions = saved.Where(item => JellyfinFavoriteScope.Matches(item, providerQuery, libraryScope))
             .Select(item =>
@@ -74,7 +74,7 @@ public partial class JellyfinController
         }
         var genreList = facets && Request.Path.Value!.EndsWith("Genres", StringComparison.OrdinalIgnoreCase);
         var nativeQuery = genreQueries.Native;
-        if ((!facets || genreList) && !latest)
+        if (!facets || genreList)
         {
             nativeQuery["StartIndex"] = "0";
             nativeQuery["Limit"] = "500";
@@ -82,7 +82,6 @@ public partial class JellyfinController
             if (query.GetValueOrDefault("SortBy")?.Equals("Random", StringComparison.OrdinalIgnoreCase) == true)
                 nativeQuery["SortBy"] = "SortName";
         }
-        if (latest) nativeQuery["Limit"] = int.MaxValue.ToString(System.Globalization.CultureInfo.InvariantCulture);
         var endpoint = Request.Path.Value!.TrimStart('/');
         var headers = new HeaderDictionary(Request.Headers.Where(header =>
             !header.Key.Equals("If-None-Match", StringComparison.OrdinalIgnoreCase) &&
@@ -98,7 +97,7 @@ public partial class JellyfinController
             var original = native.RootElement.GetRawText();
             if (facets && !genreList) return MergeSavedFacets(original, additions);
             var envelope = JsonNode.Parse(original) as JsonObject;
-            var originalItems = latest ? JsonNode.Parse(original) as JsonArray : envelope?["Items"] as JsonArray;
+            var originalItems = envelope?["Items"] as JsonArray;
             if (originalItems == null) return HandleProxyResponse(native, status);
             var rows = originalItems.OfType<JsonObject>().Select(item => item.Deserialize<Dictionary<string, object?>>() ?? []).ToList();
             var nativeText = new Dictionary<string, string>(JellyfinItemIdComparer.Instance);
@@ -107,53 +106,56 @@ public partial class JellyfinController
                 foreach (var item in element.EnumerateArray())
                     if (item.TryGetProperty("Id", out var id) && id.GetString() is { } value) nativeText.TryAdd(value, item.GetRawText());
             }
-            Remember(latest ? native.RootElement : native.RootElement.GetProperty("Items"));
+            Remember(native.RootElement.GetProperty("Items"));
             var totalNative = envelope?["TotalRecordCount"]?.GetValue<int>() ?? rows.Count;
-            while (!latest && rows.Count < totalNative)
+            if (rows.Count < totalNative)
             {
-                nativeQuery["StartIndex"] = rows.Count.ToString(System.Globalization.CultureInfo.InvariantCulture);
-                var (page, pageStatus) = await _proxyService.GetJsonAsync(endpoint, nativeQuery, headers);
-                using (page)
+                // The first page gives the total, so the remaining pages are read together instead of one after another.
+                var pageSize = rows.Count;
+                if (pageSize == 0) return HandleProxyResponse(native, status);
+                using var gate = new SemaphoreSlim(4);
+                var pages = await Task.WhenAll(Enumerable.Range(1, (totalNative - 1) / pageSize).Select(async index =>
                 {
-                    if (pageStatus != 200 || page == null || !page.RootElement.TryGetProperty("Items", out var items) ||
-                        items.GetArrayLength() == 0 || page.RootElement.GetProperty("TotalRecordCount").GetInt32() != totalNative)
-                        return HandleProxyResponse(native, status);
-                    Remember(items);
-                    rows.AddRange(items.EnumerateArray().Select(item => item.Deserialize<Dictionary<string, object?>>() ?? []));
-                    if (rows.Count > totalNative) return HandleProxyResponse(native, status);
+                    await gate.WaitAsync(HttpContext.RequestAborted);
+                    try
+                    {
+                        var pageQuery = new Dictionary<string, string>(nativeQuery, StringComparer.OrdinalIgnoreCase)
+                        { ["StartIndex"] = (index * pageSize).ToString(System.Globalization.CultureInfo.InvariantCulture) };
+                        return await _proxyService.GetJsonAsync(endpoint, pageQuery, headers);
+                    }
+                    finally { gate.Release(); }
+                }));
+                try
+                {
+                    foreach (var (page, pageStatus) in pages)
+                    {
+                        if (pageStatus != 200 || page == null || !page.RootElement.TryGetProperty("Items", out var items) ||
+                            items.GetArrayLength() == 0 || page.RootElement.GetProperty("TotalRecordCount").GetInt32() != totalNative)
+                            return HandleProxyResponse(native, status);
+                        Remember(items);
+                        rows.AddRange(items.EnumerateArray().Select(item => item.Deserialize<Dictionary<string, object?>>() ?? []));
+                    }
                 }
+                finally
+                {
+                    foreach (var (page, _) in pages) page?.Dispose();
+                }
+                if (rows.Count != totalNative) return HandleProxyResponse(native, status);
             }
-            if (!latest) HttpContext.Items[JellyfinQueryResponseRows.NativeRowsKey] = nativeText;
+            HttpContext.Items[JellyfinQueryResponseRows.NativeRowsKey] = nativeText;
             if (genreList)
             {
                 envelope!["Items"] = JsonSerializer.SerializeToNode(rows);
                 return MergeSavedFacets(envelope.ToJsonString(), additions);
             }
-            await ReadNativeAddedDatesAsync(rows, query, headers, latest);
+            await ReadNativeAddedDatesAsync(rows, query, headers);
             rows.AddRange(additions);
-            var merged = filter.FilterAndSort(rows, latest ? "DateCreated" : "SortName", nativeAlreadyFiltered: true);
-            if (latest && !query.ContainsKey("SortBy")) merged = merged.OrderByDescending(row => JellyfinProviderQuery.Date(JellyfinProviderQuery.Text(row, "DateCreated"))).ToList();
+            var merged = filter.FilterAndSort(rows, "SortName", nativeAlreadyFiltered: true);
             if (query.GetValueOrDefault("SortBy")?.Equals("Random", StringComparison.OrdinalIgnoreCase) == true)
                 Random.Shared.Shuffle(System.Runtime.InteropServices.CollectionsMarshal.AsSpan(merged));
             var pageRows = merged.Skip(filter.StartIndex).Take(filter.Limit).ToArray();
             foreach (var row in pageRows.Where(IsProviderQueryItem)) new JellyfinItemFields(Request.Query).Apply(row);
             Response.Headers.CacheControl = "no-store";
-            if (latest)
-            {
-                using var output = new MemoryStream();
-                using (var writer = new Utf8JsonWriter(output))
-                {
-                    writer.WriteStartArray();
-                    foreach (var row in pageRows)
-                    {
-                        if (!IsProviderQueryItem(row) && nativeText.TryGetValue(JellyfinProviderQuery.Text(row, "Id"), out var raw))
-                            writer.WriteRawValue(raw);
-                        else JsonSerializer.Serialize(writer, row);
-                    }
-                    writer.WriteEndArray();
-                }
-                return Content(System.Text.Encoding.UTF8.GetString(output.ToArray()), "application/json");
-            }
             envelope!["Items"] = JsonSerializer.SerializeToNode(pageRows);
             envelope["TotalRecordCount"] = merged.Count;
             envelope["StartIndex"] = filter.StartIndex;

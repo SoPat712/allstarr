@@ -137,7 +137,7 @@ public sealed partial class ProtocolRouteFixtureTests
     [Theory]
     [InlineData("/Items/Latest")]
     [InlineData("/Users/user-1/Items/Latest")]
-    public async Task WebAndFinampLatestUseMembershipDateAndReturnTheOpenApiArrayShape(string endpoint)
+    public async Task RecentlyAddedListsOnlyWhatJoinedTheLibrary(string endpoint)
     {
         await using var database = await SqliteTestDatabase.CreateAsync();
         var storage = new FavoriteViewFactory(database.Options);
@@ -150,12 +150,40 @@ public sealed partial class ProtocolRouteFixtureTests
         using var response = await client.GetAsync($"{endpoint}?ApiKey=fixture&IncludeItemTypes=Audio&Limit=1&Fields=DateCreated,ParentId");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-        var item = Assert.Single(body.RootElement.EnumerateArray());
-        Assert.Equal("ext-deezer-song-saved", item.GetProperty("Id").GetString());
-        var data = item.GetProperty("UserData");
-        Assert.Equal(JsonValueKind.Number, data.GetProperty("PlaybackPositionTicks").ValueKind);
-        Assert.Equal(JsonValueKind.Number, data.GetProperty("PlayCount").ValueKind);
-        Assert.Equal(JsonValueKind.False, data.GetProperty("Played").ValueKind);
+        Assert.Equal("native", Assert.Single(body.RootElement.EnumerateArray()).GetProperty("Id").GetString());
+    }
+
+    [Fact]
+    public async Task SavedBrowseReadsEveryNativePageAndAsksForDatesInShortBatches()
+    {
+        await using var database = await SqliteTestDatabase.CreateAsync();
+        var storage = new FavoriteViewFactory(database.Options);
+        await SeedFavoriteViewsAsync(storage, "jellyfin");
+        var native = Enumerable.Range(0, 250).Select(index => $"{index:x32}").ToArray();
+        var idBatches = new System.Collections.Concurrent.ConcurrentBag<int>();
+        using var factory = new ProtocolFactory("Jellyfin", request =>
+        {
+            var path = request.RequestUri!.AbsolutePath;
+            if (path == "/Users/Me") return Json(200, """{"Id":"user-1"}""");
+            if (path == "/System/Info/Public") return Json(200, """{"Id":"e3a56afe7c3846f18b60519c78aad531"}""");
+            var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(request.RequestUri.Query);
+            if (query.ContainsKey("Ids"))
+            {
+                var ids = query["Ids"].ToString().Split(',');
+                idBatches.Add(ids.Length);
+                return Json(200, "{\"Items\":[" + string.Join(',', ids.Select(id => $"{{\"Id\":\"{id}\",\"DateCreated\":\"2020-01-01T00:00:00Z\"}}")) + "],\"TotalRecordCount\":" + ids.Length + "}");
+            }
+            var start = int.TryParse(query["StartIndex"].ToString(), out var offset) ? offset : 0;
+            var page = native.Skip(start).Take(100).Select(id => $"{{\"Id\":\"{id}\",\"Name\":\"Album {id}\",\"Type\":\"MusicAlbum\"}}");
+            return Json(200, "{\"Items\":[" + string.Join(',', page) + "],\"TotalRecordCount\":250,\"StartIndex\":" + start + "}");
+        }, services => ConfigureFavoriteViews(services, storage, new Mock<IProtocolProviderGateway>(MockBehavior.Strict).Object));
+        using var client = factory.CreateClient();
+        using var response = await client.GetAsync("/Items?ApiKey=fixture&IncludeItemTypes=MusicAlbum&SortBy=DateCreated&SortOrder=Descending&Limit=20");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal(251, body.RootElement.GetProperty("TotalRecordCount").GetInt32());
+        Assert.Equal(250, idBatches.Sum());
+        Assert.All(idBatches, size => Assert.InRange(size, 1, 100));
     }
 
     [Theory]
@@ -288,11 +316,9 @@ public sealed partial class ProtocolRouteFixtureTests
     }
 
     [Theory]
-    [InlineData("/Items", false)]
-    [InlineData("/Items", true)]
-    [InlineData("/Items/Latest", false)]
-    [InlineData("/Items/Latest", true)]
-    public async Task WebSavedNewestSortUsesNativeDatesWithoutChangingSelectedNativeRows(string endpoint, bool includeDate)
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task WebSavedNewestSortUsesNativeDatesWithoutChangingSelectedNativeRows(bool includeDate)
     {
         await using var database = await SqliteTestDatabase.CreateAsync();
         var storage = new FavoriteViewFactory(database.Options);
@@ -318,19 +344,17 @@ public sealed partial class ProtocolRouteFixtureTests
                 Assert.Equal("DateCreated", query["Fields"].ToString());
                 return Json(200, """{"Items":[{"Id":"native-later","DateCreated":"2024-01-01T00:00:01Z"},{"Id":"native-earlier","DateCreated":"2024-01-01T00:00:00Z"}],"TotalRecordCount":2}""");
             }
-            var rows = "[" + later + "," + earlier + "]";
-            return Json(200, endpoint.EndsWith("Latest", StringComparison.Ordinal) ? rows
-                : "{\"Items\":" + rows + ",\"TotalRecordCount\":2,\"StartIndex\":0}");
+            return Json(200, "{\"Items\":[" + later + "," + earlier + "],\"TotalRecordCount\":2,\"StartIndex\":0}");
         }, services => ConfigureFavoriteViews(services, storage, new Mock<IProtocolProviderGateway>(MockBehavior.Strict).Object));
         using var client = factory.CreateClient();
         var fields = includeDate ? "SortName,DateCreated" : "PrimaryImageAspectRatio,SortName";
-        using var response = await client.GetAsync($"{endpoint}?ApiKey=fixture&IncludeItemTypes=MusicAlbum&SortBy=DateCreated&SortOrder=Descending&Fields={fields}&Limit=20");
+        using var response = await client.GetAsync($"/Items?ApiKey=fixture&IncludeItemTypes=MusicAlbum&SortBy=DateCreated&SortOrder=Descending&Fields={fields}&Limit=20");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var text = await response.Content.ReadAsStringAsync();
         Assert.Contains(later, text, StringComparison.Ordinal);
         Assert.Contains(earlier, text, StringComparison.Ordinal);
         using var body = JsonDocument.Parse(text);
-        var items = endpoint.EndsWith("Latest", StringComparison.Ordinal) ? body.RootElement : body.RootElement.GetProperty("Items");
+        var items = body.RootElement.GetProperty("Items");
         Assert.Equal(["native-later", "ext-deezer-album-saved", "native-earlier"],
             items.EnumerateArray().Select(item => item.GetProperty("Id").GetString()));
         Assert.Equal(!includeDate, metadataReads > 0);

@@ -8,17 +8,18 @@ namespace allstarr.Controllers;
 public partial class JellyfinController
 {
     private async Task ReadNativeAddedDatesAsync(IReadOnlyList<Dictionary<string, object?>> rows,
-        Dictionary<string, string> query, IHeaderDictionary headers, bool latest)
+        Dictionary<string, string> query, IHeaderDictionary headers)
     {
         var sorts = JellyfinProviderQuery.Values(query.GetValueOrDefault("SortBy") ?? "");
-        if (!(latest && sorts.Length == 0) && !sorts.Contains("DateCreated", StringComparer.OrdinalIgnoreCase)) return;
+        if (!sorts.Contains("DateCreated", StringComparer.OrdinalIgnoreCase)) return;
         if (JellyfinProviderQuery.Values(query.GetValueOrDefault("Fields") ?? "").Contains("DateCreated", StringComparer.OrdinalIgnoreCase)) return;
         var missing = rows.Where(row => !IsProviderQueryItem(row) && !row.ContainsKey("DateCreated"))
             .GroupBy(row => JellyfinProviderQuery.Text(row, "Id"), JellyfinItemIdComparer.Instance)
             .Where(group => group.Key.Length != 0)
             .ToDictionary(group => group.Key, group => group.ToArray(), JellyfinItemIdComparer.Instance);
         var user = HttpContext.RequireProtocolExecutionContext().VerifiedBackendPrincipalId;
-        foreach (var batch in missing.Keys.Chunk(400))
+        // Ids travel in the query string; larger batches pass the backend's request-line limit.
+        foreach (var batch in missing.Keys.Chunk(100))
         {
             var metadataQuery = query.Where(pair => pair.Key.Equals("ApiKey", StringComparison.OrdinalIgnoreCase) ||
                 pair.Key.Equals("api_key", StringComparison.OrdinalIgnoreCase) || pair.Key.Equals("access_token", StringComparison.OrdinalIgnoreCase))

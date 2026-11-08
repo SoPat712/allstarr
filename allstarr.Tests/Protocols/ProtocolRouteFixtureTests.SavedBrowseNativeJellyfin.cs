@@ -132,18 +132,13 @@ public sealed partial class ProtocolRouteFixtureTests
     [InlineData("/Genres", "Audio")]
     [InlineData("/Genres", "MusicAlbum")]
     [InlineData("/Genres", "MusicArtist")]
-    [InlineData("/Items/Latest", "Audio")]
-    [InlineData("/Items/Latest", "MusicAlbum")]
-    [InlineData("/Users/user-1/Items/Latest", "Audio")]
-    [InlineData("/Users/user-1/Items/Latest", "MusicAlbum")]
     [InlineData("/Items", "Audio")]
-    public async Task JellyfinSavedFacetsLatestAndRandomKeepEveryNativeRow(string endpoint, string type)
+    public async Task JellyfinSavedFacetsAndRandomKeepEveryNativeRow(string endpoint, string type)
     {
         await using var database = await SqliteTestDatabase.CreateAsync();
         var storage = new FavoriteViewFactory(database.Options);
         await SeedSingleSavedSongAsync(storage, albumIdentity: true);
         var genres = endpoint == "/Genres";
-        var latest = endpoint.EndsWith("Latest", StringComparison.Ordinal);
         var native = NativeBrowseRows(genres ? "MusicGenre" : type, 558);
         using var factory = new ProtocolFactory("Jellyfin", request =>
         {
@@ -151,19 +146,18 @@ public sealed partial class ProtocolRouteFixtureTests
             var query = QueryHelpers.ParseQuery(request.RequestUri.Query);
             var start = int.TryParse(query.GetValueOrDefault("StartIndex"), out var offset) ? offset : 0;
             var limit = int.TryParse(query.GetValueOrDefault("Limit"), out var size) ? size : 100;
-            if (latest) start = 0;
             var source = query.GetValueOrDefault("SortBy") == "Random" && start != 0 ? native.Reverse() : native;
             var rows = string.Join(',', source.Skip(start).Take(limit));
-            return Json(200, latest ? $"[{rows}]" : $$"""{"Items":[{{rows}}],"TotalRecordCount":558,"StartIndex":{{start}}}""");
+            return Json(200, $$"""{"Items":[{{rows}}],"TotalRecordCount":558,"StartIndex":{{start}}}""");
         }, services => ConfigureFavoriteViews(services, storage, new Mock<IProtocolProviderGateway>(MockBehavior.Strict).Object));
         using var client = factory.CreateClient();
-        var sorting = latest ? "" : genres ? "&SortBy=SortName&SortOrder=Descending" : "&SortBy=Random";
+        var sorting = genres ? "&SortBy=SortName&SortOrder=Descending" : "&SortBy=Random";
         using var response = await client.GetAsync($"{endpoint}?ApiKey=fixture&IncludeItemTypes={type}&Fields=DateCreated&Limit=2000{sorting}");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-        var rows = latest ? body.RootElement : body.RootElement.GetProperty("Items");
+        var rows = body.RootElement.GetProperty("Items");
         Assert.Equal(559, rows.GetArrayLength());
-        if (!latest) Assert.Equal(559, body.RootElement.GetProperty("TotalRecordCount").GetInt32());
+        Assert.Equal(559, body.RootElement.GetProperty("TotalRecordCount").GetInt32());
         var originals = rows.EnumerateArray().Where(row => row.GetProperty("Id").GetString()!.StartsWith("native-", StringComparison.Ordinal))
             .ToDictionary(row => row.GetProperty("Id").GetString()!, row => row.GetRawText());
         for (var index = 0; index < native.Length; index++) Assert.Equal(native[index], originals[$"native-{index:D4}"]);
@@ -172,8 +166,7 @@ public sealed partial class ProtocolRouteFixtureTests
             var names = rows.EnumerateArray().Select(row => row.GetProperty("Name").GetString()).ToArray();
             Assert.Equal(names.OrderDescending(StringComparer.OrdinalIgnoreCase), names);
         }
-        if (latest) Assert.Equal(type == "Audio" ? "ext-apple-download-song-saved" : "ext-apple-download-album-saved", rows[0].GetProperty("Id").GetString());
-        if (latest || genres)
+        if (genres)
         {
             var expected = rows.EnumerateArray().Select(row => row.GetProperty("Id").GetString()).ToArray();
             var received = new List<string?>();
@@ -182,8 +175,8 @@ public sealed partial class ProtocolRouteFixtureTests
                 using var pageResponse = await client.GetAsync($"{endpoint}?ApiKey=fixture&IncludeItemTypes={type}&Fields=DateCreated&StartIndex={start}&Limit=499{sorting}");
                 Assert.Equal(HttpStatusCode.OK, pageResponse.StatusCode);
                 using var page = JsonDocument.Parse(await pageResponse.Content.ReadAsStringAsync());
-                var pageRows = latest ? page.RootElement : page.RootElement.GetProperty("Items");
-                if (!latest) Assert.Equal(559, page.RootElement.GetProperty("TotalRecordCount").GetInt32());
+                var pageRows = page.RootElement.GetProperty("Items");
+                Assert.Equal(559, page.RootElement.GetProperty("TotalRecordCount").GetInt32());
                 foreach (var row in pageRows.EnumerateArray().Where(row => row.GetProperty("Id").GetString()!.StartsWith("native-", StringComparison.Ordinal)))
                     Assert.Equal(originals[row.GetProperty("Id").GetString()!], row.GetRawText());
                 received.AddRange(pageRows.EnumerateArray().Select(row => row.GetProperty("Id").GetString()));
