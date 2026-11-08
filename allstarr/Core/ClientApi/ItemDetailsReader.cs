@@ -178,11 +178,21 @@ public sealed class ItemDetailsReader(
             item.RevokedAt == null && (item.OwnerUserId == owner || item.OwnerUserId == null)).ToArrayAsync(token);
         var lyricsEndpoint = (await settings.GetAsync("LyricsPlus:BaseUrl", token)).NormalizedValue;
         var libraryProvider = native.Count > 0 ? await http.RequestServices.GetRequiredService<LibraryProviderResolver>().ResolveAsync(http, execution) : null;
-        var items = new Dictionary<string, ItemDetails>(StringComparer.Ordinal);
-        foreach (var id in requested)
+        // Each song's match and lyrics reads stand alone, so a batch reads a few songs at once instead of one after another.
+        using var gate = new SemaphoreSlim(Math.Clamp(Environment.ProcessorCount / 2, 1, 4));
+        var built = await Task.WhenAll(requested.Select(async id =>
+        {
+            await gate.WaitAsync(token);
+            try { return (Id: id, Details: await ReadItemAsync(id)); }
+            finally { gate.Release(); }
+        }));
+        var items = built.Where(item => item.Details != null).ToDictionary(item => item.Id, item => item.Details!, StringComparer.Ordinal);
+        return new(ids.Where(items.ContainsKey).Select(id => items[id]).ToArray(), ids.Where(id => !items.ContainsKey(id)).ToArray());
+
+        async Task<ItemDetails?> ReadItemAsync(string id)
         {
             var song = songs.GetValueOrDefault(id);
-            if (song == null && !native.ContainsKey(id)) continue;
+            if (song == null && !native.ContainsKey(id)) return null;
             var local = library.FirstOrDefault(item => SameNativeId(item.BackendItemId, localIds.GetValueOrDefault(id) ?? id));
             var identity = song == null && local?.CanonicalRecordingId is { } localRecording
                 ? resolved.GetValueOrDefault(localRecording.ToString("D")) : resolved.GetValueOrDefault(id);
@@ -238,11 +248,10 @@ public sealed class ItemDetailsReader(
                 audio = new(artifact.Codec, artifact.BitDepth, artifact.SampleRate, artifact.Bitrate);
             var explicitContent = (song?.ExplicitContentLyrics ?? native.GetValueOrDefault(id)?.Rating) switch { 1 => true, 0 or 3 => false, _ => (bool?)null };
             explicitContent ??= recordingId.HasValue ? recordings.GetValueOrDefault(recordingId.Value)?.IsExplicit : null;
-            items[id] = new(id, song != null, recordingId?.ToString("D"), identity?.Isrc ?? song?.Isrc ?? local?.Isrc ?? identifiers.FirstOrDefault(item => item.RecordingId == recordingId)?.Value,
+            return new ItemDetails(id, song != null, recordingId?.ToString("D"), identity?.Isrc ?? song?.Isrc ?? local?.Isrc ?? identifiers.FirstOrDefault(item => item.RecordingId == recordingId)?.Value,
                 song == null ? libraryProvider : providers.GetValueOrDefault(servingProviders.GetValueOrDefault(id) ?? song.ExternalProvider!), audio, explicitContent,
                 song == null ? native[id].Saved : saved.Contains(id), keep, match, lyrics);
         }
-        return new(ids.Where(items.ContainsKey).Select(id => items[id]).ToArray(), ids.Where(id => !items.ContainsKey(id)).ToArray());
     }
 
     private async Task<Dictionary<string, NativeDetails>> ReadNativeAsync(HttpContext http, ProtocolExecutionContext execution, string[] ids,
