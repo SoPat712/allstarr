@@ -17,7 +17,6 @@
   import { DropdownMenu } from "$lib/components/ui/dropdown-menu";
   import MixCover from "$lib/components/MixCover.svelte";
   import MixTrackRows from "$lib/components/MixTrackRows.svelte";
-  import RefreshButton from "$lib/components/RefreshButton.svelte";
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
   import UiIcon from "$lib/components/UiIcon.svelte";
   let { id, administrator = false }: { id: string; administrator?: boolean } = $props();
@@ -168,10 +167,10 @@
         {/if}
 
     {#if !detail.mix.readiness.ready}<div class="explanation"><p>{detail.mix.readiness.message}</p><Button variant="outline" href={nextStep.href}>{nextStep.label}</Button></div>{/if}
-    {#if detail.songs.length}<div class="songs-heading"><h3>Songs</h3><span>Picked from</span></div><MixTrackRows songs={detail.songs} {busy} onfeedback={detail.mix.kind === "external" ? undefined : feedback} />{/if}
+    {#if detail.songs.length}<div class="songs-heading"><h3>Songs</h3><span>Plays from</span></div><MixTrackRows songs={detail.songs} {busy} onfeedback={detail.mix.kind === "external" ? undefined : feedback} />{/if}
   {/if}
   {#snippet footer()}{#if detail}<div class="mix-footer">
-    {#if detail.mix.kind !== "custom" && detail.mix.kind !== "external"}<RefreshButton label="Refresh mix" disabled={busy || throttled || Boolean(refreshJob)} onrefresh={refresh} />{/if}
+    {#if detail.mix.kind !== "custom" && detail.mix.kind !== "external"}<Button variant="outline" disabled={busy || throttled || Boolean(refreshJob)} onclick={() => void refresh()}>Refresh mix</Button>{/if}
     {#if !detail.mix.inApps}<Button disabled={busy || !detail.mix.appsAllowed} onclick={() => void showInApps(true)}>Add to apps</Button>{/if}
   </div>{/if}{/snippet}
 </SidePanel>
