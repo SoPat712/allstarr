@@ -429,7 +429,7 @@ public partial class JellyfinResponseBuilder
             ["ArtistItems"] = artistItems,
             ["Album"] = albumName,
             ["AlbumId"] = song.AlbumId,
-            ["AlbumPrimaryImageTag"] = song.AlbumId == null ? null : JellyfinItemArtwork.PrimaryImageTag(song.AlbumId, song.IsLocal),
+            ["AlbumPrimaryImageTag"] = song.AlbumId == null ? null : JellyfinItemArtwork.AlbumImageTag(song.AlbumId, song.IsLocal),
             ["PrimaryImageAspectRatio"] = 1.0,
             ["AlbumArtist"] = albumArtistName,
             ["AlbumArtists"] = albumArtists,
@@ -731,7 +731,7 @@ public partial class JellyfinResponseBuilder
             ["AlbumArtists"] = albumArtistItems,
             ["ImageTags"] = new Dictionary<string, string>
             {
-                ["Primary"] = album.IsLocal ? album.Id : $"{album.Id}-art-v3"
+                ["Primary"] = JellyfinItemArtwork.AlbumImageTag(album.Id, album.IsLocal)
             },
             ["BackdropImageTags"] = new string[0],
             ["ParentLogoImageTag"] = album.ArtistId ?? album.Id,

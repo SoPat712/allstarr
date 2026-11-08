@@ -177,7 +177,7 @@ public sealed partial class ProtocolRouteFixtureTests
             var item = Assert.Single(body.RootElement.GetProperty("Items").EnumerateArray());
             Assert.Equal(song.Id, item.GetProperty("Id").GetString());
             Assert.Equal(song.AlbumId, item.GetProperty("AlbumId").GetString());
-            Assert.Equal(song.AlbumId + "-art-v3", item.GetProperty("AlbumPrimaryImageTag").GetString());
+            Assert.Equal(song.AlbumId + "-art-v4", item.GetProperty("AlbumPrimaryImageTag").GetString());
             Assert.Equal(song.AlbumId, item.GetProperty("ParentId").GetString());
             entries.Add(item.GetProperty("PlaylistItemId").GetString()!);
         }

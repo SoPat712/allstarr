@@ -6,6 +6,11 @@ internal static class JellyfinItemArtwork
 {
     internal static string PrimaryImageTag(string itemId, bool isLocal) => isLocal ? itemId : $"{itemId}-art-v3";
 
+    // v4: an album whose source has no art shows one of its saved songs' covers instead of the source logo.
+    internal const string AlbumArtRevision = "art-v4";
+
+    internal static string AlbumImageTag(string albumId, bool isLocal) => isLocal ? albumId : $"{albumId}-{AlbumArtRevision}";
+
     internal static string PrimaryImageUrl(string itemId, string tag) =>
         $"/Items/{Uri.EscapeDataString(itemId)}/Images/Primary?tag={Uri.EscapeDataString(tag)}";
 

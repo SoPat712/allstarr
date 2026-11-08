@@ -157,11 +157,19 @@ public partial class JellyfinController : ControllerBase
         CancellationToken cancellationToken = default) =>
         _providerGateway.GetSongAsync(HttpContext.RequireProtocolExecutionContext(), provider, externalId);
 
-    private Task<Album?> GetProviderAlbumAsync(
+    private async Task<Album?> GetProviderAlbumAsync(
         string provider,
         string externalId,
         CancellationToken cancellationToken = default) =>
-        _providerGateway.GetAlbumAsync(HttpContext.RequireProtocolExecutionContext(), provider, externalId);
+        await _providerGateway.GetAlbumAsync(HttpContext.RequireProtocolExecutionContext(), provider, externalId) ??
+        await SavedAlbumAsync($"ext-{provider}-album-{externalId}", cancellationToken);
+
+    // Albums built from playlist songs can come from a source with no album details; they open to their saved songs.
+    private async Task<Album?> SavedAlbumAsync(string albumId, CancellationToken cancellationToken) =>
+        HttpContext.GetProtocolExecutionContext() is { } protocol &&
+        HttpContext.RequestServices?.GetService<SavedLibraryReader>() is { } reader
+            ? await reader.AlbumAsync(protocol, albumId, cancellationToken)
+            : null;
 
     private Task<Artist?> GetProviderArtistAsync(
         string provider,
@@ -180,6 +188,19 @@ public partial class JellyfinController : ControllerBase
         string externalId,
         CancellationToken cancellationToken = default) =>
         _providerGateway.GetArtistTracksAsync(HttpContext.RequireProtocolExecutionContext(), provider, externalId);
+
+    // An album whose source has no art shows the cover of one of its saved songs.
+    private async Task<string?> SavedSongCoverAsync(string albumId, CancellationToken cancellationToken)
+    {
+        foreach (var songId in (await SavedAlbumAsync(albumId, cancellationToken))?.Songs.Take(3).Select(item => item.Id) ?? [])
+        {
+            var song = _localLibraryService.ParseExternalId(songId);
+            if (!song.isExternal || song.type != "song") continue;
+            var cover = await GetProviderImageUrlAsync(song.provider!, "song", song.externalId!, cancellationToken);
+            if (!ProviderArtworkFallback.IsFallback(song.provider, cover, "song")) return cover;
+        }
+        return null;
+    }
 
     private async Task<string?> GetProviderImageUrlAsync(
         string provider,
@@ -565,6 +586,8 @@ public partial class JellyfinController : ControllerBase
                 provider,
                 resourceKind,
                 resourceId,
+                // Albums without source art now take a saved song's cover, so earlier placeholders are not reused.
+                Revision: resourceKind == "album" ? JellyfinItemArtwork.AlbumArtRevision : null,
                 Width: width > 0 ? width : null,
                 Height: height > 0 ? height : null),
             async token =>
@@ -584,6 +607,9 @@ public partial class JellyfinController : ControllerBase
                         ? (await _providerGateway.GetStoredAlbumAsync(HttpContext.RequireProtocolExecutionContext(), provider, resourceId))?.CoverArtUrl
                         : await GetProviderImageUrlAsync(provider, resourceKind, resourceId, token);
                     if ((storedOnly || actor == null) && string.IsNullOrWhiteSpace(coverUrl)) return null;
+                    if (resourceKind == "album" && actor != null && ProviderArtworkFallback.IsFallback(provider, coverUrl, resourceKind) &&
+                        await SavedSongCoverAsync($"ext-{provider}-album-{resourceId}", token) is { } songCover)
+                        coverUrl = songCover;
                     if (ProviderArtworkFallback.IsFallback(provider, coverUrl, resourceKind))
                         return await ProviderArtworkFallback.ReadAsync(HttpContext.RequestServices, provider,
                             width.HasValue && height.HasValue ? Math.Max(width.Value, height.Value) : width ?? height, token, coverUrl);

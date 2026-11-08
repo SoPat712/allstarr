@@ -25,7 +25,8 @@ public sealed class SavedLibraryReader(IDbContextFactory<AllstarrDbContext> fact
     private sealed record IndexedAlbum(int Order, FavoriteViewItem Item, Album Album);
 
     private sealed record SearchIndex(ILookup<string, IndexedTrack> TracksById, ILookup<string, IndexedTrack> TracksByRecording,
-        ILookup<string, IndexedAlbum> AlbumsByFamily);
+        ILookup<string, IndexedAlbum> AlbumsByFamily, ILookup<string, IndexedTrack> TracksByAlbum,
+        ILookup<string, IndexedAlbum> AlbumsById);
 
     private sealed class SearchIndexEntry(Task<SearchIndex> index, DateTimeOffset loadedAt, int favoriteEvents)
     {
@@ -48,7 +49,9 @@ public sealed class SavedLibraryReader(IDbContextFactory<AllstarrDbContext> fact
         }).ToArray();
         return new(tracks.ToLookup(track => track.Item.ItemId, StringComparer.Ordinal),
             tracks.ToLookup(track => MusicSearchService.RecordingKey(track.Song), StringComparer.Ordinal),
-            albums.ToLookup(album => MusicAlbumReleases.FamilyKey(album.Album), StringComparer.Ordinal));
+            albums.ToLookup(album => MusicAlbumReleases.FamilyKey(album.Album), StringComparer.Ordinal),
+            tracks.Where(track => track.Song.AlbumId != null).ToLookup(track => track.Song.AlbumId!, StringComparer.Ordinal),
+            albums.ToLookup(album => album.Item.ItemId, StringComparer.Ordinal));
     }
 
     // Searches run far more often than a saved library changes, and loading it means reading every playlist's members. A search
@@ -76,6 +79,31 @@ public sealed class SavedLibraryReader(IDbContextFactory<AllstarrDbContext> fact
                 catch (Exception) { Volatile.Write(ref entry.Refreshing, 0); }
             });
         return await entry.Index.WaitAsync(cancellationToken);
+    }
+
+    // An album built from its saved songs, in saved order. Albums from playlist songs can come from a source that
+    // can't describe the album itself.
+    internal async Task<Album?> AlbumAsync(ProtocolExecutionContext execution, string albumId, CancellationToken cancellationToken)
+    {
+        if (execution.Actor?.EffectiveUserId is not { } owner) return null;
+        var index = await SearchIndexAsync(execution, owner, cancellationToken);
+        var songs = index.TracksByAlbum[albumId].OrderBy(track => track.Order).Select(track => track.Song).ToList();
+        if (songs.Count == 0) return null;
+        var first = songs[0];
+        var album = index.AlbumsById[albumId].Select(item => item.Item.Album()).FirstOrDefault() ?? new Album
+        {
+            Id = albumId,
+            ExternalProvider = FavoriteDisplaySnapshot.Resource(albumId)?.ProviderId,
+            ExternalId = FavoriteDisplaySnapshot.Resource(albumId)?.Value,
+            Title = first.Album,
+            Artist = first.AlbumArtist ?? first.Artist,
+            ArtistId = first.AlbumArtists.FirstOrDefault()?.Id ?? first.ArtistId,
+            Genre = first.Genre,
+            Year = first.Year
+        };
+        album.Songs = songs;
+        album.SongCount = songs.Count;
+        return album;
     }
 
     public Task<IReadOnlyList<FavoriteViewItem>> ReadForRequestAsync(HttpContext http)

@@ -55,7 +55,7 @@ public partial class JellyfinController
                     if (song != null) item = _responseBuilder.ConvertSongToJellyfinItem(song);
                     break;
                 case "album":
-                    var album = await _providerGateway.GetAlbumAsync(protocol, provider!, externalId!);
+                    var album = await GetProviderAlbumAsync(provider!, externalId!, HttpContext.RequestAborted);
                     if (album != null) item = _responseBuilder.ConvertAlbumToJellyfinItem(album);
                     break;
                 case "artist":

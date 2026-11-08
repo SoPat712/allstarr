@@ -119,8 +119,9 @@ public sealed partial class VirtualPlaylistProtocolAdapterTests
         var second = builder.ConvertSongToJellyfinItem(song);
         var album = builder.ConvertAlbumToJellyfinItem(new Album { Id = song.AlbumId!, ExternalProvider = "deezer" });
         var artist = builder.ConvertArtistToJellyfinItem(new Artist { Id = song.ArtistId!, ExternalProvider = "deezer" });
-        foreach (var item in new[] { first, album, artist })
+        foreach (var item in new[] { first, artist })
             Assert.Equal(item["Id"] + "-art-v3", Assert.IsType<Dictionary<string, string>>(item["ImageTags"])["Primary"]);
+        Assert.Equal(album["Id"] + "-art-v4", Assert.IsType<Dictionary<string, string>>(album["ImageTags"])["Primary"]);
         Assert.Equal(first["AlbumPrimaryImageTag"], Assert.IsType<Dictionary<string, string>>(album["ImageTags"])["Primary"]);
         Assert.Equal(Assert.IsType<Dictionary<string, string>>(first["ImageTags"]), Assert.IsType<Dictionary<string, string>>(second["ImageTags"]));
     }
