@@ -183,7 +183,7 @@ for (const width of [390, 1280]) test(`match comparison preserves known fields w
   }
   await row.locator(".open-match:visible, .row-action:visible").click();
   const panel = page.getByRole("dialog", { name: "Layered song (Live)", exact: true });
-  await expect(panel.locator(".preview-label")).toHaveText("Previewing Qobuz");
+  await expect(panel.locator(".comparison thead th").nth(2)).toHaveText("Plays as · Qobuz");
   await expect(panel.locator(".comparison tbody tr td:last-child")).toHaveText([
     "Can't compare", "Same", "Can't compare", "Can't compare", "Can't compare", "Can't compare",
   ]);
@@ -300,7 +300,7 @@ for (const width of [390, 1280]) for (const colorScheme of ["light", "dark"] as 
     await rows.first().locator(".row-action").focus();
     await page.keyboard.press("Enter");
     expect(writes).toHaveLength(0);
-    await expect(dialog.locator(".preview-label")).toContainText("Apple Music");
+    await expect(dialog.locator(".comparison thead th").nth(2)).toContainText("Apple Music");
     await dialog.getByRole("button", { name: "Use Apple Music version", exact: true }).click();
     await expect.poll(() => writes.length).toBe(1);
     expect(writes[0]).toMatchObject({ targetType: "provider", externalProvider: "apple-download", externalId: "apple-deluxe", authorityScope: "personal" });

@@ -11,7 +11,7 @@
 </script>
 
 <details class={`settings-fold ${className}`} bind:open>
-  <summary><span>{label}{#if description}: {description}{/if}</span></summary>
+  <summary>{label}{#if description}: {description}{/if}</summary>
   {@render children?.()}
 </details>
 
