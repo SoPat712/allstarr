@@ -6,7 +6,7 @@ function isReviewProvider(providerId: string) {
   return normalized !== "" && normalized !== "allstarr";
 }
 
-export function isReviewableMatch(match: MatchReviewItem) {
+export function isReviewableMatch(match: Pick<MatchReviewItem, "externalSnapshotId" | "providerId" | "title" | "artist"> & Partial<MatchReviewItem>) {
   return Boolean(match.externalSnapshotId.trim() && isReviewProvider(match.providerId) && match.title?.trim() && match.artist?.trim());
 }
 

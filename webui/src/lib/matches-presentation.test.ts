@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { comparisonRows, currentSong, defaultMatchFilter, differenceChips, evidenceSentence, filterCounts, formatConfidence, hasOwnArtwork, inFilter, keyboardCommand, matchPill, matchesSearch, summarizeMatches, sortMatches, sourceArtwork, versionWords } from "./matches-presentation";
+import { comparisonRows, currentSong, defaultMatchFilter, differenceChips, evidenceSentence, filterCounts, formatConfidence, hasOwnArtwork, keyboardCommand, matchPill, sourceArtwork, versionWords } from "./matches-presentation";
 import type { MatchReviewItem } from "./api";
 
 const song = { title: "Song", artist: "Singer", album: "Album", durationMilliseconds: 180000, isrc: "AB123", isExplicit: true };
@@ -95,8 +95,6 @@ describe("match filters and ordering", () => {
   it("combines review, unsure and no match without rejections", () => {
     const stats = { total: 12, review: 3, suggested: 2, ambiguous: 1, unresolved: 4, accepted: 4, manualMatches: 1, manualRejections: 1 } as Parameters<typeof filterCounts>[0];
     expect(filterCounts(stats)).toMatchObject({ needs: 7, automatic: 3, manual: 1, rejected: 1, all: 12 });
-    for (const state of ["ambiguous", "suggested", "unresolved"]) expect(inFilter(match(state), "needs")).toBe(true);
-    expect(inFilter(match("rejected"), "needs")).toBe(false);
   });
   it("defaults to work needing attention, otherwise All, and honors saved choices", () => {
     const stats = { total: 2, review: 0, suggested: 0, unresolved: 0 } as Parameters<typeof filterCounts>[0];
@@ -105,20 +103,6 @@ describe("match filters and ordering", () => {
     expect(defaultMatchFilter({ ...stats, unresolved: 1 }, "automatic")).toBe("automatic");
     expect(defaultMatchFilter(stats, "stale")).toBe("all");
     expect(defaultMatchFilter(stats, "manual", "Song")).toBe("all");
-  });
-  it("searches playlist names as well as song metadata and counts the results", () => {
-    expect(matchesSearch(match("accepted"), "road", ["Road trip"])).toBe(true);
-    expect(matchesSearch(match("accepted"), "singer")).toBe(true);
-    expect(matchesSearch(match("accepted"), "missing")).toBe(false);
-    expect(summarizeMatches([match("accepted"), match("ambiguous"), match("unresolved")])).toMatchObject({ total: 3, automatic: 1, review: 1, unresolved: 1 });
-  });
-  it("sorts all loaded rows before pagination", () => {
-    const rows = [{ ...match("accepted"), title: "Z", confidence: .99 }, { ...match("unresolved"), title: "A", confidence: .1 }];
-    expect(sortMatches(rows, "confidence_asc")[0].title).toBe("A");
-    expect(sortMatches(rows, "title")[0].title).toBe("A");
-    expect(sortMatches(rows, "playlist", { accepted: ["First"], unresolved: ["Second"] })[0].title).toBe("Z");
-    const exact = { ...match("accepted"), title: "E", confidence: null, decisionSource: "canonical_provider_identity" };
-    expect(sortMatches([exact, ...rows], "confidence_asc").map(row => row.title)).toEqual(["A", "Z", "E"]);
   });
   it("shows the song it plays as when the playlist song has only the service's logo", () => {
     const logo = { ...match("accepted"), sourceArtworkUrl: "/api/admin/providers/apple-musickit/cover", artworkUrl: "/api/admin/providers/apple-musickit/cover",

@@ -4,14 +4,13 @@ import { formatDuration } from "./playlists";
 
 export type MatchFilter = "needs" | "automatic" | "manual" | "rejected" | "all";
 export const filterStates: Record<MatchFilter, string[]> = {
-  needs: ["attention", "unresolved"], automatic: ["automatic"], manual: ["manual_matches"], rejected: ["manual_rejections"], all: [""],
+  needs: ["needs"], automatic: ["automatic"], manual: ["manual_matches"], rejected: ["manual_rejections"], all: [""],
 };
 export function formatConfidence(value?: number | null) {
   return value == null || !Number.isFinite(value) ? "—" : `${Math.round(value * 100)}%`;
 }
 // The playlist song is the very song that plays, so nothing needed scoring.
 const isExact = (match: MatchReviewItem) => match.state === "accepted" && match.confidence == null && match.decisionSource === "canonical_provider_identity";
-const sureness = (match: MatchReviewItem) => match.confidence ?? (isExact(match) ? 1 : -1);
 const providerCover = (url?: string | null) => !!url && /^\/api\/admin\/providers\/[^/]+\/cover$/.test(url);
 export const hasOwnArtwork = (match: MatchReviewItem) => !!match.sourceArtworkUrl && !providerCover(match.sourceArtworkUrl);
 // A playlist song without its own cover shows the song it plays as rather than the service's logo.
@@ -120,34 +119,6 @@ export function defaultMatchFilter(stats: MatchReviewResponse["stats"], saved = 
   if (search) return "all";
   if (Object.hasOwn(filterStates, saved)) return saved as MatchFilter;
   return filterCounts(stats).needs > 0 ? "needs" : "all";
-}
-export function inFilter(match: MatchReviewItem, filter: MatchFilter) {
-  const hand = match.manualAuthorities?.some(item => item.kind !== "rejection");
-  if (filter === "needs") return ["ambiguous", "suggested", "unresolved"].includes(match.state);
-  if (filter === "manual") return Boolean(hand);
-  if (filter === "rejected") return match.state === "rejected" || Boolean(match.manualAuthorities?.some(item => item.kind === "rejection"));
-  if (filter === "automatic") return match.state === "accepted" && !hand && !match.manualAuthorities?.some(item => item.kind === "rejection");
-  return true;
-}
-export function matchesSearch(match: MatchReviewItem, search: string, playlists: string[] = []) {
-  const term = normalized(search);
-  return [match.title, match.artist, match.album, match.providerId, ...playlists].some(value => normalized(value).includes(term));
-}
-export function summarizeMatches(matches: MatchReviewItem[]): MatchReviewResponse["stats"] {
-  const count = (test: (item: MatchReviewItem) => boolean) => matches.filter(test).length;
-  return { total: matches.length, matched: count(item => ["accepted", "pinned"].includes(item.state)),
-    accepted: count(item => ["accepted", "pinned"].includes(item.state)), unresolved: count(item => item.state === "unresolved"),
-    suggested: count(item => item.state === "suggested"), review: count(item => ["ambiguous", "suggested"].includes(item.state)),
-    ambiguous: count(item => item.state === "ambiguous"), rejected: count(item => item.state === "rejected"),
-    attention: count(item => ["ambiguous", "suggested"].includes(item.state)),
-    automatic: count(item => inFilter(item, "automatic")), manualMatches: count(item => inFilter(item, "manual")), manualRejections: count(item => inFilter(item, "rejected")) };
-}
-export function sortMatches(matches: MatchReviewItem[], sort: string, playlists: Record<string, string[]> = {}) {
-  return matches.toSorted((a, b) => sort === "playlist" ? (playlists[a.externalSnapshotId]?.join(", ") || "\uffff").localeCompare(playlists[b.externalSnapshotId]?.join(", ") || "\uffff") || (a.title ?? "").localeCompare(b.title ?? "")
-    : sort === "title" ? (a.title ?? "").localeCompare(b.title ?? "")
-    : sort === "newest" ? (b.decidedAt ?? "").localeCompare(a.decidedAt ?? "")
-    : sort === "confidence_desc" ? sureness(b) - sureness(a)
-    : sureness(a) - sureness(b));
 }
 export function currentSong(match: MatchReviewItem): (SongFacts & { providerId: string; identity: string; artworkUrl?: string | null }) | null {
   if (match.target) return { ...match.target, identity: match.target.externalId };

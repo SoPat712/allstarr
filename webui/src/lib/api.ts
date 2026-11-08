@@ -1125,7 +1125,11 @@ export type MatchReviewItem = {
   warnings: string[];
   decidedAt?: string | null;
   reviewedAt?: string | null;
+  playlistNames?: string[];
 };
+
+export type MatchSelectionItem = Pick<MatchReviewItem,
+  "externalSnapshotId" | "providerId" | "title" | "artist" | "target" | "localTrack" | "providerIdentities" | "candidates" | "manualAuthorities" | "allowedAuthorityScopes">;
 
 export type MatchReviewResponse = {
   matches: MatchReviewItem[];
@@ -2741,6 +2745,17 @@ export const matchReview = {
   },
   get: async (externalSnapshotId: string) =>
     (await matchReview.list({ externalSnapshotId, pageSize: 1 })).matches[0] ?? null,
+  selection: (params: {
+    search?: string;
+    state?: string;
+    backendLibraryId?: string;
+  }) => {
+    const query = new URLSearchParams();
+    for (const [key, value] of Object.entries(params)) {
+      if (value !== undefined && value !== "") query.set(key, String(value));
+    }
+    return json<{ matches: MatchSelectionItem[] }>(`/api/admin/track-matches/selection?${query}`);
+  },
   searchLocal: (query: string, externalSnapshotId: string, backendLibraryId = "") =>
     json<{ tracks: MatchTarget[] }>(
       `/api/admin/track-matches/targets/local?query=${encodeURIComponent(query)}&backendLibraryId=${encodeURIComponent(backendLibraryId)}&externalSnapshotId=${encodeURIComponent(externalSnapshotId)}`,

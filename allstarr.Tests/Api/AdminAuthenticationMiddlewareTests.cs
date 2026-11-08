@@ -78,6 +78,7 @@ public class AdminAuthenticationMiddlewareTests
     [InlineData("/api/admin/migrations/019f48f2-5f28-7b11-b42d-0d9b76b73b40", "GET")]
     [InlineData("/api/admin/migrations/019f48f2-5f28-7b11-b42d-0d9b76b73b40/apply", "POST")]
     [InlineData("/api/admin/track-matches", "GET")]
+    [InlineData("/api/admin/track-matches/selection", "GET")]
     [InlineData("/api/admin/track-matches/targets/local", "GET")]
     [InlineData("/api/admin/track-matches/targets/provider", "GET")]
     [InlineData("/api/admin/track-matches/spotify/track", "GET")]

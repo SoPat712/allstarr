@@ -102,6 +102,9 @@ async function mockMatching(page: Page, options: AuthorityOptions) {
       return options.resolve?.(route) ?? json(route, { success: true });
     if (url.pathname.includes("/manual-authorities/"))
       return options.authorityAction?.(route) ?? json(route, { rematched: true, state: "accepted" });
+    if (url.pathname === "/api/admin/track-matches/selection") return json(route, {
+      matches: [{ ...matchFixture(options.administrator), ...options.match }],
+    });
     if (url.pathname === "/api/admin/track-matches") return json(route, {
       matches: [{ ...matchFixture(options.administrator), ...options.match }],
       stats: {

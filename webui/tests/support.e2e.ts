@@ -530,13 +530,14 @@ async function mockReportMatch(page: Page, options: { native?: boolean; missing?
     context: { ...captured, song: { ...captured.song, canonicalRecordingId: reportRecordingId,
       ...(options.native ? { itemId: "native-fixture", externalSnapshotId: null, catalogProviderId: "jellyfin" } : {}) } },
   }));
+  await page.route("**/api/admin/track-matches/selection", route => reply(route, { matches: [] }));
   await page.route("**/api/admin/track-matches?*", route => {
     const snapshot = new URL(route.request().url()).searchParams.get("externalSnapshotId") ?? "";
     reads.push(snapshot);
     return reply(route, { matches: options.missing ? [] : [{ externalSnapshotId: snapshot,
       canonicalRecordingId: options.changed ? "different-recording" : reportRecordingId,
       providerId: "deezer", state: "accepted", decisionSource: "automatic",
-      title: captured.song.title, artist: captured.song.artist, durationMilliseconds: 180000,
+      title: captured.song.title, artist: captured.song.artist, durationMilliseconds: 180000, playlistNames: [],
       allowedAuthorityScopes: ["personal", "household"], manualAuthorities: [], providerIdentities: [],
       reasons: [], warnings: [], candidates: [{ libraryTrackId: "correct-recording", isLocal: true,
         title: "Correct recording version", artist: captured.song.artist, confidence: 0.97 }] }] });

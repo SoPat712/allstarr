@@ -117,7 +117,7 @@ public sealed class TrackMatchesControllerContractTests
             IsLocal: false, IsBestVersion: best);
         var parse = typeof(TrackMatchReviewCandidates).GetMethod("ParseCandidates", BindingFlags.Static | BindingFlags.NonPublic)!;
         var projected = JsonSerializer.SerializeToElement(parse.Invoke(null,
-            [JsonSerializer.Serialize(new[] { score }), new HashSet<string>(["artistgrid"]), new HashSet<Guid>()]));
+            [JsonSerializer.Serialize(new[] { score }), new HashSet<string>(["artistgrid"]), new HashSet<Guid>(), false]));
         var candidate = Assert.Single(projected.EnumerateArray());
         Assert.Equal(best, candidate.GetProperty("isBestVersion").GetBoolean());
         Assert.Equal(best, candidate.GetProperty("reasons").EnumerateArray()
@@ -219,7 +219,7 @@ public sealed class TrackMatchesControllerContractTests
 
         var projected = JsonSerializer.Serialize(parse.Invoke(
             null,
-            [candidates, new HashSet<string>(["qobuz"]), new HashSet<Guid>([localId])]));
+            [candidates, new HashSet<string>(["qobuz"]), new HashSet<Guid>([localId]), false]));
 
         Assert.Contains("Local", projected);
         Assert.Contains("External", projected);
@@ -288,7 +288,9 @@ public sealed class TrackMatchesControllerContractTests
         var controller = typeof(TrackMatchesController);
         arguments[4] = Activator.CreateInstance(controller.GetNestedType("RowLibrary", BindingFlags.NonPublic)!, arguments[4]);
         arguments = [.. arguments[..7], ((IEnumerable<string>)arguments[6]!).ToHashSet(StringComparer.Ordinal), .. arguments[7..]];
-        var row = controller.GetMethod("Row", BindingFlags.Static | BindingFlags.NonPublic)!.Invoke(null, arguments)!;
+        var method = controller.GetMethod("Row", BindingFlags.Static | BindingFlags.NonPublic)!;
+        arguments = [.. arguments, .. Enumerable.Repeat<object?>(null, method.GetParameters().Length - arguments.Length)];
+        var row = method.Invoke(null, arguments)!;
         return JsonSerializer.SerializeToElement(((Func<object>)row.GetType().GetProperty("Value")!.GetValue(row)!)());
     }
 }

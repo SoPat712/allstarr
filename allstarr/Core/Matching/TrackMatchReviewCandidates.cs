@@ -13,7 +13,8 @@ public static class TrackMatchReviewCandidates
         TrackRouteProjection projection,
         IReadOnlyDictionary<Guid, LibraryTrackRecord> library,
         IReadOnlySet<string> playableProviders,
-        IReadOnlySet<Guid> indexedLibraryTrackIds)
+        IReadOnlySet<Guid> indexedLibraryTrackIds,
+        bool routesOnly = false)
     {
         JsonArray candidates;
         try { candidates = JsonNode.Parse(decision?.CandidateResultsJson ?? "[]") as JsonArray ?? []; }
@@ -71,13 +72,14 @@ public static class TrackMatchReviewCandidates
                 existing["providerTrackIds"] = providerIds;
             }
         }
-        return ParseCandidates(candidates.ToJsonString(), playableProviders, indexedLibraryTrackIds);
+        return ParseCandidates(candidates.ToJsonString(), playableProviders, indexedLibraryTrackIds, routesOnly);
     }
 
     private static object[] ParseCandidates(
         string? json,
         IReadOnlySet<string> playableProviders,
-        IReadOnlySet<Guid> indexedLibraryTrackIds)
+        IReadOnlySet<Guid> indexedLibraryTrackIds,
+        bool routesOnly)
     {
         try
         {
@@ -124,7 +126,7 @@ public static class TrackMatchReviewCandidates
                 };
             }).Where(item => item.isLocal == true && item.libraryTrackId != null ||
                              item.isLocal == false && HasProviderTrackId(item.providerTrackIds, playableProviders))
-                .Cast<object>()
+                .Select(item => routesOnly ? new { item.libraryTrackId, item.isLocal, item.providerTrackIds } : (object)item)
                 .ToArray();
         }
         catch (JsonException) { return []; }

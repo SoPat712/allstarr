@@ -36,7 +36,7 @@
   import ErrorState from "$lib/components/patterns/ErrorState.svelte";
   import { Dialog } from "$lib/components/ui/dialog";
   import { ChevronRight, X } from "@lucide/svelte";
-  import { currentSong, defaultMatchFilter, differenceChips, filterCounts, filterStates, keyboardCommand, matchPill, matchesSearch, summarizeMatches, inFilter, sortMatches, sourceArtwork, type MatchFilter } from "$lib/matches-presentation";
+  import { currentSong, defaultMatchFilter, differenceChips, filterCounts, filterStates, keyboardCommand, matchPill, sourceArtwork, type MatchFilter } from "$lib/matches-presentation";
   import { installMatchSearchShortcut, takeMatchSearchRequest } from "$lib/matches-search";
   import { reportHref } from "$lib/support";
   import BulkRematchDialog from "$lib/components/BulkRematchDialog.svelte";
@@ -79,10 +79,7 @@
   let lyricsRequest = $state(0);
   let shortcutsOpen = $state(false);
   let playlistCount = $state<number | null>(null);
-  let playlistNames = $state<Record<string, string[]>>({});
-  let playlistSortReady = $state(false);
   let libraryOptions = $state<{ value: string; label: string }[]>([]);
-  let allFiltered: MatchReviewItem[] | null = null;
   let searchInput = $state("");
   let search = $state("");
   let backendLibraryId = $state("");
@@ -91,7 +88,7 @@
   let loading = $state(true);
   let refreshing = $state(false);
   let error = $state("");
-  let degraded = $state("");
+  let providerError = $state("");
   const playbackProviders = $derived(playableProviderIds(providers));
   const visibleMatches = $derived(data?.matches.filter(isReviewableMatch) ?? []);
   let action = $state("");
@@ -118,7 +115,8 @@
     return providerDisplayName(providers, providerId);
   }
 
-  const query = (requested = page) => ({ page: requested, pageSize: 50, search, state: stateFilter, sort: sort.startsWith("confidence") ? sort : "confidence_asc", backendLibraryId });
+  const query = (requested = page) => ({ page: requested, pageSize: 50, search, state: stateFilter, sort, backendLibraryId });
+  const rowPlaylists = (match: MatchReviewItem) => match.playlistNames ?? [];
   const counts = $derived(data ? filterCounts(data.stats) : { needs: 0, automatic: 0, manual: 0, rejected: 0, all: 0 });
   const breakdown = $derived([
           { label: "Matched by Allstarr", value: counts.automatic, color: "var(--color-signal)" },
@@ -128,38 +126,6 @@
         ]);
 
   let threshold = $state<number | null>(null);
-  const collections = new Map<string, { response: MatchReviewResponse; rows: MatchReviewItem[] }>();
-  const playlistSearch = () => Boolean(search && Object.values(playlistNames).some(names => names.some(name => name.toLocaleLowerCase().includes(search.toLocaleLowerCase()))));
-  const useCollection = () => view === "needs" || !sort.startsWith("confidence") || playlistSearch();
-  async function collection() {
-    const params = query();
-    const ordering = sort;
-    const term = search;
-    const searchingPlaylists = playlistSearch();
-    const selectedFilter = view;
-    const states = searchingPlaylists ? [""] : [...filterStates[view]];
-    if (searchingPlaylists) params.search = "";
-    const key = JSON.stringify({ view, search, backendLibraryId, ordering });
-    const cached = collections.get(key);
-    if (cached) return cached;
-    const responses: MatchReviewResponse[] = [];
-    const rows: MatchReviewItem[] = [];
-    for (const state of states) {
-      let requested = 1, pages = 1;
-      do {
-        const response = await matchReview.list({ ...params, page: requested, state, pageSize: 200 });
-        responses.push(response); rows.push(...response.matches); pages = response.pagination.totalPages;
-        requested++;
-      } while (requested <= pages);
-    }
-    const unique = [...new Map(rows.map(item => [item.externalSnapshotId, item])).values()];
-    const matching = searchingPlaylists ? unique.filter(item => matchesSearch(item, term, playlistNames[item.externalSnapshotId])) : unique;
-    const response = searchingPlaylists ? { ...responses[0], stats: summarizeMatches(matching) } : responses[0];
-    const result = { response, rows: sortMatches(searchingPlaylists ? matching.filter(item => inFilter(item, selectedFilter)) : matching, ordering, playlistNames) };
-    collections.set(key, result);
-    if (collections.size > 4) collections.delete(collections.keys().next().value!);
-    return result;
-  }
   const cacheKey = (requested = page) => JSON.stringify(query(requested));
 
   function remember(key: string, response: MatchReviewResponse) {
@@ -169,7 +135,6 @@
   }
 
   async function prefetch(requested: number) {
-    if (useCollection()) return;
     const key = `${view}:${sort}:${cacheKey(requested)}`;
     if (requested < 1 || !data || requested > data.pagination.totalPages || pageCache.has(key)) return;
     try { remember(key, await matchReview.list(query(requested))); } catch { /* the page loads normally when opened */ }
@@ -184,13 +149,7 @@
     refreshing = !cached;
     error = "";
     try {
-      let response: MatchReviewResponse;
-      if (useCollection()) {
-        const loaded = await collection();
-        if (version !== loadVersion) return;
-        allFiltered = loaded.rows;
-        response = { ...loaded.response, matches: loaded.rows.slice((page - 1) * 50, page * 50), pagination: { page, pageSize: 50, total: loaded.rows.length, totalPages: Math.max(1, Math.ceil(loaded.rows.length / 50)) } };
-      } else { allFiltered = null; response = await matchReview.list(query()); }
+      const response = await matchReview.list(query());
       if (version !== loadVersion) return;
       threshold = response.matches.find(item => item.threshold != null)?.threshold ?? threshold;
       const libraries = new Set([...libraryOptions.map(item => item.value), ...response.matches.map(item => item.localTrack?.backendLibraryId).filter((id): id is string => Boolean(id))]);
@@ -230,29 +189,16 @@
       const schema = await home.schema();
       providers = schema.providers;
       backend = schema.activeBackend || backend;
-      const links = await playlistLinks.list();
-      playlistCount = links.playlistLinks?.length ?? null;
-      const names: Record<string, string[]> = {};
-      let failed = false;
-      for (const link of links.playlistLinks ?? []) {
-        try {
-          const details = await playlistLinks.details(link.id);
-          for (const track of details.tracks ?? []) {
-            if (!track.externalSnapshotId) continue;
-            const previous = names[track.externalSnapshotId] ?? [];
-            if (!previous.includes(link.name)) names[track.externalSnapshotId] = [...previous, link.name];
-          }
-        } catch { failed = true; }
-      }
-      playlistNames = names;
-      playlistSortReady = !failed;
-      if (failed) degraded = "Some playlist names could not load.";
-      else degraded = "";
-      if (sort === "playlist" || playlistSearch()) { collections.clear(); await load(); }
+      playlistCount = (await playlistLinks.list()).playlistLinks?.length ?? null;
+      providerError = "";
     } catch (cause) {
-      degraded =
-        cause instanceof Error ? cause.message : "Provider presentation is unavailable.";
+      playlistCount = null;
+      providerError = cause instanceof Error ? cause.message : "Provider presentation is unavailable.";
     }
+  }
+
+  async function retryLoad() {
+    await Promise.all([loadProviders(), load()]);
   }
 
   async function openInitialReview() {
@@ -271,7 +217,6 @@
   // Decisions change other pages too, so cached pages are dropped before reloading.
   function reload() {
     pageCache.clear();
-    collections.clear();
     return load();
   }
 
@@ -302,7 +247,6 @@
   function setView(value: string) {
     if (!Object.hasOwn(filterStates, value)) return;
     view = value as MappingView;
-    allFiltered = null;
     setState(filterStates[view][0]);
   }
 
@@ -648,8 +592,8 @@
     if (!data || action) return;
     action = "select";
     try {
-      const loaded = allFiltered ?? (await collection()).rows;
-      chosen = new Map(loaded.filter(isReviewableMatch).map(item => [item.externalSnapshotId, item]));
+      const loaded = await matchReview.selection({ state: stateFilter, search, backendLibraryId });
+      chosen = new Map(loaded.matches.filter(isReviewableMatch).map(item => [item.externalSnapshotId, item as MatchReviewItem]));
     } catch (cause) { toast.error(cause instanceof Error ? cause.message : "Songs could not be selected."); }
     finally { action = ""; }
   }
@@ -676,7 +620,7 @@
 {#if loading}
   <section class="mapping-page" aria-label="Loading match review"><RowsSkeleton count={8} /></section>
 {:else if error && !data}
-  <ErrorState title="Matches could not load" detail={error} onretry={load} />
+  <ErrorState title="Matches could not load" detail={error} onretry={retryLoad} />
 {:else if data}
   <section class="mapping-page" class:panel-open={dialogOpen} aria-busy={refreshing}>
     <article class="mapping-queue">
@@ -692,7 +636,7 @@
         </div>
         <ul class="match-legend" aria-label="Status breakdown">{#each breakdown as item}<li><span class="legend-swatch" style:background={item.color}></span>{item.label} <strong>{item.value.toLocaleString()}</strong></li>{/each}</ul>
       </header>
-      {#if degraded || error}<div class="degraded-banner" role="status"><p>{error || degraded}</p><Button variant="text" onclick={() => { void loadProviders(); void load(); }}>Try again</Button></div>{/if}
+      {#if error || providerError}<div class="degraded-banner" role="status"><p>{error || providerError}</p><Button variant="text" onclick={() => void retryLoad()}>Try again</Button></div>{/if}
       <div class="matches-controls">
         <FilterSegments options={[
           { id: "needs", label: "Needs a look", count: counts.needs },
@@ -706,7 +650,7 @@
           <SelectField value={backendLibraryId} label="Library scope" options={[{ value: "", label: "All libraries" }, ...libraryOptions]} onchange={(value) => { backendLibraryId = value; page = 1; void load(); }} />
           <SelectField bind:value={sort} label="Sort matches" options={[
             { value: "confidence_asc", label: "Least sure first" }, { value: "confidence_desc", label: "Most sure first" },
-            { value: "newest", label: "Newest" }, { value: "title", label: "Title" }, { value: "playlist", label: "Playlist", disabled: !playlistSortReady },
+            { value: "newest", label: "Newest" }, { value: "title", label: "Title" }, { value: "playlist", label: "Playlist" },
           ]} onchange={() => { page = 1; void load(); }} />
           <Button variant="outline" size="sm" aria-pressed={bulkMode} onclick={() => { bulkMode = !bulkMode; if (!bulkMode) chosen = new Map(); }}>{bulkMode ? "Done selecting" : "Select"}</Button>
           <RefreshButton class="matches-refresh" disabled={Boolean(action)} onrefresh={reload} />
@@ -735,7 +679,7 @@
                   {#if bulkMode}<td class="desktop-cell check-cell"><label class="select-target"><input type="checkbox" checked={chosen.has(match.externalSnapshotId)} onchange={() => toggleChosen(match)} aria-label={`Select ${match.title || "song"}`} /></label></td>{/if}
                   <td class="desktop-cell source-cell">
                     <button type="button" class="open-match" aria-label={`Open match for ${match.title || "song"}`} onclick={() => openMatch(match)}></button>
-                    <div class="source-copy"><MediaArtwork url={sourceArtwork(match)} /><div><strong>{match.title}</strong><small>{match.artist}{match.album ? ` · ${match.album}` : ""}</small>{#if playlistNames[match.externalSnapshotId]?.length}<small class="playlist-names">{playlistNames[match.externalSnapshotId].join(", ")}</small>{/if}</div></div>
+                    <div class="source-copy"><MediaArtwork url={sourceArtwork(match)} /><div><strong>{match.title}</strong><small>{match.artist}{match.album ? ` · ${match.album}` : ""}</small>{#if rowPlaylists(match).length}<small class="playlist-names">{rowPlaylists(match).join(", ")}</small>{/if}</div></div>
                   </td>
                   <td class="desktop-cell"><div class="plays-as">{#if target}<span><ProviderMark id={target.providerId === "local" ? backend.toLowerCase() : target.providerId} definition={provider(target.providerId)} />{providerName(target.providerId)}</span>{#if target.title?.trim() && target.title !== match.title}<small>{target.title}</small>{/if}{:else}<span class="no-match">No match yet</span>{/if}</div></td>
                   <td class="desktop-cell"><StatePill tone={state.tone} text={state.text} /></td>
@@ -760,7 +704,7 @@
       </div></div>{/if}
     </article>
   </section>
-  <MatchesPanel bind:open={dialogOpen} match={selected} {providers} {backend} {acceptRequest} {lyricsRequest} playlists={selected ? playlistNames[selected.externalSnapshotId] ?? [] : []} onSaved={matchSaved} onReject={(match, scope) => confirm("reject", match, scope)} onRematch={rematch}
+  <MatchesPanel bind:open={dialogOpen} match={selected} {providers} {backend} {acceptRequest} {lyricsRequest} playlists={selected ? rowPlaylists(selected) : []} onSaved={matchSaved} onReject={(match, scope) => confirm("reject", match, scope)} onRematch={rematch}
     onPrevious={visibleMatches.findIndex(item => item.externalSnapshotId === activeId) > 0 ? () => moveSelected(-1) : undefined}
     onNext={visibleMatches.findIndex(item => item.externalSnapshotId === activeId) < visibleMatches.length - 1 ? () => moveSelected(1) : undefined}>
     {#snippet authorities()}{#if selected?.manualAuthorities?.length}<section aria-label="Saved decisions"><h3 class="sec-label">Saved decisions</h3>

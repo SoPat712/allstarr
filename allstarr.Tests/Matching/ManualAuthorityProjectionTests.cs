@@ -70,7 +70,7 @@ public sealed class ManualAuthorityProjectionTests
             new Dictionary<Guid, LibraryTrackRecord>());
         var row = controller.GetMethod("Row", BindingFlags.Static | BindingFlags.NonPublic)!
             .Invoke(null, [snapshot, null, layers, null, library, new Dictionary<Guid, ProviderTrackIdentityRecord[]>(),
-                new[] { "deezer" }, new HashSet<string>(StringComparer.Ordinal) { "deezer" }, viewer, administrator, null, null])!;
+                new[] { "deezer" }, new HashSet<string>(StringComparer.Ordinal) { "deezer" }, viewer, administrator, null, null, null])!;
         return JsonSerializer.SerializeToElement(((Func<object>)row.GetType().GetProperty("Value")!.GetValue(row)!)(),
             new JsonSerializerOptions(JsonSerializerDefaults.Web));
     }

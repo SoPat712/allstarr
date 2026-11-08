@@ -5,6 +5,7 @@ using System.Text.Json;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Downloads;
 using allstarr.Core.Matching;
+using allstarr.Core.Playlists;
 using allstarr.Core.Providers.AppleMusicKit;
 using allstarr.Core.Providers.Spotify;
 using allstarr.Core.Protocols;
@@ -308,16 +309,8 @@ public sealed class TrackMatchesController(
     {
         if (!TrySession(out var session, out var error)) return error!;
         if (page < 1 || pageSize is < 1 or > 200) return BadRequest(new { error = "Page and pageSize are outside the supported range" });
-        if (!string.IsNullOrWhiteSpace(state) &&
-            !state.Equals("attention", StringComparison.OrdinalIgnoreCase) &&
-            !state.Equals("matched", StringComparison.OrdinalIgnoreCase) &&
-            !state.Equals("history", StringComparison.OrdinalIgnoreCase) &&
-            !state.Equals("automatic", StringComparison.OrdinalIgnoreCase) &&
-            !state.Equals("manual_matches", StringComparison.OrdinalIgnoreCase) &&
-            !state.Equals("manual_rejections", StringComparison.OrdinalIgnoreCase) &&
-            !Enum.TryParse<TrackMatchState>(state, true, out _))
-            return BadRequest(new { error = "State is not a valid match state" });
-        if (sort is not (null or "" or "confidence_desc" or "confidence_asc"))
+        if (!IsStateFilter(state)) return BadRequest(new { error = "State is not a valid match state" });
+        if (sort is not (null or "" or "confidence_desc" or "confidence_asc" or "title" or "newest" or "playlist"))
             return BadRequest(new { error = "Sort is not supported" });
 
         var userId = session!.AllstarrUserId!.Value;
@@ -337,84 +330,25 @@ public sealed class TrackMatchesController(
         if (summaryKey != null && await applicationCache!.GetStringAsync(summaryKey) is { } cached)
             return Ok(JsonSerializer.Deserialize<JsonElement>(cached));
         var started = Stopwatch.GetTimestamp();
-        var review = await trackMatchCommands.GetReviewDataAsync(
-            new TrackMatchActor(userId, session.IsAdministrator),
-            backendLibraryId,
-            search,
-            externalSnapshotId,
-            cancellationToken: cancellationToken);
-        var loaded = Stopwatch.GetTimestamp();
-        var decisions = review.LatestDecisions.ToDictionary(item => item.ExternalSnapshotId);
-        var overrides = ManualTrackOverrides.Index(review.Snapshots, review.ActiveOverrides, userId);
-        var library = review.LibraryTracks.ToDictionary(item => item.Id);
-        var sourceIdentities = review.ProviderIdentities.ToDictionary(item => item.Id);
-        var sourceIdentitiesByHash = review.ProviderIdentities
-            .GroupBy(item => item.ExternalIdHash, StringComparer.Ordinal)
-            .ToDictionary(group => group.Key, group => group
-                .OrderByDescending(item => item.Verification == ProviderIdentityVerification.Pinned)
-                .ThenByDescending(item => item.VerifiedAt)
-                .ToArray(), StringComparer.Ordinal);
-        var identities = review.ProviderIdentities
-            .GroupBy(item => item.CanonicalRecordingId).ToDictionary(group => group.Key, group => group.ToArray());
-        var playableProviders = await providerGateway.GetPlayableProviderOrderAsync(execution.RequireActor(), cancellationToken);
-        var providerPolicy = effectivePolicies == null ? execution.Policy :
-            await effectivePolicies.ResolveForUserAsync(userId, cancellationToken);
-
-        var prepared = Stopwatch.GetTimestamp();
-        var rowLibrary = new RowLibrary(library);
-        var playableProviderSet = playableProviders.ToHashSet(StringComparer.Ordinal);
-        // Rows are independent and only read the indexes above, so a large review spreads over a few cores.
-        var allRows = review.Snapshots
-            .GroupBy(snapshot => new
-            {
-                snapshot.OwnerUserId,
-                SourceIdentity = $"{snapshot.ProviderId.ToLowerInvariant()}:{snapshot.ExternalIdHash}"
-            })
-            .AsParallel().AsOrdered()
-            .WithDegreeOfParallelism(Math.Clamp(Environment.ProcessorCount / 2, 1, 4))
-            .WithCancellation(cancellationToken)
-            .Select(group =>
-            {
-                var snapshot = group
-                    .OrderByDescending(item => item.RetrievedAt)
-                    .ThenByDescending(item => item.SnapshotVersion)
-                    .First();
-                var decision = group
-                    .Select(item => decisions.GetValueOrDefault(item.Id))
-                    .Where(item => item != null)
-                    .OrderByDescending(item => item!.DecidedAt)
-                    .FirstOrDefault();
-                var layers = overrides[snapshot.Id];
-                var sourceIdentity = snapshot.ProviderTrackIdentityId.HasValue
-                    ? sourceIdentities.GetValueOrDefault(snapshot.ProviderTrackIdentityId.Value)
-                    : null;
-                sourceIdentity ??= sourceIdentitiesByHash.GetValueOrDefault(snapshot.ExternalIdHash)?
-                    .FirstOrDefault(item => MatchesSourceIdentity(snapshot, item));
-                return Row(
-                    snapshot,
-                    decision,
-                    layers,
-                    sourceIdentity,
-                    rowLibrary,
-                    identities,
-                    playableProviders,
-                    playableProviderSet,
-                    userId, session.IsAdministrator, providerPolicy, review.MediaSnapshots.GetValueOrDefault(snapshot.Id));
-            })
-            .ToArray();
-        var filteredRows = allRows.Where(row => state?.ToLowerInvariant() switch
+        var (allRows, loaded, prepared, playlistSearch) = await ReviewRowsAsync(session, execution, backendLibraryId, search,
+            externalSnapshotId, cancellationToken);
+        var filteredRows = allRows.Where(row => InState(row, state, playlistSearch));
+        var titles = StringComparer.InvariantCulture;
+        var ordered = sort switch
         {
-            "manual_matches" => row.HasManualMatch,
-            "manual_rejections" => row.HasManualRejection,
-            "automatic" => IsAutomaticDecision(row.State, row.HasManualMatch, row.HasManualRejection),
-            _ => MatchesStateFilter(row.State, state)
-        });
-        var rows = sort switch
-        {
-            "confidence_desc" => filteredRows.OrderByDescending(Sureness).ToArray(),
-            "confidence_asc" => filteredRows.OrderBy(Sureness).ToArray(),
-            _ => filteredRows.ToArray()
+            "confidence_desc" => filteredRows.OrderByDescending(Sureness),
+            "confidence_asc" => filteredRows.OrderBy(Sureness),
+            "title" => filteredRows.OrderBy(row => row.Title(), titles),
+            "newest" => filteredRows.OrderByDescending(row => row.DecidedAt),
+            "playlist" => filteredRows.OrderBy(row => row.PlaylistNames.Count == 0)
+                .ThenBy(row => string.Join(", ", row.PlaylistNames), titles).ThenBy(row => row.Title(), titles),
+            _ => null
         };
+        // Ties keep the order songs to review come in: needing a look before no match, then least sure first.
+        if (ordered != null && string.Equals(state, "needs", StringComparison.OrdinalIgnoreCase))
+            ordered = ordered.ThenBy(row => row.State == TrackMatchState.Unresolved);
+        if (ordered != null && sort is "title" or "newest" or "playlist") ordered = ordered.ThenBy(Sureness);
+        var rows = (ordered ?? filteredRows).ToArray();
         var total = rows.Length;
         var pageRows = rows.Skip((page - 1) * pageSize).Take(pageSize).ToArray();
         var projected = Stopwatch.GetTimestamp();
@@ -454,6 +388,108 @@ public sealed class TrackMatchesController(
         if (summaryKey != null)
             await applicationCache!.SetStringAsync(summaryKey, JsonSerializer.Serialize(response), TimeSpan.FromSeconds(60));
         return Ok(response);
+    }
+
+    [HttpGet("selection")]
+    public async Task<IActionResult> Selection(
+        [FromQuery] string? backendLibraryId = null,
+        [FromQuery] string? state = null,
+        [FromQuery] string? search = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (!TrySession(out var session, out var error)) return error!;
+        if (!IsStateFilter(state)) return BadRequest(new { error = "State is not a valid match state" });
+        ProtocolExecutionContext execution;
+        try
+        {
+            execution = await protocolContexts.CreateAsync(session!, HttpContext.TraceIdentifier, cancellationToken);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return StatusCode(403, new { error = "The linked backend identity is unavailable" });
+        }
+        var (rows, _, _, playlistSearch) = await ReviewRowsAsync(session!, execution, backendLibraryId, search, null, cancellationToken);
+        return Ok(new { matches = rows.Where(row => InState(row, state, playlistSearch)).Select(row => row.Selection()).ToArray() });
+    }
+
+    private async Task<(MatchRow[] Rows, long Loaded, long Prepared, bool PlaylistSearch)> ReviewRowsAsync(AdminAuthSession session,
+        ProtocolExecutionContext execution, string? backendLibraryId, string? search, Guid? externalSnapshotId,
+        CancellationToken cancellationToken)
+    {
+        var userId = session.AllstarrUserId!.Value;
+        var playlists = await new SongPlaylistMembershipReader(contextFactory).ReadNamesAsync(userId, cancellationToken);
+        var term = search?.Trim() ?? "";
+        // A playlist-name query is applied to the grouped song, so an older snapshot is never pulled in as the row.
+        var playlistSearch = IsPlaylistQuery(term, playlists);
+        var review = await trackMatchCommands.GetReviewDataAsync(
+            new TrackMatchActor(userId, session.IsAdministrator),
+            backendLibraryId,
+            playlistSearch ? null : search,
+            externalSnapshotId,
+            cancellationToken: cancellationToken);
+        var loaded = Stopwatch.GetTimestamp();
+        var decisions = review.LatestDecisions.ToDictionary(item => item.ExternalSnapshotId);
+        var overrides = ManualTrackOverrides.Index(review.Snapshots, review.ActiveOverrides, userId);
+        var library = review.LibraryTracks.ToDictionary(item => item.Id);
+        var sourceIdentities = review.ProviderIdentities.ToDictionary(item => item.Id);
+        var sourceIdentitiesByHash = review.ProviderIdentities
+            .GroupBy(item => item.ExternalIdHash, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group
+                .OrderByDescending(item => item.Verification == ProviderIdentityVerification.Pinned)
+                .ThenByDescending(item => item.VerifiedAt)
+                .ToArray(), StringComparer.Ordinal);
+        var identities = review.ProviderIdentities
+            .GroupBy(item => item.CanonicalRecordingId).ToDictionary(group => group.Key, group => group.ToArray());
+        var playableProviders = await providerGateway.GetPlayableProviderOrderAsync(execution.RequireActor(), cancellationToken);
+        var providerPolicy = effectivePolicies == null ? execution.Policy :
+            await effectivePolicies.ResolveForUserAsync(userId, cancellationToken);
+
+        var prepared = Stopwatch.GetTimestamp();
+        var rowLibrary = new RowLibrary(library);
+        var playableProviderSet = playableProviders.ToHashSet(StringComparer.Ordinal);
+        // Rows are independent and only read the indexes above, so a large review spreads over a few cores.
+        var allRows = review.Snapshots
+            .GroupBy(snapshot => new
+            {
+                snapshot.OwnerUserId,
+                SourceIdentity = SongPlaylistMembershipReader.SongKey(snapshot.ProviderId, snapshot.ExternalIdHash)
+            })
+            .AsParallel().AsOrdered()
+            .WithDegreeOfParallelism(Math.Clamp(Environment.ProcessorCount / 2, 1, 4))
+            .WithCancellation(cancellationToken)
+            .Select(group =>
+            {
+                var snapshot = group
+                    .OrderByDescending(item => item.RetrievedAt)
+                    .ThenByDescending(item => item.SnapshotVersion)
+                    .First();
+                var decision = group
+                    .Select(item => decisions.GetValueOrDefault(item.Id))
+                    .Where(item => item != null)
+                    .OrderByDescending(item => item!.DecidedAt)
+                    .FirstOrDefault();
+                var layers = overrides[snapshot.Id];
+                var sourceIdentity = snapshot.ProviderTrackIdentityId.HasValue
+                    ? sourceIdentities.GetValueOrDefault(snapshot.ProviderTrackIdentityId.Value)
+                    : null;
+                sourceIdentity ??= sourceIdentitiesByHash.GetValueOrDefault(snapshot.ExternalIdHash)?
+                    .FirstOrDefault(item => MatchesSourceIdentity(snapshot, item));
+                return Row(
+                    snapshot,
+                    decision,
+                    layers,
+                    sourceIdentity,
+                    rowLibrary,
+                    identities,
+                    playableProviders,
+                    playableProviderSet,
+                    userId, session.IsAdministrator, providerPolicy, review.MediaSnapshots.GetValueOrDefault(snapshot.Id),
+                    playlists.GetValueOrDefault(SongPlaylistMembershipReader.SongKey(snapshot.ProviderId, snapshot.ExternalIdHash)));
+            })
+            .ToArray();
+        if (playlistSearch)
+            allRows = allRows.Where(row => MatchesSongSearch(row, term)).ToArray();
+        return (allRows, loaded, prepared, playlistSearch);
     }
 
     private async Task<string> SummaryCacheKeyAsync(AdminAuthSession session, CancellationToken token)
@@ -1042,10 +1078,53 @@ public sealed class TrackMatchesController(
         });
     }
 
+    private static bool IsStateFilter(string? state) =>
+        string.IsNullOrWhiteSpace(state) ||
+        state.Equals("attention", StringComparison.OrdinalIgnoreCase) ||
+        state.Equals("needs", StringComparison.OrdinalIgnoreCase) ||
+        state.Equals("matched", StringComparison.OrdinalIgnoreCase) ||
+        state.Equals("history", StringComparison.OrdinalIgnoreCase) ||
+        state.Equals("automatic", StringComparison.OrdinalIgnoreCase) ||
+        state.Equals("manual_matches", StringComparison.OrdinalIgnoreCase) ||
+        state.Equals("manual_rejections", StringComparison.OrdinalIgnoreCase) ||
+        Enum.TryParse<TrackMatchState>(state, true, out _);
+
+    private static bool InState(MatchRow row, string? state, bool playlistSearch = false)
+    {
+        // Playlist search keeps automatic rejections, which that view used to include.
+        if (playlistSearch && string.Equals(state, "manual_rejections", StringComparison.OrdinalIgnoreCase))
+            return row.State == TrackMatchState.Rejected || row.HasManualRejection;
+        return state?.ToLowerInvariant() switch
+        {
+            "manual_matches" => row.HasManualMatch,
+            "manual_rejections" => row.HasManualRejection,
+            "automatic" => IsAutomaticDecision(row.State, row.HasManualMatch, row.HasManualRejection),
+            _ => MatchesStateFilter(row.State, state)
+        };
+    }
+
+    private static bool IsPlaylistQuery(string term, IReadOnlyDictionary<string, string[]> playlists) =>
+        term.Length > 0 && playlists.Values.Any(names => names.Any(name => name.Contains(term, StringComparison.OrdinalIgnoreCase)));
+
+    private static bool MatchesSongSearch(MatchRow row, string term)
+    {
+        var folded = SearchFold(term);
+        return SearchFold(row.Title()).Contains(folded, StringComparison.Ordinal)
+            || SearchFold(row.Artist).Contains(folded, StringComparison.Ordinal)
+            || SearchFold(row.Album).Contains(folded, StringComparison.Ordinal)
+            || SearchFold(row.ProviderId).Contains(folded, StringComparison.Ordinal)
+            || row.PlaylistNames.Any(name => SearchFold(name).Contains(folded, StringComparison.Ordinal));
+    }
+
+    private static string SearchFold(string? value) =>
+        (value ?? "").Trim().Replace('\u2019', '\'').ToLowerInvariant();
+
     private static bool MatchesStateFilter(TrackMatchState state, string? filter) =>
         string.IsNullOrWhiteSpace(filter) ||
         (filter.Equals("attention", StringComparison.OrdinalIgnoreCase) && state is
             TrackMatchState.Suggested or TrackMatchState.Ambiguous) ||
+        (filter.Equals("needs", StringComparison.OrdinalIgnoreCase) && state is
+            TrackMatchState.Suggested or TrackMatchState.Ambiguous or TrackMatchState.Unresolved) ||
         (filter.Equals("matched", StringComparison.OrdinalIgnoreCase) && state is TrackMatchState.Accepted or TrackMatchState.Pinned) ||
         (filter.Equals("history", StringComparison.OrdinalIgnoreCase) && state is
             TrackMatchState.Accepted or TrackMatchState.Pinned or TrackMatchState.Rejected) ||
@@ -1108,8 +1187,10 @@ public sealed class TrackMatchesController(
         IReadOnlyDictionary<Guid, ProviderTrackIdentityRecord[]> identities,
         IReadOnlyCollection<string> playableProviders, IReadOnlySet<string> playableProviderSet, Guid viewerUserId, bool isAdministrator,
         EffectiveProviderPolicySnapshot? providerPolicy = null,
-        ExternalMetadataSnapshotRecord? mediaSnapshot = null)
+        ExternalMetadataSnapshotRecord? mediaSnapshot = null,
+        IReadOnlyList<string>? playlistNames = null)
     {
+        playlistNames ??= [];
         var manual = layers.Effective;
         var routeCanonicalId = decision?.CanonicalRecordingId ?? sourceIdentity?.CanonicalRecordingId;
         var routeIdentities = routeCanonicalId.HasValue &&
@@ -1211,6 +1292,7 @@ public sealed class TrackMatchesController(
                 searchQuery = metadata.Title ?? string.Empty,
                 artist = metadata.Artist,
                 album = metadata.Album,
+                playlistNames,
                 artworkUrl = metadata.ArtworkUrl == null ? candidateArtworkUrl ?? sourceArtworkUrl : sourceArtworkUrl,
                 sourceArtworkUrl,
                 candidateArtworkUrl,
@@ -1252,12 +1334,39 @@ public sealed class TrackMatchesController(
                     : (DateTimeOffset?)manualAuthorities.Max(item => item.CreatedAt)
             };
         }
+        // Selecting a whole filter returns only what the bulk actions read, so thousands of songs stay small.
+        object Selection()
+        {
+            var metadata = Metadata(snapshot.PayloadJson);
+            return new
+            {
+                externalSnapshotId = snapshot.Id,
+                providerId = snapshot.ProviderId,
+                title = metadata.Title,
+                artist = metadata.Artist,
+                target = target == null ? null : new { providerId = target.ProviderId, externalId = target.ExternalId },
+                localTrack = track == null ? null : new { id = track.Id, backendItemId = track.BackendItemId, title = track.Title },
+                providerIdentities = providerIdentities.Select(item => new { item.providerId, item.externalId, item.scope, item.verification }),
+                candidates = TrackMatchReviewCandidates.Build(
+                    snapshot, decision, projection, library.Tracks, playableProviderSet, indexedLibraryTrackIds, routesOnly: true),
+                manualAuthorities,
+                allowedAuthorityScopes = isAdministrator ? new[] { "personal", "household" } : ["personal"]
+            };
+        }
+        var labels = Metadata(snapshot.PayloadJson);
         return new(
             state,
             decision?.Confidence,
             hasManualMatch,
             hasManualRejection,
             Details,
+            Selection,
+            () => labels.Title ?? "",
+            decision?.DecidedAt,
+            playlistNames,
+            labels.Artist ?? "",
+            labels.Album ?? "",
+            snapshot.ProviderId,
             target == null ? null : new(canonicalId, snapshot.OwnerUserId, target, snapshot,
                 projection.PrimaryProviderRoute?.IsManual == true), track);
     }
@@ -1495,6 +1604,13 @@ public sealed class TrackMatchesController(
         bool HasManualMatch,
         bool HasManualRejection,
         Func<object> Value,
+        Func<object> Selection,
+        Func<string> Title,
+        DateTimeOffset? DecidedAt,
+        IReadOnlyList<string> PlaylistNames,
+        string Artist,
+        string Album,
+        string ProviderId,
         TrackMatchTargetLookup? TargetLookup = null,
         LibraryTrackRecord? LocalTrack = null);
 

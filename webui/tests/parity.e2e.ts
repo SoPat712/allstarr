@@ -3751,6 +3751,8 @@ test("Match review pages from cache and acts on several selected songs", async (
   const pages: Record<string, ReturnType<typeof match>[]> = { "1": [match("one", "First song"), match("two", "Second song")], "2": [match("three", "Third song")] };
   let holdFirstPage = false;
   const rematched: string[] = [];
+  await page.route((url) => url.pathname === "/api/admin/track-matches/selection", async (route) =>
+    route.fulfill({ json: { matches: Object.values(pages).flat() } }));
   await page.route((url) => url.pathname === "/api/admin/track-matches", async (route) => {
     const requested = new URL(route.request().url()).searchParams.get("page") ?? "1";
     if (requested === "1" && holdFirstPage) await new Promise(() => {});

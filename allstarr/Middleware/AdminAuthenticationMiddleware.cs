@@ -128,7 +128,9 @@ public class AdminAuthenticationMiddleware
             var matchSegments = path.TrimEnd('/').Split('/', StringSplitOptions.RemoveEmptyEntries);
             if (matchSegments.Length < 3 || !matchSegments[2].Equals("track-matches", StringComparison.OrdinalIgnoreCase)) return false;
             if (HttpMethods.IsGet(method))
-                return matchSegments.Length == 3 || matchSegments.Length == 5 && (
+                return matchSegments.Length == 3 ||
+                    matchSegments.Length == 4 && matchSegments[3].Equals("selection", StringComparison.OrdinalIgnoreCase) ||
+                    matchSegments.Length == 5 && (
                     matchSegments[3].Equals("targets", StringComparison.OrdinalIgnoreCase) && matchSegments[4] is "local" or "provider" ||
                     matchSegments[3].Equals("spotify", StringComparison.OrdinalIgnoreCase) ||
                     Guid.TryParse(matchSegments[3], out _) && matchSegments[4].Equals("artwork", StringComparison.OrdinalIgnoreCase));

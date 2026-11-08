@@ -31,7 +31,7 @@ export async function panelFixture(page: Page) {
     codec: "FLAC", quality: "Lossless", bitrateKbps: 1064, sampleRateHz: 44100, bitDepth: 16, channels: 2, durationMilliseconds: 229000,
     provider: "apple-musickit", externalId: "take-on-me", artworkUrl: null, publicationState: "Indexed", referenceCount: 0, explicitlyKept: false, removable: true };
   const matches = ["One", "Two"].map((id, index) => ({ externalSnapshotId: id, providerId: "spotify", state: index ? "accepted" : "ambiguous", confidence: .967, threshold: .88,
-    title: `Evening song ${id}`, artist: "Example artist", album: "Original album", durationMilliseconds: 180000, isrc: "SOURCE123",
+    title: `Evening song ${id}`, artist: "Example artist", album: "Original album", durationMilliseconds: 180000, isrc: "SOURCE123", playlistNames: ["Evening mix"],
     allowedAuthorityScopes: ["personal", "household"], canonicalRecordingId: `recording-${id}`, providerIdentities: [], reasons: [], warnings: [], manualAuthorities: [],
     target: { providerId: "qobuz", externalId: `current-${id}`, title: `Evening song ${id} (Live)`, artist: "Example artist", album: "Deluxe album", durationMilliseconds: 182000, isrc: "OTHER123" },
     candidates: [{ isCurrent: true, isLocal: false, title: `Evening song ${id} (Live)`, artist: "Example artist", providerTrackIds: { qobuz: `current-${id}` }, confidence: .967 },
@@ -86,9 +86,17 @@ export async function panelFixture(page: Page) {
     if (path === "/api/admin/playlist-sources") return reply({ accounts: [{ id: accountId, providerId: "spotify", displayName: "My Spotify", scope: "personal" }], blockedAccounts: [], providers: [{ id: "spotify", displayName: "Spotify" }] });
     if (path === "/api/admin/media-targets") return reply({ targets: [{ id: "home", protocol: "jellyfin", backendInstanceId: "home", displayName: "Jellyfin" }] });
     if (path.endsWith("/playlist-forks")) return reply([]);
+    if (path === "/api/admin/track-matches/selection") {
+      const state = url.searchParams.get("state");
+      const rows = matches.filter(item => !state || state === "attention" ? item.state === "ambiguous" : item.state === state);
+      return reply({ matches: rows });
+    }
     if (path === "/api/admin/track-matches") {
-      const rows = url.searchParams.has("externalSnapshotId") ? matches.filter(item => item.externalSnapshotId === url.searchParams.get("externalSnapshotId")) : url.searchParams.get("state") === "attention" ? matches.filter(item => item.state === "ambiguous") : matches;
-      return reply({ matches: rows, stats: { total: 2, matched: 1, accepted: 1, automatic: 1, manualMatches: 0, manualRejections: 0, suggested: 0, ambiguous: 1, review: 1, unresolved: 0, rejected: 0, attention: 1 }, pagination: { page: 1, pageSize: 200, total: rows.length, totalPages: 1 } });
+      const state = url.searchParams.get("state");
+      const rows = url.searchParams.has("externalSnapshotId")
+        ? matches.filter(item => item.externalSnapshotId === url.searchParams.get("externalSnapshotId"))
+        : !state || state === "needs" || state === "attention" ? matches.filter(item => item.state === "ambiguous") : matches.filter(item => item.state === state);
+      return reply({ matches: rows, stats: { total: 2, matched: 1, accepted: 1, automatic: 1, manualMatches: 0, manualRejections: 0, suggested: 0, ambiguous: 1, review: 1, unresolved: 0, rejected: 0, attention: 1 }, pagination: { page: 1, pageSize: 50, total: rows.length, totalPages: 1 } });
     }
     if (path.includes("/track-matches/targets/")) return reply({ tracks: [], providers: [] });
     if (path === "/api/admin/jobs") return reply({ jobs: [job], progress: [], hasMore: false });

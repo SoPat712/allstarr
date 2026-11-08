@@ -265,7 +265,7 @@ public sealed class ProviderTargetProjectionTests
                 ExternalIdHash = source.ExternalIdHash, PayloadJson = "{}"
             }, decision, new ManualTrackOverrideLayers(null, null), source, library,
                 new Dictionary<Guid, ProviderTrackIdentityRecord[]> { [source.CanonicalRecordingId] = identities },
-                new[] { "apple-musickit" }, new HashSet<string>(StringComparer.Ordinal) { "apple-musickit" }, Guid.NewGuid(), true, null, null])!;
+                new[] { "apple-musickit" }, new HashSet<string>(StringComparer.Ordinal) { "apple-musickit" }, Guid.NewGuid(), true, null, null, null])!;
         return JsonSerializer.SerializeToElement(((Func<object>)row.GetType().GetProperty("Value")!.GetValue(row)!)(),
             new JsonSerializerOptions(JsonSerializerDefaults.Web));
     }

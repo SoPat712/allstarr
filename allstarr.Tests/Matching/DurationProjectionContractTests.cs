@@ -121,7 +121,9 @@ public sealed class DurationProjectionContractTests
         var controller = typeof(TrackMatchesController);
         arguments[4] = Activator.CreateInstance(controller.GetNestedType("RowLibrary", BindingFlags.NonPublic)!, arguments[4]);
         arguments = [.. arguments[..7], ((IEnumerable<string>)arguments[6]!).ToHashSet(StringComparer.Ordinal), .. arguments[7..]];
-        return controller.GetMethod("Row", BindingFlags.Static | BindingFlags.NonPublic)!.Invoke(null, arguments)!;
+        var method = controller.GetMethod("Row", BindingFlags.Static | BindingFlags.NonPublic)!;
+        arguments = [.. arguments, .. Enumerable.Repeat<object?>(null, method.GetParameters().Length - arguments.Length)];
+        return method.Invoke(null, arguments)!;
     }
 
     private static JsonElement Value(object row)

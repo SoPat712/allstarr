@@ -1,4 +1,5 @@
 import { expect, test, type Page, type Route } from "@playwright/test";
+import { trackMatchSearch, trackMatchStateFilter } from "./track-matches-fixtures";
 import { appearance, mockForYou } from "./for-you-fixtures";
 import { mkdir } from "node:fs/promises";
 
@@ -51,7 +52,7 @@ async function matchesFixture(page: Page) {
 
 const makeSong = (id: string, state: string, confidence: number | null) => ({
   externalSnapshotId: id, providerId: "spotify", state, decisionSource: "track_match_decision", confidence, threshold: .88,
-  title: `Song ${id}`, artist: "Example artist", album: "Original album", durationMilliseconds: 180000, isrc: "SOURCE123",
+  title: `Song ${id}`, artist: "Example artist", album: "Original album", durationMilliseconds: 180000, isrc: "SOURCE123", playlistNames: ["First playlist", "Second playlist"],
   allowedAuthorityScopes: ["personal", "household"], canonicalRecordingId: `recording-${id}`,
   providerIdentities: [], reasons: [], warnings: [], manualAuthorities: [],
   target: state === "unresolved" ? null : { providerId: "qobuz", externalId: `current-${id}`, title: `Song ${id} (Live)`, artist: "Example artist", album: "Deluxe album", durationMilliseconds: 182000, isrc: "OTHER123" },
@@ -76,17 +77,23 @@ async function fixture(page: Page, options: { needs?: boolean; administrator?: b
       { id: "spotify", name: "Spotify", categories: ["metadata"] }, { id: "qobuz", name: "Qobuz", categories: ["streaming"] }, { id: "apple-download", name: "Apple Music", categories: ["streaming"] },
     ] };
     if (url.pathname === "/api/admin/playlist-links") body = { playlistLinks: [{ id: "first", name: "First playlist" }, { id: "second", name: "Second playlist" }] };
-    if (url.pathname.startsWith("/api/admin/playlist-links/")) body = { tracks: songs.map(item => ({ externalSnapshotId: item.externalSnapshotId })) };
     if (url.pathname.endsWith("/resolve")) { writes.push(route.request().postDataJSON()); body = { success: true }; }
     if (url.pathname.endsWith("/rematch")) body = { rematched: true, state: "suggested" };
+    if (url.pathname === "/api/admin/track-matches/selection") {
+      const state = url.searchParams.get("state");
+      const filtered = songs.filter(item => trackMatchStateFilter(state, item) && trackMatchSearch(url.searchParams.get("search"), item));
+      body = { matches: filtered.map(item => ({ ...item, allowedAuthorityScopes: administrator ? ["personal", "household"] : ["personal"] })) };
+    }
     if (url.pathname === "/api/admin/track-matches") {
       const state = url.searchParams.get("state");
-      const filtered = songs.filter(item => state === "attention" ? ["ambiguous", "suggested"].includes(item.state)
-        : state === "unresolved" ? item.state === state : state === "automatic" ? item.state === "accepted" : state === "manual_matches" || state === "manual_rejections" ? false : true);
+      const filtered = songs.filter(item => trackMatchStateFilter(state, item) && trackMatchSearch(url.searchParams.get("search"), item));
       const rows = url.searchParams.has("externalSnapshotId") ? songs.filter(item => item.externalSnapshotId === url.searchParams.get("externalSnapshotId")) : filtered;
-      body = { matches: rows.map(item => ({ ...item, allowedAuthorityScopes: administrator ? ["personal", "household"] : ["personal"] })),
+      const pageNo = Number(url.searchParams.get("page") ?? 1);
+      const pageSize = Number(url.searchParams.get("pageSize") ?? 50);
+      const pageRows = rows.slice((pageNo - 1) * pageSize, pageNo * pageSize);
+      body = { matches: pageRows.map(item => ({ ...item, allowedAuthorityScopes: administrator ? ["personal", "household"] : ["personal"] })),
         stats: { total: songs.length, matched: 2, accepted: 2, automatic: 2, manualMatches: 0, manualRejections: 0, suggested: needs ? 1 : 0, ambiguous: needs ? 1 : 0, review: needs ? 2 : 0, unresolved: needs ? 1 : 0, rejected: 0, attention: needs ? 2 : 0 },
-        pagination: { page: 1, pageSize: 200, total: rows.length, totalPages: 1 } };
+        pagination: { page: pageNo, pageSize, total: rows.length, totalPages: Math.max(1, Math.ceil(rows.length / pageSize)) } };
     }
     if (url.pathname.endsWith("/current")) body = { target: songs.find(item => url.pathname.includes(`/${item.externalSnapshotId}/`))?.target ?? null };
     if (url.pathname.endsWith("/targets/provider")) body = { tracks: [], providers: [] };
