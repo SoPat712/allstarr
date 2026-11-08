@@ -107,6 +107,10 @@ public interface IProtocolProviderGateway
         string providerId,
         string externalId);
 
+    async Task<List<Album>> GetArtistAlbumsAsync(
+        ProtocolExecutionContext protocol, string providerId, string externalId, int limit) =>
+        (await GetArtistAlbumsAsync(protocol, providerId, externalId)).Take(Math.Clamp(limit, 1, 200)).ToList();
+
     Task<List<Song>> GetArtistTracksAsync(
         ProtocolExecutionContext protocol,
         string providerId,
@@ -906,15 +910,23 @@ public sealed partial class ProtocolProviderGateway(
         return null;
     }
 
-    public async Task<List<Album>> GetArtistAlbumsAsync(
-        ProtocolExecutionContext protocol,
-        string providerId,
-        string externalId)
+    public Task<List<Album>> GetArtistAlbumsAsync(ProtocolExecutionContext protocol, string providerId, string externalId) =>
+        ArtistAlbumsAsync(protocol, providerId, externalId, null);
+
+    public Task<List<Album>> GetArtistAlbumsAsync(ProtocolExecutionContext protocol, string providerId, string externalId, int limit) =>
+        ArtistAlbumsAsync(protocol, providerId, externalId, Math.Clamp(limit, 1, 200));
+
+    private async Task<List<Album>> ArtistAlbumsAsync(
+        ProtocolExecutionContext protocol, string providerId, string externalId, int? limit)
     {
         ArgumentNullException.ThrowIfNull(protocol);
         var routedProviderId = NormalizeProvider(providerId);
         if (protocol.IsReadOnly)
-            return MusicAlbumReleases.Collapse(await ReadKnownRelationshipsAsync<Album>(protocol, routedProviderId, externalId, "albums"));
+        {
+            var known = MusicAlbumReleases.Collapse(await ReadKnownRelationshipsAsync<Album>(protocol, routedProviderId, externalId, "albums"));
+            if (limit == null) return known;
+            return CleanAlbums(known, await ResolveEffectivePolicyAsync(protocol)).Take(limit.Value).ToList();
+        }
         var routed = await PlanExactAsync<IProviderMetadataCapability>(
             protocol, routedProviderId, ProviderCapabilityKind.Metadata, "protocol-metadata-get-artist-albums");
         if (routed.Candidate != null)
@@ -923,11 +935,13 @@ public sealed partial class ProtocolProviderGateway(
             var albums = new List<Album>();
             var seenCursors = new HashSet<string>(StringComparer.Ordinal);
             string? cursor = null;
+            var policy = limit == null ? null : await ResolveEffectivePolicyAsync(protocol);
+            var pages = 0;
             do
             {
                 var outcome = await routed.Candidate.Implementation.GetArtistAlbumsAsync(
                     routed.Candidate.Context,
-                    new ProviderArtistItemsRequest(id, new ProviderPageRequest(200, cursor)));
+                    new ProviderArtistItemsRequest(id, new ProviderPageRequest(limit ?? 200, cursor)));
                 if (!outcome.IsSuccess)
                 {
                     if (outcome.Error!.Kind == ProviderErrorKind.NotFound) return [];
@@ -936,15 +950,22 @@ public sealed partial class ProtocolProviderGateway(
                     ThrowRouteFailure(outcome.Error);
                 }
                 var page = outcome.RequireValue();
-                albums.AddRange(page.Items.Select(Map));
+                var mapped = page.Items.Select(Map).ToList();
+                if (limit is { } cap) mapped = mapped.Take(cap).ToList();
+                albums.AddRange(mapped);
                 cursor = page.NextCursor;
+                pages++;
+                // One page is enough unless clean-only removed every album; then at most two further pages.
+                var stop = limit != null && (CleanAlbums(albums, policy).Any() || pages >= 3 || cursor == null);
+                if (stop) break;
                 if (cursor != null && (seenCursors.Count >= 1_000 || !seenCursors.Add(cursor)))
                     throw new HttpRequestException("The provider repeated an artist-album page cursor.");
             } while (cursor != null);
             await ApplyKnownPublicIdsAsync(routed.Candidate.Context, albums.SelectMany(album => album.Songs).ToArray(), protocol);
             await CacheResourcesAsync(routed.Candidate.Context, albums, []);
-            await CacheKnownRelationshipsAsync(protocol, routed.Candidate.Context, externalId, "albums", albums);
-            return CleanAlbums(MusicAlbumReleases.Collapse(albums), await ResolveEffectivePolicyAsync(protocol)).ToList();
+            if (limit == null)
+                await CacheKnownRelationshipsAsync(protocol, routed.Candidate.Context, externalId, "albums", albums);
+            return CleanAlbums(MusicAlbumReleases.Collapse(albums), policy ?? await ResolveEffectivePolicyAsync(protocol)).ToList();
         }
 
         return [];

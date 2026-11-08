@@ -5,6 +5,7 @@ using allstarr.Core.Music;
 using allstarr.Core.Playlists;
 using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
+using allstarr.Models.Domain;
 using allstarr.Services.Jellyfin;
 using allstarr.Services.Local;
 using Microsoft.EntityFrameworkCore;
@@ -13,15 +14,17 @@ namespace allstarr.Core.ClientApi;
 
 // Which of the listener's mixes and synced playlists hold an album's or a song's songs.
 public sealed class ItemAppearancesReader(PersonalMixService mixes, IDbContextFactory<AllstarrDbContext> factory,
-    IProtocolProviderGateway providers, SavedLibraryReader saved, JellyfinProxyService jellyfin, IProviderRegistry registry)
+    IProtocolProviderGateway providers, SavedLibraryReader saved, JellyfinProxyService jellyfin, IProviderRegistry registry,
+    ITrackIdentityService identities)
 {
-    private sealed record SongKey(string? LocalId, string? Provider, string? ExternalId);
+    private sealed record SongKey(string? LocalId, string? Provider, string? ExternalId, Guid? CanonicalRecordingId);
 
     public async Task<ClientItemAppearances> ReadAsync(HttpContext http, ProtocolExecutionContext execution, string itemId)
     {
         var owner = execution.RequireActor().EffectiveUserId!.Value;
         var token = execution.CancellationToken;
         var songs = await SongsAsync(http, execution, itemId);
+        var recordings = songs.Select(song => song.CanonicalRecordingId).OfType<Guid>().ToHashSet();
         var locals = songs.Where(song => song.LocalId != null).Select(song => Native(song.LocalId!)).ToHashSet(StringComparer.Ordinal);
         var externals = songs.Where(song => song.Provider != null).Select(song => External(song.Provider!, song.ExternalId!))
             .ToHashSet(StringComparer.Ordinal);
@@ -29,10 +32,8 @@ public sealed class ItemAppearancesReader(PersonalMixService mixes, IDbContextFa
         var stored = await mixes.ListAsync(execution);
         foreach (var mix in stored)
         {
-            var matched = mix.Songs.Select(item => item.Song).Count(song => song.IsLocal
-                ? locals.Contains(Native(song.Id))
-                : song.ExternalProvider != null && song.ExternalId != null &&
-                  externals.Contains(External(song.ExternalProvider, song.ExternalId)));
+            // A projected library copy keeps the canonical recording after its provider ids are cleared.
+            var matched = mix.Songs.Select(item => item.Song).Count(song => Matches(song, recordings, locals, externals));
             if (matched == 0) continue;
             var inApps = mix.Added && mix.Generation > 0;
             result.Add(new("mix", mix.Id.ToString("D"), mix.Name, mix.SourceLabel ?? "Made for you",
@@ -88,17 +89,34 @@ public sealed class ItemAppearancesReader(PersonalMixService mixes, IDbContextFa
         var parsed = LocalLibraryService.ParseExternalResource(itemId);
         if (parsed.isExternal)
         {
-            if (parsed.type == "song") return [new(null, parsed.provider, parsed.externalId)];
+            if (parsed.type == "song")
+            {
+                Song? song;
+                // A disabled or briefly failing service still leaves the listener's stored songs to match.
+                try { song = await providers.GetSongAsync(execution, parsed.provider!, parsed.externalId!); }
+                catch (Exception exception) when (exception is UnauthorizedAccessException or HttpRequestException) { song = null; }
+                if (song == null)
+                {
+                    if (execution.Actor?.EffectiveUserId is not { } owner ||
+                        !await KnownExternalSongAsync(owner, parsed.provider!, parsed.externalId!, execution.CancellationToken))
+                        throw new KeyNotFoundException();
+                    return await WithRecordingsAsync(execution, [new(null, parsed.provider, parsed.externalId, null)]);
+                }
+                return song.IsLocal
+                    ? await WithRecordingsAsync(execution, [new(song.Id, null, null, song.CanonicalRecordingId)])
+                    : await WithRecordingsAsync(execution, [new(null, song.ExternalProvider ?? parsed.provider,
+                        song.ExternalId ?? parsed.externalId, song.CanonicalRecordingId)]);
+            }
             if (parsed.type != "album") throw new ArgumentException("Only albums and songs have appearances.");
             var album = await providers.GetAlbumAsync(execution, parsed.provider!, parsed.externalId!) ??
                 await saved.AlbumAsync(execution, $"ext-{parsed.provider}-album-{parsed.externalId}", execution.CancellationToken) ??
                 throw new KeyNotFoundException();
-            return album.Songs.Select(song =>
+            return await WithRecordingsAsync(execution, album.Songs.Select(song =>
             {
-                if (song.IsLocal) return new SongKey(song.Id, null, null);
+                if (song.IsLocal) return new SongKey(song.Id, null, null, song.CanonicalRecordingId);
                 var item = LocalLibraryService.ParseExternalResource(song.Id);
-                return new SongKey(null, song.ExternalProvider ?? item.provider, song.ExternalId ?? item.externalId);
-            }).Where(song => song.LocalId != null || song.Provider != null && song.ExternalId != null).ToArray();
+                return new SongKey(null, song.ExternalProvider ?? item.provider, song.ExternalId ?? item.externalId, song.CanonicalRecordingId);
+            }).Where(song => song.LocalId != null || song.Provider != null && song.ExternalId != null).ToArray());
         }
 
         var user = Uri.EscapeDataString(execution.VerifiedBackendPrincipalId);
@@ -110,7 +128,7 @@ public sealed class ItemAppearancesReader(PersonalMixService mixes, IDbContextFa
             if (status is 401 or 403) throw new UnauthorizedAccessException();
             if (status != 200 || body == null) throw new HttpRequestException("Library details are unavailable.");
             var type = body.RootElement.TryGetProperty("Type", out var value) ? value.GetString() : null;
-            if (type == "Audio") return [new(body.RootElement.GetProperty("Id").GetString(), null, null)];
+            if (type == "Audio") return await WithRecordingsAsync(execution, [new(body.RootElement.GetProperty("Id").GetString(), null, null, null)]);
             if (type != "MusicAlbum") throw new ArgumentException("Only albums and songs have appearances.");
         }
         var (children, childStatus) = await jellyfin.GetJsonAsync($"Users/{user}/Items", new()
@@ -124,11 +142,96 @@ public sealed class ItemAppearancesReader(PersonalMixService mixes, IDbContextFa
         using (children)
         {
             if (childStatus != 200 || children == null) throw new HttpRequestException("Library details are unavailable.");
-            return children.RootElement.TryGetProperty("Items", out var items) && items.ValueKind == JsonValueKind.Array
+            return await WithRecordingsAsync(execution, children.RootElement.TryGetProperty("Items", out var items) && items.ValueKind == JsonValueKind.Array
                 ? items.EnumerateArray().Select(item => item.TryGetProperty("Id", out var id) ? id.GetString() : null)
-                    .OfType<string>().Select(id => new SongKey(id, null, null)).ToArray()
-                : [];
+                    .OfType<string>().Select(id => new SongKey(id, null, null, null)).ToArray()
+                : []);
         }
+    }
+
+    private async Task<IReadOnlyList<SongKey>> WithRecordingsAsync(ProtocolExecutionContext execution, IReadOnlyList<SongKey> songs)
+    {
+        if (songs.Count == 0 || execution.Actor?.EffectiveUserId is not { } owner) return songs;
+        var token = execution.CancellationToken;
+        var external = new Dictionary<string, Guid>(StringComparer.Ordinal);
+        var local = new Dictionary<string, Guid>(StringComparer.Ordinal);
+        try
+        {
+            var publicIds = songs.Where(song => song.CanonicalRecordingId == null && song.Provider != null && song.ExternalId != null)
+                .Select(song => ClientCatalogIds.Resource(song.Provider!, ProviderResourceKind.Track, song.ExternalId!))
+                .Distinct(StringComparer.Ordinal).ToArray();
+            if (publicIds.Length > 0)
+                foreach (var (id, recording) in await identities.ResolveRecordingsAsync(execution.RequireActor(), publicIds, token))
+                    if (recording != null) external[id] = recording.Id;
+            var localIds = songs.Where(song => song.CanonicalRecordingId == null && song.LocalId != null)
+                .Select(song => song.LocalId!).Distinct(StringComparer.Ordinal).ToArray();
+            if (localIds.Length > 0)
+            {
+                await using var db = await factory.CreateDbContextAsync(token);
+                var protocol = execution.Protocol.ToString().ToLowerInvariant();
+                var rows = await db.LibraryTracks.AsNoTracking().Where(track =>
+                        track.OwnerUserId == owner && track.Protocol == protocol &&
+                        track.BackendInstanceId == execution.BackendInstanceId && track.CanonicalRecordingId != null &&
+                        EF.Parameter(localIds).Contains(track.BackendItemId))
+                    .Select(track => new { track.BackendItemId, Recording = track.CanonicalRecordingId!.Value })
+                    .ToArrayAsync(token);
+                foreach (var group in rows.GroupBy(row => row.BackendItemId, StringComparer.Ordinal))
+                {
+                    var ids = group.Select(row => row.Recording).Distinct().Take(2).ToArray();
+                    if (ids.Length != 1) continue;
+                    local[group.Key] = ids[0];
+                    local.TryAdd(Native(group.Key), ids[0]);
+                }
+            }
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException) { }
+        return songs.Select(song =>
+        {
+            if (song.CanonicalRecordingId != null) return song;
+            if (song.Provider != null && song.ExternalId != null &&
+                external.TryGetValue(ClientCatalogIds.Resource(song.Provider, ProviderResourceKind.Track, song.ExternalId), out var recording))
+                return song with { CanonicalRecordingId = recording };
+            if (song.LocalId != null && (local.TryGetValue(song.LocalId, out var native) || local.TryGetValue(Native(song.LocalId), out native)))
+                return song with { CanonicalRecordingId = native };
+            return song;
+        }).ToArray();
+    }
+
+    private async Task<bool> KnownExternalSongAsync(Guid owner, string provider, string externalId, CancellationToken token)
+    {
+        var keys = CanonicalCatalogKeys.StoredKeys(externalId);
+        await using var db = await factory.CreateDbContextAsync(token);
+        if (await db.ExternalMetadataSnapshots.AsNoTracking().AnyAsync(item => item.OwnerUserId == owner &&
+                item.ResourceKind == "track" && item.ProviderId == provider && EF.Parameter(keys).Contains(item.ExternalIdHash), token))
+            return true;
+        return await db.ProviderTrackIdentities.AsNoTracking().AnyAsync(identity =>
+            identity.ResourceKind == ProviderResourceKind.Track &&
+            (identity.Verification == ProviderIdentityVerification.Verified || identity.Verification == ProviderIdentityVerification.Pinned) &&
+            identity.VerificationMethod != "automatic-suggestion" &&
+            identity.VerificationMethod != ManualTrackAuthorityPolicy.ReleasedProviderVerificationMethod &&
+            identity.VerificationMethod != ManualTrackAuthorityPolicy.ReplacedProviderVerificationMethod &&
+            identity.VerificationMethod != CatalogIdentityPolicy.SupersededVerificationMethod &&
+            identity.ProviderId == provider && EF.Parameter(keys).Contains(identity.ExternalIdHash) &&
+            (identity.Scope == ProviderIdentityScope.Catalog || db.ProviderAccounts.Any(account =>
+                account.Id == identity.ProviderAccountId && account.OwnerUserId == owner)), token);
+    }
+
+    private static bool Matches(Song song, HashSet<Guid> recordings, HashSet<string> locals, HashSet<string> externals)
+    {
+        if (song.CanonicalRecordingId is { } recording && recordings.Contains(recording)) return true;
+        var provider = song.ExternalProvider;
+        var externalId = song.ExternalId;
+        if (provider == null || externalId == null)
+        {
+            var parsed = LocalLibraryService.ParseExternalResource(song.Id);
+            if (parsed is { isExternal: true, type: "song" })
+            {
+                provider ??= parsed.provider;
+                externalId ??= parsed.externalId;
+            }
+        }
+        if (provider != null && externalId != null && externals.Contains(External(provider, externalId))) return true;
+        return locals.Contains(Native(song.Id));
     }
 
     private static string Native(string id) => Guid.TryParse(id, out var guid) ? guid.ToString("N") : id;

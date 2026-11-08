@@ -1,7 +1,10 @@
+using System.Collections.Immutable;
 using System.Net;
 using System.Text.Json;
 using allstarr.Core.Capabilities;
+using allstarr.Core.ClientApi;
 using allstarr.Core.Protocols;
+using allstarr.Core.Settings;
 using allstarr.Models.Domain;
 using allstarr.Models.Search;
 using Microsoft.Extensions.DependencyInjection;
@@ -25,11 +28,11 @@ public sealed partial class ProtocolRouteFixtureTests
                 new Artist { Name = "Library Friend", ExternalProvider = "deezer", ExternalId = "friend" },
                 new Artist { Name = "Service Friend", ExternalProvider = "deezer", ExternalId = "other" },
                 new Artist { Name = "Seed Artist", ExternalProvider = "deezer", ExternalId = "seed" }]);
-        gateway.Setup(service => service.GetArtistAlbumsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "other"))
+        gateway.Setup(service => service.GetArtistAlbumsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "other", It.IsAny<int>()))
             .ReturnsAsync([
                 new Album { Id = "ext-deezer-album-other-single", Title = "A single", Artist = "Service Friend", ReleaseType = "single", ExternalProvider = "deezer", ExternalId = "other-single" },
                 new Album { Id = "ext-deezer-album-other-album", Title = "Other album", Artist = "Service Friend", ArtistId = "ext-deezer-artist-other", Year = 2020, SongCount = 10, ExternalProvider = "deezer", ExternalId = "other-album" }]);
-        gateway.Setup(service => service.GetArtistAlbumsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "seed"))
+        gateway.Setup(service => service.GetArtistAlbumsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "seed", It.IsAny<int>()))
             .ReturnsAsync([new Album { Id = "ext-deezer-album-seed-album", Title = "Seed album", Artist = "Seed Artist", ExternalProvider = "deezer", ExternalId = "seed-album" }]);
         using var factory = ClientDetailsFactory(request =>
         {
@@ -67,7 +70,8 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.Equal("ext-deezer-artist-other", albums[1].GetProperty("artistId").GetString());
         Assert.Equal("deezer", albums[1].GetProperty("provider").GetProperty("id").GetString());
         Assert.StartsWith("/Items/ext-deezer-album-other-album/Images/Primary", albums[1].GetProperty("coverUrl").GetString());
-        gateway.Verify(service => service.GetArtistAlbumsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "friend"), Times.Never);
+        gateway.Verify(service => service.GetArtistAlbumsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "other", 24), Times.Once);
+        gateway.Verify(service => service.GetArtistAlbumsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "friend", It.IsAny<int>()), Times.Never);
 
         using var song = await client.GetAsync("/allstarr/v1/items/ext-deezer-song-mix-song/similar");
         Assert.Equal(HttpStatusCode.BadRequest, song.StatusCode);
@@ -89,7 +93,7 @@ public sealed partial class ProtocolRouteFixtureTests
             });
         gateway.Setup(service => service.GetSimilarArtistsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "seed", It.IsAny<int>()))
             .ReturnsAsync([new Artist { Name = "Service Friend", ExternalProvider = "deezer", ExternalId = "other" }]);
-        gateway.Setup(service => service.GetArtistAlbumsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "other"))
+        gateway.Setup(service => service.GetArtistAlbumsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "other", It.IsAny<int>()))
             .ReturnsAsync([new Album { Id = "ext-deezer-album-other-album", Title = "Other album", Artist = "Service Friend", ExternalProvider = "deezer", ExternalId = "other-album" }]);
         using var factory = ClientDetailsFactory(request => request.RequestUri!.AbsolutePath switch
         {
@@ -111,5 +115,150 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.Equal("deezer", body.RootElement.GetProperty("basedOn").GetString());
         Assert.Equal("ext-deezer-album-other-album", Assert.Single(body.RootElement.GetProperty("albums").EnumerateArray()).GetProperty("id").GetString());
         gateway.Verify(service => service.GetSimilarArtistsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "namesake", It.IsAny<int>()), Times.Never);
+        gateway.Verify(service => service.GetArtistAlbumsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "other", 24), Times.Once);
     }
+
+    [Fact]
+    public async Task ClientApi_SimilarAlbumsFallBackToArtistSearchWhenAlbumSearchFails()
+    {
+        var gateway = new Mock<IProtocolProviderGateway>();
+        gateway.Setup(service => service.SearchAsync(It.IsAny<ProtocolExecutionContext>(), "Seed Artist Seed album", 0, 5, 0, "deezer"))
+            .ThrowsAsync(new HttpRequestException("album search failed"));
+        gateway.Setup(service => service.SearchAsync(It.IsAny<ProtocolExecutionContext>(), "Seed Artist", 0, 0, 10, "deezer"))
+            .ReturnsAsync(new SearchResult { Artists = [new Artist { Name = "Seed Artist", ExternalProvider = "deezer", ExternalId = "seed" }] });
+        gateway.Setup(service => service.GetSimilarArtistsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "seed", It.IsAny<int>()))
+            .ReturnsAsync([new Artist { Name = "Service Friend", ExternalProvider = "deezer", ExternalId = "other" }]);
+        gateway.Setup(service => service.GetArtistAlbumsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "other", It.IsAny<int>()))
+            .ReturnsAsync([new Album { Id = "ext-deezer-album-other-album", Title = "Other album", Artist = "Service Friend", ExternalProvider = "deezer", ExternalId = "other-album" }]);
+        using var factory = ClientDetailsFactory(request => request.RequestUri!.AbsolutePath switch
+        {
+            "/Users/Me" => Json(200, """{"Id":"listener"}"""),
+            "/Users/listener/Items/library-fallback" => Json(200, """{"Id":"library-fallback","Type":"MusicAlbum","Name":"Seed album","AlbumArtist":"Seed Artist"}"""),
+            _ => Json(200, """{"Items":[],"TotalRecordCount":0}""")
+        }, services =>
+        {
+            services.RemoveAll<IProtocolProviderGateway>();
+            services.AddSingleton(gateway.Object);
+        });
+        using var client = CreateClientApiClient(factory);
+        client.DefaultRequestHeaders.Add("X-Emby-Token", "listener-token");
+
+        using var response = await client.GetAsync("/allstarr/v1/items/library-fallback/similar");
+        var text = await response.Content.ReadAsStringAsync();
+        Assert.True(response.StatusCode == HttpStatusCode.OK, text);
+        using var body = JsonDocument.Parse(text);
+        Assert.Equal("ext-deezer-album-other-album", Assert.Single(body.RootElement.GetProperty("albums").EnumerateArray()).GetProperty("id").GetString());
+        gateway.Verify(service => service.SearchAsync(It.IsAny<ProtocolExecutionContext>(), "Seed Artist", 0, 0, 10, "deezer"), Times.Once);
+    }
+
+    [Fact]
+    public async Task ClientApi_SimilarAlbumsCacheIsPersonalAndFollowsListenerSettings()
+    {
+        var clean = false;
+        var gateway = new Mock<IProtocolProviderGateway>();
+        gateway.Setup(service => service.GetAlbumAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "cache-seed"))
+            .ReturnsAsync(new Album { Id = "ext-deezer-album-cache-seed", Title = "Seed", Artist = "Seed Artist", ArtistId = "ext-deezer-artist-cache-seed" });
+        gateway.Setup(service => service.GetSimilarArtistsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "cache-seed", It.IsAny<int>()))
+            .ReturnsAsync([new Artist { Name = "Service Friend", ExternalProvider = "deezer", ExternalId = "cache-friend" }]);
+        gateway.Setup(service => service.GetArtistAlbumsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "cache-friend", It.IsAny<int>()))
+            .ReturnsAsync([new Album { Id = "ext-deezer-album-cache-other", Title = "Other", Artist = "Service Friend", ExternalProvider = "deezer", ExternalId = "cache-other" }]);
+        var policies = new Mock<IEffectiveProviderPolicyResolver>();
+        policies.Setup(item => item.ResolveForUserAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((Guid user, CancellationToken _) => new EffectiveProviderPolicySnapshot(
+                ImmutableDictionary<ProviderCapabilityKind, ImmutableArray<string>>.Empty,
+                ImmutableHashSet<string>.Empty, AudioQualityPolicy.DefaultStep, 0.07)
+            { UserId = user, Preferences = new(clean ? "CleanOnly" : "All") });
+        using var factory = ClientDetailsFactory(request =>
+        {
+            if (request.RequestUri!.AbsolutePath == "/Users/Me")
+                return Json(200, request.Headers.ToString().Contains("other-token", StringComparison.Ordinal) ? """{"Id":"other"}""" : """{"Id":"listener"}""");
+            return Json(200, """{"Items":[],"TotalRecordCount":0}""");
+        }, services =>
+        {
+            services.RemoveAll<IProtocolProviderGateway>();
+            services.AddSingleton(gateway.Object);
+            services.RemoveAll<IEffectiveProviderPolicyResolver>();
+            services.AddSingleton(policies.Object);
+        });
+        using var client = CreateClientApiClient(factory);
+        client.DefaultRequestHeaders.Add("X-Emby-Token", "listener-token");
+
+        async Task<HttpStatusCode> Read()
+        {
+            using var response = await client.GetAsync("/allstarr/v1/items/ext-deezer-album-cache-seed/similar");
+            return response.StatusCode;
+        }
+
+        Assert.Equal(HttpStatusCode.OK, await Read());
+        Assert.Equal(HttpStatusCode.OK, await Read());
+        gateway.Verify(service => service.GetSimilarArtistsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "cache-seed", It.IsAny<int>()), Times.Once);
+        client.DefaultRequestHeaders.Remove("X-Emby-Token");
+        client.DefaultRequestHeaders.Add("X-Emby-Token", "other-token");
+        Assert.Equal(HttpStatusCode.OK, await Read());
+        gateway.Verify(service => service.GetSimilarArtistsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "cache-seed", It.IsAny<int>()), Times.Exactly(2));
+        client.DefaultRequestHeaders.Remove("X-Emby-Token");
+        client.DefaultRequestHeaders.Add("X-Emby-Token", "listener-token");
+        clean = true;
+        Assert.Equal(HttpStatusCode.OK, await Read());
+        gateway.Verify(service => service.GetSimilarArtistsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "cache-seed", It.IsAny<int>()), Times.Exactly(3));
+    }
+
+    [Fact]
+    public void SimilarAlbumsCacheKeyFollowsTheListenerAndTheSettingsThatShapeTheAnswer()
+    {
+        var owner = Guid.Parse("018f1f6e-8e9c-77f5-9a79-3d8a494d60cd");
+        var other = Guid.Parse("028f1f6e-8e9c-77f5-9a79-3d8a494d60cd");
+        string[] available = ["deezer", "qobuz"];
+        var open = SimilarPolicy(false, ["qobuz", "deezer"], ProviderUseMode.Automatic);
+        var clean = SimilarPolicy(true, ["qobuz", "deezer"], ProviderUseMode.Automatic);
+        var reordered = SimilarPolicy(false, ["deezer", "qobuz"], ProviderUseMode.Automatic);
+        var disabled = SimilarPolicy(false, ["qobuz", "deezer"], ProviderUseMode.Off);
+        var lyrics = open with { ProviderOrders = open.ProviderOrders.SetItem(ProviderCapabilityKind.Lyrics, ["genius"]) };
+        string Key(EffectiveProviderPolicySnapshot policy, Guid user, int limit = 12) =>
+            SimilarAlbumsReader.CacheKey(user, "primary", "album", limit, policy, available);
+
+        Assert.NotEqual(Key(open, owner), Key(open, other));
+        Assert.NotEqual(Key(open, owner), Key(clean, owner));
+        Assert.NotEqual(Key(open, owner), Key(reordered, owner));
+        Assert.NotEqual(Key(open, owner), Key(disabled, owner));
+        Assert.NotEqual(Key(open, owner), Key(open, owner, 1));
+        Assert.Equal(Key(open, owner), Key(lyrics, owner));
+        Assert.Equal(Key(open, owner), SimilarAlbumsReader.CacheKey(owner, "primary", "album", 12, open, available));
+    }
+
+    [Fact]
+    public void SimilarAlbumsCacheEvictsTheOldestEntriesPastTheCap()
+    {
+        var prefix = "cap-" + Guid.NewGuid().ToString("N") + "-";
+        var expired = prefix + "expired";
+        var keys = Array.Empty<string>();
+        try
+        {
+            SimilarAlbumsReader.PutCacheForTests(expired, DateTimeOffset.UnixEpoch);
+            var fresh = SimilarAlbumsReader.CacheCountForTests() - 1;
+            var room = Math.Max(1, SimilarAlbumsReader.MaxCacheEntries - fresh + 1);
+            keys = Enumerable.Range(0, room).Select(index => prefix + index.ToString("D4")).ToArray();
+            var start = DateTimeOffset.UtcNow.AddHours(-5);
+            for (var index = 0; index < keys.Length; index++)
+                SimilarAlbumsReader.PutCacheForTests(keys[index], start.AddSeconds(index));
+            SimilarAlbumsReader.TrimCacheForTests();
+            Assert.False(SimilarAlbumsReader.ContainsCacheForTests(expired));
+            Assert.False(SimilarAlbumsReader.ContainsCacheForTests(keys[0]));
+            if (keys.Length > 1) Assert.True(SimilarAlbumsReader.ContainsCacheForTests(keys[^1]));
+            Assert.InRange(SimilarAlbumsReader.CacheCountForTests(), 0, SimilarAlbumsReader.MaxCacheEntries);
+        }
+        finally
+        {
+            SimilarAlbumsReader.RemoveCacheForTests(expired);
+            foreach (var key in keys) SimilarAlbumsReader.RemoveCacheForTests(key);
+        }
+    }
+
+    private static EffectiveProviderPolicySnapshot SimilarPolicy(bool clean, string[] metadata, ProviderUseMode deezer) => new(
+        ImmutableDictionary<ProviderCapabilityKind, ImmutableArray<string>>.Empty.Add(ProviderCapabilityKind.Metadata, metadata.ToImmutableArray()),
+        ImmutableHashSet<string>.Empty, "Lossless", 0.07)
+    {
+        Preferences = new(clean ? "CleanOnly" : "All"),
+        ProviderModes = ImmutableDictionary<string, ProviderUseMode>.Empty.Add("deezer", deezer)
+    };
 }

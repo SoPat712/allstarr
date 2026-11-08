@@ -54,8 +54,12 @@ public sealed class ItemLyricsReader(
         var item = await ResolveAsync(http, execution, itemId);
         if (item == null) return null;
         var layers = await ChoicesAsync(execution, item);
+        var recordingDurationMs = await RecordingDurationMsAsync(execution, item);
         var candidates = await lyrics.FindAllAsync(execution with { RequestedItemId = itemId }, item.Song, item.ResourceKey, item.Sources);
-        var sources = ProtocolLyricsResolver.Assess(candidates, item.Song).Select((candidate, order) =>
+        var scored = recordingDurationMs is > 0
+            ? candidates.Select(candidate => candidate with { Assessment = null }).ToArray()
+            : candidates;
+        var sources = ProtocolLyricsResolver.Assess(scored, item.Song, recordingDurationMs).Select((candidate, order) =>
         {
             var rich = Usable(Rich(candidate));
             return new
@@ -63,7 +67,7 @@ public sealed class ItemLyricsReader(
                 Candidate = candidate,
                 Rich = rich,
                 Order = order,
-                Score = rich == null ? null : candidate.Assessment ?? LyricsQuality.Evaluate(candidate.Lyrics, item.Song)
+                Score = rich == null ? null : candidate.Assessment ?? LyricsQuality.Evaluate(candidate.Lyrics, item.Song, recordingDurationMs)
             };
         }).Where(source => source.Rich != null || source.Candidate.State == "pending").ToArray();
         var known = sources.Where(source => source.Rich != null).ToArray();
@@ -172,6 +176,23 @@ public sealed class ItemLyricsReader(
             ? $"ext-{item.Song.ExternalProvider}-song-{item.Song.ExternalId}" : item.Song.Id;
         return item.Song.CanonicalRecordingId ??
             (await identities.ResolveRecordingAsync(execution.RequireActor(), publicId, execution.CancellationToken))?.Id;
+    }
+
+    private async Task<long?> RecordingDurationMsAsync(ProtocolExecutionContext execution, LyricsItem item)
+    {
+        if (execution.Actor == null) return null;
+        try
+        {
+            var recording = item.Song.CanonicalRecordingId ?? await RecordingAsync(execution, item);
+            if (recording == null) return null;
+            var duration = (await identities.ResolveRecordingAsync(execution.RequireActor(), recording.Value.ToString("D"),
+                execution.CancellationToken))?.DurationMilliseconds;
+            return duration is > 0 ? duration : null;
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            return null;
+        }
     }
 
     private async Task<LyricsItem?> ResolveAsync(HttpContext http, ProtocolExecutionContext execution, string itemId)

@@ -176,25 +176,26 @@ Omit `sourceId` to read the effective lyrics.
 `GET /allstarr/v1/items/{itemId}/lyrics/sources` lists candidate versions,
 their formats, a text preview of up to four lines and 1,000 characters, the
 chosen source and layer (`personal`, `household`, or `automatic`), and the
-current revision. Every candidate has `state`: `ready`, `pending`, or `unavailable`.
-Pending and unavailable candidates have null format and preview;
-`chosen` is null when no lyrics can be selected. Each candidate also includes
+current revision. A listed candidate has `state` `ready` or `pending`.
+Versions with no letters or digits, and lookups that found nothing, are omitted.
+Pending candidates have null format and preview;
+`chosen` is null when no lyrics can be selected. Each listed candidate also includes
 `providerId`, `providerName`, and nullable provider metadata: `title`, `artist`,
-`album`, and `durationMs` (an integer in milliseconds). Providers stay in the
-configured order; each provider's metadata match appears first. Lists contain at
+`album`, and `durationMs` (an integer in milliseconds). Ready candidates are
+ordered by `rank`, best first, with pending candidates after them. Lists contain at
 most five versions per provider and twenty candidates overall. Source discovery
 uses the same response budget and returns the sources known so far. Pending
 sources can become ready on a later read as background lookups fill the caches.
 
 Candidates also have optional `score`, `rank`, and `reasons` fields. `score` is
-between 0 and 1 and uses the exact scorer used for automatic selection. `rank`
-is a unique position among ready, scored candidates, starting at 1 for the best;
-equal scores keep configured provider order, then version order. Pending or
-unavailable candidates have null score, rank, and reasons. Sources configured for
-manual selection remain reviewable but also have null ranking fields because
-they are unavailable to automatic selection. Personal and household
+between 0 and 1 and uses the exact scorer used for automatic selection, including
+a manual source when its text is usable. `rank`
+is a unique position among ready candidates, starting at 1 for the best;
+equal scores prefer the richer timing, then the provider's default version, then
+the order the versions were found. Pending candidates have null score, rank, and
+reasons. Personal and household
 pins override automatic selection without changing scores or ranks. Without a pin,
-`chosen` is rank 1 among the ready candidates known to the response.
+`chosen` is the best ready candidate automatic selection can use.
 
 Clients should prefer `rank` for ordering and fall back to their own ordering
 when these fields are absent. Scores compare versions of this recording; they
@@ -255,8 +256,8 @@ Both writes return `{chosen,revision}` and use `Cache-Control: no-store`.
 Copy the complete revision object from the last sources or write response into
 `expectedRevision`; its stamps are opaque, and numeric revisions must be JSON
 numbers. A stale personal or household revision returns 409 `conflict`.
-Choosing an unavailable source or a source whose preview changes during the
-save also returns 409. A missing or null `expectedRevision` returns 400
+Choosing a source that no longer offers the song also returns 409. A change to
+that version's text does not return 409. A missing or null `expectedRevision` returns 400
 `invalid_request`.
 
 These writes always affect the caller's personal pin, including for
@@ -378,7 +379,8 @@ subtitle names the service it comes from. Playlists the listener made in Jellyfi
 themselves are not included. Results are ordered by `matchedSongCount`, then
 mixes before playlists. Library IDs, service `ext-...` album and song IDs, and
 albums built from saved playlist songs are accepted; other item types return
-400 and unknown items 404. Responses use `Cache-Control: no-store`.
+400. An external song the listener has not stored and the provider does not
+know returns 404, as do other unknown items. Responses use `Cache-Control: no-store`.
 
 `GET /allstarr/v1/items/{itemId}/similar?limit=12` (`similarAlbums`) returns
 `{itemId,basedOn,albums}` for an album. Allstarr asks the album's own service,
@@ -390,7 +392,9 @@ service, or is null when none had related artists. Each album has `id`,
 `title`, `artist`, `artistId`, `year`, `songCount`, `coverUrl`, `source`
 (`library` or the service ID), `isExternal`, and `provider`. Service albums use
 `ext-...` IDs that open and play through Allstarr. `limit` is 1–24. Results are
-kept for six hours per listener. Songs and other item types return 400.
+kept for six hours for that listener. Another listener does not receive them,
+and a change to clean-only or the metadata sources that listener allows is read
+again. The server keeps a bounded number of these answers. Songs and other item types return 400.
 Responses use `Cache-Control: no-store`.
 
 `GET /allstarr/v1/releases` returns `{releases,followedArtists}` from the

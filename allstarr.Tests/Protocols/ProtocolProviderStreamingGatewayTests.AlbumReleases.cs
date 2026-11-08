@@ -2,6 +2,7 @@ using allstarr.Core.Capabilities;
 using allstarr.Core.Operations;
 using allstarr.Core.Protocols;
 using allstarr.Core.Routing;
+using allstarr.Models.Domain;
 using allstarr.Services.Common;
 using Moq;
 
@@ -141,4 +142,80 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
             Mock.Get(capability).Verify(item => item.GetAlbumAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderAlbumLookupRequest>()),
                 Times.Exactly(detailsAvailable ? 1 : 2));
     }
+
+    [Theory]
+    [InlineData(ProtocolKind.Jellyfin)]
+    [InlineData(ProtocolKind.Subsonic)]
+    public async Task LimitedArtistAlbumsReadOnePageAndAtMostTwoMoreWhenCleanOnlyFiltersThem(ProtocolKind protocol)
+    {
+        var first = await ReadArtistAlbumPages(protocol, false, new Dictionary<string, (ProviderAlbumMetadata[] Items, string? Next)>(StringComparer.Ordinal)
+        {
+            [""] = ([Release("kept", false)], "more")
+        });
+        Assert.Equal([24], first.Limits);
+        Assert.Equal([null], first.Cursors);
+        Assert.Equal("kept", Assert.Single(first.Albums).ExternalId);
+
+        var filtered = await ReadArtistAlbumPages(protocol, true, new Dictionary<string, (ProviderAlbumMetadata[] Items, string? Next)>(StringComparer.Ordinal)
+        {
+            [""] = ([Release("explicit-one", true)], "2"),
+            ["2"] = ([Release("explicit-two", true)], "3"),
+            ["3"] = ([Release("clean-one", false)], "4")
+        });
+        Assert.Equal([24, 24, 24], filtered.Limits);
+        Assert.Equal([null, "2", "3"], filtered.Cursors);
+        Assert.Equal("clean-one", Assert.Single(filtered.Albums).ExternalId);
+    }
+
+    [Theory]
+    [InlineData(ProtocolKind.Jellyfin)]
+    [InlineData(ProtocolKind.Subsonic)]
+    public async Task ArtistAlbumsWithoutALimitFollowEveryCursor(ProtocolKind protocol)
+    {
+        var read = await ReadArtistAlbumPages(protocol, false, new Dictionary<string, (ProviderAlbumMetadata[] Items, string? Next)>(StringComparer.Ordinal)
+        {
+            [""] = ([Release("one", false)], "next"),
+            ["next"] = ([Release("two", false)], null)
+        }, limit: null);
+        Assert.Equal([200, 200], read.Limits);
+        Assert.Equal([null, "next"], read.Cursors);
+        Assert.Equal(["one", "two"], read.Albums.Select(album => album.ExternalId));
+    }
+
+    private static async Task<(List<int> Limits, List<string?> Cursors, List<Album> Albums)> ReadArtistAlbumPages(
+        ProtocolKind protocol, bool cleanOnly, Dictionary<string, (ProviderAlbumMetadata[] Items, string? Next)> pages, int? limit = 24)
+    {
+        var capability = SearchRankingCapability("deezer");
+        var limits = new List<int>();
+        var cursors = new List<string?>();
+        Mock.Get(capability).Setup(item => item.GetArtistAlbumsAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderArtistItemsRequest>()))
+            .Returns((ProviderExecutionContext _, ProviderArtistItemsRequest request) =>
+            {
+                limits.Add(request.Page!.Limit);
+                cursors.Add(request.Page.Cursor);
+                var page = pages[request.Page.Cursor ?? ""];
+                return Task.FromResult(ProviderOutcome<ProviderPage<ProviderAlbumMetadata>>.Success(new("deezer", page.Items, page.Next)));
+            });
+        var registry = MetadataRegistry(capability);
+        var router = new Mock<IProviderRouter>(MockBehavior.Strict);
+        router.Setup(item => item.PlanAsync<IProviderMetadataCapability>(It.IsAny<ProviderRouteRequest>()))
+            .ReturnsAsync((ProviderRouteRequest request) => MetadataPlan(request, registry, capability));
+        var gateway = new ProtocolProviderGateway(router.Object, registry, new HttpClientFactory(), audioVerifier: FixtureAudioVerifier.Instance);
+        var context = SearchRankingContext(protocol);
+        if (cleanOnly)
+            context = context with
+            {
+                Policy = new allstarr.Core.Settings.EffectiveProviderPolicySnapshot(
+                    System.Collections.Immutable.ImmutableDictionary<ProviderCapabilityKind, System.Collections.Immutable.ImmutableArray<string>>.Empty,
+                    System.Collections.Immutable.ImmutableHashSet<string>.Empty, "Lossless", 0.07)
+                { UserId = context.Actor?.EffectiveUserId, Preferences = new("CleanOnly") }
+            };
+        var albums = limit is { } capped
+            ? await gateway.GetArtistAlbumsAsync(context, "deezer", "artist", capped)
+            : await gateway.GetArtistAlbumsAsync(context, "deezer", "artist");
+        return (limits, cursors, albums);
+    }
+
+    private static ProviderAlbumMetadata Release(string id, bool? explicitAlbum) =>
+        new(new("deezer", ProviderResourceKind.Album, id), id, [new("Artist")], isExplicit: explicitAlbum);
 }

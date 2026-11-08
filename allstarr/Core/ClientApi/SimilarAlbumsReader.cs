@@ -3,6 +3,7 @@ using System.Text.Json;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Music;
 using allstarr.Core.Protocols;
+using allstarr.Core.Settings;
 using allstarr.Models.Domain;
 using allstarr.Services.Common;
 using allstarr.Services.Jellyfin;
@@ -17,6 +18,8 @@ public sealed class SimilarAlbumsReader(IProtocolProviderGateway providers, Save
     private const int RelatedArtists = 24;
     private const string RelatedArtistsSource = "deezer";
     private const int Lookups = 4;
+    private const int ArtistAlbumSample = 24;
+    internal const int MaxCacheEntries = 500;
     private static readonly TimeSpan FreshFor = TimeSpan.FromHours(6);
     private static readonly ConcurrentDictionary<string, (DateTimeOffset At, ClientSimilarAlbums Value)> Recent = new();
 
@@ -26,7 +29,8 @@ public sealed class SimilarAlbumsReader(IProtocolProviderGateway providers, Save
     {
         limit = Math.Clamp(limit, 1, 24);
         var owner = execution.RequireActor().EffectiveUserId!.Value;
-        var key = $"{owner:N}|{execution.BackendInstanceId}|{itemId}|{limit}";
+        var metadata = providers.GetProviderOrder(ProviderCapabilityKind.Metadata) ?? [];
+        var key = CacheKey(owner, execution.BackendInstanceId, itemId, limit, execution.Policy, metadata);
         if (Recent.TryGetValue(key, out var cached) && DateTimeOffset.UtcNow - cached.At < FreshFor) return cached.Value;
 
         var token = execution.CancellationToken;
@@ -48,11 +52,33 @@ public sealed class SimilarAlbumsReader(IProtocolProviderGateway providers, Save
             .Where(album => !SameName(album.Artist, seed.Artist))
             .DistinctBy(album => album.Id).Take(limit).ToArray();
         var result = new ClientSimilarAlbums(itemId, basedOn, albums);
-        if (Recent.Count > 500)
-            foreach (var stale in Recent.Where(item => DateTimeOffset.UtcNow - item.Value.At >= FreshFor).Select(item => item.Key).ToArray())
-                Recent.TryRemove(stale, out _);
         Recent[key] = (DateTimeOffset.UtcNow, result);
+        TrimCache();
         return result;
+    }
+
+    // Clean-only and the metadata sources this read consults are part of the answer, so a settings change misses.
+    internal static string CacheKey(Guid owner, string backendId, string itemId, int limit,
+        EffectiveProviderPolicySnapshot? policy, IReadOnlyList<string> metadataOrder) =>
+        $"{owner:N}|{backendId}|{itemId}|{limit}|{SettingsFingerprint(policy, metadataOrder)}";
+
+    internal static string SettingsFingerprint(EffectiveProviderPolicySnapshot? policy, IReadOnlyList<string> metadataOrder)
+    {
+        var clean = policy?.Preferences.ExplicitFilter == "CleanOnly" ? "1" : "0";
+        var consulted = policy?.ApplyAutomaticProviderAvailability(ProviderCapabilityKind.Metadata, metadataOrder) ?? metadataOrder;
+        var deezer = policy == null ? "Automatic" : policy.GetProviderMode(RelatedArtistsSource).ToString();
+        return $"{clean}|{deezer}|{string.Join(',', consulted)}";
+    }
+
+    private static void TrimCache()
+    {
+        var now = DateTimeOffset.UtcNow;
+        foreach (var stale in Recent.Where(item => now - item.Value.At >= FreshFor).Select(item => item.Key).ToArray())
+            Recent.TryRemove(stale, out _);
+        var overflow = Recent.Count - MaxCacheEntries;
+        if (overflow <= 0) return;
+        foreach (var oldest in Recent.OrderBy(item => item.Value.At).Take(overflow).Select(item => item.Key).ToArray())
+            Recent.TryRemove(oldest, out _);
     }
 
     private async Task<Seed> SeedAsync(HttpContext http, ProtocolExecutionContext execution, string itemId)
@@ -119,12 +145,16 @@ public sealed class SimilarAlbumsReader(IProtocolProviderGateway providers, Save
         var candidates = new List<string>();
         if (!string.IsNullOrWhiteSpace(seed.Title))
         {
-            var albums = await providers.SearchAsync(execution, $"{seed.Artist} {seed.Title}", 0, 5, 0, source);
-            var album = albums?.Albums.FirstOrDefault(item => item.ExternalProvider == source &&
-                SameName(item.Artist, seed.Artist) && SameName(item.Title, seed.Title));
-            var artist = LocalLibraryService.ParseExternalResource(album?.ArtistId ?? "");
-            if (artist is { isExternal: true, type: "artist" } && artist.provider == source) candidates.Add(artist.externalId!);
-            else if (!string.IsNullOrWhiteSpace(album?.ArtistId) && !album.ArtistId.StartsWith("ext-", StringComparison.Ordinal)) candidates.Add(album.ArtistId);
+            try
+            {
+                var albums = await providers.SearchAsync(execution, $"{seed.Artist} {seed.Title}", 0, 5, 0, source);
+                var album = albums?.Albums.FirstOrDefault(item => item.ExternalProvider == source &&
+                    SameName(item.Artist, seed.Artist) && SameName(item.Title, seed.Title));
+                var artist = LocalLibraryService.ParseExternalResource(album?.ArtistId ?? "");
+                if (artist is { isExternal: true, type: "artist" } && artist.provider == source) candidates.Add(artist.externalId!);
+                else if (!string.IsNullOrWhiteSpace(album?.ArtistId) && !album.ArtistId.StartsWith("ext-", StringComparison.Ordinal)) candidates.Add(album.ArtistId);
+            }
+            catch (Exception exception) when (exception is HttpRequestException or JsonException or InvalidOperationException) { }
         }
         var found = await providers.SearchAsync(execution, seed.Artist, 0, 0, 10, source);
         candidates.AddRange((found?.Artists ?? []).Where(item => item.ExternalProvider == source && SameName(item.Name, seed.Artist))
@@ -137,7 +167,7 @@ public sealed class SimilarAlbumsReader(IProtocolProviderGateway providers, Save
     {
         if (await LibraryAlbumAsync(http, execution, artist.Name) is { } owned) return owned with { Provider = library };
         if (artist.ExternalProvider is not { } source || artist.ExternalId is not { } artistId) return null;
-        var albums = MusicAlbumReleases.Collapse(await providers.GetArtistAlbumsAsync(execution, source, artistId))
+        var albums = MusicAlbumReleases.Collapse(await providers.GetArtistAlbumsAsync(execution, source, artistId, ArtistAlbumSample))
             .OrderByDescending(item => item.ReleaseDate ?? item.Year?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "", StringComparer.Ordinal)
             .ToArray();
         var album = albums.FirstOrDefault(item => item.ReleaseType is not ("single" or "Single" or "compilation" or "Compilation")) ??
@@ -209,4 +239,10 @@ public sealed class SimilarAlbumsReader(IProtocolProviderGateway providers, Save
     private static bool SameName(string? first, string? second) =>
         !string.IsNullOrWhiteSpace(first) && !string.IsNullOrWhiteSpace(second) &&
         FuzzyMatcher.NormalizeForMatching(first) == FuzzyMatcher.NormalizeForMatching(second);
+
+    internal static int CacheCountForTests() => Recent.Count;
+    internal static bool ContainsCacheForTests(string key) => Recent.ContainsKey(key);
+    internal static void PutCacheForTests(string key, DateTimeOffset at) => Recent[key] = (at, new(key, null, []));
+    internal static void RemoveCacheForTests(string key) => Recent.TryRemove(key, out _);
+    internal static void TrimCacheForTests() => TrimCache();
 }

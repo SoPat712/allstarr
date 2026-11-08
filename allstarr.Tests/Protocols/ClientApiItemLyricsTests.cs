@@ -192,6 +192,62 @@ public sealed class ClientApiItemLyricsTests
     }
 
     [Fact]
+    public async Task SourcesScoreAutomaticAndManualCandidatesAgainstTheRecordingDuration()
+    {
+        var fixture = new Fixture();
+        var recording = Guid.NewGuid();
+        const string itemId = "ext-deezer-song-duration";
+        fixture.ExternalSong(itemId, "deezer", "duration", "Song", recording);
+        fixture.Providers.Setup(item => item.GetSongAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "duration"))
+            .ReturnsAsync(new Song
+            {
+                Id = itemId,
+                Title = "Song",
+                Artist = "Artist",
+                Duration = 10,
+                CanonicalRecordingId = recording,
+                ExternalProvider = "deezer",
+                ExternalId = "duration"
+            });
+        fixture.Identities.Setup(item => item.ResolveRecordingAsync(It.IsAny<ProviderActorContext>(), recording.ToString("D"), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CanonicalRecordingIdentity(recording, fixture.Context.Principal!.UserId, null, null, 1) { DurationMilliseconds = 120_000 });
+        fixture.Candidates = [
+            new("lrclib", new LyricsInfo { Source = "lrclib", SyncedLyrics = "[01:50]Last line" })
+            {
+                Assessment = new LyricsScore(0.35, ["synced_lines", "duration_mismatch"])
+            },
+            new("genius", new LyricsInfo { Source = "genius", SyncedLyrics = "[00:08]<00:08>Short <00:09>words" })
+            {
+                AutomaticEligible = false
+            }
+        ];
+
+        var result = Assert.IsType<ClientLyricsSources>(Assert.IsType<OkObjectResult>((await fixture.Controller().Sources(itemId)).Result).Value);
+
+        Assert.Equal(["lrclib", "genius"], result.Sources.Select(source => source.SourceId));
+        Assert.Equal([1, 2], result.Sources.Select(source => source.Rank));
+        Assert.Contains("duration_fits", result.Sources[0].Reasons!);
+        Assert.Contains("duration_mismatch", result.Sources[1].Reasons!);
+        Assert.True(result.Sources[0].Score!.Value > result.Sources[1].Score!.Value);
+        Assert.Equal(new ClientLyricsChosen("lrclib", "automatic"), result.Chosen);
+    }
+
+    [Fact]
+    public async Task SourcesOmitLyricsWithoutWords()
+    {
+        var fixture = new Fixture();
+        const string itemId = "ext-deezer-song-wordless";
+        fixture.ExternalSong(itemId, "deezer", "wordless", "Song");
+        var wordless = new LyricsInfo { Source = "lrclib", SyncedLyrics = "[00:01]♪" };
+        fixture.ResolvedLyrics = wordless;
+        fixture.Candidates = [new("lrclib", wordless)];
+
+        var sources = Assert.IsType<ClientLyricsSources>(Assert.IsType<OkObjectResult>((await fixture.Controller().Sources(itemId)).Result).Value);
+        Assert.Empty(sources.Sources);
+        Assert.Null(sources.Chosen);
+    }
+
+    [Fact]
     public async Task SourceLookupCancellationReachesTheCaller()
     {
         var fixture = new Fixture();
@@ -212,6 +268,7 @@ public sealed class ClientApiItemLyricsTests
         public Mock<ITrackIdentityService> Identities { get; } = new();
         public Mock<ILibraryIndexService> Library { get; } = new();
         public Mock<IRecordingLyricsChoices> Choices { get; } = new();
+        public LyricsInfo ResolvedLyrics { get; set; } = new() { Source = "lrclib", PlainLyrics = "Words" };
         public IReadOnlyList<ProtocolLyricsCandidate> Candidates { get; set; } = [
             new("lrclib", new LyricsInfo { Source = "lrclib", PlainLyrics = "Words" }),
             new("lyricsplus", null) { State = "pending" },
@@ -228,7 +285,7 @@ public sealed class ClientApiItemLyricsTests
                 .Returns((ProtocolExecutionContext context, Song song, string key, ProtocolLyricsSources? sources) =>
                 {
                     Lookups.Add((context, song, key, sources));
-                    return Task.FromResult(RichLyricsMapper.Map(new LyricsInfo { Source = "lrclib", PlainLyrics = "Words" }));
+                    return Task.FromResult(RichLyricsMapper.Map(ResolvedLyrics));
                 });
             _lyrics.Setup(item => item.FindAllAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<Song>(), It.IsAny<string>(), It.IsAny<ProtocolLyricsSources?>()))
                 .Returns((ProtocolExecutionContext context, Song song, string key, ProtocolLyricsSources? sources) =>
