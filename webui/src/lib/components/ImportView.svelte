@@ -44,7 +44,7 @@
   let receiptCounts = $state<Record<string, number>>({});
   let loading = $state(true);
   let busy = $state(false);
-  let error = $state(""), reconnect = $state(false);
+  let error = $state(""), reconnect = $state(false), sourceBusy = $state(false);
   let confirmStop = $state(false);
   let resourceOpen = $state(false);
   let resourceDialog = $state<HTMLDivElement | null>(null);
@@ -224,12 +224,14 @@
   }
   async function findMusic() {
     if (busy) return;
-    busy = true; error = ""; reconnect = false;
+    busy = true; error = ""; reconnect = false; sourceBusy = false;
     try { await discover(); }
     catch (cause) {
       // A source that can't confirm whose music it is has to be reconnected; say so instead of a generic failure.
-      reconnect = cause instanceof ApiError && (cause.details as { code?: string } | null)?.code === "source_connection";
-      error = reconnect && cause instanceof Error ? cause.message : "Your music could not be found. Try again with this account.";
+      const code = cause instanceof ApiError ? (cause.details as { code?: string } | null)?.code : undefined;
+      reconnect = code === "source_connection";
+      sourceBusy = code === "source_busy";
+      error = (reconnect || sourceBusy) && cause instanceof Error ? cause.message : "Your music could not be found. Try again with this account.";
     } finally { busy = false; }
   }
   function selectKind(kind: string, checked: boolean) {
@@ -352,7 +354,7 @@
   {#if loading}<RowsSkeleton count={5} />
   {:else}
     {#if error}<ErrorState title={accounts.length ? "Your import needs attention" : "Your accounts could not load"} detail={error} onretry={!accounts.length ? load : runId && runState !== "choosing" ? refresh : findMusic} />
-      {#if reconnect}<Button variant="outline" href="#/sources/accounts">Reconnect in Sources</Button>{/if}{/if}
+      {#if reconnect}<div class="import-actions"><Button variant="outline" href="#/sources/accounts">Reconnect in Sources</Button></div>{/if}{/if}
     {#if !providerAccounts.length && !runId && !error}
       <EmptyState title={`Connect ${providerName} first.`}>{#snippet icon()}<Check size={24} />{/snippet}{#snippet action()}<Button href="#/integrations/services">Connect an account</Button>{/snippet}</EmptyState>
     {:else if accounts.length || runId}
@@ -360,7 +362,7 @@
         <li class="import-step import-account" class:done={accountVerified || !!runId}>
           <span class="import-step-marker">{#if accountVerified || runId}<Check size={16} aria-hidden="true" />{:else}1{/if}</span>
           <div class="import-step-content">
-            <div class="import-account-heading"><div><h3>Account</h3><small>{accountVerified ? "Account verified" : runId ? "Connected account" : "Checking your account…"}</small></div>
+            <div class="import-account-heading"><div><h3>Account</h3><small>{accountVerified ? "Account verified" : runId ? "Connected account" : reconnect ? "Needs reconnecting" : sourceBusy ? "Busy · try again soon" : error && !busy ? "Not checked" : "Checking your account…"}</small></div>
               {#if providerAccounts.length}<SelectField value={accountId} options={providerAccounts.map(item => ({ value: item.id, label: item.displayName }))} label={`${providerName} account`} disabled={busy} onchange={changeAccount} />{/if}
             </div>
           </div>

@@ -43,6 +43,7 @@ public sealed partial class MigrationWizardFlowTests : IAsyncLifetime
     private int count = 2;
     private long revision = 1;
     private string sourceUser = "source-listener";
+    private bool rateLimited;
     private bool expired, failSecondPage, loseCreate, needsReview, unsupportedLast;
     private int creates, finds, nativeHearts;
     private BackendPlaylistSnapshot? destination;
@@ -126,7 +127,8 @@ public sealed partial class MigrationWizardFlowTests : IAsyncLifetime
         orchestration = new(factory, Mock.Of<IProviderPlaylistSourceGateway>(MockBehavior.Strict), targets.Object, new(), new(), matches,
             clock, new(), access, providerGateway: gateway.Object, jobs: queue);
         reader.Setup(item => item.GetSourceUserAsync(It.IsAny<ProviderExecutionContext>())).ReturnsAsync(() =>
-            expired ? ProviderOutcome<string>.Failure(new(ProviderErrorKind.Unauthorized)) : ProviderOutcome<string>.Success(sourceUser));
+            rateLimited ? ProviderOutcome<string>.Failure(new(ProviderErrorKind.RateLimited, TimeSpan.FromSeconds(30)))
+            : expired ? ProviderOutcome<string>.Failure(new(ProviderErrorKind.Unauthorized)) : ProviderOutcome<string>.Success(sourceUser));
         reader.Setup(item => item.GetUserPlaylistsAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderUserPlaylistsRequest>()))
             .ReturnsAsync(ProviderOutcome<ProviderPage<ProviderPlaylistSummary>>.Success(new("spotify", [Summary("owned"), Summary("followed")])));
         reader.Setup(item => item.GetPlaylistTracksAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderPlaylistTracksRequest>()))
@@ -400,6 +402,18 @@ public sealed partial class MigrationWizardFlowTests : IAsyncLifetime
 
     private CollectionMigrationService Service(ITrackIdentityService? identityService = null) => new(factory, queue, router.Object, matches, playlists, orchestration, targets.Object,
         favorites, new(), clock, identityService ?? identities, gateway.Object, new(factory, clock, router.Object, new Moq.Mock<allstarr.Core.Settings.IDurableRuntimeSettings>().Object));
+    [Fact]
+    public async Task ABusySourceAsksToTryAgainAndAnExpiredOneToReconnect()
+    {
+        rateLimited = true;
+        var busy = await Assert.ThrowsAsync<MigrationSourceBusyException>(() => Service().PreviewAsync(Context(owner), account, null, default));
+        Assert.EndsWith("is busy right now. Try again in a few minutes.", busy.Message);
+        await Assert.ThrowsAsync<MigrationSourceBusyException>(() => Start());
+        rateLimited = false; expired = true;
+        var reconnect = await Assert.ThrowsAsync<MigrationSourceConnectionException>(() => Service().PreviewAsync(Context(owner), account, null, default));
+        Assert.EndsWith("to see your music.", reconnect.Message);
+    }
+
     private Task<Guid> Start() => Service().StartAsync(Context(owner), account, "request", default);
     private async Task<Guid> Selected(string source, bool keepInSync = false)
     {

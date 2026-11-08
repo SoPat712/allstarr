@@ -118,7 +118,7 @@ public sealed partial class CollectionMigrationService(IDbContextFactory<Allstar
         var account = await AccountAsync(db, user.Id, accountId, token);
         var source = await SourceAsync(execution, account, token);
         var identity = await source.Implementation.GetSourceUserAsync(source.Context);
-        if (!identity.IsSuccess) throw new MigrationSourceConnectionException(source.Name);
+        if (!identity.IsSuccess) throw SourceUnavailable(source.Name, identity.Error);
         var run = new MigrationRun
         {
             ProviderId = account.ProviderId,
@@ -156,7 +156,7 @@ public sealed partial class CollectionMigrationService(IDbContextFactory<Allstar
         var user = await UserAsync(db, execution, token);
         var source = await SourceAsync(execution, await AccountAsync(db, user.Id, accountId, token), token);
         var identity = await source.Implementation.GetSourceUserAsync(source.Context);
-        if (!identity.IsSuccess) throw new MigrationSourceConnectionException(source.Name);
+        if (!identity.IsSuccess) throw SourceUnavailable(source.Name, identity.Error);
         return await ReadDiscoveryAsync(source, cursor);
     }
 
@@ -676,6 +676,11 @@ public sealed partial class CollectionMigrationService(IDbContextFactory<Allstar
         if (!identity.IsSuccess) throw new InvalidOperationException($"Restore the {source.Name} connection.");
         if (identity.RequireValue() != run.SourceUserId) throw new UnauthorizedAccessException();
     }
+    // A busy service is asked again later; any other failure to say whose music it is needs the account reconnected.
+    private static InvalidOperationException SourceUnavailable(string sourceName, ProviderError? error) =>
+        error?.Kind is ProviderErrorKind.RateLimited or ProviderErrorKind.TransientFailure
+            ? new MigrationSourceBusyException(sourceName)
+            : new MigrationSourceConnectionException(sourceName);
     public ProtocolExecutionContext Execution(UserRecord user, string correlation, CancellationToken token) => new(
         user.BackendType == "jellyfin" ? ProtocolKind.Jellyfin : ProtocolKind.Subsonic, user.BackendInstanceId, user.BackendPrincipalId,
         new AllstarrPrincipal(user.Id, user.BackendType, user.BackendInstanceId, user.BackendPrincipalId, user.DisplayName, user.IsAdmin), correlation, clock.UtcNow.AddMinutes(5), token);
@@ -687,3 +692,6 @@ public sealed class MigrationSourceConnectionException(string sourceName)
 {
     public string SourceName { get; } = sourceName;
 }
+
+public sealed class MigrationSourceBusyException(string sourceName)
+    : InvalidOperationException($"{sourceName} is busy right now. Try again in a few minutes.");
