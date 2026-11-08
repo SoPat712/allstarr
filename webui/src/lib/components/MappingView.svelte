@@ -177,6 +177,7 @@
 
   async function load() {
     const version = ++loadVersion;
+    loadsInFlight++;
     const key = `${view}:${sort}:${cacheKey()}`;
     const cached = pageCache.get(key);
     if (cached) { data = cached; loading = false; }
@@ -219,6 +220,8 @@
         loading = false;
         refreshing = false;
       }
+      loadsInFlight--;
+      if (!loadsInFlight && liveChangePending) { liveChangePending = false; scheduleRefresh(); }
     }
   }
 
@@ -279,7 +282,14 @@
       rowsElement.scrollIntoView({ block: "start", behavior: "instant" });
   }
 
-  const refreshScheduler = createRefreshScheduler(reload);
+  // A large review can take a while to build. Live changes never throw away a load in flight: they wait for it,
+  // then reload once, at most every few seconds.
+  let loadsInFlight = 0, liveChangePending = false;
+  function liveReload() {
+    if (loadsInFlight) { liveChangePending = true; return; }
+    return reload();
+  }
+  const refreshScheduler = createRefreshScheduler(liveReload, 250, 5000);
   const scheduleRefresh = refreshScheduler.schedule;
 
   function setState(value: string) {
@@ -650,7 +660,7 @@
 {#snippet rowMenu(match: MatchReviewItem)}
   <DropdownMenu.Root>
     <DropdownMenu.Trigger class={`${buttonVariants({ variant: "text", size: "icon" })} row-menu`} disabled={Boolean(action)} aria-label={`More actions for ${match.title || "song"}`}><MoreHorizontal size={18} aria-hidden="true" /></DropdownMenu.Trigger>
-    <DropdownMenu.Portal><DropdownMenu.Content class="bits-menu" sideOffset={4} align="end">
+    <DropdownMenu.Portal><DropdownMenu.Content preventScroll={false} class="bits-menu" sideOffset={4} align="end">
       <DropdownMenu.Item class="bits-menu-item" onSelect={() => { openMatch(match); lyricsRequest++; }} disabled={!match.canonicalRecordingId}>Wrong lyrics?</DropdownMenu.Item>
       <DropdownMenu.Item class="bits-menu-item" onSelect={() => window.location.hash = reportHref({ externalSnapshotId: match.externalSnapshotId }, "/library/matches")}>Report a problem</DropdownMenu.Item>
       <DropdownMenu.Item class="bits-menu-item" onSelect={() => void rematch(match)}>Rematch</DropdownMenu.Item>

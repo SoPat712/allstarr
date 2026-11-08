@@ -2717,8 +2717,8 @@ export const playlistLinks = {
 };
 
 export const matchReview = {
-  current: (externalSnapshotId: string) => json<{ externalSnapshotId: string; target: (Omit<NonNullable<MatchReviewItem["target"]>, "providerId" | "externalId"> & { providerId?: string | null; externalId?: string | null; isLocal?: boolean; libraryTrackId?: string | null; backendItemId?: string | null }) | null }>(
-    `/api/admin/track-matches/${encodeURIComponent(externalSnapshotId)}/current`),
+  current: (externalSnapshotId: string, copy?: { providerId: string; externalId: string } | null) => json<{ externalSnapshotId: string; target: (Omit<NonNullable<MatchReviewItem["target"]>, "providerId" | "externalId"> & { providerId?: string | null; externalId?: string | null; isLocal?: boolean; libraryTrackId?: string | null; backendItemId?: string | null }) | null }>(
+    `/api/admin/track-matches/${encodeURIComponent(externalSnapshotId)}/current${copy ? `?${new URLSearchParams(copy)}` : ""}`),
   list: (params: {
     page?: number;
     pageSize?: number;

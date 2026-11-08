@@ -363,12 +363,16 @@ public sealed class TrackMatchesController(
         var prepared = Stopwatch.GetTimestamp();
         var rowLibrary = new RowLibrary(library);
         var playableProviderSet = playableProviders.ToHashSet(StringComparer.Ordinal);
+        // Rows are independent and only read the indexes above, so a large review spreads over a few cores.
         var allRows = review.Snapshots
             .GroupBy(snapshot => new
             {
                 snapshot.OwnerUserId,
                 SourceIdentity = $"{snapshot.ProviderId.ToLowerInvariant()}:{snapshot.ExternalIdHash}"
             })
+            .AsParallel().AsOrdered()
+            .WithDegreeOfParallelism(Math.Clamp(Environment.ProcessorCount / 2, 1, 4))
+            .WithCancellation(cancellationToken)
             .Select(group =>
             {
                 var snapshot = group
@@ -472,7 +476,8 @@ public sealed class TrackMatchesController(
     }
 
     [HttpGet("{externalSnapshotId:guid}/current")]
-    public async Task<IActionResult> Current(Guid externalSnapshotId, CancellationToken cancellationToken = default)
+    public async Task<IActionResult> Current(Guid externalSnapshotId, [FromQuery] string? providerId = null,
+        [FromQuery] string? externalId = null, CancellationToken cancellationToken = default)
     {
         Response.Headers.CacheControl = "private, no-store";
         if (!TrySession(out var session, out var error)) return error!;
@@ -493,6 +498,29 @@ public sealed class TrackMatchesController(
         {
             return StatusCode(403, new { error = "The linked backend identity is unavailable" });
         }
+        async Task DescribeAsync(TrackMatchTarget target)
+        {
+            try
+            {
+                var song = await providerGateway.GetExactSongAsync(execution with { IsReadOnly = true }, target.ProviderId, target.ExternalId);
+                cancellationToken.ThrowIfCancellationRequested();
+                if (song?.ExternalId == target.ExternalId &&
+                    AppleMusicClient.NormalizeProviderId(song.ExternalProvider ?? "") == target.ProviderId)
+                {
+                    target.Title = CurrentFact(song.Title) ?? target.Title;
+                    target.Artist = CurrentFact(song.Artist) ?? CurrentFact(string.Join(", ", song.Artists)) ?? target.Artist;
+                    target.Album = CurrentFact(song.Album) ?? target.Album;
+                    target.Isrc = CurrentFact(song.Isrc) ?? target.Isrc;
+                    target.DurationMilliseconds = song.PreciseDuration is { } duration && duration > TimeSpan.Zero
+                        ? (long)Math.Round(duration.TotalMilliseconds)
+                        : song.Duration is > 0 ? (long)song.Duration.Value * 1000 : target.DurationMilliseconds;
+                }
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+            {
+                logger?.LogDebug(exception, "Current match metadata was unavailable for {ProviderId}", target.ProviderId);
+            }
+        }
         var playableProviders = await providerGateway.GetPlayableProviderOrderAsync(execution.RequireActor(), cancellationToken);
         var providerPolicy = effectivePolicies == null ? execution.Policy :
             await effectivePolicies.ResolveForUserAsync(userId, cancellationToken);
@@ -506,7 +534,35 @@ public sealed class TrackMatchesController(
             review.ProviderIdentities.GroupBy(item => item.CanonicalRecordingId).ToDictionary(group => group.Key, group => group.ToArray()),
             playableProviders, playableProviders.ToHashSet(StringComparer.Ordinal), userId, session.IsAdministrator, providerPolicy);
         if (row.State is not (TrackMatchState.Accepted or TrackMatchState.Pinned))
-            return Ok(new { externalSnapshotId, target = (object?)null });
+        {
+            // A song still under review plays through one of its own service copies; the review names which one it shows.
+            var copy = providerId == null || externalId == null || row.State == TrackMatchState.Rejected ? null
+                : review.ProviderIdentities.FirstOrDefault(item =>
+                    AppleMusicClient.NormalizeProviderId(item.ProviderId) == AppleMusicClient.NormalizeProviderId(providerId) &&
+                    item.ExternalId == externalId &&
+                    item.CanonicalRecordingId == (decision?.CanonicalRecordingId ?? sourceIdentity?.CanonicalRecordingId));
+            if (copy == null) return Ok(new { externalSnapshotId, target = (object?)null });
+            var described = new TrackMatchTarget(copy.ProviderId, copy.ExternalId);
+            await DescribeAsync(described);
+            return Ok(new
+            {
+                externalSnapshotId,
+                target = new
+                {
+                    providerId = described.ProviderId,
+                    externalId = described.ExternalId,
+                    isLocal = false,
+                    libraryTrackId = (Guid?)null,
+                    backendItemId = (string?)null,
+                    title = described.Title,
+                    artist = described.Artist,
+                    album = described.Album,
+                    durationMilliseconds = described.DurationMilliseconds,
+                    isrc = described.Isrc,
+                    artworkUrl = described.ArtworkUrl
+                }
+            });
+        }
         if (row.LocalTrack is { } track)
             return Ok(new
             {
@@ -532,26 +588,7 @@ public sealed class TrackMatchesController(
         await new TrackMatchTargetResolver(contextFactory, applicationCache).EnrichAsync(actor,
             [lookup with { SourceSnapshot = null }], cancellationToken, targetMetadataOnly: true);
         var target = lookup.Target;
-        try
-        {
-            var song = await providerGateway.GetExactSongAsync(execution with { IsReadOnly = true }, target.ProviderId, target.ExternalId);
-            cancellationToken.ThrowIfCancellationRequested();
-            if (song?.ExternalId == target.ExternalId &&
-                AppleMusicClient.NormalizeProviderId(song.ExternalProvider ?? "") == target.ProviderId)
-            {
-                target.Title = CurrentFact(song.Title) ?? target.Title;
-                target.Artist = CurrentFact(song.Artist) ?? CurrentFact(string.Join(", ", song.Artists)) ?? target.Artist;
-                target.Album = CurrentFact(song.Album) ?? target.Album;
-                target.Isrc = CurrentFact(song.Isrc) ?? target.Isrc;
-                target.DurationMilliseconds = song.PreciseDuration is { } duration && duration > TimeSpan.Zero
-                    ? (long)Math.Round(duration.TotalMilliseconds)
-                    : song.Duration is > 0 ? (long)song.Duration.Value * 1000 : target.DurationMilliseconds;
-            }
-        }
-        catch (Exception exception) when (exception is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
-        {
-            logger?.LogDebug(exception, "Current match metadata was unavailable for {ProviderId}", target.ProviderId);
-        }
+        await DescribeAsync(target);
         return Ok(new
         {
             externalSnapshotId,

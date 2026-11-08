@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using allstarr.Core.Storage;
 using allstarr.Core.Settings;
 using allstarr.Services.Spotify;
@@ -82,6 +83,13 @@ public sealed class TrackRouteLibrary(IEnumerable<LibraryTrackRecord> tracks)
 
 public static class TrackRouteProjector
 {
+    // Deciding whether the library holds a song means scoring it against the library, the slow part of projecting
+    // thousands of songs. The answer holds until the song, its identity, the library or the listener's policy changes.
+    private readonly record struct LocalCopyKey(Guid SnapshotId, int SnapshotVersion, Guid? IdentityId, long IdentityRevision,
+        long LibraryRevision, double Window, bool CleanOnly);
+    private const int MaximumLocalCopies = 200_000;
+    private static readonly ConcurrentDictionary<LocalCopyKey, Guid?> LocalCopies = new();
+
     public static TrackRouteProjection Project(
         ExternalMetadataSnapshotRecord snapshot,
         TrackMatchRecord? decision,
@@ -124,29 +132,45 @@ public static class TrackRouteProjector
             providerOrder,
             scopedLibrary.Ids, providerPolicy, snapshot.ProviderId);
         scopedLibrary.ById.TryGetValue(classification.LibraryTrackId ?? Guid.Empty, out var local);
-        var matchingSource = TrackSnapshotMetadata.MatchingSource(snapshot, sourceIdentity);
+        ExternalTrackMatchSnapshot? matchingSource = null;
+        var sourceRead = false;
+        ExternalTrackMatchSnapshot? MatchingSource()
+        {
+            if (!sourceRead) { matchingSource = TrackSnapshotMetadata.MatchingSource(snapshot, sourceIdentity); sourceRead = true; }
+            return matchingSource;
+        }
         if (preferLocalCopies && local == null && manual == null && decision?.State is not (TrackMatchState.Pinned or TrackMatchState.Rejected) &&
             snapshot.OwnerUserId != Guid.Empty &&
             providerPolicy?.IsAutomatic(sourceIdentity?.ProviderId ?? snapshot.ProviderId) != false)
         {
-            if (matchingSource is { } source)
+            var window = providerPolicy?.LocalPreferenceWindow ?? .07;
+            var cleanOnly = providerPolicy?.Preferences.ExplicitFilter == "CleanOnly";
+            var key = new LocalCopyKey(snapshot.Id, snapshot.SnapshotVersion, sourceIdentity?.Id, sourceIdentity?.Revision ?? 0,
+                scopedLibrary.Candidates.Revision, window, cleanOnly);
+            if (!LocalCopies.TryGetValue(key, out var selected))
             {
-                var scope = new TrackMatchScope(snapshot.OwnerUserId, snapshot.BackendInstanceId, null, 2,
-                    Math.Max(1, snapshot.SnapshotVersion), scopedLibrary.LibraryIds);
-                var engine = new TrackMatchDecisionEngine(new TrackMatchPolicy
+                selected = null;
+                if (MatchingSource() is { } source)
                 {
-                    LocalPriorityWindow = providerPolicy?.LocalPreferenceWindow ?? .07,
-                    ExplicitContent = providerPolicy?.Preferences.ExplicitFilter == "CleanOnly"
-                        ? allstarr.Core.Capabilities.ProviderExplicitContentPolicy.CleanOnly
-                        : allstarr.Core.Capabilities.ProviderExplicitContentPolicy.Allow
-                });
-                var localDecision = engine.Decide(scope, source, scopedLibrary.Candidates);
-                if (localDecision.State == TrackMatchReviewState.Accepted &&
-                    localDecision.SelectedLibraryTrackId is { } selectedId)
-                {
-                    local = scopedLibrary.ById[selectedId];
-                    classification = classification with { State = TrackMatchState.Accepted, LibraryTrackId = selectedId };
+                    var scope = new TrackMatchScope(snapshot.OwnerUserId, snapshot.BackendInstanceId, null, 2,
+                        Math.Max(1, snapshot.SnapshotVersion), scopedLibrary.LibraryIds);
+                    var engine = new TrackMatchDecisionEngine(new TrackMatchPolicy
+                    {
+                        LocalPriorityWindow = window,
+                        ExplicitContent = cleanOnly
+                            ? allstarr.Core.Capabilities.ProviderExplicitContentPolicy.CleanOnly
+                            : allstarr.Core.Capabilities.ProviderExplicitContentPolicy.Allow
+                    });
+                    var localDecision = engine.Decide(scope, source, scopedLibrary.Candidates);
+                    if (localDecision.State == TrackMatchReviewState.Accepted) selected = localDecision.SelectedLibraryTrackId;
                 }
+                if (LocalCopies.Count >= MaximumLocalCopies) LocalCopies.Clear();
+                LocalCopies[key] = selected;
+            }
+            if (selected is { } selectedId && scopedLibrary.ById.TryGetValue(selectedId, out var chosen))
+            {
+                local = chosen;
+                classification = classification with { State = TrackMatchState.Accepted, LibraryTrackId = selectedId };
             }
         }
         canonicalId ??= local?.CanonicalRecordingId;
@@ -158,7 +182,7 @@ public static class TrackRouteProjector
         {
             local = scopedLibrary.FirstByRecording.GetValueOrDefault(canonicalId.Value);
             if (local != null &&
-                (matchingSource != null && !LocalCopyPreference.KnownRecordingMatches(matchingSource, LocalCopyPreference.ToCandidate(local)) ||
+                (MatchingSource() is { } known && !LocalCopyPreference.KnownRecordingMatches(known, LocalCopyPreference.ToCandidate(local)) ||
                  providerPolicy?.Preferences.ExplicitFilter == "CleanOnly" &&
                  TrackMatchSignals.Explicitness(LocalCopyPreference.ToCandidate(local)) != false)) local = null;
             if (local != null) classification = classification with { LibraryTrackId = local.Id };

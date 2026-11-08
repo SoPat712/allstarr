@@ -77,6 +77,8 @@
   const scopes = $derived(match ? allowedAuthorityScopes(match).map(id => ({ id, label: id === "personal" ? "For me" : "For the household", disabled: !canEditAuthorityScope(match, id) })) : []);
   const editable = $derived(Boolean(match && scopes.some(item => item.id === scope && !item.disabled)));
   const comparison = $derived(match ? comparisonRows(match, preview ? targetSong(preview) : null) : []);
+  const previewIsCurrent = $derived(Boolean(preview && current && (preview.externalProvider || "local") === current.providerId &&
+    (preview.externalId || preview.id) === current.identity));
   $effect(() => {
     if (!open) { prepared = null; factsRequest++; loadingFacts = false; return; }
     if (!match || prepared === match) return;
@@ -93,7 +95,9 @@
     const snapshotId = match.externalSnapshotId;
     const initialPreview = preview;
     loadingFacts = true;
-    void matchReview.current(snapshotId).then(response => {
+    // A song still under review has no settled target, so ask about the service copy shown as playing.
+    const shown = !match.target && !match.localTrack && target && target.providerId !== "local" ? { providerId: target.providerId, externalId: target.identity } : null;
+    void matchReview.current(snapshotId, shown).then(response => {
       const target = response.target;
       const identity = target?.isLocal ? target.libraryTrackId : target?.externalId;
       const fresh = target && identity && match && (target.isLocal || target.providerId) ? {
@@ -162,7 +166,7 @@
     {#if match}
       <DropdownMenu.Root>
         <DropdownMenu.Trigger class={buttonVariants({ variant: "text", size: "icon" })} aria-label="More"><MoreHorizontal size={18} aria-hidden="true" /></DropdownMenu.Trigger>
-        <DropdownMenu.Portal><DropdownMenu.Content class="bits-menu" align="end" sideOffset={4}>
+        <DropdownMenu.Portal><DropdownMenu.Content preventScroll={false} class="bits-menu" align="end" sideOffset={4}>
           <DropdownMenu.Item class="bits-menu-item" onSelect={() => onRematch(match!)}>Rematch</DropdownMenu.Item>
           <DropdownMenu.Item class="bits-menu-item" disabled={!match.canonicalRecordingId} onSelect={() => showLyrics = !showLyrics}>Wrong lyrics?</DropdownMenu.Item>
           <DropdownMenu.Item class="bits-menu-item" onSelect={() => { open = false; window.location.hash = reportHref({ externalSnapshotId: match!.externalSnapshotId }, "/library/matches"); }}>Report a problem</DropdownMenu.Item>
@@ -177,9 +181,9 @@
     {:else}
       <section class="comparison-section" aria-label="Recording comparison">
         {#if loadingFacts}<p class="preview-label" role="status">Loading current recording details…</p>{/if}
-        <p class="preview-label">{preview ? `Previewing ${name(preview.externalProvider)}${preview.title?.trim() ? ` · ${preview.title}` : ""}` : "No current match"}</p>
-        <table class="comparison"><thead><tr><th>Detail</th><th>Original<br /><small>Your playlist</small></th><th>Current<br /><small>Plays as</small></th><th>Verdict</th></tr></thead>
-          <tbody>{#each comparison as row}<tr><th scope="row">{row.label}</th><td>{row.original}</td><td>{row.current}</td><td><span class:equal={row.verdict === "Same"}>{row.verdict}</span></td></tr>{/each}</tbody>
+        {#if !preview}<p class="preview-label">No current match</p>{/if}
+        <table class="comparison"><thead><tr><th><span class="sr-only">Detail</span></th><th>Your playlist</th><th>{preview ? `${previewIsCurrent ? "Plays as" : "Would play"} · ${name(preview.externalProvider)}` : "Plays as"}</th><th><span class="sr-only">Verdict</span></th></tr></thead>
+          <tbody>{#each comparison as row}<tr><th scope="row">{row.label}</th><td>{row.original}</td><td>{row.current}</td><td><span class="verdict" data-verdict={row.verdict === "Same" ? "same" : row.verdict === "Close" ? "close" : row.verdict === "Can't compare" ? "unknown" : "different"}>{row.verdict}</span></td></tr>{/each}</tbody>
         </table>
       </section>
       <section class="choices" aria-labelledby="better-choices"><h3 id="better-choices" class="sec-label">Better choices</h3>
@@ -276,7 +280,12 @@
   .comparison th, .comparison td { text-align: left; padding: var(--space-2) var(--space-1); border-bottom: 1px solid var(--color-edge); overflow-wrap: anywhere; vertical-align: top; }
   .comparison th { font-weight: 500; color: var(--color-ink-muted); }
   .comparison th:first-child { width: 16%; }.comparison th:last-child { width: 20%; }
-  .equal { color: var(--success); }
+  .comparison thead th { font-size: .66rem; letter-spacing: .05em; text-transform: uppercase; }
+  .verdict { font-weight: 500; }
+  .verdict[data-verdict="same"] { color: var(--success); }
+  .verdict[data-verdict="close"] { color: var(--warning); }
+  .verdict[data-verdict="different"] { color: var(--danger); }
+  .verdict[data-verdict="unknown"] { color: var(--color-ink-muted); }
   .candidate-card, .search-result { border-bottom: 1px solid var(--color-edge); padding-block: var(--space-2); }
   .candidate-reasons { padding-inline: var(--space-3); }
   .search-section :global(.search-toggle) { height: auto; min-height: var(--touch-target-min, 32px); padding: 0; color: var(--color-signal-text); font-size: .8125rem; font-weight: 500; }

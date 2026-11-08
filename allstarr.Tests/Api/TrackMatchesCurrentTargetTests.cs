@@ -243,10 +243,32 @@ public sealed class TrackMatchesCurrentTargetTests : IAsyncLifetime
         gateway.Verify(item => item.GetExactSongAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), It.IsAny<string>()), Times.Never);
     }
 
-    private async Task<JsonElement> Read()
+    [Fact]
+    public async Task SongUnderReviewDescribesTheServiceCopyItShows()
+    {
+        var recording = Guid.NewGuid();
+        var sourceIdentity = Identity(recording, "spotify", "source", source.ExternalIdHash);
+        var copy = Identity(recording, "apple-musickit", "copy", new string('b', 64));
+        var unrelated = Identity(Guid.NewGuid(), "deezer", "unrelated", new string('d', 64));
+        source.ProviderTrackIdentityId = sourceIdentity.Id;
+        review = review with { ActiveOverrides = [], ProviderIdentities = [sourceIdentity, copy, unrelated] };
+        gateway.Setup(item => item.GetExactSongAsync(It.Is<ProtocolExecutionContext>(context => context.IsReadOnly), "apple-musickit", "copy"))
+            .ReturnsAsync(new Song { ExternalProvider = "apple-musickit", ExternalId = "copy", Title = "Copy title", Artist = "Copy artist", Duration = 155 });
+
+        var target = (await Read("apple-musickit", "copy")).GetProperty("target");
+        Assert.Equal("Copy title", target.GetProperty("title").GetString());
+        Assert.Equal("Copy artist", target.GetProperty("artist").GetString());
+        Assert.Equal(155000, target.GetProperty("durationMilliseconds").GetInt64());
+        Assert.Equal("copy", target.GetProperty("externalId").GetString());
+
+        Assert.Equal(JsonValueKind.Null, (await Read("deezer", "unrelated")).GetProperty("target").ValueKind);
+        gateway.Verify(item => item.GetExactSongAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", It.IsAny<string>()), Times.Never);
+    }
+
+    private async Task<JsonElement> Read(string? providerId = null, string? externalId = null)
     {
         var controller = Controller();
-        var result = Assert.IsType<OkObjectResult>(await controller.Current(source.Id));
+        var result = Assert.IsType<OkObjectResult>(await controller.Current(source.Id, providerId, externalId));
         Assert.Equal("private, no-store", controller.Response.Headers.CacheControl.ToString());
         return JsonSerializer.SerializeToElement(result.Value);
     }

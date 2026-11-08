@@ -453,3 +453,36 @@ test("Match status and legend format large counts and put rematch before filters
   expect(rematch!.y).toBeLessThan(filters!.y);
   await expect(page.getByRole("button", { name: "Select", exact: true })).toHaveClass(/border-\[var\(--color-edge-strong\)\]/);
 });
+
+test("Live changes wait for a slow match list instead of restarting it", async ({ page }) => {
+  await page.addInitScript(() => {
+    class FixtureStream {
+      static instances: FixtureStream[] = [];
+      listeners = new Map<string, EventListener[]>();
+      constructor() { FixtureStream.instances.push(this); }
+      addEventListener(type: string, listener: EventListener) { this.listeners.set(type, [...(this.listeners.get(type) ?? []), listener]); }
+      close() { FixtureStream.instances = FixtureStream.instances.filter(item => item !== this); }
+    }
+    let revision = 0;
+    Object.defineProperty(window, "EventSource", { value: FixtureStream });
+    Object.assign(window, { __emitMatchUpdate: () => {
+      revision++;
+      const event = { data: JSON.stringify({ resource: "track-match", resourceId: `song-${revision}`, revision }), lastEventId: `match-${revision}` };
+      for (const stream of FixtureStream.instances) for (const listener of stream.listeners.get("update") ?? []) listener(event as unknown as Event);
+    } });
+  });
+  await fixture(page);
+  let lists = 0;
+  await page.route(url => url.pathname === "/api/admin/track-matches", async route => {
+    lists++;
+    await new Promise(resolve => setTimeout(resolve, 1500));
+    await route.fallback();
+  });
+  await page.goto("/#/library/matches");
+  for (let index = 0; index < 8; index++) {
+    await page.evaluate(() => (window as unknown as { __emitMatchUpdate: () => void }).__emitMatchUpdate());
+    await page.waitForTimeout(300);
+  }
+  await expect(page.locator(".mapping-row").first()).toBeVisible({ timeout: 10_000 });
+  expect(lists).toBeLessThanOrEqual(4);
+});
