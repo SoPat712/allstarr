@@ -417,6 +417,11 @@
     font-size: 0.85rem;
   }
 
+  .notice-safe {
+    background: var(--success-container);
+    color: var(--on-success-container);
+  }
+
   .app-shell {
     --sidebar-width: 12.5rem;
     min-height: 100vh;
@@ -5520,32 +5525,6 @@
     grid-template-columns: minmax(0, 1.4fr) minmax(16rem, 1fr);
     gap: var(--space-8);
     padding: var(--space-6);
-  }
-
-  .home-listening {
-    display: grid;
-    align-content: start;
-    gap: var(--space-3);
-  }
-
-  .home-sentence {
-    max-width: 34rem;
-    margin: 0;
-    color: var(--color-ink-muted);
-    font-size: 1.25rem;
-    line-height: 1.875rem;
-  }
-
-  .home-sentence strong {
-    color: var(--color-ink);
-    font-weight: 600;
-  }
-
-  .home-sentence-detail {
-    margin: 0;
-    color: var(--color-ink-muted);
-    font-size: 0.8125rem;
-    line-height: 1.125rem;
   }
 
   .home-facts {

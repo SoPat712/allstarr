@@ -7,6 +7,7 @@
     open = $bindable(false),
     title,
     description,
+    safe = "",
     confirmLabel,
     cancelLabel = "Cancel",
     confirmVariant = "destructive",
@@ -21,6 +22,8 @@
     open: boolean;
     title: string;
     description: string;
+    // What the action leaves alone, shown in a green box.
+    safe?: string;
     confirmLabel: string;
     cancelLabel?: string;
     confirmVariant?: ButtonVariant;
@@ -40,6 +43,7 @@
     <AlertDialog.Content class="confirm-dialog" {preventScroll}>
       <AlertDialog.Title>{title}</AlertDialog.Title>
       <AlertDialog.Description>{description}</AlertDialog.Description>
+      {#if safe}<p class="notice-error notice-safe">✓ {safe}</p>{/if}
       {@render children?.()}
       {#if error}<p class="notice-error" role="alert">{error}</p>{/if}
       <footer class="dialog-actions">

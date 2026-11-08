@@ -89,7 +89,14 @@
   const bulkActionCount = $derived(removableFiles.length);
   const bulkSize = $derived(removableFiles.length === allFiles.length
     ? data?.totalSizeFormatted ?? "0 B" : formatSize(removableFiles.reduce((sum, file) => sum + file.size, 0)));
+  // Removing cached copies only frees space: say how much, and what stays.
+  const simpleCacheRemoval = $derived(cached && !explicitKeepCount);
+  const bulkSafe = $derived(simpleCacheRemoval ? "Kept songs and original library files stay. Nothing changes in your media server." : "");
   const bulkDescription = $derived.by(() => {
+    if (simpleCacheRemoval) {
+      const diagnostics = data?.diagnosticCount ?? 0;
+      return `Frees ${bulkSize}. These ${countLabel(legacyRemovalCount, "cached copy", "cached copies")} stream again next time they play.${diagnostics ? ` ${countLabel(diagnostics, "diagnostic file")} ${diagnostics === 1 ? "stays" : "stay"}.` : ""}`;
+    }
     const actions: string[] = [];
     if (explicitKeepCount) actions.push(`release ${countLabel(explicitKeepCount, "explicit Keep")}`);
     if (legacyRemovalCount) actions.push(`remove ${legacyRemovalCount} ${cached ? "cached" : "unreferenced kept"} ${legacyRemovalCount === 1 ? "copy" : "copies"}`);
@@ -313,6 +320,7 @@
     : removal?.kind === "all" ? bulkDescription
     : removal?.kind === "release" ? `This releases your Keep on ${removal.file.title || removal.file.fileName}. Other household interests stay protected. If none remain, the file enters a 24-hour grace period before cleanup.`
     : `This deletes the indexed audio file and its lyrics sidecar for ${removal?.file.title || removal?.file.fileName || "this song"} (${removal?.file.sizeFormatted || ""}). This cannot be undone.`}
+  safe={removal?.kind === "all" ? bulkSafe : ""}
   confirmLabel={removal?.kind === "delete-kept" ? "Delete kept copy" : removal?.kind === "all" ? `Remove ${countLabel(bulkActionCount, "copy", "copies")}` : removal?.kind === "release" ? "Stop keeping" : "Remove song"}
   disabled={Boolean(action)} closeOnConfirm={false} error={removalError} onConfirm={remove} />
 

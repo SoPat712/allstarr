@@ -274,7 +274,7 @@ test("cached filters remember their selection and bulk removal confirms exact co
   const dialog = page.getByRole("alertdialog", { name: "Remove all cached songs?" });
   await expect(dialog).toContainText("4 cached copies");
   await expect(dialog).toContainText("116 MB");
-  await expect(dialog).toContainText("Kept songs and original library files stay");
+  await expect(dialog.locator(".notice-safe")).toContainText("Kept songs and original library files stay");
   expect(mutations).toHaveLength(0);
   await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
   expect(mutations).toHaveLength(0);
