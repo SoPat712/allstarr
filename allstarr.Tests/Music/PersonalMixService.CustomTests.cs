@@ -38,6 +38,24 @@ public sealed partial class PersonalMixServiceTests
         Assert.Equal(24, chill.Songs.Count);
     }
 
+    [Fact]
+    public async Task A_release_saved_as_a_list_keeps_its_songs_in_order_and_saves_once()
+    {
+        await Seed();
+        var id = Guid.NewGuid();
+        var list = songs.Values.Where(song => song.Title != "Unavailable").Take(5).ToList();
+        var saved = await service.SaveListAsync(owner, id, "Therapy", "FLO · Album", list, "From the release");
+        Assert.Equal(id, saved.Id);
+        Assert.Equal("custom", saved.Kind);
+        Assert.True(saved.Added);
+        Assert.Equal(list.Select(song => song.Id), saved.Songs.Select(item => item.Song.Id));
+        Assert.All(saved.Songs, item => Assert.Equal("From the release", item.Reason));
+        Assert.Equal(id, (await NewService().SaveListAsync(owner, id, "Another name", "Other", list, "Other")).Id);
+        Assert.Contains(await service.ListAsync(owner), item => item.Id == id && item.Name == "Therapy");
+        await Assert.ThrowsAsync<ArgumentException>(() => service.SaveListAsync(owner, Guid.NewGuid(), " ", "x", list, "x"));
+        await Assert.ThrowsAsync<ArgumentException>(() => service.SaveListAsync(owner, Guid.NewGuid(), "Empty", "x", [], "x"));
+    }
+
     [Theory]
     [InlineData("song")]
     [InlineData("artist")]

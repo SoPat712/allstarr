@@ -2,6 +2,9 @@
   import { releaseInbox, type FollowedReleaseArtist, type ReleaseInboxEntry, type ReleaseTracks } from "$lib/api";
   import { formatDuration } from "$lib/playlists";
   import RowsSkeleton from "$lib/components/patterns/RowsSkeleton.svelte";
+  import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
+  import { countLabel } from "$lib/count-label";
+  import { toast } from "$lib/toasts";
   import { releaseDate } from "$lib/intelligence";
   import { humanize } from "$lib/activity";
   import SidePanel from "$lib/components/patterns/SidePanel.svelte";
@@ -10,8 +13,8 @@
   import StatePill from "$lib/components/patterns/StatePill.svelte";
   import { Button } from "$lib/components/ui/button";
   import MediaArtwork from "$lib/components/MediaArtwork.svelte";
-  let { entry, artists, busy = false, onclose, onunfollow, ondismiss, onfind }: {
-    entry?: ReleaseInboxEntry; artists: FollowedReleaseArtist[]; busy?: boolean; onclose: () => void;
+  let { entry, artists, administrator = false, busy = false, onclose, onunfollow, ondismiss, onfind }: {
+    entry?: ReleaseInboxEntry; artists: FollowedReleaseArtist[]; administrator?: boolean; busy?: boolean; onclose: () => void;
     onunfollow: (artist: FollowedReleaseArtist) => void; ondismiss: (entry: ReleaseInboxEntry) => void; onfind: () => void;
   } = $props();
   const followed = $derived(artists.find(artist => artist.displayName.toLowerCase() === entry?.artist.toLowerCase()));
@@ -29,6 +32,27 @@
     }).catch(() => { if (current === request) tracksFailed = true; });
   });
   const shownTracks = $derived(tracks ? allTracks ? tracks.tracks : tracks.tracks.slice(0, 6) : []);
+  // Keeping asks first and estimates the size at CD quality (about 0.9 Mb/s); adding to apps saves the songs as a mix.
+  let keepOpen = $state(false), action = $state(""), inApps = $state(false);
+  const estimatedMegabytes = $derived(Math.max(1, Math.round((tracks?.tracks ?? []).reduce((sum, track) => sum + (track.durationMs ?? 0), 0) * 112.5 / 1_000_000)));
+  $effect(() => { void entry?.id; inApps = false; });
+  async function addToApps() {
+    if (!entry || action) return;
+    action = "apps";
+    try { const result = await releaseInbox.addToApps(entry.id); inApps = true; toast.success(`${entry.title} is in your apps with ${countLabel(result.songCount, "song")}`); }
+    catch (cause) { toast.error(cause instanceof Error ? cause.message : "The release could not be added to your apps."); }
+    finally { action = ""; }
+  }
+  async function keepAlbum() {
+    if (!entry || action) return;
+    action = "keep";
+    try {
+      const result = await releaseInbox.keep(entry.id);
+      keepOpen = false;
+      toast.success(result.skipped ? `Keeping ${countLabel(result.queued, "song")}; ${countLabel(result.skipped, "song")} couldn't be kept yet` : `Keeping ${countLabel(result.queued, "song")}. Follow progress in Activity.`);
+    } catch (cause) { toast.error(cause instanceof Error ? cause.message : "The album could not be kept."); }
+    finally { action = ""; }
+  }
 </script>
 <SidePanel open={true} title={entry?.title ?? "Release unavailable"} description={entry ? `${entry.artist} · ${type} · ${entry.isExplicit === true ? "Explicit" : entry.isExplicit === false ? "Clean" : "Explicit status unknown"}` : "This release is no longer in your inbox."} {onclose}>
   {#snippet artwork()}{#if entry}<MediaArtwork url={entry.artworkUrl} />{/if}{/snippet}
@@ -48,13 +72,21 @@
       {#each entry.sources ?? [] as source, index (`${index}:${source.providerId}:${source.albumId}`)}<ItemRow title={humanize(source.providerId)} subtitle={`${source.title}${source.edition ? ` · ${source.edition}` : ""}`} />{:else}<p>Source details aren't available for this release.</p>{/each}
     </section>
   {:else}<EmptyState title="This release is no longer in your inbox" description="Close this panel to browse your other releases." />{/if}
-  {#snippet footer()}{#if entry}<Button variant="text" class="destructive" disabled={busy} onclick={() => ondismiss(entry!)}>Dismiss release</Button>{/if}{/snippet}
+  {#snippet footer()}{#if entry}<div class="release-footer"><Button variant="text" class="destructive" disabled={busy} onclick={() => ondismiss(entry!)}>Dismiss release</Button>
+    <span>{#if administrator && tracks?.tracks.length}<Button variant="outline" disabled={busy || Boolean(action)} onclick={() => keepOpen = true}>Keep album…</Button>{/if}
+      <Button disabled={busy || Boolean(action) || inApps || !tracks?.tracks.length} onclick={() => void addToApps()}>{inApps ? "In your apps" : action === "apps" ? "Adding…" : "Add to apps"}</Button></span></div>{/if}{/snippet}
 </SidePanel>
+{#if entry && tracks}<ConfirmDialog bind:open={keepOpen} title={`Keep ${entry.title}?`} confirmVariant="default"
+  description={`Keeps all ${countLabel(tracks.tracks.length, "song")} permanently, about ${estimatedMegabytes.toLocaleString()} MB at CD quality.`}
+  safe="Songs you already keep stay as they are, and nothing is downloaded twice."
+  confirmLabel={`Keep ${countLabel(tracks.tracks.length, "song")}`} disabled={Boolean(action)} closeOnConfirm={false} onConfirm={keepAlbum} />{/if}
 <style>
   .release-cover { width: min(200px, 60%); margin: 0 auto var(--space-4); }
   .release-cover :global(.media-art) { width: 100%; height: auto; aspect-ratio: 1; }
   .follow-state { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--space-2); border-block: 1px solid var(--color-edge); padding-block: var(--space-3); }
   .release-sources, .release-tracks { margin-top: var(--space-5); }
+  .release-footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2); width: 100%; }
+  .release-footer > span { display: flex; flex-wrap: wrap; gap: var(--space-2); }
   .release-tracks ol { display: grid; margin: 0; padding: 0; list-style: none; }
   .release-tracks li { display: grid; grid-template-columns: 1.5rem minmax(0, 1fr) auto; align-items: center; gap: var(--space-3); min-height: 48px; border-bottom: 1px solid var(--color-edge); }
   .track-number, .track-time { color: var(--color-ink-muted); font-size: var(--text-xs); font-variant-numeric: tabular-nums; }

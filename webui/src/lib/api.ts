@@ -2532,6 +2532,8 @@ export const releaseInbox = {
   unfollow: (providerId: string, artistId: string) => json<void>(`/api/admin/releases/artists/${encodeURIComponent(providerId)}/${encodeURIComponent(artistId)}`, { method: "DELETE" }),
   dismiss: (id: string) => json<void>(`/api/admin/releases/${encodeURIComponent(id)}`, { method: "DELETE" }),
   tracks: (id: string) => json<ReleaseTracks>(`/api/admin/releases/${encodeURIComponent(id)}/tracks`),
+  addToApps: (id: string) => json<{ mixId: string; songCount: number }>(`/api/admin/releases/${encodeURIComponent(id)}/apps`, { method: "POST" }),
+  keep: (id: string) => json<{ queued: number; skipped: number }>(`/api/admin/releases/${encodeURIComponent(id)}/keep`, { method: "POST" }),
 };
 
 export const playlistLinks = {

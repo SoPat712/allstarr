@@ -205,4 +205,12 @@ test("A release panel lists its tracks and folds the rest away", async ({ page }
   await expect(tracks.getByRole("listitem").first()).toContainText("3:20");
   await tracks.getByRole("button", { name: "3 more tracks", exact: true }).click();
   await expect(tracks.getByRole("listitem")).toHaveCount(9);
+  // Listeners can add a release to their apps; keeping files is for administrators.
+  await expect(panel.getByRole("button", { name: "Keep album…", exact: true })).toHaveCount(0);
+  const added: string[] = [];
+  await page.route("**/api/admin/releases/aurora/apps", route => { added.push(route.request().method()); return route.fulfill({ json: { mixId: "mix", songCount: 9 } }); });
+  await panel.getByRole("button", { name: "Add to apps", exact: true }).click();
+  await expect(panel.getByRole("button", { name: "In your apps", exact: true })).toBeDisabled();
+  await expect(page.getByText("Aurora is in your apps with 9 songs", { exact: true })).toBeVisible();
+  expect(added).toEqual(["POST"]);
 });

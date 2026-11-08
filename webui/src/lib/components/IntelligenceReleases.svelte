@@ -22,7 +22,7 @@
   import MediaArtwork from "$lib/components/MediaArtwork.svelte";
   import SearchField from "$lib/components/SearchField.svelte";
 
-  let { initialRelease = "" }: { initialRelease?: string } = $props();
+  let { initialRelease = "", administrator = false }: { initialRelease?: string; administrator?: boolean } = $props();
   let inbox = $state<ReleaseInbox | null>(null), artists = $state<FollowedReleaseArtist[]>([]);
   let loading = $state(true), error = $state(""), pendingAction = $state("");
   let artistsOpen = $state(false), followOpen = $state(false), followError = $state("");
@@ -183,7 +183,7 @@
     {#if hidden.length}<details class="release-disclosure"><summary class="disclosure-summary"><DisclosureLabel title={`Hidden: ${countLabel(hidden.length, "release")}`} /></summary><ul>{#each hidden as entry}<li><strong>{entry.title}</strong> · {entry.artist} · {hiddenReason(entry.exclusionReason)}</li>{/each}</ul></details>{/if}
   {/if}
 </div>
-{#if initialRelease && !loading && ReleasePanel}<ReleasePanel entry={selected} {artists} busy={Boolean(pendingAction)} onclose={closeRelease} onunfollow={askUnfollow} ondismiss={askDismiss} onfind={() => artistsOpen = true} />{/if}
+{#if initialRelease && !loading && ReleasePanel}<ReleasePanel entry={selected} {artists} {administrator} busy={Boolean(pendingAction)} onclose={closeRelease} onunfollow={askUnfollow} ondismiss={askDismiss} onfind={() => artistsOpen = true} />{/if}
 <ConfirmDialog bind:open={dismissOpen} title="Dismiss release?" description={`Remove ${dismissTarget?.title ?? "this release"} from your release inbox?`} confirmLabel="Dismiss release" closeOnConfirm={false} disabled={Boolean(pendingAction)} onConfirm={() => dismissTarget ? dismiss(dismissTarget) : undefined} />
 <ConfirmDialog bind:open={unfollowOpen} title="Unfollow artist?" description={`Stop checking new releases from ${unfollowTarget?.displayName ?? "this artist"}?`} confirmLabel="Unfollow artist" closeOnConfirm={false} disabled={Boolean(pendingAction)} onConfirm={() => unfollowTarget ? unfollow(unfollowTarget) : undefined} />
 
