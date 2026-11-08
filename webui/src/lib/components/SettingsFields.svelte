@@ -17,6 +17,7 @@
   import ThreeDetentSwitch from "$lib/components/ThreeDetentSwitch.svelte";
   import AudioQualityField from "$lib/components/AudioQualityField.svelte";
   import AdvancedFold from "$lib/components/patterns/AdvancedFold.svelte";
+  import SavedMark from "$lib/components/patterns/SavedMark.svelte";
 
   let { section, config, footer, embedded = false, onChanged = () => {} }: { section: ConfigSection; config: Record<string, unknown>; footer?: Snippet; embedded?: boolean; onChanged?: () => void | Promise<void> } = $props();
   let edits = $state<Record<string, { value: string; base: string }>>({});
@@ -104,6 +105,15 @@
     else void persist(field, next, previous);
   }
 
+  // The mark shows for a moment after each save, then fades away.
+  const savedTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  function markSaved(key: string) {
+    saved[key] = true;
+    clearTimeout(savedTimers.get(key));
+    savedTimers.set(key, setTimeout(() => { saved[key] = false; savedTimers.delete(key); }, 2400));
+  }
+  onDestroy(() => savedTimers.forEach(timer => clearTimeout(timer)));
+
   async function persist(field: ConfigField, next: string, previous: string) {
     if (busy) return;
     busy = true; error = "";
@@ -112,7 +122,7 @@
       try { restarting = (await settings.save({ [field.key]: next })).requiresRestart === true; }
       catch (cause) { if (field.requiresRestart && savedBeforeRestart(cause)) restarting = true; else throw cause; }
       pending = null; restartOpen = false;
-      saved[field.key] = true;
+      markSaved(field.key);
       if (restarting) {
         if (!field.sensitive) rememberRestartUndo({ kind: "config", key: field.key, value: previous, label: label(field) });
         toast.info("Saved. Allstarr is restarting…");
@@ -160,7 +170,7 @@
         <div class:sr-only={field.type === "audio-quality"}>
           <label for={`${id}-${field.key}`}><strong>{label(field)}</strong></label>
           {#if !locked(field) && (hint || field.requiresRestart)}<small>{hint}{#if field.requiresRestart}<span class="restart-note">{settingRestartNote(hint)}</span>{/if}</small>{/if}
-          {#if saved[field.key]}<small class="setting-saved" role="status">✓ Saved</small>{/if}
+          <SavedMark show={saved[field.key] === true} />
         </div>
         {#if locked(field)}
           <div class="locked-setting"><output>{toggle(field) ? value(field) === "true" ? "On" : "Off" : field.sensitive ? fieldValue(config, field) ? "Key saved" : "Not set" : optionLabel(field, value(field)) || "Not set"}</output><small><Lock size={12} aria-hidden="true" />Set in your deployment</small></div>
@@ -232,7 +242,6 @@
   .setting-input input { min-width: 0; flex: 1; }
   .locked-setting { display: grid; justify-items: end; gap: var(--space-1); text-align: right; }
   .locked-setting small { display: flex; align-items: center; gap: var(--space-1); color: var(--color-ink-muted); font-size: var(--text-xs); }
-  .setting-saved { color: var(--success) !important; }
   .wide-control { grid-template-columns: minmax(0, 1fr) minmax(0, 25rem) !important; }
   @media (max-width: 650px) { .wide-control { grid-template-columns: minmax(0, 1fr) !important; } .locked-setting { justify-items: start; text-align: left; } }
 </style>

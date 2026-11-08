@@ -87,6 +87,10 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     await expect(quota).toHaveValue("4");
     await expect(streams).toHaveValue("8");
     await expect(conversions).toHaveValue("3");
+    // Each save shows a short "Saved" mark that then goes away.
+    const savedMarks = form.getByRole("status").filter({ hasText: "Saved" });
+    await expect(savedMarks.first()).toBeVisible();
+    await expect(savedMarks).toHaveCount(0, { timeout: 5_000 });
     if (width === 390) await expectContainedMobileGeometry(page);
     await form.scrollIntoViewIfNeeded();
     await page.screenshot({ path: testInfo.outputPath(`audio-limits-${width}-${theme}.png`) });
