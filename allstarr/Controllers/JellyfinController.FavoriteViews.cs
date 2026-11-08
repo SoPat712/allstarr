@@ -20,13 +20,15 @@ public partial class JellyfinController
             catch (Exception exception) when (exception is not OperationCanceledException)
             { _logger.LogWarning("Saved favorites are unavailable ({ExceptionType})", exception.GetType().Name); }
         }
+        var parent = Request.Query["ParentId"].ToString();
+        var libraryScope = parent.Length != 0 && await IsListenerMusicLibraryAsync(parent) ? parent : _settings.LibraryId;
         var types = (includeItemTypes ?? JellyfinMusicEndpointPolicy.DefaultMusicItemTypes)
             .Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var ids = Request.Query["Ids"].ToString().Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
             .ToHashSet(FavoriteViewReader.ItemComparer(saved));
         var favorites = saved.Where(item => ids.Count == 0 || ids.Contains(item.ItemId))
-            .Where(item => JellyfinFavoriteScope.Matches(item, Request.Query, _settings.LibraryId))
+            .Where(item => JellyfinFavoriteScope.Matches(item, Request.Query, libraryScope))
             .Where(item => string.IsNullOrWhiteSpace(searchTerm) || item.Display.Title.Contains(searchTerm, StringComparison.OrdinalIgnoreCase) ||
                 item.Display.Artists.Any(artist => artist.Contains(searchTerm, StringComparison.OrdinalIgnoreCase)) ||
                 item.Display.Album?.Contains(searchTerm, StringComparison.OrdinalIgnoreCase) == true)

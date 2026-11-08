@@ -12,11 +12,23 @@ namespace allstarr.Controllers;
 
 public partial class JellyfinController
 {
+    // Saved service items belong to no library, so any music library the listener can read includes them, as browsing
+    // without a library does.
+    private async Task<bool> IsListenerMusicLibraryAsync(string parent)
+    {
+        if (parent == _settings.LibraryId) return true;
+        if (_libraryAccess == null || HttpContext.GetProtocolExecutionContext() is not { } execution) return false;
+        var access = await _libraryAccess.ResolveAsync(execution, HttpContext.RequestAborted);
+        return access.Succeeded && access.LibraryIds.Any(id => id == parent ||
+            Guid.TryParse(id, out var library) && Guid.TryParse(parent, out var requested) && library == requested);
+    }
+
     private async Task<IActionResult?> TryReadSavedBrowseAsync(string? types = null, bool facets = false, bool latest = false)
     {
         if (!string.IsNullOrWhiteSpace(Request.Query["SearchTerm"]) || Request.Query.ContainsKey("Ids")) return null;
         var parent = Request.Query["ParentId"].ToString();
-        if (parent.Length != 0 && parent != _settings.LibraryId) return null;
+        if (parent.Length != 0 && !await IsListenerMusicLibraryAsync(parent)) return null;
+        var libraryScope = parent.Length != 0 ? parent : _settings.LibraryId;
         string[] relations = ["AlbumIds", "ArtistIds", "AlbumArtistIds", "ContributingArtistIds"];
         if (parent.Length == 0 && relations.Any(key => JellyfinProviderQuery.Values(Request.Query[key].ToString())
             .Any(id => _localLibraryService.ParseExternalId(id).isExternal))) return null;
@@ -36,13 +48,13 @@ public partial class JellyfinController
         var providerQuery = new QueryCollection(genreQueries.Provider.ToDictionary(pair => pair.Key, pair => new Microsoft.Extensions.Primitives.StringValues(pair.Value), StringComparer.OrdinalIgnoreCase));
         var defaultLimit = latest ? 10 : artistList ? 50 : 20;
         var filter = new JellyfinProviderQuery(providerQuery, defaultLimit: defaultLimit, membership: true);
-        var additions = saved.Where(item => JellyfinFavoriteScope.Matches(item, providerQuery, _settings.LibraryId))
+        var additions = saved.Where(item => JellyfinFavoriteScope.Matches(item, providerQuery, libraryScope))
             .Select(item =>
             {
                 var row = _responseBuilder.ConvertFavoriteToJellyfinItem(item);
                 if (row.GetValueOrDefault("UserData") is IDictionary<string, object?> data) data["IsFavorite"] = favorites.Contains(item.ItemId);
                 row["DateCreated"] = item.FavoritedAt.ToString("O");
-                row["ParentId"] = item.Resource.ResourceKind == ProviderResourceKind.Track ? item.Display.AlbumId ?? _settings.LibraryId : _settings.LibraryId;
+                row["ParentId"] = item.Resource.ResourceKind == ProviderResourceKind.Track ? item.Display.AlbumId ?? libraryScope : libraryScope;
                 if (item.Resource.ResourceKind == ProviderResourceKind.Album)
                     row["ChildCount"] = item.Display.Count ?? 0;
                 row["Genres"] = item.Display.Genres;

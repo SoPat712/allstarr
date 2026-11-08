@@ -4,6 +4,9 @@ using allstarr.Core.Favorites;
 using allstarr.Core.Protocols;
 using allstarr.Models.Domain;
 using Microsoft.EntityFrameworkCore;
+using allstarr.Core.Storage;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Moq;
 
 namespace allstarr.Tests;
@@ -67,6 +70,7 @@ public sealed partial class ProtocolRouteFixtureTests
     [InlineData("", 1, 2)]
     [InlineData("", 2, 2)]
     [InlineData("&ParentId=foreign-folder", 0, 1)]
+    [InlineData("&ParentId=00000000000000000000000000000b0b", 0, 2)]
     public async Task JellyfinSavedBrowsingPagesAfterMergingAndHonorsFolderOwnership(string scope, int start, int total)
     {
         await using var database = await SqliteTestDatabase.CreateAsync();
@@ -76,7 +80,14 @@ public sealed partial class ProtocolRouteFixtureTests
         using var factory = new ProtocolFactory("Jellyfin", request => request.RequestUri!.AbsolutePath == "/Users/Me"
             ? Json(200, """{"Id":"user-1"}""")
             : Json(200, """{"Items":[{"Id":"native","Name":"Native","Type":"Audio","DateCreated":"2000-01-01T00:00:00Z"}],"TotalRecordCount":1,"StartIndex":0}"""),
-            services => ConfigureFavoriteViews(services, storage, new Mock<IProtocolProviderGateway>(MockBehavior.Strict).Object),
+            services =>
+            {
+                ConfigureFavoriteViews(services, storage, new Mock<IProtocolProviderGateway>(MockBehavior.Strict).Object);
+                // Another music library the listener can read includes saved songs just like the configured one.
+                services.RemoveAll<IBackendLibraryAccessResolver>();
+                services.AddSingleton<IBackendLibraryAccessResolver>(provider => new TestBackendLibraryAccess(
+                    provider.GetRequiredService<IDbContextFactory<AllstarrDbContext>>(), "music-1", "00000000-0000-0000-0000-000000000b0b"));
+            },
             configuration: new Dictionary<string, string?> { ["Jellyfin:LibraryId"] = "music-1" });
         using var client = factory.CreateClient();
         using var response = await client.GetAsync($"/Items?ApiKey=fixture&IncludeItemTypes=Audio&Recursive=true&SortBy=DateCreated&SortOrder=Descending&Fields=DateCreated,ParentId&StartIndex={start}&Limit=1{scope}");
