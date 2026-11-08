@@ -392,6 +392,7 @@ public sealed class NewReleasesTests : IAsyncLifetime
         Assert.Empty(await _service.ListAsync(_first));
         Assert.Single(await _service.ListAsync(_second));
         Assert.IsType<BadRequestObjectResult>(await controller.Follow(new("deezer", "a", ""), default));
+        Assert.IsType<NotFoundResult>(await controller.Tracks("not-in-the-inbox", default));
     }
 
     [Fact]

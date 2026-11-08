@@ -190,3 +190,19 @@ test("Live refresh keeps the inbox visible and preserves an open artist dialog",
   await page.getByRole("button", { name: "Done", exact: true }).click();
   await expect(page.getByRole("article", { name: "Fresh arrival by Willow", exact: true })).toBeVisible();
 });
+
+test("A release panel lists its tracks and folds the rest away", async ({ page }) => {
+  await mockReleases(page);
+  await page.route("**/api/admin/releases/aurora/tracks", route => route.fulfill({ json: { providerId: "qobuz", tracks: Array.from({ length: 9 }, (_, index) => ({
+    number: index + 1, title: `Track ${index + 1}`, artists: "North", durationMs: 200_000 + index * 1000, isExplicit: index === 0,
+  })) } }));
+  await page.goto("/#/intelligence?section=releases&release=aurora");
+  const panel = page.getByRole("dialog", { name: "Aurora", exact: true });
+  const tracks = panel.getByRole("region", { name: "Tracks", exact: true });
+  await expect(tracks).toContainText("From Qobuz");
+  await expect(tracks.getByRole("listitem")).toHaveCount(6);
+  await expect(tracks.getByRole("listitem").first()).toContainText("Track 1");
+  await expect(tracks.getByRole("listitem").first()).toContainText("3:20");
+  await tracks.getByRole("button", { name: "3 more tracks", exact: true }).click();
+  await expect(tracks.getByRole("listitem")).toHaveCount(9);
+});

@@ -1474,6 +1474,8 @@ export type HistoryImport = {
 export type FollowedReleaseArtist = { providerId: string; artistId: string; displayName: string; musicBrainzArtistId?: string | null };
 export type ReleaseSource = { providerId: string; albumId: string; title: string; artist: string; releaseDate: string | null; datePrecision: string; type: string; isExplicit: boolean | null; edition: string; upc: string | null; isrcs: string[]; aliases: string[]; exclusionReason: string | null };
 export type ReleaseInboxEntry = { id: string; title: string; artist: string; releaseDate: string | null; datePrecision: string; type: string; isExplicit: boolean | null; edition: string; exclusionReason: string | null; sources: ReleaseSource[]; artworkUrl: string };
+export type ReleaseTrack = { number: number; title: string; artists: string; durationMs: number | null; isExplicit: boolean };
+export type ReleaseTracks = { providerId: string | null; tracks: ReleaseTrack[] };
 export type ReleaseInbox = { entries: ReleaseInboxEntry[]; excluded: ReleaseInboxEntry[]; coverage: Array<{ artist: FollowedReleaseArtist; status: string; checkedAt: string | null }> };
 
 export type ListeningHistoryStats = {
@@ -2529,6 +2531,7 @@ export const releaseInbox = {
   }),
   unfollow: (providerId: string, artistId: string) => json<void>(`/api/admin/releases/artists/${encodeURIComponent(providerId)}/${encodeURIComponent(artistId)}`, { method: "DELETE" }),
   dismiss: (id: string) => json<void>(`/api/admin/releases/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  tracks: (id: string) => json<ReleaseTracks>(`/api/admin/releases/${encodeURIComponent(id)}/tracks`),
 };
 
 export const playlistLinks = {
