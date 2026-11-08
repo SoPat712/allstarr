@@ -4,7 +4,7 @@
   import { matchReview, type MatchAuthorityScope, type MatchCandidate, type MatchReviewItem, type MatchTarget, type ProviderDefinition } from "$lib/api";
   import { allowedAuthorityScopes, canEditAuthorityScope, expectedAuthorityForScope } from "$lib/matching-api";
   import { candidateResolution, percent, playableProviderIds, providerResultCounts, rankedTargets, reportedAudio, reviewProviderIdentities, routingPreference, scoreComponents, targetRoutingPreference } from "$lib/mappings";
-  import { candidateReason, comparisonRows, currentSong, evidenceSentence, formatConfidence, targetSong } from "$lib/matches-presentation";
+  import { candidateReason, comparisonRows, currentSong, evidenceSentence, formatConfidence, hasOwnArtwork, sourceArtwork, targetSong } from "$lib/matches-presentation";
   import { findProviderDefinition, providerDisplayName } from "$lib/sources";
   import { formatDuration } from "$lib/playlists";
   import { reportHref } from "$lib/support";
@@ -156,7 +156,7 @@
 </script>
 
 <SidePanel bind:open title={match?.title || "Match details"} description={match?.artist || "Unknown artist"} {onPrevious} {onNext}>
-  {#snippet artwork()}<MediaArtwork url={match?.sourceArtworkUrl || match?.artworkUrl} />{/snippet}
+  {#snippet artwork()}<MediaArtwork url={match ? sourceArtwork(match) : null} />{/snippet}
   {#snippet header()}
     {#if match}
       <span title={sourceDetails}>{sourceDetails}</span>
@@ -252,7 +252,7 @@
           {#each Object.entries(previewCandidate.providerTrackIds ?? {}) as [id, trackId]}<div><dt>{name(id)} track ID</dt><dd>{trackId}</dd></div>{/each}
         {/if}{#each scoreComponents(preview) as [key, value]}<div><dt>{key}</dt><dd>{percent(value)}</dd></div>{/each}
         {#each [...preview.reasons ?? [], ...preview.warnings ?? []] as reason}<div><dt>Evidence</dt><dd>{reason}</dd></div>{/each}
-      </dl>{#if match.sourceArtworkUrl && preview.artworkUrl}<ArtworkSimilarity source={match.sourceArtworkUrl} candidate={preview.artworkUrl} />{/if}</details></section>{/if}
+      </dl>{#if hasOwnArtwork(match) && preview.artworkUrl}<ArtworkSimilarity source={match.sourceArtworkUrl!} candidate={preview.artworkUrl} />{/if}</details></section>{/if}
       {@render authorities?.()}
       <details class="identity-details"><summary>Database and identity details</summary><dl>
         <div><dt>Source snapshot</dt><dd>{match.externalSnapshotId}</dd></div><div><dt>Source provider</dt><dd>{match.providerId}</dd></div>

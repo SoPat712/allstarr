@@ -9,9 +9,20 @@ export const filterStates: Record<MatchFilter, string[]> = {
 export function formatConfidence(value?: number | null) {
   return value == null || !Number.isFinite(value) ? "—" : `${Math.round(value * 100)}%`;
 }
+// The playlist song is the very song that plays, so nothing needed scoring.
+const isExact = (match: MatchReviewItem) => match.state === "accepted" && match.confidence == null && match.decisionSource === "canonical_provider_identity";
+const sureness = (match: MatchReviewItem) => match.confidence ?? (isExact(match) ? 1 : -1);
+const providerCover = (url?: string | null) => !!url && /^\/api\/admin\/providers\/[^/]+\/cover$/.test(url);
+export const hasOwnArtwork = (match: MatchReviewItem) => !!match.sourceArtworkUrl && !providerCover(match.sourceArtworkUrl);
+// A playlist song without its own cover shows the song it plays as rather than the service's logo.
+export function sourceArtwork(match: MatchReviewItem) {
+  const own = match.sourceArtworkUrl || match.artworkUrl;
+  return providerCover(own) ? match.localTrack?.artworkUrl || match.target?.artworkUrl || own : own;
+}
 export function matchPill(match: MatchReviewItem): { text: string; tone: "ok" | "warn" | "stop" | "neutral" } {
   if (match.state === "rejected") return { text: "Rejected", tone: "stop" };
   if (match.manualAuthorities?.some(item => item.effective && item.kind !== "rejection") || match.state === "pinned") return { text: "By you", tone: "neutral" };
+  if (isExact(match)) return { text: "Exact", tone: "ok" };
   if (match.state === "unresolved" || match.confidence == null) return { text: "No match", tone: "stop" };
   return { text: formatConfidence(match.confidence), tone: match.state === "accepted" && match.threshold != null && match.confidence >= match.threshold ? "ok" : "warn" };
 }
@@ -135,8 +146,8 @@ export function sortMatches(matches: MatchReviewItem[], sort: string, playlists:
   return matches.toSorted((a, b) => sort === "playlist" ? (playlists[a.externalSnapshotId]?.join(", ") || "\uffff").localeCompare(playlists[b.externalSnapshotId]?.join(", ") || "\uffff") || (a.title ?? "").localeCompare(b.title ?? "")
     : sort === "title" ? (a.title ?? "").localeCompare(b.title ?? "")
     : sort === "newest" ? (b.decidedAt ?? "").localeCompare(a.decidedAt ?? "")
-    : sort === "confidence_desc" ? (b.confidence ?? -1) - (a.confidence ?? -1)
-    : (a.confidence ?? -1) - (b.confidence ?? -1));
+    : sort === "confidence_desc" ? sureness(b) - sureness(a)
+    : sureness(a) - sureness(b));
 }
 export function currentSong(match: MatchReviewItem): (SongFacts & { providerId: string; identity: string; artworkUrl?: string | null }) | null {
   if (match.target) return { ...match.target, identity: match.target.externalId };

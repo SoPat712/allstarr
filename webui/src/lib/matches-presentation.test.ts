@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { comparisonRows, currentSong, defaultMatchFilter, differenceChips, evidenceSentence, filterCounts, formatConfidence, inFilter, keyboardCommand, matchPill, matchesSearch, summarizeMatches, sortMatches, versionWords } from "./matches-presentation";
+import { comparisonRows, currentSong, defaultMatchFilter, differenceChips, evidenceSentence, filterCounts, formatConfidence, hasOwnArtwork, inFilter, keyboardCommand, matchPill, matchesSearch, summarizeMatches, sortMatches, sourceArtwork, versionWords } from "./matches-presentation";
 import type { MatchReviewItem } from "./api";
 
 const song = { title: "Song", artist: "Singer", album: "Album", durationMilliseconds: 180000, isrc: "AB123", isExplicit: true };
@@ -70,6 +70,7 @@ describe("match confidence presentation", () => {
     expect(matchPill({ ...match("rejected"), confidence: 1 })).toEqual({ text: "Rejected", tone: "stop" });
     expect(matchPill({ ...match("unresolved"), confidence: .967, threshold: .9 })).toEqual({ text: "No match", tone: "stop" });
     expect(matchPill({ ...match("accepted"), confidence: null })).toEqual({ text: "No match", tone: "stop" });
+    expect(matchPill({ ...match("accepted"), confidence: null, decisionSource: "canonical_provider_identity" })).toEqual({ text: "Exact", tone: "ok" });
   });
 });
 
@@ -116,6 +117,18 @@ describe("match filters and ordering", () => {
     expect(sortMatches(rows, "confidence_asc")[0].title).toBe("A");
     expect(sortMatches(rows, "title")[0].title).toBe("A");
     expect(sortMatches(rows, "playlist", { accepted: ["First"], unresolved: ["Second"] })[0].title).toBe("Z");
+    const exact = { ...match("accepted"), title: "E", confidence: null, decisionSource: "canonical_provider_identity" };
+    expect(sortMatches([exact, ...rows], "confidence_asc").map(row => row.title)).toEqual(["A", "Z", "E"]);
+  });
+  it("shows the song it plays as when the playlist song has only the service's logo", () => {
+    const logo = { ...match("accepted"), sourceArtworkUrl: "/api/admin/providers/apple-musickit/cover", artworkUrl: "/api/admin/providers/apple-musickit/cover",
+      target: { providerId: "apple-musickit", externalId: "1", artworkUrl: "/api/admin/downloads/artwork/ext-apple-musickit-song-1" } } as MatchReviewItem;
+    expect(sourceArtwork(logo)).toBe("/api/admin/downloads/artwork/ext-apple-musickit-song-1");
+    expect(hasOwnArtwork(logo)).toBe(false);
+    expect(sourceArtwork({ ...logo, target: undefined })).toBe("/api/admin/providers/apple-musickit/cover");
+    const own = { ...logo, sourceArtworkUrl: "/api/admin/track-matches/s/artwork" };
+    expect(sourceArtwork(own)).toBe("/api/admin/track-matches/s/artwork");
+    expect(hasOwnArtwork(own)).toBe(true);
   });
 });
 

@@ -411,8 +411,8 @@ public sealed class TrackMatchesController(
         });
         var rows = sort switch
         {
-            "confidence_desc" => filteredRows.OrderByDescending(row => row.Confidence).ToArray(),
-            "confidence_asc" => filteredRows.OrderBy(row => row.Confidence).ToArray(),
+            "confidence_desc" => filteredRows.OrderByDescending(Sureness).ToArray(),
+            "confidence_asc" => filteredRows.OrderBy(Sureness).ToArray(),
             _ => filteredRows.ToArray()
         };
         var total = rows.Length;
@@ -1050,6 +1050,10 @@ public sealed class TrackMatchesController(
         (filter.Equals("history", StringComparison.OrdinalIgnoreCase) && state is
             TrackMatchState.Accepted or TrackMatchState.Pinned or TrackMatchState.Rejected) ||
         state.ToString().Equals(filter, StringComparison.OrdinalIgnoreCase);
+
+    // A song accepted without a score is the very song from the playlist, so it is as sure as a match gets.
+    private static double Sureness(MatchRow row) =>
+        row.Confidence ?? (row.State == TrackMatchState.Accepted && !row.HasManualMatch ? 1 : -1);
 
     private static bool IsAutomaticDecision(
         TrackMatchState state,
