@@ -43,7 +43,7 @@
     <AlertDialog.Content class="confirm-dialog" {preventScroll}>
       <AlertDialog.Title>{title}</AlertDialog.Title>
       <AlertDialog.Description>{description}</AlertDialog.Description>
-      {#if safe}<p class="notice-error notice-safe">✓ {safe}</p>{/if}
+      {#if safe}<p class="notice-error notice-safe" style="margin-inline: var(--space-4)">✓ {safe}</p>{/if}
       {@render children?.()}
       {#if error}<p class="notice-error" role="alert">{error}</p>{/if}
       <footer class="dialog-actions">
