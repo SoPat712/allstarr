@@ -26,13 +26,14 @@ public sealed class MixReader(PersonalMixService mixes, IDbContextFactory<Allsta
         var native = await ReadNativeAsync(http, execution, stored.SelectMany(mix => Playable(mix, allowed))
             .Where(item => item.Song.IsLocal).Select(item => item.Song.Id).Distinct().ToArray());
         var publish = (bool)(await settings.GetAsync(PersonalMixService.PublishKey, token)).Value;
+        var covers = await CoverInputsAsync(execution, stored);
         return new(stored.Select(mix =>
         {
             var songs = Playable(mix, allowed);
             var inApps = publish && mix.Added && mix.Generation > 0;
             return new ClientMix(mix.Id, mix.Kind, mix.Name, mix.Description, State(mix), songs.Count,
                 songs.Sum(item => item.Song.Duration * 1000L ?? 0), mix.UpdatedAt,
-                $"/allstarr/v1/mixes/{mix.Id}/cover", inApps,
+                $"/allstarr/v1/mixes/{mix.Id}/cover?v={MixCoverImageService.Version(covers[mix.Id])}", inApps,
                 inApps ? PlaylistVirtualizationService.CreateProtocolId(mix.Id) : null,
                 songs.Select(item => ArtworkUrl(item.Song, native)).OfType<string>().Distinct(StringComparer.Ordinal).Take(4).ToArray());
         }).ToArray());
@@ -105,11 +106,24 @@ public sealed class MixReader(PersonalMixService mixes, IDbContextFactory<Allsta
     {
         var owner = execution.RequireActor().EffectiveUserId!.Value;
         var mix = await mixes.GetAsync(owner, mixId, execution.CancellationToken);
-        var input = MixCoverInput.From(mix);
-        if (mix.Kind != "external") return input;
+        var input = (await CoverInputsAsync(execution, [mix]))[mix.Id];
+        if (mix.Kind == "external" && input.Source.Length == 0) throw new KeyNotFoundException("The synced mix's playlist is unavailable.");
+        return input;
+    }
+
+    // The list and the cover itself describe a mix's cover the same way, so the list's versioned URL matches the image served.
+    private async Task<Dictionary<Guid, MixCoverInput>> CoverInputsAsync(ProtocolExecutionContext execution, IReadOnlyList<PersonalMix> stored)
+    {
+        var inputs = stored.ToDictionary(mix => mix.Id, MixCoverInput.From);
+        var external = stored.Where(mix => mix.Kind == "external").Select(mix => mix.Id).ToArray();
+        if (external.Length == 0) return inputs;
+        var owner = execution.RequireActor().EffectiveUserId!.Value;
         await using var db = await factory.CreateDbContextAsync(execution.CancellationToken);
-        var link = await db.PlaylistLinks.AsNoTracking().SingleAsync(item => item.Id == mixId && item.OwnerUserId == owner, execution.CancellationToken);
-        return input with { Source = link.SourceProviderId, SourcePlaylistId = link.SourcePlaylistId };
+        var links = await db.PlaylistLinks.AsNoTracking().Where(item => external.Contains(item.Id) && item.OwnerUserId == owner)
+            .Select(item => new { item.Id, item.SourceProviderId, item.SourcePlaylistId }).ToArrayAsync(execution.CancellationToken);
+        foreach (var link in links)
+            inputs[link.Id] = inputs[link.Id] with { Source = link.SourceProviderId, SourcePlaylistId = link.SourcePlaylistId };
+        return inputs;
     }
 
     private async Task<HashSet<string>> AllowedLocalIdsAsync(ProtocolExecutionContext execution, IReadOnlyList<PersonalMix> stored)

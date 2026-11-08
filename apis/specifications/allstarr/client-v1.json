@@ -1648,6 +1648,13 @@
               "type": "string",
               "format": "uuid"
             }
+          },
+          {
+            "name": "v",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {

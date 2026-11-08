@@ -100,7 +100,7 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.True(card.GetProperty("inApps").GetBoolean());
         var playlist = PlaylistVirtualizationService.CreateProtocolId(mix.Id);
         Assert.Equal(playlist, card.GetProperty("playlistId").GetString());
-        Assert.Equal($"/allstarr/v1/mixes/{mix.Id}/cover", card.GetProperty("coverUrl").GetString());
+        Assert.Equal($"/allstarr/v1/mixes/{mix.Id}/cover?v={MixCoverImageService.Version(MixCoverInput.From(mix))}", card.GetProperty("coverUrl").GetString());
         using var itemsResponse = await client.GetAsync($"/allstarr/v1/mixes/{mix.Id}/items");
         Assert.Equal(HttpStatusCode.OK, itemsResponse.StatusCode);
         using var itemsBody = JsonDocument.Parse(await itemsResponse.Content.ReadAsStringAsync());
@@ -161,7 +161,13 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.Equal(HttpStatusCode.OK, first.StatusCode);
         Assert.Equal("image/png", first.Content.Headers.ContentType?.MediaType);
         Assert.True(first.Headers.CacheControl?.Private);
+        Assert.Equal(TimeSpan.Zero, first.Headers.CacheControl?.MaxAge);
         Assert.Equal('"' + MixCoverImageService.GetTag(MixCoverInput.From(mix)) + '"', first.Headers.ETag?.Tag);
+        using var current = await client.GetAsync(path + "?v=" + MixCoverImageService.Version(MixCoverInput.From(mix)));
+        Assert.Equal(TimeSpan.FromDays(365), current.Headers.CacheControl?.MaxAge);
+        Assert.Equal(await first.Content.ReadAsByteArrayAsync(), await current.Content.ReadAsByteArrayAsync());
+        using var stale = await client.GetAsync(path + "?v=0000000000000000");
+        Assert.Equal(TimeSpan.Zero, stale.Headers.CacheControl?.MaxAge);
         Assert.Equal(MixCoverRenderer.Render(MixCoverInput.From(mix)), await first.Content.ReadAsByteArrayAsync());
         using var conditional = new HttpRequestMessage(HttpMethod.Get, path);
         conditional.Headers.IfNoneMatch.Add(first.Headers.ETag!);

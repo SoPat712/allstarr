@@ -29,12 +29,17 @@ public sealed class MixCoverImageService
         Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(input))) +
         "-gradient-v2";
 
-    public IActionResult CreateResponse(MixCoverInput input, HttpContext context)
+    // A short form of the tag that apps can put in the cover URL.
+    public static string Version(MixCoverInput input) => GetTag(input)[..16].ToLowerInvariant();
+
+    public IActionResult CreateResponse(MixCoverInput input, HttpContext context, string? version = null)
     {
         var tag = GetTag(input);
         var etag = $"\"{tag}\"";
         context.Response.Headers.ETag = etag;
-        context.Response.Headers.CacheControl = "private, max-age=0, must-revalidate";
+        // A URL naming the current version never changes, so apps can keep it; any other request revalidates.
+        context.Response.Headers.CacheControl = version == Version(input)
+            ? "private, max-age=31536000, immutable" : "private, max-age=0, must-revalidate";
         if (ImageConditionalRequestHelper.MatchesIfNoneMatch(context.Request.Headers, etag))
             return new StatusCodeResult(StatusCodes.Status304NotModified);
         lock (_gate)

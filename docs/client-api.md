@@ -364,8 +364,10 @@ library IDs, service `ext-...` IDs, stored recording IDs, and Apple catalog
 aliases. These JSON routes use `Cache-Control: no-store`.
 
 `GET /allstarr/v1/mixes/{mixId}/cover` serves the same generated PNG as the
-dashboard. It uses a private cache with revalidation and returns 304 for a
-matching `If-None-Match`. Unknown mixes and other listeners' mixes return 404,
+dashboard. The list's `coverUrl` adds `?v=` with the cover's version, and a
+request for the current version may be kept for a year (`immutable`); the URL
+changes when the cover does. Other requests use a private cache with
+revalidation and return 304 for a matching `If-None-Match`. Unknown mixes and other listeners' mixes return 404,
 including conditional cover requests.
 
 `GET /allstarr/v1/items/{itemId}/appearances` (`appearances`) lists where an
