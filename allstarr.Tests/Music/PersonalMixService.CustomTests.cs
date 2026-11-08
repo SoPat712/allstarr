@@ -51,6 +51,9 @@ public sealed partial class PersonalMixServiceTests
         Assert.Equal(list.Select(song => song.Id), saved.Songs.Select(item => item.Song.Id));
         Assert.All(saved.Songs, item => Assert.Equal("From the release", item.Reason));
         Assert.Equal(id, (await NewService().SaveListAsync(owner, id, "Another name", "Other", list, "Other")).Id);
+        await service.SetInAppsAsync(owner, id, false, default);
+        Assert.True((await NewService().SaveListAsync(owner, id, "Another name", "Other", list, "Other")).Added);
+        Assert.True((await service.GetAsync(owner, id)).Added);
         Assert.Contains(await service.ListAsync(owner), item => item.Id == id && item.Name == "Therapy");
         await Assert.ThrowsAsync<ArgumentException>(() => service.SaveListAsync(owner, Guid.NewGuid(), " ", "x", list, "x"));
         await Assert.ThrowsAsync<ArgumentException>(() => service.SaveListAsync(owner, Guid.NewGuid(), "Empty", "x", [], "x"));

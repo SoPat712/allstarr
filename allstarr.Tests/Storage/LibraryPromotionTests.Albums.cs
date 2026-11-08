@@ -8,6 +8,7 @@ using allstarr.Core.Matching;
 using allstarr.Core.Operations;
 using allstarr.Models.Domain;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Moq;
 
@@ -120,6 +121,87 @@ public sealed partial class LibraryPromotionTests
         var refresh = await verify.Jobs.SingleAsync(item => item.Type == "library.refresh");
         var payload = System.Text.Json.JsonSerializer.Deserialize<BackendLibraryRefreshJobPayload>(refresh.PayloadJson)!;
         Assert.Equal(new[] { second }, payload.RecordingIds);
+    }
+
+    [Fact]
+    public async Task Album_ChecksTheReadyBatchBeforePlacingAnyTrack()
+    {
+        await SaveBatchProfileAsync();
+        var second = Guid.NewGuid();
+        var catalog = new Mock<IPromotionCatalog>();
+        catalog.Setup(item => item.ResolveAsync(It.IsAny<ProtocolExecutionContext>(), recordingId, "album", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[]
+            {
+                new Song { CanonicalRecordingId = recordingId, Title = "First", Artist = "Artist", Album = "Album", Track = 1 },
+                new Song { CanonicalRecordingId = second, Title = "Second", Artist = "Artist", Album = "Album", Track = 2 }
+            });
+        var source = await WaveSourceAsync();
+        var acquisition = new Mock<IPromotionAcquisition>();
+        acquisition.Setup(item => item.AcquireAsync(owner, It.IsAny<Guid>(), It.IsAny<PromotionTrack>(),
+            It.IsAny<PromotionProfile>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PromotionAcquisitionResult(source, false, "Verified source."));
+        var batch = BatchService(catalog.Object, acquisition.Object);
+        var run = await batch.StartAsync(Context, Request() with { ArtifactId = Guid.Empty });
+        var reads = 0;
+        var capacity = source.Length * 3 / 2;
+        var constrained = new PromotionRoots(settings.Object, factory, new Microsoft.Extensions.Configuration.ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Promotion:AllowedBase"] = Path.Combine(directory, "library"),
+                ["Promotion:MinimumFreeBytes"] = "0"
+            }).Build(), _ => ++reads < 3 ? capacity : 0);
+
+        await ExecuteBatchAsync(BatchService(catalog.Object, acquisition.Object, promotionRoots: constrained));
+
+        var failed = await batch.GetAsync(Context, run.Id);
+        Assert.Equal("Failed", failed.Outcome);
+        Assert.All(failed.Tracks, track => Assert.Null(track.ManagedFileId));
+        Assert.Equal(1, reads);
+        await using var db = factory.CreateDbContext();
+        Assert.Empty(await db.ManagedFiles.ToArrayAsync());
+    }
+
+    [Fact]
+    public async Task Album_AlreadyPlacedQueuesRefreshWithoutCheckingSpaceAgain()
+    {
+        await SaveBatchProfileAsync();
+        var catalog = new Mock<IPromotionCatalog>();
+        catalog.Setup(item => item.ResolveAsync(It.IsAny<ProtocolExecutionContext>(), recordingId, "song", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { new Song { CanonicalRecordingId = recordingId, Title = "Song", Artist = "Artist", Album = "Album" } });
+        var source = await WaveSourceAsync();
+        var acquisition = new Mock<IPromotionAcquisition>();
+        acquisition.Setup(item => item.AcquireAsync(owner, It.IsAny<Guid>(), It.IsAny<PromotionTrack>(),
+            It.IsAny<PromotionProfile>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PromotionAcquisitionResult(source, false, "Verified source."));
+        var batch = BatchService(catalog.Object, acquisition.Object);
+        var run = await batch.StartAsync(Context, Request() with { ArtifactId = Guid.Empty, Unit = "song" });
+        await ExecuteBatchAsync(batch);
+        await using (var db = factory.CreateDbContext())
+        {
+            var stored = await db.Set<PromotionRunRecord>().SingleAsync(item => item.Id == run.Id);
+            var album = System.Text.Json.JsonSerializer.Deserialize<PromotionAlbumPlan>(stored.PlanJson)!;
+            album.RefreshJobId = null;
+            foreach (var track in album.Tracks) track.RefreshJobId = null;
+            var queued = await queue.EnqueueAsync(new DurableJobEnqueueRequest<Guid>(
+                LibraryPromotionService.JobType, $"promotion:{run.Id:N}:resume", run.Id, owner));
+            stored.JobId = queued.JobId;
+            stored.Outcome = "Running";
+            stored.PlanJson = System.Text.Json.JsonSerializer.Serialize(album);
+            stored.Revision++;
+            await db.SaveChangesAsync();
+        }
+        var reads = 0;
+        var constrained = new PromotionRoots(settings.Object, factory, new Microsoft.Extensions.Configuration.ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Promotion:AllowedBase"] = Path.Combine(directory, "library"),
+                ["Promotion:MinimumFreeBytes"] = "1"
+            }).Build(), _ => { reads++; return 0; });
+
+        await ExecuteBatchAsync(BatchService(catalog.Object, acquisition.Object, promotionRoots: constrained));
+
+        Assert.Equal("Placed", (await batch.GetAsync(Context, run.Id)).Outcome);
+        Assert.Equal(0, reads);
     }
 
     [Fact]
@@ -445,13 +527,13 @@ public sealed partial class LibraryPromotionTests
     }
 
     private LibraryPromotionService BatchService(IPromotionCatalog catalog, IPromotionAcquisition acquisition, IManagedMetadataWriter? writer = null,
-        IProtocolLyricsResolver? lyricsResolver = null, ITrackIdentityService? identityService = null)
+        IProtocolLyricsResolver? lyricsResolver = null, ITrackIdentityService? identityService = null, PromotionRoots? promotionRoots = null)
     {
         var options = new ProviderDownloadWorkspaceOptions { RootPath = Path.Combine(directory, "workspaces") };
         var resolver = new ProviderDownloadArtifactResolver(new EfProviderDownloadArtifactStore(factory), options);
         var cache = new allstarr.Services.Common.FileMediaApplicationCache(new allstarr.Services.Common.FileMediaCacheOptions(Path.Combine(directory, "batch-cache")),
             new SystemPlatformClock(), Microsoft.Extensions.Logging.Abstractions.NullLogger<allstarr.Services.Common.FileMediaApplicationCache>.Instance);
-        return new(factory, queue, roots, resolver, options, services.GetRequiredService<IServiceScopeFactory>(),
+        return new(factory, queue, promotionRoots ?? roots, resolver, options, services.GetRequiredService<IServiceScopeFactory>(),
             writer ?? new TagLibManagedMetadataWriter(new TagLibManagedTagFileMutator(), new PhysicalManagedFileOperations()), new allstarr.Services.Common.AudioQualityAnalyzer(cache), new TestBackendLibraryAccess(factory, "music"),
             identities: identityService, promotionCatalog: catalog, promotionAcquisition: acquisition, lyrics: lyricsResolver);
     }

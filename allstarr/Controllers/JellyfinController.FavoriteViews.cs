@@ -21,7 +21,7 @@ public partial class JellyfinController
             { _logger.LogWarning("Saved favorites are unavailable ({ExceptionType})", exception.GetType().Name); }
         }
         var parent = Request.Query["ParentId"].ToString();
-        var libraryScope = parent.Length != 0 && await IsListenerMusicLibraryAsync(parent) ? parent : _settings.LibraryId;
+        var libraryScope = parent.Length != 0 && saved.Count != 0 && await IsListenerMusicLibraryAsync(parent) ? parent : _settings.LibraryId;
         var types = (includeItemTypes ?? JellyfinMusicEndpointPolicy.DefaultMusicItemTypes)
             .Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);

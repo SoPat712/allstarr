@@ -241,7 +241,7 @@ public sealed partial class LibraryPromotionService(IDbContextFactory<AllstarrDb
             var access = await libraryAccess.ResolveUserAsync(run.OwnerUserId, token);
             if (access.Context == null || !access.Access.Allows(request.BackendLibraryId))
                 throw new UnauthorizedAccessException("The owner's backend library access is unavailable.");
-            var root = await roots.RequireAsync(request.RootId, token);
+            var root = await roots.RequireAsync(request.RootId, token, checkFreeSpace: false);
             if (root.Path != run.RootPath) throw new PromotionException(PromotionFailure.PromotionChanged);
             var workspace = Workspace(id);
             var path = Path.Combine(workspace, "song" + plan.Track.Extension);

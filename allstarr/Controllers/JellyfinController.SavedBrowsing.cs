@@ -27,8 +27,6 @@ public partial class JellyfinController
     {
         if (!string.IsNullOrWhiteSpace(Request.Query["SearchTerm"]) || Request.Query.ContainsKey("Ids")) return null;
         var parent = Request.Query["ParentId"].ToString();
-        if (parent.Length != 0 && !await IsListenerMusicLibraryAsync(parent)) return null;
-        var libraryScope = parent.Length != 0 ? parent : _settings.LibraryId;
         string[] relations = ["AlbumIds", "ArtistIds", "AlbumArtistIds", "ContributingArtistIds"];
         if (parent.Length == 0 && relations.Any(key => JellyfinProviderQuery.Values(Request.Query[key].ToString())
             .Any(id => _localLibraryService.ParseExternalId(id).isExternal))) return null;
@@ -36,6 +34,8 @@ public partial class JellyfinController
         if (reader == null) return null;
         var saved = await reader.ReadForRequestAsync(HttpContext);
         if (saved.Count == 0) return null;
+        if (parent.Length != 0 && !await IsListenerMusicLibraryAsync(parent)) return null;
+        var libraryScope = parent.Length != 0 ? parent : _settings.LibraryId;
         IReadOnlyList<FavoriteViewItem> favoriteView = _favoriteViews == null ? [] : await _favoriteViews.ReadForRequestAsync(HttpContext);
         var favorites = favoriteView.Select(item => item.ItemId).ToHashSet(FavoriteViewReader.ItemComparer(favoriteView));
         var query = Request.Query.ToDictionary(pair => pair.Key, pair => pair.Value.ToString(), StringComparer.OrdinalIgnoreCase);

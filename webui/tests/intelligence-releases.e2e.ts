@@ -214,3 +214,27 @@ test("A release panel lists its tracks and folds the rest away", async ({ page }
   await expect(page.getByText("Aurora is in your apps with 9 songs", { exact: true })).toBeVisible();
   expect(added).toEqual(["POST"]);
 });
+
+test("A release panel keeps duplicate track labels and shows an apps refusal", async ({ page }) => {
+  await mockReleases(page);
+  await page.route("**/api/admin/releases/aurora/tracks", route => route.fulfill({ json: {
+    providerId: "qobuz",
+    tracks: [
+      { number: 1, title: "Intro", artists: "North", durationMs: 60_000, isExplicit: false },
+      { number: 1, title: "Intro", artists: "North", durationMs: 70_000, isExplicit: false },
+    ],
+  } }));
+  await page.route("**/api/admin/releases/aurora/apps", route => route.fulfill({
+    status: 403,
+    json: { error: "Adding mixes to apps is turned off for this household." },
+  }));
+  await page.goto("/#/intelligence?section=releases&release=aurora");
+  const panel = page.getByRole("dialog", { name: "Aurora", exact: true });
+  await expect(panel.getByRole("listitem")).toHaveCount(2);
+
+  await panel.getByRole("button", { name: "Add to apps", exact: true }).click();
+
+  await expect(page.getByText("Adding mixes to apps is turned off for this household.", { exact: true })).toBeVisible();
+  await expect(panel.getByRole("button", { name: "Add to apps", exact: true })).toBeEnabled();
+  await expect(page.getByText(/Aurora is in your apps/)).toHaveCount(0);
+});

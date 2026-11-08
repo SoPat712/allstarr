@@ -65,7 +65,7 @@
       {#if tracksFailed}<p>The track list could not be loaded.</p>
       {:else if !tracks}<RowsSkeleton count={4} label="Loading tracks" />
       {:else if !tracks.tracks.length}<p>No source lists this release's tracks yet.</p>
-      {:else}<ol>{#each shownTracks as track (track.number + track.title)}<li><span class="track-number">{track.number}</span><span class="track-title"><strong>{track.title}{#if track.isExplicit} <abbr title="Explicit">E</abbr>{/if}</strong><small>{track.artists}</small></span><span class="track-time">{formatDuration(track.durationMs)}</span></li>{/each}</ol>
+      {:else}<ol>{#each shownTracks as track, index (index)}<li><span class="track-number">{track.number}</span><span class="track-title"><strong>{track.title}{#if track.isExplicit} <abbr title="Explicit">E</abbr>{/if}</strong><small>{track.artists}</small></span><span class="track-time">{formatDuration(track.durationMs)}</span></li>{/each}</ol>
         {#if tracks.tracks.length > 6}<Button variant="text" size="sm" onclick={() => allTracks = !allTracks}>{allTracks ? "Show fewer tracks" : `${tracks.tracks.length - 6} more tracks`}</Button>{/if}{/if}
     </section>
     <section class="release-sources" aria-label="Available from"><h3>Available from</h3>

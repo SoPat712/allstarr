@@ -14,7 +14,14 @@ public sealed partial class PersonalMixService
         var key = "custom:" + id.ToString("N");
         var (user, captured, _) = await SnapshotAsync(owner, token);
         if (captured.Mixes.TryGetValue(key, out var saved))
+        {
+            if (!saved.Added)
+            {
+                await SetInAppsAsync(owner, saved.Id, true, token);
+                saved = saved with { Added = true };
+            }
             return (await VisibleAsync(owner, new() { Mixes = new() { [key] = saved } }, token)).Single();
+        }
         var context = await ContextAsync(user, token);
         var playable = new List<Song>();
         foreach (var song in songs)
@@ -26,7 +33,14 @@ public sealed partial class PersonalMixService
         {
             var (_, document, version) = await SnapshotAsync(owner, token);
             if (document.Mixes.TryGetValue(key, out saved))
+            {
+                if (!saved.Added)
+                {
+                    await SetInAppsAsync(owner, saved.Id, true, token);
+                    saved = saved with { Added = true };
+                }
                 return (await VisibleAsync(owner, new() { Mixes = new() { [key] = saved } }, token)).Single();
+            }
             var revision = await InputRevisionAsync(db, owner, token);
             saved = new PersonalMix(id, "custom", name.Trim(), description, 1, clock.UtcNow, new(true, "Ready"), true,
                 playable.Select(song => new PersonalMixItem(id, 1, SafeSong(song), song.IsLocal ? "library" : song.ExternalProvider ?? "service",

@@ -44,6 +44,37 @@ public sealed partial class ProtocolRouteFixtureTests
     }
 
     [Theory]
+    [InlineData("")]
+    [InlineData("&Filters=IsFavorite")]
+    public async Task ParentBrowseWithoutSavedRowsSkipsLibraryAccessLookup(string favorite)
+    {
+        await using var database = await SqliteTestDatabase.CreateAsync();
+        var storage = new FavoriteViewFactory(database.Options);
+        await SeedFavoriteViewsAsync(storage, "jellyfin");
+        await using (var db = storage.CreateDbContext())
+        {
+            await db.Set<FavoriteStateRecord>().ExecuteDeleteAsync();
+            await db.Set<FavoriteEventRecord>().ExecuteDeleteAsync();
+        }
+        var access = new Mock<IBackendLibraryAccessResolver>(MockBehavior.Strict);
+        using var factory = new ProtocolFactory("Jellyfin", request => request.RequestUri!.AbsolutePath == "/Users/Me"
+            ? Json(200, """{"Id":"user-1"}""")
+            : Json(200, """{"Items":[{"Id":"native","Name":"Native","Type":"Audio"}],"TotalRecordCount":1,"StartIndex":0}"""),
+            services =>
+            {
+                ConfigureFavoriteViews(services, storage, new Mock<IProtocolProviderGateway>(MockBehavior.Strict).Object);
+                services.RemoveAll<IBackendLibraryAccessResolver>();
+                services.AddSingleton(access.Object);
+            });
+        using var client = factory.CreateClient();
+
+        using var response = await client.GetAsync($"/Items?ApiKey=fixture&ParentId=native-album&IncludeItemTypes=Audio{favorite}");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        access.VerifyNoOtherCalls();
+    }
+
+    [Theory]
     [InlineData("/Genres?IncludeItemTypes=Audio", "Items")]
     [InlineData("/Items/Filters2?IncludeItemTypes=Audio", "Genres")]
     [InlineData("/Items/Filters?IncludeItemTypes=Audio", "Years")]

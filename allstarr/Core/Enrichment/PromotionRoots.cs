@@ -11,7 +11,12 @@ public sealed record PromotionSetup(bool Ready, bool AllowedBaseConfigured, stri
 public sealed class PromotionRoots(IDurableRuntimeSettings settings, IDbContextFactory<AllstarrDbContext> factory,
     IConfiguration configuration)
 {
+    private readonly Func<string, long?>? readFreeBytes;
     public const string Key = "Promotion:Roots";
+
+    internal PromotionRoots(IDurableRuntimeSettings settings, IDbContextFactory<AllstarrDbContext> factory,
+        IConfiguration configuration, Func<string, long?> readFreeBytes) : this(settings, factory, configuration) =>
+        this.readFreeBytes = readFreeBytes;
 
     public async Task<PromotionRoot[]> ReadAsync(CancellationToken token = default) =>
         JsonSerializer.Deserialize<PromotionRoot[]>((string)(await settings.GetAsync(Key, token)).Value) ?? [];
@@ -40,7 +45,7 @@ public sealed class PromotionRoots(IDurableRuntimeSettings settings, IDbContextF
     internal static bool SameLocation(PromotionRoot left, PromotionRoot right) =>
         left.Id == right.Id && left.Path == right.Path && left.BackendPath == right.BackendPath;
 
-    public async Task<PromotionRoot> RequireAsync(Guid id, CancellationToken token)
+    public async Task<PromotionRoot> RequireAsync(Guid id, CancellationToken token, bool checkFreeSpace = true)
     {
         var approved = await ReadAsync(token);
         if (approved.Length == 0) throw new PromotionException(PromotionFailure.LibraryFolderNotSet);
@@ -49,7 +54,7 @@ public sealed class PromotionRoots(IDurableRuntimeSettings settings, IDbContextF
         try { Validate(root); }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException)
         { throw new PromotionException(PromotionFailure.LibraryFolderUnavailable); }
-        RequireFreeSpace(root.Path, 0);
+        if (checkFreeSpace) RequireFreeSpace(root.Path, 0);
         return root;
     }
 
@@ -62,6 +67,7 @@ public sealed class PromotionRoots(IDurableRuntimeSettings settings, IDbContextF
 
     internal long? FreeBytes(string path)
     {
+        if (readFreeBytes != null) return readFreeBytes(path);
         var full = System.IO.Path.GetFullPath(path);
         var drive = DriveInfo.GetDrives().Where(item => Contains(item.RootDirectory.FullName, full))
             .OrderByDescending(item => item.RootDirectory.FullName.Length).FirstOrDefault();

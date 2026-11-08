@@ -3,6 +3,7 @@ using allstarr.Core.ManagedFiles;
 using allstarr.Core.Music;
 using allstarr.Core.Protocols;
 using allstarr.Core.Releases;
+using allstarr.Core.Settings;
 using allstarr.Filters;
 using allstarr.Services.Admin;
 using allstarr.Services.Local;
@@ -14,7 +15,8 @@ namespace allstarr.Controllers;
 [Route("api/admin/releases")]
 [ServiceFilter(typeof(AdminPortFilter))]
 public sealed class NewReleasesController(NewReleasesService releases, AdminProtocolExecutionContextFactory? protocolContexts = null,
-    IProtocolProviderGateway? providers = null, PersonalMixService? mixes = null, RecordingKeptFiles? kept = null) : ControllerBase
+    IProtocolProviderGateway? providers = null, PersonalMixService? mixes = null, RecordingKeptFiles? kept = null,
+    IDurableRuntimeSettings? settings = null) : ControllerBase
 {
     [HttpGet("artists")]
     public Task<IActionResult> List(CancellationToken cancellationToken) => ExecuteAsync(async owner =>
@@ -77,25 +79,37 @@ public sealed class NewReleasesController(NewReleasesService releases, AdminProt
     [HttpPost("{entryId}/apps")]
     public Task<IActionResult> AddToApps(string entryId, CancellationToken cancellationToken) => ExecuteAsync(async owner =>
     {
-        if (mixes == null) return StatusCode(503, new { error = "Mixes are unavailable." });
+        if (mixes == null || settings == null) return StatusCode(503, new { error = "Mixes are unavailable." });
+        if (!(bool)(await settings.GetAsync(PersonalMixService.PublishKey, cancellationToken)).Value)
+            return StatusCode(403, new { error = "Adding mixes to apps is turned off for this household." });
         var release = await ReleaseAlbumAsync(owner, entryId, cancellationToken);
         if (release.Failure is { } failure) return failure;
         if (release.Album == null) return Conflict(new { error = "No source lists this release's songs yet." });
+        if (release.Album.Songs.Count > 100)
+            return Conflict(new { error = "This release has more than 100 songs and cannot be added to apps." });
         var entry = release.Entry!;
         var type = entry.Type.ToLowerInvariant() switch { "single" => "Single", "ep" => "EP", "album" => "Album", _ => "Release" };
+        return await SaveReleaseAsync(() => mixes.SaveListAsync(owner, ReleaseGuid(owner, entryId, "apps"), entry.Title,
+            $"{entry.Artist} · {type}", release.Album.Songs, "From the release", cancellationToken));
+    });
+
+    internal static async Task<IActionResult> SaveReleaseAsync(Func<Task<PersonalMix>> save)
+    {
         try
         {
-            var mix = await mixes.SaveListAsync(owner, ReleaseGuid(owner, entryId, "apps"), entry.Title, $"{entry.Artist} · {type}",
-                release.Album.Songs, "From the release", cancellationToken);
-            return Ok(new { mixId = mix.Id, songCount = mix.Songs.Count });
+            var mix = await save();
+            return new OkObjectResult(new { mixId = mix.Id, songCount = mix.Songs.Count });
         }
-        catch (ArgumentException exception) { return Conflict(new { error = exception.Message }); }
-    });
+        catch (ArgumentException exception) { return new ConflictObjectResult(new { error = exception.Message }); }
+        catch (InvalidOperationException) { return new ConflictObjectResult(new { error = "Your apps changed while saving this release. Try again." }); }
+    }
 
     // Keeps every song on the release, the same way Keep works for one song.
     [HttpPost("{entryId}/keep")]
     public Task<IActionResult> KeepAlbum(string entryId, CancellationToken cancellationToken) => ExecuteAsync(async owner =>
     {
+        if (HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] is not AdminAuthSession { IsAdministrator: true })
+            return StatusCode(403, new { error = "Administrator access is required to keep albums." });
         if (kept == null) return StatusCode(503, new { error = "Keeping songs is unavailable." });
         var release = await ReleaseAlbumAsync(owner, entryId, cancellationToken);
         if (release.Failure is { } failure) return failure;
@@ -109,12 +123,12 @@ public sealed class NewReleasesController(NewReleasesService releases, AdminProt
             {
                 await providers!.RememberTrackAsync(release.Execution!, song.Id);
                 var artists = song.Artists.Count > 0 ? song.Artists.ToArray() : [string.IsNullOrWhiteSpace(song.Artist) ? "Unknown artist" : song.Artist];
-                await kept.RequestKeepAsync(release.Execution!, new(source.provider!, ProviderResourceKind.Track, source.externalId!),
+                var result = await kept.RequestKeepAsync(release.Execution!, new(source.provider!, ProviderResourceKind.Track, source.externalId!),
                     new(song.Title, artists, song.Album, song.Duration * 1000L, song.ExplicitContentLyrics, Track: song.Track, AlbumArtist: song.AlbumArtist),
-                    ReleaseGuid(owner, entryId, "keep:" + song.Id), cancellationToken);
-                queued++;
+                    Guid.CreateVersion7(), cancellationToken);
+                if (result.Created) queued++; else skipped++;
             }
-            catch (InvalidOperationException) { skipped++; }
+            catch (Exception exception) when (exception is InvalidOperationException or ArgumentException) { skipped++; }
         }
         return Accepted(new { queued, skipped });
     });
@@ -139,7 +153,7 @@ public sealed class NewReleasesController(NewReleasesService releases, AdminProt
         return new(entry, execution, null, null, null);
     }
 
-    // The same release and action always map to the same id, so pressing again does not repeat the work.
+    // A release always maps to the same mix, so adding it again restores the existing one.
     private static Guid ReleaseGuid(Guid owner, string entryId, string action) =>
         new(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes($"{owner:N}:{entryId}:{action}")).AsSpan(0, 16));
 

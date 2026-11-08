@@ -1,10 +1,17 @@
 using System.Net;
+using System.Collections.Immutable;
 using System.Text.Json;
 using allstarr.Controllers;
 using allstarr.Core.Capabilities;
 using allstarr.Core.ClientEvents;
+using allstarr.Core.Downloads;
+using allstarr.Core.Enrichment;
 using allstarr.Core.Favorites;
+using allstarr.Core.Intelligence;
 using allstarr.Core.Jobs;
+using allstarr.Core.ManagedFiles;
+using allstarr.Core.Matching;
+using allstarr.Core.Music;
 using allstarr.Core.Operations;
 using allstarr.Core.Protocols;
 using allstarr.Core.Releases;
@@ -17,6 +24,7 @@ using allstarr.Services.Common;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using SkiaSharp;
@@ -396,6 +404,105 @@ public sealed class NewReleasesTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Album_keep_counts_only_new_jobs_and_can_retry_changed_metadata_after_failure()
+    {
+        var song = ReleaseSong("track");
+        var (controller, entry, _) = await KeepControllerAsync(true, [song]);
+        var first = JsonSerializer.SerializeToElement(Assert.IsType<AcceptedResult>(
+            await controller.KeepAlbum(entry, default)).Value);
+        Assert.Equal(1, first.GetProperty("queued").GetInt32());
+        Assert.Equal(0, first.GetProperty("skipped").GetInt32());
+
+        var repeated = JsonSerializer.SerializeToElement(Assert.IsType<AcceptedResult>(
+            await controller.KeepAlbum(entry, default)).Value);
+        Assert.Equal(0, repeated.GetProperty("queued").GetInt32());
+        Assert.Equal(1, repeated.GetProperty("skipped").GetInt32());
+        await using (var db = _factory.CreateDbContext())
+        {
+            var job = await db.Jobs.SingleAsync(item => item.Type == RecordingKeptFiles.ExplicitKeepJobType);
+            job.State = DurableJobState.Failed;
+            job.CompletedAt = _clock.UtcNow;
+            job.UpdatedAt = _clock.UtcNow;
+            job.Revision++;
+            await db.SaveChangesAsync();
+        }
+        song.Title = "Changed title";
+        song.Duration++;
+
+        var retried = JsonSerializer.SerializeToElement(Assert.IsType<AcceptedResult>(
+            await controller.KeepAlbum(entry, default)).Value);
+        Assert.Equal(1, retried.GetProperty("queued").GetInt32());
+        Assert.Equal(0, retried.GetProperty("skipped").GetInt32());
+        await using var verify = _factory.CreateDbContext();
+        var jobs = await verify.Jobs.Where(item => item.Type == RecordingKeptFiles.ExplicitKeepJobType).ToArrayAsync();
+        Assert.Equal(2, jobs.Length);
+        Assert.Equal(2, jobs.Select(item => item.IdempotencyKey).Distinct().Count());
+    }
+
+    [Fact]
+    public async Task Album_keep_skips_invalid_songs_and_continues()
+    {
+        var invalid = ReleaseSong("invalid");
+        invalid.Track = 0;
+        var (controller, entry, _) = await KeepControllerAsync(true, [invalid, ReleaseSong("valid", 2)]);
+
+        var response = JsonSerializer.SerializeToElement(Assert.IsType<AcceptedResult>(
+            await controller.KeepAlbum(entry, default)).Value);
+
+        Assert.Equal(1, response.GetProperty("queued").GetInt32());
+        Assert.Equal(1, response.GetProperty("skipped").GetInt32());
+    }
+
+    [Fact]
+    public async Task Album_keep_rejects_listeners_before_reading_provider_tracks()
+    {
+        var (controller, entry, gateway) = await KeepControllerAsync(false, [ReleaseSong("track")]);
+
+        var response = Assert.IsType<ObjectResult>(await controller.KeepAlbum(entry, default));
+
+        Assert.Equal(403, response.StatusCode);
+        Assert.Contains("Administrator", JsonSerializer.Serialize(response.Value));
+        gateway.Verify(item => item.GetAlbumAsync(It.IsAny<ProtocolExecutionContext>(),
+            It.IsAny<string>(), It.IsAny<string>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Add_to_apps_obeys_the_publish_setting_and_explains_large_releases()
+    {
+        var gateway = new Mock<IProtocolProviderGateway>();
+        var publish = false;
+        _settings.Setup(item => item.GetAsync(PersonalMixService.PublishKey, It.IsAny<CancellationToken>()))
+            .Returns(() => Task.FromResult(new EffectiveRuntimeSetting(PersonalMixService.PublishKey,
+                RuntimeSettingValueType.Boolean, publish, publish.ToString(), RuntimeSettingOrigin.Durable, 1, null, null, null)));
+        var controller = ReleaseController(gateway.Object, mixes: Mixes(gateway.Object), settings: _settings.Object);
+        var refused = Assert.IsType<ObjectResult>(await controller.AddToApps("missing", default));
+        Assert.Equal(403, refused.StatusCode);
+        Assert.Contains("turned off", JsonSerializer.Serialize(refused.Value));
+        gateway.Verify(item => item.GetAlbumAsync(It.IsAny<ProtocolExecutionContext>(),
+            It.IsAny<string>(), It.IsAny<string>()), Times.Never);
+
+        publish = true;
+        await Follow(_first);
+        _albums = [Album()];
+        await Poll(_first);
+        var entry = Assert.Single((await _service.ReadAsync(_first)).Entries);
+        gateway.Setup(item => item.GetAlbumAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "one"))
+            .ReturnsAsync(new Album { Songs = Enumerable.Range(1, 101).Select(index => ReleaseSong(index.ToString(), index)).ToList() });
+        var tooLarge = Assert.IsType<ConflictObjectResult>(await controller.AddToApps(entry.Id, default));
+        Assert.Contains("more than 100 songs", JsonSerializer.Serialize(tooLarge.Value));
+    }
+
+    [Fact]
+    public async Task Add_to_apps_save_race_returns_a_retryable_conflict()
+    {
+        var response = Assert.IsType<ConflictObjectResult>(await NewReleasesController.SaveReleaseAsync(
+            () => Task.FromException<PersonalMix>(new InvalidOperationException("Save again."))));
+
+        Assert.Equal(409, response.StatusCode);
+        Assert.Contains("Try again", JsonSerializer.Serialize(response.Value));
+    }
+
+    [Fact]
     public async Task Follow_keeps_only_an_existing_enriched_artist_identity()
     {
         var mbid = Guid.NewGuid().ToString();
@@ -610,6 +717,90 @@ public sealed class NewReleasesTests : IAsyncLifetime
         Assert.Equal(403, Assert.IsType<ObjectResult>(await Artwork(gateway.Object, Listener(_second, _second.ToString())).Get("deezer", "one", default)).StatusCode);
         Assert.Empty(_coverSource.Requests);
     }
+
+    private async Task<(NewReleasesController Controller, string EntryId, Mock<IProtocolProviderGateway> Gateway)>
+        KeepControllerAsync(bool administrator, List<Song> songs)
+    {
+        await using (var db = _factory.CreateDbContext())
+        {
+            (await db.Users.SingleAsync(item => item.Id == _first)).IsAdmin = administrator;
+            await db.SaveChangesAsync();
+        }
+        await Follow(_first);
+        _albums = [Album()];
+        await Poll(_first);
+        var entry = Assert.Single((await _service.ReadAsync(_first)).Entries);
+        var gateway = new Mock<IProtocolProviderGateway>();
+        gateway.Setup(item => item.GetAlbumAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "one"))
+            .ReturnsAsync(new Album { Songs = songs });
+        gateway.Setup(item => item.RememberTrackAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>()))
+            .Returns(Task.CompletedTask);
+        var recordingIds = songs.ToDictionary(song => song.Id, _ => Guid.CreateVersion7());
+        var identities = new Mock<ITrackIdentityService>();
+        identities.Setup(item => item.ResolveRecordingAsync(It.IsAny<ProviderActorContext>(), It.IsAny<string>(),
+                It.IsAny<CancellationToken>()))
+            .Returns((ProviderActorContext _, string publicId, CancellationToken _) =>
+                Task.FromResult<CanonicalRecordingIdentity?>(recordingIds.TryGetValue(publicId, out var id)
+                    ? new(id, _first, null, null, 1) { PublicId = publicId }
+                    : null));
+        var workspace = new ProviderDownloadWorkspaceOptions
+        { RootPath = Path.Combine(Path.GetTempPath(), "allstarr-release-keep", Guid.NewGuid().ToString("N")) };
+        var artifacts = new ProviderDownloadArtifactResolver(new EfProviderDownloadArtifactStore(_factory), workspace);
+        var placement = new ManagedTrackPlacementOptions
+        {
+            RootId = Guid.CreateVersion7(),
+            RootPath = Path.Combine(workspace.RootPath, "kept"),
+            PathTemplate = "{artist}/{title}"
+        };
+        var kept = new RecordingKeptFiles(_factory, artifacts, Mock.Of<IServiceScopeFactory>(), placement,
+            identities.Object, _clock, NullLogger<RecordingKeptFiles>.Instance, _queue);
+        return (ReleaseController(gateway.Object, kept: kept, administrator: administrator), entry.Id, gateway);
+    }
+
+    private NewReleasesController ReleaseController(IProtocolProviderGateway gateway, PersonalMixService? mixes = null,
+        RecordingKeptFiles? kept = null, IDurableRuntimeSettings? settings = null, bool administrator = false)
+    {
+        var controller = new NewReleasesController(_service, new(_factory, _clock), gateway, mixes, kept, settings)
+        { ControllerContext = new() { HttpContext = new DefaultHttpContext() } };
+        controller.HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] = new AdminAuthSession
+        {
+            SessionId = "release-actions",
+            UserId = _first.ToString(),
+            UserName = "Listener",
+            IsAdministrator = administrator,
+            BackendType = "subsonic",
+            BackendInstanceId = "main",
+            AllstarrUserId = _first,
+            JellyfinAccessToken = "",
+            ExpiresAtUtc = DateTime.UtcNow.AddHours(1)
+        };
+        return controller;
+    }
+
+    private PersonalMixService Mixes(IProtocolProviderGateway gateway)
+    {
+        var policies = new Mock<IEffectiveProviderPolicyResolver>();
+        policies.Setup(item => item.ResolveForUserAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new EffectiveProviderPolicySnapshot(
+                ImmutableDictionary<ProviderCapabilityKind, ImmutableArray<string>>.Empty,
+                ImmutableHashSet<string>.Empty, "Lossless", .07));
+        var tags = new SharedTagStore(_factory, _clock);
+        var taste = new TasteService(_factory, tags, _clock);
+        return new(_factory, _clock, tags, taste, new MusicMixService(gateway), gateway, _service,
+            _settings.Object, policies.Object, Mock.Of<IBackendLibraryAccessResolver>());
+    }
+
+    private static Song ReleaseSong(string id, int track = 1) => new()
+    {
+        Id = "ext-deezer-song-" + id,
+        ExternalProvider = "deezer",
+        ExternalId = id,
+        Title = "Song " + id,
+        Artist = "Artist",
+        Album = "Album",
+        Duration = 180,
+        Track = track
+    };
 
     private ReleaseArtworkController Artwork(IProtocolProviderGateway gateway, AdminAuthSession? session)
     {

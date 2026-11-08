@@ -591,94 +591,110 @@ public partial class JellyfinController : ControllerBase
         bool storedOnly = false)
     {
         var actor = HttpContext.GetProtocolExecutionContext()?.Actor;
-        return await _mediaAssets.ResolveAsync(
-            new MediaAssetIdentity(
-                resourceKind is "song" or "album" or "artist" ? null : actor?.EffectiveUserId,
-                null,
-                provider,
-                resourceKind,
-                resourceId,
-                // Albums without source art now take a saved song's cover and covers come at a larger size, so earlier copies are not reused.
-                Revision: resourceKind is "album" or "song" ? JellyfinItemArtwork.AlbumArtRevision : null,
-                Width: width > 0 ? width : null,
-                Height: height > 0 ? height : null),
-            async token =>
+        // Separate revisions keep shared source artwork from reusing a listener-scoped saved-song fallback.
+        var revision = resourceKind switch
+        {
+            "album" => JellyfinItemArtwork.AlbumArtRevision + ":source",
+            "song" => JellyfinItemArtwork.AlbumArtRevision,
+            _ => null
+        };
+        var identity = new MediaAssetIdentity(
+            resourceKind is "song" or "album" or "artist" ? null : actor?.EffectiveUserId,
+            null,
+            provider,
+            resourceKind,
+            resourceId,
+            Revision: revision,
+            Width: width > 0 ? width : null,
+            Height: height > 0 ? height : null);
+        var albumFallback = false;
+
+        async Task<MediaAssetSource?> FetchAsync(CancellationToken token, bool useListenerFallback)
+        {
+            async Task<MediaAssetSource?> Fetch()
             {
-                async Task<MediaAssetSource?> Fetch()
+                if (resourceKind == "playlist" &&
+                    HttpContext.GetProtocolExecutionContext() is { Actor: not null } protocol)
                 {
-                    if (resourceKind == "playlist" &&
-                        HttpContext.GetProtocolExecutionContext() is { Actor: not null } protocol)
-                    {
-                        var artwork = await _providerGateway.ResolvePlaylistArtworkAsync(
-                            protocol, provider, resourceId, MaximumArtworkBytes);
-                        if (artwork != null)
-                            return new MediaAssetSource(artwork.Bytes, artwork.ContentType);
-                    }
-
-                    var coverUrl = storedOnly
-                        ? (await _providerGateway.GetStoredAlbumAsync(HttpContext.RequireProtocolExecutionContext(), provider, resourceId))?.CoverArtUrl
-                        : await GetProviderImageUrlAsync(provider, resourceKind, resourceId, token);
-                    if ((storedOnly || actor == null) && string.IsNullOrWhiteSpace(coverUrl)) return null;
-                    if (resourceKind == "album" && actor != null && ProviderArtworkFallback.IsFallback(provider, coverUrl, resourceKind) &&
-                        await SavedSongCoverAsync($"ext-{provider}-album-{resourceId}", token) is { } songCover)
-                        coverUrl = songCover;
-                    if (ProviderArtworkFallback.IsFallback(provider, coverUrl, resourceKind))
-                        return await ProviderArtworkFallback.ReadAsync(HttpContext.RequestServices, provider,
-                            width.HasValue && height.HasValue ? Math.Max(width.Value, height.Value) : width ?? height, token, coverUrl);
-                    if (!OutboundRequestGuard.TryCreateSafeHttpUri(
-                            coverUrl, out var coverUri, out var validationReason) ||
-                        coverUri == null)
-                    {
-                        _logger.LogDebug(
-                            "No usable external image URL for {Type} {Provider}/{ExternalId}: {Reason}",
-                            resourceKind,
-                            provider,
-                            resourceId,
-                            validationReason);
-                        return null;
-                    }
-
-                    var originalCoverUri = coverUri;
-                    coverUri = SelectExternalArtworkVariant(
-                        coverUri, provider, width, height);
-                    HttpResponseMessage response;
-                    try { response = await _proxyService.HttpClient.GetAsync(coverUri, token); }
-                    catch (OperationCanceledException) when (!token.IsCancellationRequested)
-                    {
-                        // A transport timeout is transient; a disconnected listener is not retried.
-                        response = await _proxyService.HttpClient.GetAsync(coverUri, token);
-                    }
-                    using var responseLifetime = response;
-                    if (response.StatusCode is System.Net.HttpStatusCode.TooManyRequests or
-                        System.Net.HttpStatusCode.ServiceUnavailable)
-                        throw new HttpRequestException(
-                            $"Transient error: {response.StatusCode}", null, response.StatusCode);
-                    var contentType = response.Content.Headers.ContentType?.MediaType;
-                    if (!response.IsSuccessStatusCode ||
-                        response.Content.Headers.ContentLength > MaximumArtworkBytes ||
-                        contentType?.StartsWith("image/", StringComparison.OrdinalIgnoreCase) == false)
-                        return null;
-                    await response.Content.LoadIntoBufferAsync(MaximumArtworkBytes, token);
-                    var bytes = await response.Content.ReadAsByteArrayAsync(token);
-                    return new MediaAssetSource(
-                        bytes,
-                        contentType ?? DetectImageContentType(bytes),
-                        response.Headers.ETag?.Tag,
-                        response.Content.Headers.LastModified,
-                        IsSizeSpecific: coverUri != originalCoverUri);
+                    var artwork = await _providerGateway.ResolvePlaylistArtworkAsync(
+                        protocol, provider, resourceId, MaximumArtworkBytes);
+                    if (artwork != null)
+                        return new MediaAssetSource(artwork.Bytes, artwork.ContentType);
                 }
 
-                return retryTransientFailures
-                    ? await RetryHelper.RetryWithBackoffAsync(
-                        Fetch,
-                        _logger,
-                        maxRetries: 3,
-                        initialDelayMs: 500,
-                        cancellationToken: HttpContext.RequestAborted)
-                    : await Fetch();
-            },
-            MaximumArtworkBytes,
-            HttpContext.RequestAborted);
+                var coverUrl = storedOnly
+                    ? (await _providerGateway.GetStoredAlbumAsync(HttpContext.RequireProtocolExecutionContext(), provider, resourceId))?.CoverArtUrl
+                    : await GetProviderImageUrlAsync(provider, resourceKind, resourceId, token);
+                if ((storedOnly || actor == null) && string.IsNullOrWhiteSpace(coverUrl)) return null;
+                if (resourceKind == "album" && ProviderArtworkFallback.IsFallback(provider, coverUrl, resourceKind))
+                {
+                    if (storedOnly || actor?.EffectiveUserId == null) return null;
+                    if (!useListenerFallback) { albumFallback = true; return null; }
+                    if (await SavedSongCoverAsync($"ext-{provider}-album-{resourceId}", token) is { } songCover)
+                        coverUrl = songCover;
+                }
+                if (ProviderArtworkFallback.IsFallback(provider, coverUrl, resourceKind))
+                    return await ProviderArtworkFallback.ReadAsync(HttpContext.RequestServices, provider,
+                        width.HasValue && height.HasValue ? Math.Max(width.Value, height.Value) : width ?? height, token, coverUrl);
+                if (!OutboundRequestGuard.TryCreateSafeHttpUri(
+                        coverUrl, out var coverUri, out var validationReason) ||
+                    coverUri == null)
+                {
+                    _logger.LogDebug(
+                        "No usable external image URL for {Type} {Provider}/{ExternalId}: {Reason}",
+                        resourceKind,
+                        provider,
+                        resourceId,
+                        validationReason);
+                    return null;
+                }
+
+                var originalCoverUri = coverUri;
+                coverUri = SelectExternalArtworkVariant(
+                    coverUri, provider, width, height);
+                HttpResponseMessage response;
+                try { response = await _proxyService.HttpClient.GetAsync(coverUri, token); }
+                catch (OperationCanceledException) when (!token.IsCancellationRequested)
+                {
+                    // A transport timeout is transient; a disconnected listener is not retried.
+                    response = await _proxyService.HttpClient.GetAsync(coverUri, token);
+                }
+                using var responseLifetime = response;
+                if (response.StatusCode is System.Net.HttpStatusCode.TooManyRequests or
+                    System.Net.HttpStatusCode.ServiceUnavailable)
+                    throw new HttpRequestException(
+                        $"Transient error: {response.StatusCode}", null, response.StatusCode);
+                var contentType = response.Content.Headers.ContentType?.MediaType;
+                if (!response.IsSuccessStatusCode ||
+                    response.Content.Headers.ContentLength > MaximumArtworkBytes ||
+                    contentType?.StartsWith("image/", StringComparison.OrdinalIgnoreCase) == false)
+                    return null;
+                await response.Content.LoadIntoBufferAsync(MaximumArtworkBytes, token);
+                var bytes = await response.Content.ReadAsByteArrayAsync(token);
+                return new MediaAssetSource(
+                    bytes,
+                    contentType ?? DetectImageContentType(bytes),
+                    response.Headers.ETag?.Tag,
+                    response.Content.Headers.LastModified,
+                    IsSizeSpecific: coverUri != originalCoverUri);
+            }
+
+            return retryTransientFailures
+                ? await RetryHelper.RetryWithBackoffAsync(
+                    Fetch,
+                    _logger,
+                    maxRetries: 3,
+                    initialDelayMs: 500,
+                    cancellationToken: HttpContext.RequestAborted)
+                : await Fetch();
+        }
+
+        var shared = await _mediaAssets.ResolveAsync(identity, token => FetchAsync(token, false),
+            MaximumArtworkBytes, HttpContext.RequestAborted);
+        if (shared != null || !albumFallback || actor?.EffectiveUserId is not { } listener) return shared;
+        return await _mediaAssets.ResolveAsync(
+            identity with { UserId = listener, Revision = JellyfinItemArtwork.AlbumArtRevision + ":saved" },
+            token => FetchAsync(token, true), MaximumArtworkBytes, HttpContext.RequestAborted);
     }
 
     internal static Uri SelectExternalArtworkVariant(
