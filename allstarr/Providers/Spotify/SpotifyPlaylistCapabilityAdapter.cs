@@ -83,18 +83,40 @@ public sealed partial class SpotifyPlaylistCapabilityAdapter : IProviderPlaylist
     public ProviderCapabilityKind Capability => ProviderCapabilityKind.Playlist;
     public ProviderPlaylistMutationSupport MutationSupport { get; } = new(true, true);
 
+    // Who the account belongs to: the web player's profile query first, then /v1/me, which Spotify rate-limits for
+    // web-player sessions. Once known, the id is remembered per account and stands in while Spotify is busy.
     public Task<ProviderOutcome<string>> GetSourceUserAsync(ProviderExecutionContext context) => ExecuteAsync(context,
         async (token, cancellationToken) =>
         {
+            var key = context.Account is { } account ? $"spotify:source-user:{account.AccountId:N}:{account.Revision}" : null;
+            var profile = await _pathfinder.GetProfileUsernameAsync(token, cancellationToken);
+            if (profile.IsSuccess) return await RememberAsync(key, profile);
             using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(WebApiOrigin, "v1/me"));
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
             using var response = await _http.SendAsync(request, cancellationToken);
-            if (!response.IsSuccessStatusCode) return ProviderOutcome<string>.Failure(Error(response));
-            using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
-            return body.RootElement.TryGetProperty("id", out var id) && !string.IsNullOrWhiteSpace(id.GetString())
-                ? ProviderOutcome<string>.Success(id.GetString()!)
-                : ProviderOutcome<string>.Failure(new(ProviderErrorKind.PermanentFailure));
+            if (response.IsSuccessStatusCode)
+            {
+                using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
+                return body.RootElement.TryGetProperty("id", out var id) && !string.IsNullOrWhiteSpace(id.GetString())
+                    ? await RememberAsync(key, ProviderOutcome<string>.Success(id.GetString()!))
+                    : ProviderOutcome<string>.Failure(new(ProviderErrorKind.PermanentFailure));
+            }
+            var error = Error(response);
+            if (error.Kind is ProviderErrorKind.RateLimited or ProviderErrorKind.TransientFailure && key != null &&
+                (KnownSourceUsers.TryGetValue(key, out var known) || _cache?.IsEnabled == true && (known = await _cache.GetStringAsync(key)) != null))
+                return ProviderOutcome<string>.Success(known!);
+            return ProviderOutcome<string>.Failure(error);
         });
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> KnownSourceUsers = new(StringComparer.Ordinal);
+
+    private async Task<ProviderOutcome<string>> RememberAsync(string? key, ProviderOutcome<string> user)
+    {
+        if (key == null) return user;
+        KnownSourceUsers[key] = user.RequireValue();
+        if (_cache?.IsEnabled == true) await _cache.SetStringAsync(key, user.RequireValue(), TimeSpan.FromDays(90));
+        return user;
+    }
 
     public Task<ProviderOutcome<ProviderPage<ProviderPlaylistSummary>>> GetUserPlaylistsAsync(
         ProviderExecutionContext context, ProviderUserPlaylistsRequest request)

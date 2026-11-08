@@ -35,6 +35,36 @@ public sealed partial class SpotifyPlaylistCapabilityAdapterTests
     }
 
     [Fact]
+    public async Task SourceUserComesFromTheWebPlayerProfileBeforeTheRateLimitedMeCall()
+    {
+        var handler = new SpotifyFakeHandler();
+        var adapter = new SpotifyPlaylistCapabilityAdapter(new HttpClient(handler), new FakeSecretAccessor("fixture-cookie"));
+        Assert.Equal("profile-listener", (await adapter.GetSourceUserAsync(Context(accountId: Guid.NewGuid()))).RequireValue());
+        Assert.DoesNotContain(handler.ApiPaths, path => path.EndsWith("/v1/me", StringComparison.Ordinal));
+
+        handler.ProfileAttributesStatus = HttpStatusCode.InternalServerError;
+        Assert.Equal("me-listener", (await adapter.GetSourceUserAsync(Context(accountId: Guid.NewGuid()))).RequireValue());
+    }
+
+    [Fact]
+    public async Task ARememberedSourceUserStandsInOnlyWhileSpotifyIsBusy()
+    {
+        var handler = new SpotifyFakeHandler();
+        var adapter = new SpotifyPlaylistCapabilityAdapter(new HttpClient(handler), new FakeSecretAccessor("fixture-cookie"));
+        var known = Context(accountId: Guid.NewGuid());
+        Assert.Equal("profile-listener", (await adapter.GetSourceUserAsync(known)).RequireValue());
+
+        handler.ProfileAttributesStatus = HttpStatusCode.TooManyRequests;
+        handler.MeStatus = HttpStatusCode.TooManyRequests;
+        Assert.Equal("profile-listener", (await adapter.GetSourceUserAsync(known)).RequireValue());
+        var unknown = await adapter.GetSourceUserAsync(Context(accountId: Guid.NewGuid()));
+        Assert.Equal(ProviderErrorKind.RateLimited, unknown.Error!.Kind);
+
+        handler.MeStatus = HttpStatusCode.Unauthorized;
+        Assert.False((await adapter.GetSourceUserAsync(known)).IsSuccess);
+    }
+
+    [Fact]
     public async Task LargePublicProfilesHaveBoundedTransportAndAnHonestPartialResult()
     {
         var handler = new SpotifyFakeHandler { TokenIsAnonymous = true, ProfileCount = 1001, GenerateProfilePlaylists = true };
@@ -572,11 +602,11 @@ public sealed partial class SpotifyPlaylistCapabilityAdapterTests
                                                 descriptor.ImplementationType == typeof(EncryptedProviderAccountSecretAccessor));
     }
 
-    private static ProviderExecutionContext Context(bool includeSecretReference = true)
+    private static ProviderExecutionContext Context(bool includeSecretReference = true, Guid? accountId = null)
     {
         var user = Guid.Parse("22222222-2222-2222-2222-222222222222");
         var account = new ProviderAccountContext(
-            Guid.Parse("33333333-3333-3333-3333-333333333333"),
+            accountId ?? Guid.Parse("33333333-3333-3333-3333-333333333333"),
             "spotify",
             ProviderAccountScope.Personal,
             1,
@@ -633,6 +663,8 @@ public sealed partial class SpotifyPlaylistCapabilityAdapterTests
         public string? ProfilePayload { get; set; }
         public int ProfileCount { get; set; } = 4;
         public bool GenerateProfilePlaylists { get; set; }
+        public HttpStatusCode ProfileAttributesStatus { get; set; } = HttpStatusCode.OK;
+        public HttpStatusCode MeStatus { get; set; } = HttpStatusCode.OK;
         public List<RequestProfile> WebPlayerProfiles { get; } = [];
         public List<string> MutationRequests { get; } = [];
         public List<string> MutationBodies { get; } = [];
@@ -672,6 +704,12 @@ public sealed partial class SpotifyPlaylistCapabilityAdapterTests
 
             ApiAuthorizationHeaders.Add(request.Headers.Authorization!.ToString());
             ApiPaths.Add($"{request.RequestUri.Scheme}://{request.RequestUri.Host}{request.RequestUri.AbsolutePath}");
+            if (request.RequestUri.Host == "api.spotify.com" && request.Method == HttpMethod.Get && request.RequestUri.AbsolutePath == "/v1/me")
+            {
+                var me = Json(MeStatus, MeStatus == HttpStatusCode.OK ? new { id = "me-listener" } : new { id = "" });
+                if (MeStatus == HttpStatusCode.TooManyRequests) me.Headers.RetryAfter = new(TimeSpan.FromSeconds(30));
+                return Task.FromResult(me);
+            }
             if (request.RequestUri.Host == "api.spotify.com")
             {
                 MutationRequests.Add($"{request.Method} {request.RequestUri.AbsolutePath}");
@@ -734,6 +772,10 @@ public sealed partial class SpotifyPlaylistCapabilityAdapterTests
 
             var decoded = Uri.UnescapeDataString(request.RequestUri.Query);
             Paths[^1] = $"{request.RequestUri.AbsolutePath}{decoded}";
+            if (decoded.Contains("operationName=profileAttributes", StringComparison.Ordinal))
+                return Task.FromResult(ProfileAttributesStatus == HttpStatusCode.OK
+                    ? Json(HttpStatusCode.OK, new { data = new { me = new { profile = new { uri = "spotify:user:profile-listener", username = "profile-listener", name = "Listener" } } } })
+                    : Json(ProfileAttributesStatus, new { error = "unavailable" }));
             if (decoded.Contains("operationName=fetchLibraryTracks", StringComparison.Ordinal))
                 return Task.FromResult(Json(HttpStatusCode.OK, new { data = new { me = new { library = new { tracks = new { totalCount = 0, items = System.Array.Empty<object>() } } } } }));
             if (decoded.Contains("operationName=fetchPlaylist", StringComparison.Ordinal))
