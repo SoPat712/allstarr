@@ -1,4 +1,5 @@
 <script lang="ts">
+  import AdvancedFold from "$lib/components/patterns/AdvancedFold.svelte";
   import { formatLocalDateTime } from "$lib/dates";
   import { countLabel } from "$lib/count-label";
   import { onMount, tick, untrack } from "svelte";
@@ -285,7 +286,7 @@
     <SelectField label="Job type" bind:value={typeFilter} options={[{ value: "", label: "All work" }, ...Object.entries(jobNames).map(([value, label]) => ({ value, label }))]} />
     <RefreshButton bind:ref={refreshButton} onrefresh={() => load()} label="Refresh jobs" />
   </div>
-  <details class="extra-filters"><summary>More filters{stateFilter ? " · " + jobState(stateFilter) : ""}</summary><SelectField label="Job state" bind:value={stateFilter} options={[{ value: "", label: "All states" }, ...stateOptions]} /></details>
+  <AdvancedFold class="extra-filters" label={`More filters${stateFilter ? " · " + jobState(stateFilter) : ""}`}><SelectField label="Job state" bind:value={stateFilter} options={[{ value: "", label: "All states" }, ...stateOptions]} /></AdvancedFold>
   {#if linkedLoading}<p role="status">Opening related work…</p>{/if}
   {#if linkedError}<ErrorState title={linkedError} onretry={() => openLinkedJob(initialJobId)} />{/if}
   {#if linkedJob}
@@ -360,9 +361,8 @@
   .job-panel-footer { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: var(--space-3); }
   :global(.cancel-job) { color: var(--danger); }
   .waiting-note { border-radius: var(--radius-md); padding: var(--space-3); background: var(--md-sys-color-primary-container); color: var(--md-sys-color-on-primary-container); }
-  .extra-filters { color: var(--color-ink-muted); font-size: var(--text-xs); }
-  .extra-filters summary, .event-technical summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; }
-  .extra-filters :global(.field) { max-width: 20rem; }
+  .event-technical summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; }
+  :global(.extra-filters) :global(.field) { max-width: 20rem; margin: var(--space-3) var(--space-4); }
   .job-row-progress { display: grid; gap: var(--space-1); padding: var(--space-2) var(--space-4); }
   .job-row-progress small { color: var(--color-ink-muted); font-size: var(--text-xs); }
   .job-attempts { display: grid; gap: var(--space-3); }

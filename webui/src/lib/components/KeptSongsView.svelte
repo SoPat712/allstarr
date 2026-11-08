@@ -1,4 +1,5 @@
 <script lang="ts">
+  import AdvancedFold from "$lib/components/patterns/AdvancedFold.svelte";
   import { onMount } from "svelte";
   import { downloads, home, type DownloadsResponse, type ManagedDownload, type ProviderDefinition, type KeptCopyDeletionPreview } from "$lib/api";
   import { MoreHorizontal } from "@lucide/svelte";
@@ -242,7 +243,7 @@
 </section>
 {#if selectedFile}<LibraryPromotionAddPanel bind:open recordingId={request?.recordingId ?? ""} backendLibraryId={request?.backendLibraryId} rootId={request?.rootId} {providers} {administrator} {setupRequired} title={selectedFile.album || selectedFile.title} description={selectedFile.artist} cover={selectedFile.artworkUrl} onPrevious={selectedIndex > 0 ? () => openSong(navigationFiles[selectedIndex - 1]) : undefined} onNext={selectedIndex >= 0 && selectedIndex < navigationFiles.length - 1 ? () => openSong(navigationFiles[selectedIndex + 1]) : undefined}>
   {#snippet copyActions()}<section class="kept-copy" aria-label="Kept copy"><h3 class="sec-label">Kept copy</h3><p>{providerDisplayName(providers, selectedFile?.provider)} · {qualityDetails(selectedFile!).join(" · ")} · {selectedFile?.sizeFormatted}</p><p>{selectedFile?.publicationState === "Imported" ? "Imported original · read-only" : selectedFile?.explicitlyKept ? "Your Keep" : selectedFile?.referenceCount ? "Household" : "No active references"}{selectedFile?.referenceCount ? ` · ${countLabel(selectedFile.referenceCount, "reference")}` : ""}</p><p class="copy-path">{selectedFile?.path}</p>
-    <details class="copy-facts"><summary>Copy details</summary><p>Never removed by cache cleanup.</p><p>{selectedFile?.explicitlyKept ? "Your Keep protects this copy. Other household interests also stay protected when you stop keeping." : selectedFile?.publicationState === "Imported" ? "This imported original is read-only." : selectedFile?.referenceCount ? "Household interests protect this copy." : "This copy has no active household references."}</p>
+    <AdvancedFold class="copy-facts" label="Copy details"><p>Never removed by cache cleanup.</p><p>{selectedFile?.explicitlyKept ? "Your Keep protects this copy. Other household interests also stay protected when you stop keeping." : selectedFile?.publicationState === "Imported" ? "This imported original is read-only." : selectedFile?.referenceCount ? "Household interests protect this copy." : "This copy has no active household references."}</p>
       {#if qualityWarning(selectedFile!)}<p class="copy-warning">{qualityWarning(selectedFile!)?.label}: {qualityWarning(selectedFile!)?.detail}</p>{/if}
       {#if lowerDownloadQuality(selectedFile!)}<p class="copy-warning">This copy is below CD quality.</p>{/if}
       <dl><dt>Song</dt><dd>{selectedFile?.title || selectedFile?.fileName}</dd><dt>Artist</dt><dd>{selectedFile?.artist || "Unknown artist"}</dd><dt>Album</dt><dd>{selectedFile?.album || "Unknown album"}</dd><dt>Duration</dt><dd>{formatDuration(selectedFile?.durationMilliseconds)}</dd>
@@ -253,7 +254,7 @@
         <dt>Your Keep</dt><dd>{selectedFile?.explicitlyKept ? "Active" : "None"}</dd><dt>Size</dt><dd>{countLabel(selectedFile!.size, "byte")}</dd>
         <dt>Updated</dt><dd><time datetime={selectedFile?.lastModified} title={selectedFile?.lastModified}>{relativeTime(selectedFile!.lastModified)}</time></dd><dt>Filename</dt><dd>{selectedFile?.fileName}</dd>
       </dl>
-    </details>
+    </AdvancedFold>
     <SongPlaylistMembership file={{ ...selectedFile!, canonicalRecordingId: context?.items.find(item => item.path === selectedFile?.path)?.recordingId ?? selectedFile?.canonicalRecordingId }} {open} />
     <div class="kept-copy-actions"><LibraryDownloadActions file={selectedFile!} storage="kept" busy={Boolean(action)} onkeep={() => {}} onrelease={() => confirm({ kind: "release", file: selectedFile! })} onremove={() => confirm({ kind: "one", file: selectedFile! })} ondeletion={() => void previewDeletion(selectedFile!)} /></div>
   </section>{/snippet}
@@ -282,11 +283,11 @@
   .kept-copy { min-width: 0; }
   .kept-copy p { margin: 0 0 var(--space-2); color: var(--color-ink-muted); font-size: var(--text-xs); overflow-wrap: anywhere; }
   .kept-copy-actions { justify-content: flex-end; margin-top: var(--space-3); }
-  .copy-facts { margin-bottom: var(--space-2); font-size: var(--text-xs); line-height: 1.5; }
-  .copy-facts summary { min-height: 44px; padding-block: var(--space-3); list-style-position: inside; cursor: pointer; }
-  .copy-facts dl { display: grid; grid-template-columns: minmax(0, .8fr) minmax(0, 1.8fr); gap: var(--space-2); margin: 0; }
-  .copy-facts dt { color: var(--color-ink-muted); }
-  .copy-facts dd { min-width: 0; margin: 0; overflow-wrap: anywhere; }
+  :global(.copy-facts) { margin-bottom: var(--space-2); font-size: var(--text-xs); line-height: 1.5; }
+  :global(.copy-facts) dl { display: grid; grid-template-columns: minmax(0, .8fr) minmax(0, 1.8fr); gap: var(--space-2); margin: 0; }
+  :global(.copy-facts) dt { color: var(--color-ink-muted); }
+  :global(.copy-facts) dd { min-width: 0; margin: 0; overflow-wrap: anywhere; }
+  :global(.copy-facts > p), :global(.copy-facts > dl) { margin: var(--space-3) var(--space-4); }
   .kept-copy .copy-warning { color: var(--warning); }
   h2 { margin: 0; font-size: var(--text-section); font-weight: 600; }
   .promotion-list { overflow: hidden; border: 1px solid var(--color-edge); border-radius: 14px; }

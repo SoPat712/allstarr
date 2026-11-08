@@ -389,9 +389,10 @@ export function groupAttempts(attempts: JobAttempt[]) {
 }
 
 
+// The song's own cover comes first: the playlist-source route only has art for songs collected from Spotify.
 export function playArtwork(play: Pick<PlayTrace, "request" | "resolution">) {
+  if (play.request.itemId) return `/api/admin/downloads/artwork/${encodeURIComponent(play.request.itemId)}`;
   const artwork = play.request.presented.artwork;
   if (artwork && artwork !== "available") return artwork;
-  if (play.resolution.externalSnapshotId) return `/api/admin/track-matches/${encodeURIComponent(play.resolution.externalSnapshotId)}/artwork`;
-  return play.request.itemId ? `/api/admin/downloads/artwork/${encodeURIComponent(play.request.itemId)}` : null;
+  return play.resolution.externalSnapshotId ? `/api/admin/track-matches/${encodeURIComponent(play.resolution.externalSnapshotId)}/artwork` : null;
 }

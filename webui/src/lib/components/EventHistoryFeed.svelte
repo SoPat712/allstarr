@@ -1,4 +1,5 @@
 <script lang="ts">
+  import AdvancedFold from "$lib/components/patterns/AdvancedFold.svelte";
   import { formatLocalDateTime } from "$lib/dates";
   import { countLabel } from "$lib/count-label";
   import { writeFilter } from "$lib/components/patterns/helpers";
@@ -346,8 +347,7 @@
       </div>
       <RefreshButton class="event-log-refresh" disabled={loadingEarlier} onrefresh={() => load("refresh")} />
     </div>
-    <details class="event-more-filters">
-      <summary>More filters{providerFilter || showBackground || ["sources", "system"].includes(category) ? " · active" : ""}</summary>
+    <AdvancedFold class="event-more-filters" label={`More filters${providerFilter || showBackground || ["sources", "system"].includes(category) ? " · active" : ""}`}>
       <div class="more-filter-fields">
         {#if administrator}<label class="background-option"><span>Background work</span><Switch checked={showBackground} aria-label="Background work" onchange={(event) => showBackground = event.currentTarget.checked} /></label>{/if}
         <SelectField bind:value={providerFilter} label="Source" options={[
@@ -358,7 +358,7 @@
           { value: "listening", label: "Listening" }, { value: "library", label: "Library" }, { value: "sources", label: "Sources" }, { value: "system", label: "System" },
         ]} />
       </div>
-    </details>
+    </AdvancedFold>
 
     <div class="history-days">
 
@@ -460,10 +460,8 @@
   .event-log-chip-row { min-width: 0; overflow-x: auto; order: 1; }
   .event-log-chip-row :global(.filter-segments) { width: max-content; min-width: 100%; max-width: none; flex-wrap: nowrap; }
   .event-log-toolbar :global(.event-log-refresh) { order: 3; }
-  .event-more-filters { margin-bottom: var(--space-2); color: var(--color-ink-muted); font-size: var(--text-xs); }
-  .event-more-filters summary { cursor: pointer; min-height: 44px; display: flex; align-items: center; gap: var(--space-1); }
-  .event-more-filters summary::after { content: "⌄"; }
-  .more-filter-fields { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-4); padding-block: var(--space-2); }
+  :global(.event-more-filters) { margin-bottom: var(--space-2); }
+  .more-filter-fields { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-4); padding: var(--space-3) var(--space-4); }
   .background-option { display: flex; align-items: center; gap: var(--space-3); min-height: 44px; }
   .history-days { overflow: hidden; border: 1px solid var(--color-edge); border-radius: var(--radius-lg); }
   .history-days:has(> :global(.empty-state)) { border-style: dashed; }

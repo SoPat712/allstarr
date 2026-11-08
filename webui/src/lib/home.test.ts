@@ -26,6 +26,12 @@ describe("Home recent activity", () => {
       progress, { ...rematch, id: "failed", state: "failed", severity: "error" }]).map(item => item.id)).toEqual(["progress", "failed"]);
   });
 
+  it("leaves waiting work to Activity and shows a repeated result once", () => {
+    const scrobble = (id: string) => ({ ...check(id), label: "Scrobble recorded", action: "scrobble.deliver", detail: "Sent to Last.fm" });
+    const waiting = { ...check("4"), id: "waiting", label: "Refresh library index", action: "library.index", state: "retry_scheduled", isRoutine: false };
+    expect(recentHomeActivity([scrobble("1"), scrobble("2"), scrobble("3"), waiting]).map(item => item.id)).toEqual(["3"]);
+  });
+
   it("filters routine work and keeps a failed background task", () => {
     const task = { ...check("1"), label: "Background task", action: "", state: "succeeded" };
     expect(recentHomeActivity([task, { ...task, id: "failed", state: "failed", severity: "error" }]).map(item => item.id)).toEqual(["failed"]);

@@ -8,7 +8,7 @@ import type {
   ActivityItem,
 } from "./api";
 import { formatPlaybackSource } from "./sources";
-import { isRoutineActivity } from "./activity";
+import { isProblem, isRoutineActivity } from "./activity";
 
 export type HomeSnapshot = {
   providerCatalog?: ProviderDefinition[];
@@ -20,14 +20,15 @@ export type HomeSnapshot = {
   failures: string[];
 };
 
+// Home shows what changed: routine and waiting work stays in Activity, and a repeated result shows once.
 export function recentHomeActivity(items: ActivityItem[]) {
-  const checks = new Set<string>();
+  const seen = new Set<string>();
   return items.toSorted((a, b) => b.occurredAt.localeCompare(a.occurredAt)).filter(item => {
     if (isRoutineActivity(item)) return false;
-    if (item.action !== "health.smoke" && !/^health check$/i.test(item.label)) return true;
+    if (!isProblem(item) && ["pending", "waiting", "deferred", "retryscheduled"].includes(item.state.toLowerCase().replaceAll(/[-_ ]/g, ""))) return false;
     const key = JSON.stringify([item.actorUserId, item.providerId, item.source, item.label, item.displayName, item.state, item.detail]);
-    if (checks.has(key)) return false;
-    checks.add(key);
+    if (seen.has(key)) return false;
+    seen.add(key);
     return true;
   }).slice(0, 4);
 }

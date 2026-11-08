@@ -391,9 +391,9 @@ describe("activity overview details", () => {
 
 
 it("uses retained covers and existing artwork routes for play receipts", () => {
-  const play = { request: { presented: { artwork: "available" }, itemId: "song" }, resolution: { externalSnapshotId: "snapshot" } };
-  expect(playArtwork(play)).toBe("/api/admin/track-matches/snapshot/artwork");
-  expect(playArtwork({ ...play, resolution: {} })).toBe("/api/admin/downloads/artwork/song");
+  const play = { request: { presented: { artwork: "/api/admin/track-matches/snapshot/artwork" }, itemId: "song" }, resolution: { externalSnapshotId: "snapshot" } };
+  expect(playArtwork(play)).toBe("/api/admin/downloads/artwork/song");
+  expect(playArtwork({ ...play, request: { presented: { artwork: "available" } } })).toBe("/api/admin/track-matches/snapshot/artwork");
   expect(playArtwork({ request: { presented: { artwork: "/cover.jpg" } }, resolution: {} })).toBe("/cover.jpg");
   expect(playArtwork({ request: { presented: { artwork: "available" } }, resolution: {} })).toBeNull();
 });

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import AdvancedFold from "$lib/components/patterns/AdvancedFold.svelte";
   import type { PlaylistRemovalPreview } from "$lib/api";
   import { playlistRemovalConfirmation } from "$lib/playlists";
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
@@ -50,14 +51,13 @@
   {:else if preview && copy.userAddedSummary}
     <div class="removal-songs">
       <p>{copy.userAddedSummary}</p>
-      <details>
-        <summary>See songs</summary>
+      <AdvancedFold label="See songs">
         <ul aria-label="Songs you added in Jellyfin">
           {#each preview.userAddedSongs as song}
             <li><span>{song.name}</span>{#if song.artist}<small>{song.artist}</small>{/if}</li>
           {/each}
         </ul>
-      </details>
+      </AdvancedFold>
     </div>
   {/if}
 </ConfirmDialog>
@@ -69,8 +69,6 @@
   .removal-preview-error { display: grid; justify-items: start; gap: var(--space-2); }
   .removal-preview-error p { margin: 0; }
   .removal-songs { display: grid; min-width: 0; gap: var(--space-3); }
-  details { min-width: 0; border: 1px solid var(--color-edge); border-radius: var(--radius-md); }
-  summary { min-height: 44px; padding: var(--space-3); color: var(--color-signal-text); cursor: pointer; }
   ul { max-height: min(35dvh, 14rem); margin: 0; padding: 0 var(--space-3) var(--space-3); list-style: none; overflow: auto; }
   li { display: grid; gap: var(--space-1); padding-block: var(--space-2); overflow-wrap: anywhere; }
   li + li { border-top: 1px solid var(--color-edge); }
