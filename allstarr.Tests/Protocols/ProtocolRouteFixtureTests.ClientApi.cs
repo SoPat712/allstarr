@@ -117,9 +117,9 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.False(string.IsNullOrWhiteSpace(root.GetProperty("serverVersion").GetString()));
         AssertLibraryProvider(root.GetProperty("library"));
         var features = root.GetProperty("features");
-        Assert.Equal(["events", "fixesMatch", "follow", "itemDetails", "lyricsRich", "lyricsSearch", "lyricsSources", "lyricsVersions", "mixes", "playback", "releases", "reports", "titleMarkers"],
+        Assert.Equal(["appearances", "events", "fixesMatch", "follow", "itemDetails", "lyricsRich", "lyricsSearch", "lyricsSources", "lyricsVersions", "mixes", "playback", "releases", "reports", "similarAlbums", "titleMarkers"],
             features.EnumerateObject().Select(item => item.Name).Order().ToArray());
-        Assert.All(features.EnumerateObject(), item => Assert.Equal(item.Name is "titleMarkers" or "itemDetails" or "playback" or "lyricsRich" or "lyricsSources" or "lyricsVersions" or "fixesMatch" or "reports" or "mixes" or "releases" or "follow" or "lyricsSearch" or "events", item.Value.GetBoolean()));
+        Assert.All(features.EnumerateObject(), item => Assert.Equal(item.Name is "titleMarkers" or "itemDetails" or "playback" or "lyricsRich" or "lyricsSources" or "lyricsVersions" or "fixesMatch" or "reports" or "mixes" or "releases" or "follow" or "lyricsSearch" or "events" or "appearances" or "similarAlbums", item.Value.GetBoolean()));
         Assert.NotNull(observed?.Principal);
         Assert.False(observed.Principal.IsAdministrator);
         Assert.Equal(ProviderActorKind.User, observed.RequireActor().Kind);

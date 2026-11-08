@@ -343,6 +343,96 @@
         }
       }
     },
+    "/allstarr/v1/items/{itemId}/appearances": {
+      "get": {
+        "tags": [
+          "ItemAppearances"
+        ],
+        "operationId": "getItemAppearances",
+        "parameters": [
+          {
+            "name": "itemId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientItemAppearances"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/allstarr/v1/items/details": {
       "post": {
         "tags": [
@@ -2254,6 +2344,105 @@
           }
         }
       }
+    },
+    "/allstarr/v1/items/{itemId}/similar": {
+      "get": {
+        "tags": [
+          "SimilarAlbums"
+        ],
+        "operationId": "getSimilarAlbums",
+        "parameters": [
+          {
+            "name": "itemId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "default": 12
+            }
+          }
+        ],
+        "responses": {
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientSimilarAlbums"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -2364,6 +2553,77 @@
           },
           "events": {
             "type": "boolean"
+          },
+          "appearances": {
+            "type": "boolean"
+          },
+          "similarAlbums": {
+            "type": "boolean"
+          }
+        }
+      },
+      "ClientItemAppearance": {
+        "required": [
+          "kind",
+          "id",
+          "title",
+          "subtitle",
+          "coverUrl",
+          "matchedSongCount",
+          "playlistId"
+        ],
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "subtitle": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "coverUrl": {
+            "type": "string"
+          },
+          "matchedSongCount": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "playlistId": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
+      "ClientItemAppearances": {
+        "required": [
+          "itemId",
+          "songCount",
+          "appearances"
+        ],
+        "type": "object",
+        "properties": {
+          "itemId": {
+            "type": "string"
+          },
+          "songCount": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "appearances": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ClientItemAppearance"
+            }
           }
         }
       },
@@ -3068,6 +3328,103 @@
           }
         }
       },
+      "ClientSimilarAlbum": {
+        "required": [
+          "id",
+          "title",
+          "artist",
+          "artistId",
+          "year",
+          "songCount",
+          "coverUrl",
+          "source",
+          "isExternal",
+          "provider"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "artist": {
+            "type": "string"
+          },
+          "artistId": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "year": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int32"
+          },
+          "songCount": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int32"
+          },
+          "coverUrl": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "source": {
+            "type": "string"
+          },
+          "isExternal": {
+            "type": "boolean"
+          },
+          "provider": {
+            "type": [
+              "null",
+              "object"
+            ],
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ItemDetailsProvider"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "ClientSimilarAlbums": {
+        "required": [
+          "itemId",
+          "basedOn",
+          "albums"
+        ],
+        "type": "object",
+        "properties": {
+          "itemId": {
+            "type": "string"
+          },
+          "basedOn": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "albums": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ClientSimilarAlbum"
+            }
+          }
+        }
+      },
       "CreateClientReportRequest": {
         "required": [
           "kind",
@@ -3750,6 +4107,9 @@
       "name": "Events"
     },
     {
+      "name": "ItemAppearances"
+    },
+    {
       "name": "ItemDetails"
     },
     {
@@ -3775,6 +4135,9 @@
     },
     {
       "name": "Reports"
+    },
+    {
+      "name": "SimilarAlbums"
     }
   ]
 }

@@ -31,6 +31,8 @@ public sealed record ClientFeatures
     [JsonPropertyName("follow")] public bool Follow { get; init; } = true;
     [JsonPropertyName("lyricsSearch")] public bool LyricsSearch { get; init; } = true;
     [JsonPropertyName("events")] public bool Events { get; init; } = true;
+    [JsonPropertyName("appearances")] public bool Appearances { get; init; } = true;
+    [JsonPropertyName("similarAlbums")] public bool SimilarAlbums { get; init; } = true;
 }
 
 public sealed record ClientApiError(

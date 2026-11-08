@@ -23,7 +23,8 @@ when a Subsonic-compatible server identifies itself as Navidrome, or `subsonic` 
 "Subsonic server" otherwise. Server identification is cached. Check feature flags
 before using optional routes.
 `titleMarkers`, `itemDetails`, `playback`, `lyricsRich`, `lyricsSources`, `lyricsVersions`,
-`fixesMatch`, `reports`, `mixes`, `releases`, `follow`, and `events` are available;
+`fixesMatch`, `reports`, `mixes`, `releases`, `follow`, `events`, `appearances`, and
+`similarAlbums` are available;
 the other flags remain false until supported.
 The version in the path identifies the contract. Compatible additions stay
 within v1; incompatible changes use a new path version.
@@ -365,6 +366,32 @@ aliases. These JSON routes use `Cache-Control: no-store`.
 dashboard. It uses a private cache with revalidation and returns 304 for a
 matching `If-None-Match`. Unknown mixes and other listeners' mixes return 404,
 including conditional cover requests.
+
+`GET /allstarr/v1/items/{itemId}/appearances` (`appearances`) lists where an
+album's or song's songs appear: the listener's mixes and the playlists Allstarr
+syncs for them. It returns `{itemId,songCount,appearances}`. Each appearance has
+`kind` (`mix` or `playlist`), `id`, `title`, `subtitle`, `coverUrl`,
+`matchedSongCount`, and `playlistId`. A mix's `id` is its `mixId` and its cover
+is the mix cover route; `playlistId` is set when the mix is in the listener's
+apps. A playlist's `id` and `playlistId` are its Jellyfin playlist ID, and its
+subtitle names the service it comes from. Playlists the listener made in Jellyfin
+themselves are not included. Results are ordered by `matchedSongCount`, then
+mixes before playlists. Library IDs, service `ext-...` album and song IDs, and
+albums built from saved playlist songs are accepted; other item types return
+400 and unknown items 404. Responses use `Cache-Control: no-store`.
+
+`GET /allstarr/v1/items/{itemId}/similar?limit=12` (`similarAlbums`) returns
+`{itemId,basedOn,albums}` for an album. Allstarr asks the first service in the
+listener's source order that knows the album's artist for related artists, and
+picks one album for each: the listener's most played album by that artist when
+the library has one, otherwise the artist's newest album from the service
+(singles and compilations only when nothing else exists). `basedOn` names that
+service, or is null when none had related artists. Each album has `id`,
+`title`, `artist`, `artistId`, `year`, `songCount`, `coverUrl`, `source`
+(`library` or the service ID), `isExternal`, and `provider`. Service albums use
+`ext-...` IDs that open and play through Allstarr. `limit` is 1–24. Results are
+kept for six hours per listener. Songs and other item types return 400.
+Responses use `Cache-Control: no-store`.
 
 `GET /allstarr/v1/releases` returns `{releases,followedArtists}` from the
 listener's stored New releases inbox and follows, without polling providers.

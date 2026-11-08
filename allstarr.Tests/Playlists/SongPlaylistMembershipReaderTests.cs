@@ -67,6 +67,20 @@ public sealed class SongPlaylistMembershipReaderTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task CollectedSongsAreFoundByTheirHashedId()
+    {
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            AddPlaylist(db, _owner, "Morning", [AddSong(db, _owner, "spotify", "source-song")]);
+            await db.SaveChangesAsync();
+        }
+
+        var rows = await new SongPlaylistMembershipReader(_factory).ReadAsync(_owner,
+            new(ProviderId: "spotify", ExternalId: Hash("source-song")));
+        Assert.Equal("Morning", Assert.Single(rows).Name);
+    }
+
+    [Fact]
     public async Task BackendIdentityUsesPublishedAcceptedMatchesAndRequiresTheFullBackendScope()
     {
         var recording = Guid.NewGuid();

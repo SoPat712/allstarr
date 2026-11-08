@@ -462,6 +462,8 @@ builder.Services.AddHostedService<LibraryLyricsIndexer>();
 builder.Services.AddScoped<ItemMatchReader>();
 builder.Services.AddScoped<PlaybackReader>();
 builder.Services.AddScoped<MixReader>();
+builder.Services.AddScoped<ItemAppearancesReader>();
+builder.Services.AddScoped<SimilarAlbumsReader>();
 builder.Services.AddScoped<ReleaseReader>();
 builder.Services.AddScoped(provider => new allstarr.Core.Releases.ReleaseArtworkReader(
     provider.GetRequiredService<IProtocolProviderGateway>(), provider.GetRequiredService<IMediaAssetResolver>(),

@@ -1,6 +1,5 @@
-using System.Security.Cryptography;
-using System.Text;
 using allstarr.Core.Capabilities;
+using allstarr.Core.Matching;
 using allstarr.Core.Providers.AppleMusicKit;
 using allstarr.Core.Storage;
 using Microsoft.EntityFrameworkCore;
@@ -39,9 +38,7 @@ public sealed class SongPlaylistMembershipReader(IDbContextFactory<AllstarrDbCon
         await using var db = await factory.CreateDbContextAsync(cancellationToken);
         var recordingIds = new HashSet<Guid>();
         if (song.CanonicalRecordingId is { } recordingId) recordingIds.Add(recordingId);
-        var externalHash = hasProvider
-            ? Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(externalId!)))
-            : null;
+        var externalHashes = hasProvider ? CanonicalCatalogKeys.StoredKeys(externalId!) : [];
         var identities = db.ProviderTrackIdentities.AsNoTracking().Where(identity =>
             identity.ResourceKind == ProviderResourceKind.Track &&
             (identity.Verification == ProviderIdentityVerification.Verified || identity.Verification == ProviderIdentityVerification.Pinned) &&
@@ -52,7 +49,7 @@ public sealed class SongPlaylistMembershipReader(IDbContextFactory<AllstarrDbCon
         if (hasProvider || hasBackend)
         {
             var candidates = await identities
-                .Where(identity => hasProvider && identity.ProviderId == providerId && identity.ExternalIdHash == externalHash)
+                .Where(identity => hasProvider && identity.ProviderId == providerId && EF.Parameter(externalHashes).Contains(identity.ExternalIdHash))
                 .Select(identity => new { RecordingId = (Guid?)identity.CanonicalRecordingId, LibraryTrackId = (Guid?)null })
                 .Concat(db.LibraryTracks.AsNoTracking().Where(track => hasBackend &&
                         track.OwnerUserId == ownerUserId && track.Protocol == protocol &&
@@ -87,7 +84,7 @@ public sealed class SongPlaylistMembershipReader(IDbContextFactory<AllstarrDbCon
             from entry in db.PlaylistSourceEntries.AsNoTracking()
             join source in db.ExternalMetadataSnapshots.AsNoTracking() on entry.ExternalMetadataSnapshotId equals source.Id
             where source.OwnerUserId == ownerUserId &&
-                (hasProvider && source.ProviderId == providerId && source.ExternalIdHash == externalHash ||
+                (hasProvider && source.ProviderId == providerId && EF.Parameter(externalHashes).Contains(source.ExternalIdHash) ||
                  EF.Parameter(catalogRouteKeys).Contains(source.ProviderId + ":" + source.ExternalIdHash) ||
                  source.ProviderAccountId.HasValue && EF.Parameter(accountRouteKeys).Contains(
                      source.ProviderId + ":" + source.ExternalIdHash + ":" + source.ProviderAccountId.Value.ToString().ToLower()) ||
