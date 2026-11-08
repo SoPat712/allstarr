@@ -43,23 +43,25 @@ public sealed partial class ListeningHistoryResolution(
         db.ListeningEvents.Where(item => item.OwnerUserId == scope.OwnerUserId && item.Protocol == scope.Protocol &&
             item.BackendInstanceId == scope.BackendInstanceId && (item.SourceKind == "import" || item.SourceKind == "protocol" || item.SourceKind == "listenbrainz-api") && item.CanonicalRecordingId == null);
 
+    // The first play of each song stands for it, so the order is fixed rather than left to whichever index SQLite picks.
     private static IQueryable<ListeningEventRecord> MatchingEvents(AllstarrDbContext db, IntelligenceScope scope) =>
-        Unresolved(db, scope).AsNoTracking().Select(item => new ListeningEventRecord
-        {
-            Id = item.Id,
-            State = item.State,
-            SourceKind = item.SourceKind,
-            ProviderId = item.ProviderId,
-            ProviderTrackReference = item.ProviderTrackReference,
-            Title = item.Title,
-            Artist = item.Artist,
-            Album = item.Album,
-            AlbumArtist = item.AlbumArtist,
-            DurationMilliseconds = item.DurationMilliseconds,
-            Isrc = item.Isrc,
-            RecordingMusicBrainzId = item.RecordingMusicBrainzId,
-            ImportProvenance = item.ImportProvenance
-        });
+        Unresolved(db, scope).AsNoTracking().OrderBy(item => item.State).ThenBy(item => item.ListenedAt).ThenBy(item => item.Id)
+            .Select(item => new ListeningEventRecord
+            {
+                Id = item.Id,
+                State = item.State,
+                SourceKind = item.SourceKind,
+                ProviderId = item.ProviderId,
+                ProviderTrackReference = item.ProviderTrackReference,
+                Title = item.Title,
+                Artist = item.Artist,
+                Album = item.Album,
+                AlbumArtist = item.AlbumArtist,
+                DurationMilliseconds = item.DurationMilliseconds,
+                Isrc = item.Isrc,
+                RecordingMusicBrainzId = item.RecordingMusicBrainzId,
+                ImportProvenance = item.ImportProvenance
+            });
 
     private static IQueryable<ExternalMetadataSnapshotRecord> Receipts(AllstarrDbContext db, IntelligenceScope scope) =>
         db.ExternalMetadataSnapshots.Where(item => item.OwnerUserId == scope.OwnerUserId && item.Protocol == scope.Protocol &&
