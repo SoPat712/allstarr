@@ -133,7 +133,7 @@
     return () => { disposed = true; request++; clearTimeout(throttleTimer); unsubscribe(); scheduler.cancel(); if (refreshToast !== undefined) toast.dismiss(refreshToast); };
   });
 </script>
-<SidePanel open={true} title={mixName(detail?.mix.name ?? "Your mix")} description={detail?.mix.sourceLabel ? `From ${detail.mix.sourceLabel} · kept in sync` : detail ? mixDescription(detail.mix.description, detail.mix.kind) : "Songs picked for you"} onclose={close}>
+<SidePanel open={true} largeArtwork title={mixName(detail?.mix.name ?? "Your mix")} description={detail?.mix.sourceLabel ? `From ${detail.mix.sourceLabel} · kept in sync` : detail ? mixDescription(detail.mix.description, detail.mix.kind) : "Songs picked for you"} onclose={close}>
   {#snippet artwork()}{#if detail}<MixCover mix={detail.mix} songs={detail.songs} />{/if}{/snippet}
   {#snippet header()}{#if detail}{detail.mix.updatedAt ? `Refreshed ${formatLocalDateTime(detail.mix.updatedAt)} · ` : ""}{countLabel(detail.songs.length, "song")}{/if}{/snippet}
   {#snippet menu()}{#if detail?.mix.kind === "custom"}<DropdownMenu.Root><DropdownMenu.Trigger class="icon-button" aria-label="Mix actions"><UiIcon name="more" /></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content preventScroll={false} class="bits-menu mix-menu" align="end"><DropdownMenu.Item class="bits-menu-item destructive" onSelect={() => deleteOpen = true}>Delete mix</DropdownMenu.Item></DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root>{/if}{/snippet}

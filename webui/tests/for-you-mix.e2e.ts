@@ -88,8 +88,10 @@ test("Undo preserves other and subsequently edited preferences", async ({ page }
 test("More today and hiding an artist use song actions", async ({ page }) => {
   const state = await mockForYou(page); state.songs.push(structuredClone(state.songs[1]));
   await page.goto("/#/for-you?mix=daily-1");
-  await page.getByRole("button", { name: "Actions for Blue morning", exact: true }).click(); await page.getByRole("menuitem", { name: "More like this", exact: true }).hover();
-  await page.getByRole("menuitem", { name: "Today only", exact: true }).click();
+  await page.getByRole("button", { name: "Actions for Blue morning", exact: true }).click();
+  // The submenu is opened from the keyboard, so the docked panel's resize can't move it under the pointer.
+  await page.getByRole("menuitem", { name: "More like this", exact: true }).focus(); await page.keyboard.press("ArrowRight");
+  await expect(page.getByRole("menuitem", { name: "Today only", exact: true })).toBeFocused(); await page.keyboard.press("Enter");
   await expect.poll(() => state.calls.find(call => call.body?.kind === "moreLikeThis")?.body.todayOnly).toBe(true);
   const quietActions = page.getByRole("listitem").filter({ hasText: "Quiet water" }).first().getByRole("button", { name: "Actions for Quiet water", exact: true });
   await expect(quietActions).toBeEnabled();

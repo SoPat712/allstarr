@@ -12,6 +12,7 @@
     title,
     description,
     artwork,
+    largeArtwork = false,
     header,
     children,
     footer,
@@ -32,6 +33,8 @@
     title: string;
     description?: string;
     artwork?: Snippet;
+    // A cover that is the panel's subject, such as a mix, shows larger.
+    largeArtwork?: boolean;
     header?: Snippet;
     children?: Snippet;
     footer?: Snippet;
@@ -175,7 +178,7 @@
           <div class="panel-layout">
             <div class="panel-grip" aria-hidden="true"><span></span></div>
             <header class="panel-header" class:with-artwork={Boolean(artwork)} class:wrap-title={wrapTitle}>
-              {#if artwork}<div class="panel-artwork">{@render artwork()}</div>{/if}
+              {#if artwork}<div class="panel-artwork" class:large={largeArtwork}>{@render artwork()}</div>{/if}
               <div class="panel-title">
                 <Dialog.Title>{title}</Dialog.Title>
                 {#if description}<Dialog.Description>{description}</Dialog.Description>{/if}
@@ -215,6 +218,7 @@
   .panel-header.with-artwork { grid-template-columns: 56px minmax(0, 1fr) auto; }
   .panel-artwork { width: 56px; height: 56px; overflow: hidden; border-radius: var(--radius-sm); }
   .panel-artwork :global(.media-art) { width: 100%; height: 100%; }
+  .panel-artwork.large { width: 96px; height: 96px; border-radius: var(--radius-md); }
   .panel-title { min-width: 0; }
   .panel-title :global([data-dialog-title]) { overflow: hidden; margin: 0; color: var(--color-ink); font-size: 1.05rem; font-weight: 600; line-height: 1.25; text-overflow: ellipsis; white-space: nowrap; }
   .panel-title :global([data-dialog-description]) { overflow: hidden; margin: var(--space-1) 0 0; color: var(--color-ink-muted); font-size: var(--text-xs); line-height: 1.4; text-overflow: ellipsis; white-space: nowrap; }
