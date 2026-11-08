@@ -177,7 +177,7 @@
           {/if}
           <div class="panel-layout">
             <div class="panel-grip" aria-hidden="true"><span></span></div>
-            <header class="panel-header" class:with-artwork={Boolean(artwork)} class:wrap-title={wrapTitle}>
+            <header class="panel-header" class:with-artwork={Boolean(artwork)} class:wrap-title={wrapTitle} style:--art={largeArtwork ? "96px" : null}>
               {#if artwork}<div class="panel-artwork" class:large={largeArtwork}>{@render artwork()}</div>{/if}
               <div class="panel-title">
                 <Dialog.Title>{title}</Dialog.Title>
@@ -215,7 +215,7 @@
   .panel-grip { display: flex; height: var(--space-5); flex: 0 0 auto; align-items: center; justify-content: center; }
   .panel-grip span { width: var(--space-8); height: var(--space-1); border-radius: var(--radius-sm); background: var(--color-edge-strong); }
   .panel-header { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--space-2) var(--space-3); flex: 0 0 auto; border-bottom: 1px solid var(--color-edge); padding: var(--space-3) var(--space-4); }
-  .panel-header.with-artwork { grid-template-columns: 56px minmax(0, 1fr) auto; }
+  .panel-header.with-artwork { grid-template-columns: var(--art, 56px) minmax(0, 1fr) auto; }
   .panel-artwork { width: 56px; height: 56px; overflow: hidden; border-radius: var(--radius-sm); }
   .panel-artwork :global(.media-art) { width: 100%; height: 100%; }
   .panel-artwork.large { width: 96px; height: 96px; border-radius: var(--radius-md); }

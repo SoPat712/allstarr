@@ -8,6 +8,9 @@ for (const width of [320, 390, 1280]) for (const theme of ["light", "dark"] as c
   await appearance(page, width, theme); const state = await mockCovers(page); state.cards[0].inApps = false; await page.goto("/#/for-you?mix=daily-1");
   const cover = page.getByRole("dialog").locator(".mix-artwork");
   await expect(cover).toHaveCount(1); await expectCovered(cover);
+  const [art, title] = await Promise.all([page.getByRole("dialog").locator(".panel-artwork"), page.getByRole("dialog").getByRole("heading").first()].map(item => item.boundingBox()));
+  expect(art!.width).toBe(96);
+  expect(art!.x + art!.width).toBeLessThanOrEqual(title!.x);
   await expect(page.getByRole("dialog").getByRole("list", { name: "Songs", exact: true }).getByRole("listitem")).toHaveCount(8);
   const expectAligned = async () => {
     const dialog = page.getByRole("dialog");
