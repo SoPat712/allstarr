@@ -30,6 +30,8 @@ public sealed class SimilarAlbumsReader(IProtocolProviderGateway providers, Save
         if (Recent.TryGetValue(key, out var cached) && DateTimeOffset.UtcNow - cached.At < FreshFor) return cached.Value;
 
         var token = execution.CancellationToken;
+        // Reads are normally answered from stored data only; related artists and their albums have to be asked for.
+        execution = execution with { IsReadOnly = false };
         var seed = await SeedAsync(http, execution, itemId);
         var (basedOn, related) = await RelatedArtistsAsync(execution, seed);
         var icons = new ConcurrentDictionary<string, ItemDetailsProvider?>(StringComparer.Ordinal);
@@ -87,9 +89,12 @@ public sealed class SimilarAlbumsReader(IProtocolProviderGateway providers, Save
     private async Task<(string? Source, IReadOnlyList<Artist> Artists)> RelatedArtistsAsync(ProtocolExecutionContext execution, Seed seed)
     {
         if (string.IsNullOrWhiteSpace(seed.Artist)) return (null, []);
-        // Deezer is the service that publishes related artists, so it is asked right after the album's own service.
-        var sources = seed.ArtistIds.Keys.Append(RelatedArtistsSource)
-            .Concat(await providers.GetPlayableProviderOrderAsync(execution.RequireActor(), execution.CancellationToken))
+        // Deezer is the service that publishes related artists, so it is asked right after the album's own service,
+        // then the household's other song-details sources the listener allows.
+        var available = providers.GetProviderOrder(ProviderCapabilityKind.Metadata) ?? [];
+        var order = execution.Policy?.ApplyAutomaticProviderAvailability(ProviderCapabilityKind.Metadata, available) ?? available;
+        var sources = seed.ArtistIds.Keys.Append(RelatedArtistsSource).Concat(order)
+            .Where(source => execution.Policy?.IsAutomatic(source) != false)
             .Distinct(StringComparer.Ordinal).Take(4);
         foreach (var source in sources)
         {
