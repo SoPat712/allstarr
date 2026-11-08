@@ -179,8 +179,9 @@ public sealed partial class MigrationWizardFlowTests
     public async Task AppleMissingTokenCannotStartAndNamesTheConnectionToRestore()
     {
         await AppleSource(); appleMissingToken = true;
-        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => Start());
-        Assert.Contains("Restore the Apple Music connection", error.Message);
+        var error = await Assert.ThrowsAsync<MigrationSourceConnectionException>(() => Start());
+        Assert.Equal("Reconnect Apple Music to see your music.", error.Message);
+        await Assert.ThrowsAsync<MigrationSourceConnectionException>(() => Service().PreviewAsync(Context(owner), account, null, default));
         await using var db = factory.CreateDbContext();
         Assert.Empty(await db.Set<CollectionMigrationRunRecord>().ToArrayAsync());
     }

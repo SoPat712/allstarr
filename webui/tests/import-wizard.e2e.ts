@@ -31,7 +31,7 @@ async function reply(route: Route, body: unknown, status = 200) {
 async function mockImport(page: Page, accounts = [account], withCollections = false) {
   const runAccounts = new Map([[runId, account], [appleRunId, appleAccount]]);
   const accountRuns = new Map(accounts.map(item => [item.id, item.id === accountId ? runId : item.id === appleAccountId ? appleRunId : "99999999-9999-4999-8999-999999999999"]));
-  const fixture = { state: "choosing" as RunState, phase: "collecting", fixed: false, appliedFixed: false, createError: false, previewError: false,
+  const fixture = { state: "choosing" as RunState, phase: "collecting", fixed: false, appliedFixed: false, createError: false, previewError: false, reconnect: false,
     albumChosen: false, artistSkipped: false, collectionChoiceError: false, unsupported: [] as { kind: string }[],
     reads: [] as string[], writes: [] as Write[], forbidden: [] as string[] };
   await page.addInitScript(() => {
@@ -98,6 +98,7 @@ async function mockImport(page: Page, accounts = [account], withCollections = fa
     }
     if (path === "/api/admin/migrations/preview") {
       if (fixture.previewError) return reply(route, { error: "The connection is temporarily unavailable." }, 503);
+      if (fixture.reconnect) return reply(route, { error: "Reconnect Spotify to see your music.", code: "source_connection" }, 409);
       return reply(route, url.searchParams.has("cursor")
         ? { items: [liked, weekend], nextCursor: null, unsupported: fixture.unsupported }
         : { items: [evening, ...(withCollections ? [followedArtists, savedAlbums] : []), liked], nextCursor: "next-playlists", unsupported: fixture.unsupported });
@@ -333,6 +334,14 @@ test("Import retries a failed account preview without creating work", async ({ p
   fixture.previewError = false;
   await page.getByRole("button", { name: "Try again", exact: true }).click();
   await expect(page.getByText("Account verified", { exact: true })).toBeVisible();
+  expect(fixture.writes).toEqual([]);
+});
+
+test("Import says which source to reconnect when it can't read the account", async ({ page }) => {
+  const fixture = await mockImport(page); fixture.reconnect = true;
+  await page.goto(`/#/library/import?account=${accountId}`);
+  await expect(page.getByRole("alert")).toContainText("Reconnect Spotify to see your music.");
+  await expect(page.getByRole("link", { name: "Reconnect in Sources", exact: true })).toHaveAttribute("href", "#/sources/accounts");
   expect(fixture.writes).toEqual([]);
 });
 

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import AdvancedFold from "$lib/components/patterns/AdvancedFold.svelte";
   import { countLabel } from "$lib/count-label";
   import { newUuid } from "$lib/uuid";
   import { onMount, tick } from "svelte";
@@ -43,7 +44,7 @@
   let receiptCounts = $state<Record<string, number>>({});
   let loading = $state(true);
   let busy = $state(false);
-  let error = $state("");
+  let error = $state(""), reconnect = $state(false);
   let confirmStop = $state(false);
   let resourceOpen = $state(false);
   let resourceDialog = $state<HTMLDivElement | null>(null);
@@ -222,7 +223,14 @@
     finally { busy = false; }
   }
   async function findMusic() {
-    await act(() => discover(), "Your music could not be found. Try again with this account.");
+    if (busy) return;
+    busy = true; error = ""; reconnect = false;
+    try { await discover(); }
+    catch (cause) {
+      // A source that can't confirm whose music it is has to be reconnected; say so instead of a generic failure.
+      reconnect = cause instanceof ApiError && (cause.details as { code?: string } | null)?.code === "source_connection";
+      error = reconnect && cause instanceof Error ? cause.message : "Your music could not be found. Try again with this account.";
+    } finally { busy = false; }
   }
   function selectKind(kind: string, checked: boolean) {
     selected = { ...selected, ...Object.fromEntries(choices.filter(item => item.kind === kind).map(item => [item.sourceId, checked])) };
@@ -343,7 +351,8 @@
   </div>
   {#if loading}<RowsSkeleton count={5} />
   {:else}
-    {#if error}<ErrorState title={accounts.length ? "Your import needs attention" : "Your accounts could not load"} detail={error} onretry={!accounts.length ? load : runId && runState !== "choosing" ? refresh : findMusic} />{/if}
+    {#if error}<ErrorState title={accounts.length ? "Your import needs attention" : "Your accounts could not load"} detail={error} onretry={!accounts.length ? load : runId && runState !== "choosing" ? refresh : findMusic} />
+      {#if reconnect}<Button variant="outline" href="#/sources/accounts">Reconnect in Sources</Button>{/if}{/if}
     {#if !providerAccounts.length && !runId && !error}
       <EmptyState title={`Connect ${providerName} first.`}>{#snippet icon()}<Check size={24} />{/snippet}{#snippet action()}<Button href="#/integrations/services">Connect an account</Button>{/snippet}</EmptyState>
     {:else if accounts.length || runId}
@@ -374,8 +383,7 @@
                 <div class="import-setting"><div><label for="import-local-only"><strong>Only songs I can play from my library</strong></label><small id="import-local-only-detail">Local-only collection imports are not available yet.</small></div><Switch id="import-local-only" aria-label="Only songs I can play from my library" aria-describedby="import-local-only-detail" checked={false} disabled /></div>
                 <div class="import-setting"><div><label for="import-make-playlists"><strong>Make playlists in {backend}</strong></label><small id="import-playlists-detail">{makePlaylists ? "Each imported playlist appears in your apps" : "Imported playlists stay in Allstarr"}</small></div><Switch id="import-make-playlists" aria-label={`Make playlists in ${backend}`} aria-describedby="import-playlists-detail" bind:checked={makePlaylists} disabled={busy} /></div>
               </div>
-              <details class="import-collection-details">
-                <summary>Choose individual collections</summary>
+              <AdvancedFold class="import-collection-details" label="Choose individual collections">
                 <div class="import-actions"><Button variant="text" disabled={busy} onclick={() => selected = Object.fromEntries(choices.map(item => [item.sourceId, true]))}>Select all</Button><Button variant="text" disabled={busy} onclick={() => selected = {}}>Clear</Button></div>
                 {#each choices as item (item.sourceId)}
                   <div class="import-choice">
@@ -384,7 +392,7 @@
                     {#if item.kind === "playlist"}<label class="import-sync"><span>Keep in sync</span><Checkbox aria-label={`Keep ${item.name} in sync`} checked={!!sync[item.sourceId]} disabled={busy} onCheckedChange={value => sync[item.sourceId] = value === true} /></label>{/if}
                   </div>
                 {/each}
-              </details>
+              </AdvancedFold>
               {#if cursor}<Button variant="secondary" disabled={busy} onclick={() => act(() => discover(true), "More playlists could not be loaded. Try again.")}>Show more playlists</Button>{/if}
               {#if !choices.length && !busy && !error}<EmptyState title="No collections found" description="Try refreshing your connected account." />{/if}
               {#if unavailableCollectionsLine(unsupported, providerId)}<small>{unavailableCollectionsLine(unsupported, providerId)}</small>{/if}
@@ -505,6 +513,7 @@
 {#if LoadedMatchDialog}<LoadedMatchDialog bind:open={matchOpen} match={selectedMatch} {providers} {backend} showReject={false} onSaved={matchSaved} />{/if}
 
 <style>
+  :global(.import-collection-details) > :not(summary) { margin-inline: var(--space-4); }
   .import-heading, .import-section > header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--space-3); }
   .import-heading h2 { margin: 0; font-size: 1.5rem; font-weight: 600; }
   .import-section { min-width: 0; }
@@ -525,8 +534,6 @@
   .import-start { display: flex; align-items: center; justify-content: space-between; gap: var(--space-5); }
   .import-start p { max-width: 42rem; color: var(--color-ink-muted); font-size: var(--text-sm); }
   .import-start :global(button) { flex: none; }
-  .import-collection-details { border-top: 1px solid var(--color-edge); }
-  .import-collection-details > summary { padding: var(--space-2) 0; font-size: var(--text-sm); color: var(--color-ink-muted); }
   .import-unsure { width: 100%; min-width: 0; }
   .import-unsure h3 { margin-bottom: var(--space-3); }
   @media (max-width: 600px) { .import-kind-counts { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-2); } }

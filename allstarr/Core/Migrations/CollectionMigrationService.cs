@@ -118,7 +118,7 @@ public sealed partial class CollectionMigrationService(IDbContextFactory<Allstar
         var account = await AccountAsync(db, user.Id, accountId, token);
         var source = await SourceAsync(execution, account, token);
         var identity = await source.Implementation.GetSourceUserAsync(source.Context);
-        if (!identity.IsSuccess) throw new InvalidOperationException($"Restore the {source.Name} connection before starting.");
+        if (!identity.IsSuccess) throw new MigrationSourceConnectionException(source.Name);
         var run = new MigrationRun
         {
             ProviderId = account.ProviderId,
@@ -156,7 +156,7 @@ public sealed partial class CollectionMigrationService(IDbContextFactory<Allstar
         var user = await UserAsync(db, execution, token);
         var source = await SourceAsync(execution, await AccountAsync(db, user.Id, accountId, token), token);
         var identity = await source.Implementation.GetSourceUserAsync(source.Context);
-        if (!identity.IsSuccess) throw new InvalidOperationException($"Restore the {source.Name} connection.");
+        if (!identity.IsSuccess) throw new MigrationSourceConnectionException(source.Name);
         return await ReadDiscoveryAsync(source, cursor);
     }
 
@@ -679,4 +679,11 @@ public sealed partial class CollectionMigrationService(IDbContextFactory<Allstar
     public ProtocolExecutionContext Execution(UserRecord user, string correlation, CancellationToken token) => new(
         user.BackendType == "jellyfin" ? ProtocolKind.Jellyfin : ProtocolKind.Subsonic, user.BackendInstanceId, user.BackendPrincipalId,
         new AllstarrPrincipal(user.Id, user.BackendType, user.BackendInstanceId, user.BackendPrincipalId, user.DisplayName, user.IsAdmin), correlation, clock.UtcNow.AddMinutes(5), token);
+}
+
+// The source account can no longer say whose music it is, so the listener has to reconnect it.
+public sealed class MigrationSourceConnectionException(string sourceName)
+    : InvalidOperationException($"Reconnect {sourceName} to see your music.")
+{
+    public string SourceName { get; } = sourceName;
 }

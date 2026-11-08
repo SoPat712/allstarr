@@ -91,6 +91,7 @@ public sealed class CollectionMigrationsController(CollectionMigrationService mi
         catch (UnauthorizedAccessException) { return Forbid(); }
         catch (KeyNotFoundException) { return NotFound(); }
         catch (ArgumentException) { return BadRequest(new { error = "Check the selected collections and request key." }); }
+        catch (MigrationSourceConnectionException exception) { return Conflict(new { error = exception.Message, code = "source_connection" }); }
         catch (InvalidOperationException) { return Conflict(new { error = "The run or connection changed. Read its status before continuing." }); }
     }
 }
