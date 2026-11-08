@@ -1,5 +1,4 @@
 using allstarr.Core.Identity;
-using allstarr.Core.Intelligence;
 using allstarr.Core.Storage;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -69,53 +68,26 @@ public sealed partial class ProviderAccountsController
             .ToListAsync(cancellationToken);
         if (users.Count == 0) return [];
 
-        var history = context.ListeningEvents.AsNoTracking().Where(item => context.Users.Any(user =>
-            user.Id == item.OwnerUserId && user.Enabled && !user.IsSynthetic &&
-            user.BackendType == item.Protocol && user.BackendInstanceId == item.BackendInstanceId));
-        var activity = await history
-            .Where(item => (item.ListenedAt ?? item.StartedAt) <= now)
-            .GroupBy(item => item.OwnerUserId)
-            .Select(group => new { UserId = group.Key, At = group.Max(item => item.ListenedAt ?? item.StartedAt) })
-            .ToDictionaryAsync(item => item.UserId, item => item.At, cancellationToken);
-
-        // Keep the same completed-or-thirty-second rule used by listening totals.
-        var plays = history.Where(item =>
-            (item.State == ListeningEventState.Completed ? item.ListenedAt != null :
-                (item.State == ListeningEventState.Abandoned || item.State == ListeningEventState.Skipped) &&
-                item.StartedAt != null && item.PositionTicks >= 30 * TimeSpan.TicksPerSecond) &&
-            (item.SourceKind == "protocol" || item.SourceKind == "listenbrainz-api" ||
-             item.SourceKind == "import" || item.ImportProvenance != null) &&
-            (item.ListenedAt ?? item.StartedAt) <= now);
-        var weeklyCounts = await plays.Where(item => (item.ListenedAt ?? item.StartedAt) >= since)
-            .GroupBy(item => item.OwnerUserId)
-            .Select(group => new { UserId = group.Key, Count = group.Count() })
-            .ToDictionaryAsync(item => item.UserId, item => item.Count, cancellationToken);
-
-        var recentPlays = await plays.GroupBy(item => item.OwnerUserId)
-            .Select(group => new
+        var activity = (await context.Database.SqlQueryRaw<ListenerActivityRow>(ListenerActivitySql,
+                now.UtcTicks, since.UtcTicks).ToListAsync(cancellationToken))
+            .ToDictionary(item => item.UserId);
+        var recentPlays = (await context.Database.SqlQueryRaw<ListenerPlayRow>(RecentPlaysSql, now.UtcTicks)
+                .ToListAsync(cancellationToken))
+            .ToLookup(item => item.UserId, item => new
             {
-                UserId = group.Key,
-                Plays = group.OrderByDescending(item => item.ListenedAt ?? item.StartedAt)
-                    .ThenByDescending(item => item.Id)
-                    .Take(5)
-                    .Select(item => new
-                    {
-                        title = item.Title,
-                        artist = item.Artist,
-                        playedAt = item.ListenedAt ?? item.StartedAt
-                    })
-                    .ToList()
-            })
-            .ToDictionaryAsync(item => item.UserId, item => item.Plays, cancellationToken);
+                title = item.Title,
+                artist = item.Artist,
+                playedAt = item.PlayedTicks is { } ticks ? new DateTimeOffset(ticks, TimeSpan.Zero) : (DateTimeOffset?)null
+            });
 
         var summaries = new List<object>(users.Count);
         foreach (var user in users)
         {
             DateTimeOffset? lastActiveAt = user.LastSeenAt != default && user.LastSeenAt <= now
                 ? user.LastSeenAt : null;
-            if (activity.GetValueOrDefault(user.Id) is { } playedAt &&
-                (!lastActiveAt.HasValue || playedAt > lastActiveAt.Value))
-                lastActiveAt = playedAt;
+            var listener = activity.GetValueOrDefault(user.Id);
+            if (listener?.LastPlayedTicks is { } ticks && (!lastActiveAt.HasValue || ticks > lastActiveAt.Value.UtcTicks))
+                lastActiveAt = new DateTimeOffset(ticks, TimeSpan.Zero);
             summaries.Add(new
             {
                 user.Id,
@@ -123,12 +95,58 @@ public sealed partial class ProviderAccountsController
                 isAdministrator = user.IsAdmin,
                 isTrustedListener = user.IsTrustedListener,
                 lastActiveAt,
-                playsThisWeek = weeklyCounts.GetValueOrDefault(user.Id),
+                playsThisWeek = listener?.PlaysThisWeek ?? 0,
                 user.playlistEditingAllowed,
-                recentPlays = recentPlays.GetValueOrDefault(user.Id) ?? []
+                recentPlays = recentPlays[user.Id].ToList()
             });
         }
 
         return summaries;
+    }
+
+    // Each listener's own history, newest first through IX_listening_event_scope_time. Times are stored as UTC ticks.
+    private const string ListenerHistory = """
+        e."OwnerUserId" = u."Id" AND e."Protocol" = u."BackendType" AND e."BackendInstanceId" = u."BackendInstanceId"
+            AND coalesce(e."ListenedAt", e."StartedAt") <= {0}
+        """;
+
+    // Keep the same completed-or-thirty-second rule used by listening totals.
+    private const string CountsAsPlay = """
+        ((e."State" = 'Completed' AND e."ListenedAt" IS NOT NULL) OR (e."State" IN ('Abandoned', 'Skipped')
+            AND e."StartedAt" IS NOT NULL AND e."PositionTicks" >= 300000000))
+            AND (e."SourceKind" IN ('protocol', 'listenbrainz-api', 'import') OR e."ImportProvenance" IS NOT NULL)
+        """;
+
+    internal const string ListenerActivitySql = $$"""
+        SELECT u."Id" AS "UserId",
+            (SELECT max(coalesce(e."ListenedAt", e."StartedAt")) FROM listening_events e
+                WHERE {{ListenerHistory}}) AS "LastPlayedTicks",
+            (SELECT count(*) FROM listening_events e
+                WHERE {{ListenerHistory}} AND coalesce(e."ListenedAt", e."StartedAt") >= {1} AND {{CountsAsPlay}}) AS "PlaysThisWeek"
+        FROM users u WHERE u."Enabled" AND NOT u."IsSynthetic"
+        """;
+
+    internal const string RecentPlaysSql = $$"""
+        SELECT p."OwnerUserId" AS "UserId", p."Title", p."Artist", coalesce(p."ListenedAt", p."StartedAt") AS "PlayedTicks"
+        FROM users u JOIN listening_events p ON p."Id" IN (
+            SELECT e."Id" FROM listening_events e WHERE {{ListenerHistory}} AND {{CountsAsPlay}}
+            ORDER BY coalesce(e."ListenedAt", e."StartedAt") DESC, e."Id" DESC LIMIT 5)
+        WHERE u."Enabled" AND NOT u."IsSynthetic"
+        ORDER BY p."OwnerUserId", coalesce(p."ListenedAt", p."StartedAt") DESC, p."Id" DESC
+        """;
+
+    internal sealed class ListenerActivityRow
+    {
+        public Guid UserId { get; set; }
+        public long? LastPlayedTicks { get; set; }
+        public int PlaysThisWeek { get; set; }
+    }
+
+    internal sealed class ListenerPlayRow
+    {
+        public Guid UserId { get; set; }
+        public string? Title { get; set; }
+        public string? Artist { get; set; }
+        public long? PlayedTicks { get; set; }
     }
 }

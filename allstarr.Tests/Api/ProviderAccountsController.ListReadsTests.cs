@@ -23,8 +23,8 @@ public sealed partial class ProviderAccountsControllerTests
     [Theory]
     [InlineData(1, false, 4)]
     [InlineData(24, false, 4)]
-    [InlineData(1, true, 8)]
-    [InlineData(24, true, 8)]
+    [InlineData(1, true, 7)]
+    [InlineData(24, true, 7)]
     public async Task List_WarmConfiguredAccountsUseBoundedDatabaseReads(
         int accountCount, bool administrator, int expectedReads)
     {
@@ -101,7 +101,7 @@ public sealed partial class ProviderAccountsControllerTests
             "Warm provider account list: {0} accounts, {1} listeners, {2} history rows, median {3:F2} ms, maximum {4:F2} ms, database reads {5}",
             accountCount, listenerCount, listenerCount * playsPerListener, durations[durations.Count / 2],
             durations[^1], string.Join(", ", counts));
-        Assert.All(counts, count => Assert.Equal(8, count));
+        Assert.All(counts, count => Assert.Equal(7, count));
         Assert.True(durations[durations.Count / 2] < 300, $"Warm provider list median was {durations[durations.Count / 2]:F2} ms.");
     }
 

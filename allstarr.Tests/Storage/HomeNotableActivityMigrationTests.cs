@@ -44,7 +44,7 @@ public sealed class HomeNotableActivityMigrationTests
         Assert.Equal(problem.Id, Assert.Single(await db.AuditEvents.FromSqlRaw(HomeActivityPolicy.AuditQuery).ToArrayAsync()).Id);
         Assert.Equal(2, await db.Database.SqlQueryRaw<int>("SELECT count(*) AS Value FROM sqlite_master WHERE type = 'index' AND name IN ('IX_home_notable_jobs', 'IX_home_notable_audits')").SingleAsync());
         var operations = db.GetService<IMigrationsAssembly>();
-        var migration = operations.CreateMigration(operations.Migrations.Last().Value, db.Database.ProviderName!);
+        var migration = operations.CreateMigration(operations.Migrations["20261107120000_HomeNotableActivity"], db.Database.ProviderName!);
         Assert.All(migration.UpOperations, operation => Assert.IsType<Microsoft.EntityFrameworkCore.Migrations.Operations.CreateIndexOperation>(operation));
     }
 
