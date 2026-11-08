@@ -202,7 +202,7 @@
 
 <section class="promotion-page" class:panel-open={open} aria-label="Kept songs">
   <header class="promotion-page-heading"><h2>Kept songs</h2><div class="heading-actions"><Button size="sm" class="rounded-full" variant="outline" title={addHint} disabled={loading || busy || Boolean(action) || addUnavailable} onclick={() => { if (!selecting) selecting = true; else if (chosen.length) { bulkError = ""; bulkOpen = true; } }} >Add selected to library</Button>
-    <DropdownMenu.Root><DropdownMenu.Trigger class="icon-button library-download-menu" aria-label="Actions for kept songs"><MoreHorizontal size={18} aria-hidden="true" /></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content class="bits-menu" align="end" sideOffset={6}>
+    <DropdownMenu.Root><DropdownMenu.Trigger class="icon-button library-download-menu" aria-label="Actions for kept songs"><MoreHorizontal size={18} aria-hidden="true" /></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content preventScroll={false} class="bits-menu" align="end" sideOffset={6}>
       <DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => void refresh()}>Refresh</DropdownMenu.Item>
       <DropdownMenu.Item class="bits-menu-item" onSelect={() => controlsOpen = !controlsOpen}>{controlsOpen ? "Hide search and sort" : "Search and sort"}</DropdownMenu.Item>
       {#if removableFiles.length}<DropdownMenu.Item class="bits-menu-item danger-item" disabled={Boolean(action)} onSelect={() => confirm({ kind: "all" })}>Remove all</DropdownMenu.Item>{/if}

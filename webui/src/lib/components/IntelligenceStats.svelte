@@ -110,7 +110,7 @@
   <PageStatus items={[{ label: stats && loadedSelection === selection ? countLabel(stats.playCount, "play") : "Your listening recap" }, { label: year || periods.find(item => item.id === period)?.label || "All time" }]} />
   <div class="stats-toolbar">
     <FilterSegments label="Stats period" options={[...periods, { id: "past", label: "Past years" }]} value={year ? "past" : period} onchange={selectPeriod} />
-    {#if year}<DropdownMenu.Root><DropdownMenu.Trigger class="year-picker" aria-label="Year in review">{year} ▾</DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content class="bits-menu" align="start">{#each years.filter(item => item.value) as item}<DropdownMenu.Item class="bits-menu-item" onSelect={() => { year = item.value; void load(); }}>{item.label}</DropdownMenu.Item>{/each}</DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root>{/if}
+    {#if year}<DropdownMenu.Root><DropdownMenu.Trigger class="year-picker" aria-label="Year in review">{year} ▾</DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content preventScroll={false} class="bits-menu" align="start">{#each years.filter(item => item.value) as item}<DropdownMenu.Item class="bits-menu-item" onSelect={() => { year = item.value; void load(); }}>{item.label}</DropdownMenu.Item>{/each}</DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root>{/if}
     <RefreshButton label="Refresh stats" onrefresh={load} />
   </div>
   {#if loading || refreshing && loadedSelection !== selection}<RowsSkeleton />
@@ -174,7 +174,7 @@
           <ol>{#each open ? list.rows : list.rows.slice(0, 10) as row, index}<li><span class="rank">{index + 1}</span><MediaArtwork url={row.artworkUrl} class={list.round ? "list-art round" : "list-art"} /><div class="stats-name"><strong>{row.name}</strong><small>{#if row.detail}{row.detail}{" · "}{/if}{countLabel(row.count, "play")}</small></div>
             {#if row.seed || row.artist}
               <DropdownMenu.Root><DropdownMenu.Trigger class="icon-button row-menu" aria-label={`Actions for ${row.name}`}><UiIcon name="more" /></DropdownMenu.Trigger>
-                <DropdownMenu.Portal><DropdownMenu.Content class="bits-menu" align="end">
+                <DropdownMenu.Portal><DropdownMenu.Content preventScroll={false} class="bits-menu" align="end">
                   {#if row.seed}<DropdownMenu.Item class="bits-menu-item" onSelect={() => void goto(`#/for-you?start=${encodeURIComponent(row.seed)}`)}>Start a mix from this</DropdownMenu.Item>{/if}
                   {#if row.artist}<DropdownMenu.Item class="bits-menu-item" disabled={Boolean(following)} onSelect={() => void follow(row.artist)}>Follow {row.artist} for new releases</DropdownMenu.Item>{/if}
                 </DropdownMenu.Content></DropdownMenu.Portal>

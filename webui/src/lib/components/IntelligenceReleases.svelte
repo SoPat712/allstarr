@@ -160,7 +160,7 @@
   <div class="release-toolbar">
     <FilterSegments options={filters} bind:value={type} storageKey="allstarr.releases.type" label="Release type" />
     <div class="release-actions"><SelectField label="Release order" bind:value={sort} options={[{ value: "newest", label: "Newest first" }, { value: "oldest", label: "Oldest first" }]} />
-      <DropdownMenu.Root><DropdownMenu.Trigger class="icon-button" aria-label="Release actions"><UiIcon name="more" /></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content class="bits-menu release-menu" align="end"><DropdownMenu.Item class="bits-menu-item" onSelect={() => void followTop()}>Follow my top artists</DropdownMenu.Item><DropdownMenu.Item class="bits-menu-item" onSelect={() => { followError = ""; followOpen = true; }}>Follow artists from my hearts</DropdownMenu.Item></DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root>
+      <DropdownMenu.Root><DropdownMenu.Trigger class="icon-button" aria-label="Release actions"><UiIcon name="more" /></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content preventScroll={false} class="bits-menu release-menu" align="end"><DropdownMenu.Item class="bits-menu-item" onSelect={() => void followTop()}>Follow my top artists</DropdownMenu.Item><DropdownMenu.Item class="bits-menu-item" onSelect={() => { followError = ""; followOpen = true; }}>Follow artists from my hearts</DropdownMenu.Item></DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root>
     </div>
   </div>
   {#if error}<ErrorState title="Couldn't load new releases" detail={error} onretry={async () => { await load(); if (initialRelease && !ReleasePanel) await loadReleasePanel(); }} />{/if}
@@ -176,7 +176,7 @@
           <h3>{entry.title}</h3><p>{entry.artist}</p><p>{releaseType(entry.type)} · {entry.isExplicit === true ? "Explicit" : entry.isExplicit === false ? "Clean" : "Explicit status unknown"}</p>
           <p><time datetime={entry.releaseDate ?? undefined}>{releaseDate(entry.releaseDate)}</time>{entry.edition ? ` · ${entry.edition}` : ""}</p>
         </button>
-        <DropdownMenu.Root><DropdownMenu.Trigger class="icon-button release-card-menu" aria-label={`Actions for ${entry.title}`}><UiIcon name="more" /></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content class="bits-menu release-menu" align="end"><DropdownMenu.Item class="bits-menu-item destructive" disabled={Boolean(pendingAction)} onSelect={() => askDismiss(entry)}>Dismiss {entry.title}</DropdownMenu.Item></DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root>
+        <DropdownMenu.Root><DropdownMenu.Trigger class="icon-button release-card-menu" aria-label={`Actions for ${entry.title}`}><UiIcon name="more" /></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content preventScroll={false} class="bits-menu release-menu" align="end"><DropdownMenu.Item class="bits-menu-item destructive" disabled={Boolean(pendingAction)} onSelect={() => askDismiss(entry)}>Dismiss {entry.title}</DropdownMenu.Item></DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root>
       </article>
     {/each}</div>{/if}
     {#if unchecked.length}<div class="checking-note"><details><summary>Couldn't check {countLabel(unchecked.length, "artist")}.</summary><p>Some releases may be missing.</p><ul>{#each unchecked as item}<li>{item.artist.displayName}</li>{/each}</ul></details><Button variant="text" size="sm" disabled={Boolean(pendingAction)} onclick={() => void load()}>Check again</Button></div>{/if}

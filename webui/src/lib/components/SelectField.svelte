@@ -49,7 +49,7 @@
       <ChevronDown class="select-chevron" size={16} aria-hidden="true" />
     </Select.Trigger>
     <Select.Portal>
-      <Select.Content class="select-content" sideOffset={6}>
+      <Select.Content preventScroll={false} class="select-content" sideOffset={6}>
         <Select.Viewport>
           {#each items as item}
             <Select.Item class="select-item" value={item.value} label={item.label} disabled={item.disabled}>

@@ -63,7 +63,7 @@
       <li class:literal={entry.kind === "literal"} ondragover={event => event.preventDefault()} ondrop={event => drop(event, index)}>
         <button id={`naming-token-${entry.id}`} class="token-handle" type="button" draggable="true" ondragstart={event => drag(event, { id: entry.id })} onkeydown={event => key(event, entry.id, index)} aria-label={`${tokenLabel(entry)}, token ${index + 1}`} aria-describedby="naming-move-help"><GripVertical size={13} aria-hidden="true" />{entry.kind === "field" ? tokenLabel(entry) : "Text"}</button>
         {#if entry.kind === "literal"}<input aria-label={`Text for token ${index + 1}`} value={entry.value} size={Math.max(1, Math.min(entry.value.length, 18))} oninput={event => { entry.value = event.currentTarget.value; changed(); }} />{/if}
-        <DropdownMenu.Root><DropdownMenu.Trigger class="token-action" aria-label={`Move token ${index + 1}`}><MoreHorizontal size={14} aria-hidden="true" /></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content class="bits-menu" align="start">
+        <DropdownMenu.Root><DropdownMenu.Trigger class="token-action" aria-label={`Move token ${index + 1}`}><MoreHorizontal size={14} aria-hidden="true" /></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content preventScroll={false} class="bits-menu" align="start">
           <DropdownMenu.Item class="bits-menu-item" disabled={index === 0} onSelect={() => move(entry.id, index - 1)}>Move left</DropdownMenu.Item>
           <DropdownMenu.Item class="bits-menu-item" disabled={index === entries.length - 1} onSelect={() => move(entry.id, index + 1)}>Move right</DropdownMenu.Item>
           <DropdownMenu.Item class="bits-menu-item" disabled={index === 0} onSelect={() => move(entry.id, 0)}>Move to start</DropdownMenu.Item>

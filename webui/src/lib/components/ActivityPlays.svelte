@@ -300,7 +300,7 @@
     {#snippet menu()}
       <DropdownMenu.Root>
         <DropdownMenu.Trigger class={buttonVariants({ variant: "text", size: "icon" })} aria-label="More play actions"><MoreHorizontal size={18} /></DropdownMenu.Trigger>
-        <DropdownMenu.Portal><DropdownMenu.Content class="bits-menu" align="end">
+        <DropdownMenu.Portal><DropdownMenu.Content preventScroll={false} class="bits-menu" align="end">
           <DropdownMenu.Item class="bits-menu-item play-forget" disabled={!detail?.resolution.externalSnapshotId || actionBusy} onSelect={() => forgetOpen = true}>Look for it again</DropdownMenu.Item>
           <DropdownMenu.Item class="bits-menu-item" disabled={!detail?.resolution.externalSnapshotId || actionBusy} onSelect={openReport}>Report a problem</DropdownMenu.Item>
           <DropdownMenu.Item class="bits-menu-item" disabled={copying} onSelect={() => void copy(expanded)}>Copy diagnostics</DropdownMenu.Item>

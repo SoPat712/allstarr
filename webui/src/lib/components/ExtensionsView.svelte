@@ -597,7 +597,7 @@
           <DropdownMenu.Root>
             <DropdownMenu.Trigger class="icon-button" aria-label="Manage extension" title={`More actions for ${item.displayName}`}><MoreHorizontal size={18} aria-hidden="true" /></DropdownMenu.Trigger>
             <DropdownMenu.Portal>
-              <DropdownMenu.Content class="bits-menu" sideOffset={6} align="end">
+              <DropdownMenu.Content preventScroll={false} class="bits-menu" sideOffset={6} align="end">
                 {#if item.permissionReviewRequired && update}<DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => void openReview(item)}>Review permissions</DropdownMenu.Item>{/if}
                 {#if item.active}<DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => void run(item.id, () => extensions.disable(item), "Extension disabled.")}>Disable</DropdownMenu.Item>{/if}
                 {#if item.hasPermissions && item.state.toLowerCase() === "active"}<DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => confirmPermissionReview(item)}>Review access</DropdownMenu.Item>{/if}
@@ -720,7 +720,7 @@
                   <DropdownMenu.Root>
                     <DropdownMenu.Trigger class="icon-button" aria-label="Manage extension" title={`More actions for ${item.displayName}`}><MoreHorizontal size={18} aria-hidden="true" /></DropdownMenu.Trigger>
                     <DropdownMenu.Portal>
-                      <DropdownMenu.Content class="bits-menu" sideOffset={6} align="end">
+                      <DropdownMenu.Content preventScroll={false} class="bits-menu" sideOffset={6} align="end">
                         {#if item.permissionReviewRequired && update}<DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => void openReview(item)}>Review permissions</DropdownMenu.Item>{/if}
                         {#if item.active}<DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => void run(item.id, () => extensions.disable(item), "Extension disabled.")}>Disable</DropdownMenu.Item>{/if}
                         {#if item.hasPermissions && item.state.toLowerCase() === "active"}<DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => confirmPermissionReview(item)}>Review access</DropdownMenu.Item>{/if}

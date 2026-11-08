@@ -32,7 +32,7 @@
   <DropdownMenu.Root>
     <DropdownMenu.Trigger class={`${buttonVariants()} split-trigger`} disabled={disabled || options.length === 0} aria-label={`${label}: ${scopeLabel}; choose scope`}><span>{scopeLabel}</span><ChevronDown size={16} aria-hidden="true" /></DropdownMenu.Trigger>
     <DropdownMenu.Portal>
-      <DropdownMenu.Content class="bits-menu split-menu" sideOffset={6} align="end">
+      <DropdownMenu.Content preventScroll={false} class="bits-menu split-menu" sideOffset={6} align="end">
         <DropdownMenu.RadioGroup {value} onValueChange={select}>
           {#each options as option (option.id)}
             <DropdownMenu.RadioItem class="bits-menu-item split-option" value={option.id} disabled={option.disabled}>

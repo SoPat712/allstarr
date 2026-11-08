@@ -46,7 +46,7 @@
   <DropdownMenu.Root>
     <DropdownMenu.Trigger class="icon-button library-download-menu" aria-label={`Actions for ${file.title || file.fileName}`}><MoreHorizontal size={18} aria-hidden="true" /></DropdownMenu.Trigger>
     <DropdownMenu.Portal>
-      <DropdownMenu.Content class="bits-menu" align="end" sideOffset={6}>
+      <DropdownMenu.Content preventScroll={false} class="bits-menu" align="end" sideOffset={6}>
         {#if cached || placement === "menu"}
           <DropdownMenu.Item class="bits-menu-item">
             {#snippet child({ props })}<a {...props} href={downloads.fileUrl(file.path, storage)}>Download</a>{/snippet}

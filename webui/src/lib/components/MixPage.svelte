@@ -132,7 +132,7 @@
         <div class="mix-actions">
           <MixAppState added={detail.mix.inApps} allowed={detail.mix.appsAllowed} {busy} onadd={() => void perform(target => mixes.add(target))} />
           {#if detail.mix.kind !== "custom" && detail.mix.kind !== "external"}<span title={throttled ? "Wait 15 minutes before refreshing again" : "Refresh this mix"}><RefreshButton label="Refresh mix" disabled={busy || throttled || Boolean(refreshJob)} onrefresh={refresh} /></span>{/if}
-          {#if detail.mix.kind === "custom"}<DropdownMenu.Root><DropdownMenu.Trigger class="icon-button" aria-label="Mix actions"><UiIcon name="more" /></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content class="bits-menu mix-menu" align="end"><DropdownMenu.Item class="bits-menu-item" onSelect={() => deleteOpen = true}>Delete mix</DropdownMenu.Item></DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root>{/if}
+          {#if detail.mix.kind === "custom"}<DropdownMenu.Root><DropdownMenu.Trigger class="icon-button" aria-label="Mix actions"><UiIcon name="more" /></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content preventScroll={false} class="bits-menu mix-menu" align="end"><DropdownMenu.Item class="bits-menu-item" onSelect={() => deleteOpen = true}>Delete mix</DropdownMenu.Item></DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root>{/if}
         </div>
         {#if !detail.mix.appsAllowed}<p class="muted" id="mix-apps-hint">Your admin hasn't allowed adding mixes.</p>{/if}
         <details class="recipe settings-card">
