@@ -1,5 +1,6 @@
 using System.ComponentModel.DataAnnotations;
 using System.Text.Json.Serialization;
+using allstarr.Core.Capabilities;
 using allstarr.Core.Music;
 
 namespace allstarr.Core.ClientApi;
@@ -19,6 +20,8 @@ public sealed record ClientLyricsSource(
     [JsonPropertyName("score"), JsonNumberHandling(JsonNumberHandling.Strict)] public double? Score { get; init; }
     [JsonPropertyName("rank")] public int? Rank { get; init; }
     [JsonPropertyName("reasons")] public IReadOnlyList<string>? Reasons { get; init; }
+    /// <summary>The full version, only when the list was requested with includeLyrics=true.</summary>
+    [JsonPropertyName("lyrics"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public RichLyrics? Lyrics { get; init; }
 }
 
 public sealed record ClientLyricsChosen(

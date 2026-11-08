@@ -58,7 +58,7 @@ public sealed class ClientApiItemLyricsTests
         Assert.IsType<RichLyrics>(Assert.IsType<OkObjectResult>((await controller.Get(itemId)).Result).Value);
         var sources = Assert.IsType<ClientLyricsSources>(Assert.IsType<OkObjectResult>((await controller.Sources(itemId)).Result).Value);
 
-        Assert.Equal(["ready", "pending", "unavailable"], sources.Sources.Select(source => source.State));
+        Assert.Equal(["ready", "pending"], sources.Sources.Select(source => source.State));
         Assert.Equal("lrclib", sources.Chosen?.SourceId);
         Assert.Equal("automatic", sources.Chosen?.Layer);
         Assert.Equal(1, sources.Sources[0].Rank);
@@ -185,9 +185,10 @@ public sealed class ClientApiItemLyricsTests
 
         var result = Assert.IsType<ClientLyricsSources>(Assert.IsType<OkObjectResult>((await fixture.Controller().Sources(itemId)).Result).Value);
         Assert.Equal(new ClientLyricsChosen("lrclib:alternate", "automatic"), result.Chosen);
-        Assert.Equal([3, 1, 2], result.Sources.Select(source => source.Rank));
+        Assert.Equal(["lrclib:alternate", "lrcred", "lrclib"], result.Sources.Select(source => source.SourceId));
+        Assert.Equal([1, 2, 3], result.Sources.Select(source => source.Rank));
         Assert.All(result.Sources, source => Assert.InRange(source.Score!.Value, 0, 1));
-        Assert.Contains("synced_words", result.Sources[1].Reasons!);
+        Assert.Contains("synced_words", result.Sources[0].Reasons!);
     }
 
     [Fact]

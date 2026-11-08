@@ -17,8 +17,8 @@ public sealed class ItemLyricsController(ItemLyricsReader reader) : ClientApiCon
     [HttpGet("sources")]
     [EndpointName("getLyricsSources")]
     [ProducesResponseType<ClientLyricsSources>(200)]
-    public Task<ActionResult<ClientLyricsSources>> Sources(string itemId) =>
-        ExecuteAsync(() => reader.SourcesAsync(HttpContext, Execution, itemId));
+    public Task<ActionResult<ClientLyricsSources>> Sources(string itemId, [FromQuery] bool includeLyrics = false) =>
+        ExecuteAsync(() => reader.SourcesAsync(HttpContext, Execution, itemId, includeLyrics));
 
     [HttpPut("source")]
     [EndpointName("setLyricsSource")]

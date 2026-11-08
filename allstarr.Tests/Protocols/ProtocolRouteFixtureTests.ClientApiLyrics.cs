@@ -42,11 +42,44 @@ public sealed partial class ProtocolRouteFixtureTests
         await SeedClientLyricsAsync(factory, recording);
         var result = await ReadClientLyricsJsonAsync(client, "/allstarr/v1/items/ext-deezer-song-lyrics/lyrics/sources");
         var sources = result["sources"]!.AsArray();
-        Assert.Equal(new[] { "pending", "ready", "unavailable" }, sources.Select(source => source!["state"]!.GetValue<string>()));
-        Assert.Null(sources[0]!["format"]);
+        Assert.Equal(new[] { "ready", "pending" }, sources.Select(source => source!["state"]!.GetValue<string>()));
+        Assert.Null(sources[1]!["format"]);
+        Assert.Null(sources[1]!["rank"]);
+        Assert.DoesNotContain(sources, source => source!["sourceId"]!.GetValue<string>() == "genius");
         Assert.Equal("lrclib", result["chosen"]!["sourceId"]!.GetValue<string>());
         resolver.Verify(item => item.FindAllAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<Song>(), It.IsAny<string>(), It.IsAny<ProtocolLyricsSources>()), Times.Once);
         resolver.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task ClientApi_LyricsSourcesRankEveryVersionAndSkipBlankPreviewLines()
+    {
+        var recording = Guid.NewGuid();
+        var resolver = new Mock<IProtocolLyricsResolver>(MockBehavior.Strict);
+        resolver.Setup(item => item.FindAllAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<Song>(), It.IsAny<string>(), It.IsAny<ProtocolLyricsSources>()))
+            .ReturnsAsync(new[]
+            {
+                new ProtocolLyricsCandidate("lrclib", new allstarr.Models.Lyrics.LyricsInfo { Source = "lrclib", SyncedLyrics = "[00:01]Line one\n[00:02]Line two" }),
+                new ProtocolLyricsCandidate("lrcred", new allstarr.Models.Lyrics.LyricsInfo
+                {
+                    Source = "lrcred", SyncedLyrics = "[00:01]♪\n[00:02]\n[00:03]<00:03.00>First <00:03.50>words\n[00:04]<00:04.00>Next <00:04.40>line"
+                }) { AutomaticEligible = false },
+                new ProtocolLyricsCandidate("empty", new allstarr.Models.Lyrics.LyricsInfo { Source = "empty", SyncedLyrics = "[00:01]♪\n[00:02] " })
+            });
+        using var factory = ClientLyricsFactory(recording, new(), configure: services =>
+        {
+            services.RemoveAll<IProtocolLyricsResolver>();
+            services.AddSingleton(resolver.Object);
+        });
+        using var client = CreateClientApiClient(factory);
+        client.DefaultRequestHeaders.Add("X-Emby-Token", "listener-token");
+        await SeedClientLyricsAsync(factory, recording);
+        var sources = (await ReadClientLyricsJsonAsync(client, "/allstarr/v1/items/ext-deezer-song-lyrics/lyrics/sources"))["sources"]!.AsArray();
+        Assert.Equal(new[] { "lrcred", "lrclib" }, sources.Select(source => source!["sourceId"]!.GetValue<string>()));
+        Assert.Equal(new[] { 1, 2 }, sources.Select(source => source!["rank"]!.GetValue<int>()));
+        Assert.Equal("word", sources[0]!["format"]!.GetValue<string>());
+        Assert.NotNull(sources[0]!["score"]);
+        Assert.Equal("First words\nNext line", sources[0]!["preview"]!.GetValue<string>());
     }
 
     [Theory]
@@ -123,7 +156,19 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.Equal("automatic", automatic["chosen"]!["layer"]!.GetValue<string>());
         Assert.Equal("lyricsplus", automatic["chosen"]!["sourceId"]!.GetValue<string>());
         var available = automatic["sources"]!.AsArray().Where(source => source!["format"] != null).ToArray();
-        Assert.Equal(new[] { "plain", "line", "word" }, available.Select(source => source!["format"]!.GetValue<string>()));
+        Assert.Equal(new[] { "word", "line", "plain" }, available.Select(source => source!["format"]!.GetValue<string>()));
+        Assert.Equal(new[] { 1, 2, 3 }, available.Select(source => source!["rank"]!.GetValue<int>()));
+        foreach (var listed in available)
+        {
+            var id = listed!["sourceId"]!.GetValue<string>();
+            var version = await ReadClientLyricsJsonAsync(client, path + "?sourceId=" + Uri.EscapeDataString(id));
+            Assert.Equal(id, version["source"]!["id"]!.GetValue<string>());
+            Assert.Equal(listed["format"]!.GetValue<string>(), version["format"]!.GetValue<string>());
+        }
+        Assert.All(available, source => Assert.Null(source!["lyrics"]));
+        var batch = await ReadClientLyricsJsonAsync(client, path + "/sources?includeLyrics=true");
+        Assert.All(batch["sources"]!.AsArray(), source =>
+            Assert.Equal(source!["sourceId"]!.GetValue<string>(), source["lyrics"]!["source"]!["id"]!.GetValue<string>()));
         Assert.All(available, source => Assert.InRange(source!["preview"]!.GetValue<string>().Split('\n').Length, 1, 4));
         Assert.DoesNotContain(other.ToString(), automatic.ToJsonString());
         Assert.Null(automatic["revision"]!["personal"]);
@@ -259,7 +304,7 @@ public sealed partial class ProtocolRouteFixtureTests
         await AssertClientApiError(response, 404, "not_found");
         var sources = await ReadClientLyricsJsonAsync(client, "/allstarr/v1/items/ext-deezer-song-lyrics/lyrics/sources");
         Assert.Null(sources["chosen"]);
-        Assert.Null(sources["sources"]![0]!["format"]);
+        Assert.Empty(sources["sources"]!.AsArray());
     }
 
     [Fact]
