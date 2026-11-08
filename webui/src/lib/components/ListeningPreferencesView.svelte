@@ -25,7 +25,8 @@
   import { audioQualityOptions, move, playbackStartLabel, playbackStartOptions } from "$lib/settings";
   import SelectField from "$lib/components/SelectField.svelte";
 
-  let { administrator = false }: { administrator?: boolean } = $props();
+  // Settings passes the household's status so the page has one status line.
+  let { administrator = false, householdStatus = [] }: { administrator?: boolean; householdStatus?: { label: string }[] } = $props();
 
   const filterOptions: Array<{ value: ExplicitFilter; label: string; description: string }> = [
     { value: "All", label: "All", description: "Show clean and explicit releases." },
@@ -281,6 +282,7 @@
 {:else}
   <section class="preferences-view" aria-busy={busy || saving}>
     <PageStatus label="Listening preferences status" items={[
+      ...householdStatus,
       { label: snapshot.usesHouseholdDefaults ? "Using household defaults" : "Personal choices" },
       { label: busy || saving ? "Saving…" : conflict ? "Reload needed" : "Changes save automatically", tone: conflict ? "warn" : "neutral" },
     ]} />

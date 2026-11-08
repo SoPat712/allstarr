@@ -176,7 +176,7 @@
     {#if loading}<RowsSkeleton count={5} />
     {:else if !schema || error}<ErrorState title="Some settings could not be loaded" detail={error} onretry={refresh} />{/if}
     {#if !loading && schema}
-      {#if statusItems.length && !["storage", "setup"].includes(active)}<PageStatus items={statusItems} />
+      {#if statusItems.length && !["storage", "setup", "playback"].includes(active)}<PageStatus items={statusItems} />
       {:else if ["storage", "setup"].includes(active)}
         <div class:setup-progress={active === "setup"}><PageStatus segments={active === "storage" ? storageSegments : active === "setup" ? [{ label: "Reviewed", value: onboardingState?.steps?.filter(step => step.state !== "pending").length ?? 0, tone: "info" }, { label: "Left", value: onboardingState?.steps?.filter(step => step.state === "pending").length ?? 0, tone: "neutral" }] : []} items={active === "storage" ? storageItems : active === "setup" ? [{ label: `${onboardingState?.steps?.filter(step => step.state !== "pending").length ?? 0} of ${countLabel(onboardingState?.steps?.length ?? 0, "step")} reviewed or skipped` }, { label: "Playback works while setup is open" }] : []} /></div>
       {/if}
@@ -185,7 +185,7 @@
       {:else if active === "adding-to-library"}
         {#await import("./LibraryPromotionSettings.svelte")}<RowsSkeleton count={4} />{:then { default: Promotion }}<Promotion {administrator} />{:catch}<ErrorState title="This settings page could not be opened" onretry={() => window.location.reload()} />{/await}
       {:else if active === "playback"}
-        {#await import("./ListeningPreferencesView.svelte")}<RowsSkeleton />{:then { default: Preferences }}<Preferences {administrator} />{:catch}<ErrorState title="This settings page could not be opened" onretry={() => window.location.reload()} />{/await}
+        {#await import("./ListeningPreferencesView.svelte")}<RowsSkeleton />{:then { default: Preferences }}<Preferences {administrator} householdStatus={statusItems} />{:catch}<ErrorState title="This settings page could not be opened" onretry={() => window.location.reload()} />{/await}
         {#if administrator}
           {#if playbackDefaults.fields.length}<SettingsFields section={playbackDefaults} {config} onChanged={refresh} />{/if}
           {#await import("./RoutingView.svelte")}<RowsSkeleton />{:then { default: Routing }}<Routing embedded />{:catch}<ErrorState title="This settings page could not be opened" onretry={() => window.location.reload()} />{/await}
