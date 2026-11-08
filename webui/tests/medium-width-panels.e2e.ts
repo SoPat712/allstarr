@@ -21,10 +21,12 @@ async function expectGeometry(page: Page) {
     for (const group of document.querySelectorAll<HTMLElement>(".filter-segments")) {
       if (!visible(group)) continue;
       const bounds = group.getBoundingClientRect();
+      // A one-row filter that scrolls sideways clips its buttons inside the outline.
+      const scrolls = /(auto|scroll)/.test(getComputedStyle(group).overflowX) && group.scrollWidth > group.clientWidth + 1;
       for (const button of group.querySelectorAll("button")) {
         if (!visible(button)) continue;
         const rect = button.getBoundingClientRect();
-        const outsideX = rect.left < bounds.left - 1 || rect.right > bounds.right + 1;
+        const outsideX = !scrolls && (rect.left < bounds.left - 1 || rect.right > bounds.right + 1);
         const outsideY = rect.top < bounds.top - 1 || rect.bottom > bounds.bottom + 1;
         if (outsideY || outsideX)
           filterEscapes.push(`${identify(button)} [${rect.left}, ${rect.right}] outside [${bounds.left}, ${bounds.right}], scroll ${group.scrollLeft}/${group.scrollWidth - group.clientWidth}`);
