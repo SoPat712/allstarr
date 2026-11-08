@@ -138,7 +138,7 @@ test("A linked music folder shows where it leads and is used there", async ({ pa
 test("A folder mounted at Jellyfin's path is used in one click", async ({ page }) => {
   const calls = await fixture(page); calls.mounted = true; await page.goto("/#/settings/adding-to-library");
   const row = page.getByRole("list", { name: "Jellyfin music folders", exact: true }).getByRole("listitem");
-  await expect(row).toContainText("Ready"); await expect(row).toContainText("33 GiB free");
+  await expect(row).toContainText("Ready"); await expect(row).toContainText("33 GB free");
   await expect(page.getByText("- /media/music:/media/music", { exact: true })).toHaveCount(0);
   await page.getByRole("button", { name: "Use /media/music", exact: true }).click();
   await expect(row).toContainText("In use");

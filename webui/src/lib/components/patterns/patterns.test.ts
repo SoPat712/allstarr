@@ -79,12 +79,11 @@ describe("shared pattern accessibility", () => {
     expect(html.indexOf("Confirm destination")).toBeLessThan(html.indexOf('class="group-members'));
     expect(html).toContain('aria-expanded="false"');
   });
-  it("uses a native fold with a compact label and a descriptive accessible name", () => {
+  it("uses a native fold whose label says what it holds", () => {
     const html = render(AdvancedFold, { props: { description: "folder and manual copies" } }).body;
     expect(html).toMatch(/<details class="settings-fold(?:\s|")/);
-    expect(html).toContain("Advanced");
-    expect(html).toContain('class="sr-only"');
-    expect(html).toContain(": folder and manual copies");
+    expect(html.replaceAll(/<!--.*?-->/g, "")).toContain("Advanced: folder and manual copies");
+    expect(html).not.toContain('class="sr-only"');
     expect(html).not.toContain(" open");
   });
   it("preserves a specific fold label when the content needs one", () => {

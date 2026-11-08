@@ -1,3 +1,4 @@
+using allstarr.Services.Jellyfin;
 using System.Net;
 using System.Security.Cryptography;
 using System.Text;
@@ -109,7 +110,7 @@ public sealed partial class ProtocolRouteFixtureTests
         factory.Services.GetRequiredService<DurableStorageState>().Set(DurableStorageReadiness.Ready, "fixture");
         var owner = await SeedAnonymousCoverAsync(factory, false, false);
         var resolver = factory.Services.GetRequiredService<IMediaAssetResolver>();
-        await resolver.ResolveAsync(new(owner, null, "allstarr", "song", AnonymousCoverId[18..]),
+        await resolver.ResolveAsync(new(owner, null, "allstarr", "song", AnonymousCoverId[18..], JellyfinItemArtwork.AlbumArtRevision),
             _ => Task.FromResult<MediaAssetSource?>(new(AnonymousCoverBytes(), "image/png")), 10 * 1024 * 1024);
         using var response = await client.GetAsync($"/Items/{AnonymousCoverId}/Images/Primary{suffix}");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);

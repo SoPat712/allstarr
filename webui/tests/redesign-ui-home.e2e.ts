@@ -74,7 +74,7 @@ test("Home fills setup tiles while mixes take ten seconds", async ({ page }) => 
   const tile = (title: string) => page.locator(".setup-tile").filter({ has: page.getByRole("heading", { name: title, exact: true }) });
   try {
     await expect(tile("Matches")).toContainText("4,999 matched");
-    await expect(tile("Storage")).toContainText("600 MiB cached of 2 GiB");
+    await expect(tile("Storage")).toContainText("600 MB cached of 2 GB");
     await expect(tile("Backups")).toContainText("Verified");
     expect(mixesPending).toBe(true);
     await expect(page.getByRole("status", { name: "Loading mixes", exact: true })).toBeVisible();
@@ -188,7 +188,7 @@ for (const { width, theme } of modes) {
       await expect(matches.locator(".match-gauge .status-gauge > span")).toHaveCount(3);
       await expect(matches).toContainText("4,992 by Allstarr · 6 by you · 1 unsure");
       const storage = page.locator(".setup-tile").filter({ has: page.getByRole("heading", { name: "Storage", exact: true }) });
-      await expect(storage.locator(".tile-value")).toHaveText("600 MiB cached of 2 GiB");
+      await expect(storage.locator(".tile-value")).toHaveText("600 MB cached of 2 GB");
       await expect(page.locator(".source-dots > i")).toHaveCount(28);
       const status = page.getByRole("region", { name: "Page status", exact: true });
       await expect(status).toContainText("5 sources need a look");
@@ -326,8 +326,8 @@ test("Home omits unavailable setup details without inventing counts", async ({ p
   await expect(page.locator(".home-setup > header")).toHaveText("Your setupJellyfin");
   await expect(page.locator(".setup-tile").filter({ hasText: "Background work" })).not.toContainText("Next:");
   const storage = page.locator(".setup-tile").filter({ hasText: "Storage" });
-  await expect(storage.locator(".tile-value")).toHaveText("600 MiB cached");
-  await expect(storage).not.toContainText("of 2 GiB");
+  await expect(storage.locator(".tile-value")).toHaveText("600 MB cached");
+  await expect(storage).not.toContainText("of 2 GB");
   await expect(page.locator(".scrobble-kpi")).toHaveCount(0);
   const matches = page.locator(".setup-tile").filter({ has: page.getByRole("heading", { name: "Matches", exact: true }) });
   await expect(matches.locator(".state-pill")).toHaveText("Not checked");
