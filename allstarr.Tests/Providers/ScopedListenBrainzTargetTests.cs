@@ -280,6 +280,25 @@ public sealed class ScopedLastFmTargetTests
         Assert.Equal(32, form["api_sig"].Length);
     }
 
+    [Theory]
+    [InlineData("Nicky Youre, dazy", "Nicky Youre", "Nicky Youre")]
+    [InlineData("XXXTENTACION, Lil Pump, Maluma, Swae Lee", "XXXTENTACION", "XXXTENTACION")]
+    [InlineData("Tyler, The Creator", "Tyler, The Creator", "Tyler, The Creator")]
+    [InlineData("Lady Gaga, Bruno Mars", "Various Artists", "Lady Gaga, Bruno Mars")]
+    [InlineData("Daft Punk", null, "Daft Punk")]
+    public async Task Scrobble_SendsTheLeadArtistInsteadOfAJoinedCredit(string credit, string? albumArtist, string expected)
+    {
+        var handler = new CaptureHandler();
+        var target = new LastFmScopedPlaybackScrobbleTarget(new HttpClient(handler), new AccountAccessor());
+
+        await target.DeliverAsync(Scope(), PlaybackTransition.Stop, new ScopedPlaybackTrack("Song", credit, "Album", 180_000, albumArtist),
+            null, DateTimeOffset.FromUnixTimeSeconds(123456), "signal", CancellationToken.None);
+
+        var form = ParseForm(handler.Body!);
+        Assert.Equal(expected, form["artist"]);
+        Assert.Equal(albumArtist == null || albumArtist == expected, !form.ContainsKey("albumArtist"));
+    }
+
     [Fact]
     public async Task NowPlaying_OmitsUnknownAndCompletionOnlyFields()
     {

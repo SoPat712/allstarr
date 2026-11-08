@@ -35,16 +35,17 @@ public sealed partial class LastFmScopedPlaybackScrobbleTarget(HttpClient http, 
         ScopedPlaybackTrack track, DateTimeOffset observedAt, CancellationToken ct)
     {
         var method = transition is PlaybackTransition.Start or PlaybackTransition.InferredStart ? "track.updateNowPlaying" : "track.scrobble";
+        var artist = MainArtist(track);
         var values = new SortedDictionary<string, string>(StringComparer.Ordinal)
         {
             ["api_key"] = Required(secret, "apiKey"),
-            ["artist"] = track.Artist,
+            ["artist"] = artist,
             ["method"] = method,
             ["sk"] = Required(secret, "sessionKey"),
             ["track"] = track.Title
         };
         Add(values, "album", track.Album);
-        if (!string.Equals(track.AlbumArtist, track.Artist, StringComparison.Ordinal)) Add(values, "albumArtist", track.AlbumArtist);
+        if (!string.Equals(track.AlbumArtist, artist, StringComparison.Ordinal)) Add(values, "albumArtist", track.AlbumArtist);
         if (track.DurationMilliseconds is > 0) values["duration"] = (track.DurationMilliseconds.Value / 1000).ToString(CultureInfo.InvariantCulture);
         if (Guid.TryParseExact(track.RecordingMusicBrainzId, "D", out var mbid) && mbid != Guid.Empty) values["mbid"] = mbid.ToString("D");
         if (track.TrackNumber is > 0) values["trackNumber"] = track.TrackNumber.Value.ToString(CultureInfo.InvariantCulture);
@@ -193,6 +194,12 @@ public sealed partial class LastFmScopedPlaybackScrobbleTarget(HttpClient http, 
         if (SafeOperationalText.Sanitize(providerMessage, 500) is { } safeMessage) values["providerMessage"] = safeMessage;
         return JsonSerializer.Serialize(values);
     }
+
+    // Last.fm keeps one artist per scrobble, so a joined credit such as "Nicky Youre, dazy" would become an artist of its own.
+    // Send the lead artist when the credit starts with the album artist; other credits stay as they are.
+    internal static string MainArtist(ScopedPlaybackTrack track) =>
+        !string.IsNullOrWhiteSpace(track.AlbumArtist) && track.Artist.StartsWith(track.AlbumArtist + ", ", StringComparison.Ordinal)
+            ? track.AlbumArtist : track.Artist;
 
     private static Dictionary<string, object>? JsonCorrections(JsonElement container)
     {
