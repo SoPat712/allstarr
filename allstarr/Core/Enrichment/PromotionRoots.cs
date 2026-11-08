@@ -49,7 +49,33 @@ public sealed class PromotionRoots(IDurableRuntimeSettings settings, IDbContextF
         try { Validate(root); }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException)
         { throw new PromotionException(PromotionFailure.LibraryFolderUnavailable); }
+        RequireFreeSpace(root.Path, 0);
         return root;
+    }
+
+    // Free space as df reports it: Allstarr runs as root and could otherwise fill the file system's reserved blocks.
+    internal void RequireFreeSpace(string path, long length)
+    {
+        if (FreeBytes(path) is { } available && available - length < MinimumFreeBytes)
+            throw new PromotionException(PromotionFailure.LibraryFolderFull);
+    }
+
+    internal long? FreeBytes(string path)
+    {
+        var full = System.IO.Path.GetFullPath(path);
+        var drive = DriveInfo.GetDrives().Where(item => Contains(item.RootDirectory.FullName, full))
+            .OrderByDescending(item => item.RootDirectory.FullName.Length).FirstOrDefault();
+        try { return drive is { IsReady: true } ? drive.AvailableFreeSpace : null; }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException) { return null; }
+    }
+
+    internal long MinimumFreeBytes => configuration.GetValue("Promotion:MinimumFreeBytes", 20L * 1024 * 1024 * 1024);
+
+    private static bool Contains(string mount, string path)
+    {
+        var root = System.IO.Path.TrimEndingDirectorySeparator(mount);
+        return path == root || path.StartsWith(root.EndsWith(System.IO.Path.DirectorySeparatorChar) ? root : root + System.IO.Path.DirectorySeparatorChar,
+            StringComparison.Ordinal);
     }
 
     private bool AllowedBaseConfigured => configuration["Promotion:AllowedBase"] is { } allowed &&

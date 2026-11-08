@@ -8,7 +8,7 @@ namespace allstarr.Core.Enrichment;
 public sealed record PromotionLibraryFolderSource(string Name, string BackendPath);
 public sealed record PromotionLibraryFolderDiscovery(bool Available, string? Reason, PromotionLibraryFolderSource[] Folders);
 public sealed record PromotionLibraryFolder(string Name, string BackendPath, string Path, bool Mapped,
-    bool Reachable, bool Writable, string Status, Guid? RootId);
+    bool Reachable, bool Writable, string Status, Guid? RootId, long? FreeBytes = null);
 public sealed record PromotionLibraryFolderList(bool Available, string? Reason, PromotionLibraryFolder[] Folders);
 
 public sealed class PromotionLibraryFolders(JellyfinProxyService jellyfin, PromotionRoots roots)
@@ -39,7 +39,7 @@ public sealed class PromotionLibraryFolders(JellyfinProxyService jellyfin, Promo
                     {
                         foreach (var location in locations.EnumerateArray())
                             if (location.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(location.GetString()))
-                                folders.Add(new(name ?? "Music", location.GetString()!));
+                                folders.Add(new(name ?? "Music", WithoutTrailingSeparator(location.GetString()!)));
                     }
                     if (library.TryGetProperty("LibraryOptions", out var options) && options.ValueKind == JsonValueKind.Object &&
                         options.TryGetProperty("PathInfos", out var paths) && paths.ValueKind == JsonValueKind.Array)
@@ -47,7 +47,7 @@ public sealed class PromotionLibraryFolders(JellyfinProxyService jellyfin, Promo
                         foreach (var path in paths.EnumerateArray())
                             if (path.ValueKind == JsonValueKind.Object && path.TryGetProperty("Path", out var value) &&
                                 value.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(value.GetString()))
-                                folders.Add(new(name ?? "Music", value.GetString()!));
+                                folders.Add(new(name ?? "Music", WithoutTrailingSeparator(value.GetString()!)));
                     }
                 }
                 var distinct = folders.DistinctBy(folder => folder.BackendPath, StringComparer.Ordinal)
@@ -65,12 +65,12 @@ public sealed class PromotionLibraryFolders(JellyfinProxyService jellyfin, Promo
         var approved = await roots.ReadAsync(token);
         var folders = discovery.Folders.Select(source =>
         {
-            var mapped = approved.FirstOrDefault(root => root.BackendPath == source.BackendPath ||
-                root.BackendPath == null && root.Path == source.BackendPath);
+            var mapped = approved.FirstOrDefault(root => WithoutTrailingSeparator(root.BackendPath ?? root.Path) == source.BackendPath);
             var path = mapped?.Path ?? source.BackendPath;
             var reachable = false;
             var writable = false;
             var status = "unreachable";
+            long? free = null;
             if (System.IO.Path.IsPathFullyQualified(path))
             {
                 if (!roots.IsWithinAllowedBase(path)) status = "outside-allowed-base";
@@ -80,16 +80,29 @@ public sealed class PromotionLibraryFolders(JellyfinProxyService jellyfin, Promo
                     {
                         PromotionRoots.RejectLinks(path);
                         reachable = Directory.Exists(path);
-                        if (reachable) { roots.ValidateDirectory(path); writable = true; status = "writable"; }
+                        if (reachable)
+                        {
+                            roots.ValidateDirectory(path);
+                            writable = true;
+                            free = roots.FreeBytes(path);
+                            status = free < roots.MinimumFreeBytes ? "almost-full" : "writable";
+                        }
                     }
                     catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException)
                     { status = reachable ? "not-writable" : "unreachable"; }
                 }
             }
             return new PromotionLibraryFolder(source.Name, source.BackendPath, path,
-                path != source.BackendPath, reachable, writable, status, mapped?.Id);
+                path != source.BackendPath, reachable, writable, status, mapped?.Id, free);
         }).ToArray();
         return new(discovery.Available, discovery.Reason ?? (folders.Any(folder => folder.Writable) ? null : "no-reachable-music-folder"), folders);
+    }
+
+    // Jellyfin can list the same folder with and without a trailing slash.
+    public static string WithoutTrailingSeparator(string path)
+    {
+        var trimmed = path.TrimEnd('/', '\\');
+        return trimmed.Length == 0 ? path[..1] : trimmed;
     }
 
     private static void RequireAdministrator(AdminAuthSession session)

@@ -44,7 +44,7 @@ public sealed class LibraryPromotionsController(LibraryPromotionService promotio
             var sources = discovery.Folders.Select(folder => folder.BackendPath).ToHashSet(StringComparer.Ordinal);
             var verified = request.Select(root =>
             {
-                var source = root.BackendPath ?? root.Path;
+                var source = PromotionLibraryFolders.WithoutTrailingSeparator(root.BackendPath ?? root.Path);
                 if (sources.Contains(source)) return root with { BackendPath = source };
                 if (approved.Any(item => PromotionRoots.SameLocation(item, root))) return root;
                 throw new ArgumentException("Choose a discovered music folder before approving its local path.");

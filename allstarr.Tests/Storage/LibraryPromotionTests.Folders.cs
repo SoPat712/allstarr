@@ -29,7 +29,7 @@ public sealed partial class LibraryPromotionTests
         var handler = new FolderResponseHandler(JsonSerializer.Serialize(new object[]
         {
             new { Name = "Movies", CollectionType = "movies", Locations = new[] { directory } },
-            new { Name = "Music", CollectionType = "music", Locations = new[] { path, missing },
+            new { Name = "Music", CollectionType = "music", Locations = new[] { path, missing, missing + "/" },
                 LibraryOptions = new { PathInfos = new[] { new { Path = path } } } }
         }));
         using var client = new HttpClient(handler);
@@ -42,7 +42,10 @@ public sealed partial class LibraryPromotionTests
         Assert.True(reachable.Reachable);
         Assert.True(reachable.Writable);
         Assert.Equal("writable", reachable.Status);
+        Assert.True(reachable.FreeBytes > 0);
         Assert.False(Assert.Single(result.Folders, folder => folder.BackendPath == missing).Writable);
+        var full = await FolderDiscovery(FolderRoots([], minimumFree: long.MaxValue.ToString()), client).ReadAsync(FolderSession(true));
+        Assert.Equal("almost-full", Assert.Single(full.Folders, folder => folder.BackendPath == path).Status);
         Assert.Empty(Directory.EnumerateFileSystemEntries(path));
         Assert.Equal("/Library/VirtualFolders", handler.Endpoint);
         Assert.Contains("fixture-folder-token", handler.Authorization);
@@ -178,7 +181,7 @@ public sealed partial class LibraryPromotionTests
         Assert.Contains(root.Path, administratorRoots);
     }
 
-    private PromotionRoots FolderRoots(PromotionRoot[] approved, string? allowed = null)
+    private PromotionRoots FolderRoots(PromotionRoot[] approved, string? allowed = null, string? minimumFree = null)
     {
         var current = JsonSerializer.Serialize(approved);
         var durable = new Mock<IDurableRuntimeSettings>();
@@ -190,7 +193,7 @@ public sealed partial class LibraryPromotionTests
             .Callback<IReadOnlyList<RuntimeSettingWrite>, string, Guid?, CancellationToken>((writes, _, _, _) => current = writes.Single().RawValue)
             .ReturnsAsync(new RuntimeSettingBatchResult([], 1));
         return new(durable.Object, factory, new ConfigurationBuilder().AddInMemoryCollection(
-            new Dictionary<string, string?> { ["Promotion:AllowedBase"] = allowed }).Build());
+            new Dictionary<string, string?> { ["Promotion:AllowedBase"] = allowed, ["Promotion:MinimumFreeBytes"] = minimumFree }).Build());
     }
 
     private static PromotionLibraryFolders FolderDiscovery(PromotionRoots configured, HttpClient client)

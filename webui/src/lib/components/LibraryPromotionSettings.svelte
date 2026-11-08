@@ -12,6 +12,8 @@
   import ThreeDetentSwitch from "$lib/components/ThreeDetentSwitch.svelte";
   import PromotionNamingBuilder from "$lib/components/PromotionNamingBuilder.svelte";
   import ErrorState from "$lib/components/patterns/ErrorState.svelte";
+  import StatePill from "$lib/components/patterns/StatePill.svelte";
+  import { formatDownloadSize } from "$lib/downloads";
   import RowsSkeleton from "$lib/components/patterns/RowsSkeleton.svelte";
 
   let { administrator }: { administrator: boolean } = $props();
@@ -103,6 +105,12 @@
     scriptOpen = true;
     requestAnimationFrame(() => { scriptInput?.focus(); scriptInput?.setSelectionRange(error.position, error.position + Math.max(1, error.length)); });
   }
+  function folderState(folder: PromotionFolder) {
+    if (folder.status === "almost-full") return "Almost full";
+    if (folder.writable) return folder.rootId ? "In use" : "Ready";
+    return ({ "not-writable": "Read-only", "outside-allowed-base": "Not allowed" } as Record<string, string>)[folder.status] ?? "Can't reach";
+  }
+
   async function approveFolder() {
     if (!folderPath.trim() || folderBusy || !selectedFolder || roots.some(root => !root.path)) return;
     folderBusy = true; folderError = "";
@@ -184,22 +192,27 @@
       </EmptyState></div>{/if}
       {#if administrator}<div class="folder-setup">
         {#if discovery?.folders.length}
+          <ul class="folder-list" aria-label="Jellyfin music folders">
           {#each discovery.folders as folder (folder.backendPath)}
-            <div class="folder-option"><strong>{folder.name}</strong><code>{folder.backendPath}</code>
-              <p class="muted">{folder.writable ? "Allstarr can add songs here" : "Allstarr can't reach this folder"}</p>
-              {#if folder.mapped}<p class="muted">Path inside Allstarr: <code>{folder.path}</code></p>{/if}
-              <Button variant="outline" onclick={() => { selectedFolder = folder; folderPath = folder.path; folderError = ""; }}>{folder.rootId ? "Edit folder mapping" : "Choose or map folder"}</Button>
-            </div>
+            {@const action = folder.rootId ? "Change" : folder.writable ? "Use" : "Map"}
+            <li class="folder-row"><div><strong>{folder.name}</strong><code title={folder.backendPath}>{folder.backendPath}</code>
+              {#if folder.mapped}<code title={folder.path}>Inside Allstarr: {folder.path}</code>{/if}
+              {#if folder.freeBytes != null}<small>{formatDownloadSize(folder.freeBytes)} free</small>{/if}</div>
+              <StatePill compact tone={folder.writable && folder.status !== "almost-full" ? "ok" : "warn"} text={folderState(folder)} />
+              <Button variant="outline" size="sm" aria-label={`${action} ${folder.backendPath}`} disabled={folderBusy}
+                onclick={() => { selectedFolder = folder; folderPath = folder.path; folderError = ""; if (action === "Use") void approveFolder(); }}>{action}</Button>
+            </li>
           {/each}
+          </ul>
         {:else}<p class="muted">Jellyfin's music folders could not be read. Check the backend connection, then reload these settings.</p>{/if}
-        {#if !discovery?.folders.some(folder => folder.writable)}<p class="muted">Mount the music folder in the Allstarr container once, for example <code>- /path/to/music:/music</code>, then map it here.</p>{/if}
+        {#if !discovery?.folders.some(folder => folder.writable)}{@const example = discovery?.folders[0]?.backendPath ?? "/path/to/music"}<p class="muted">Mount the music folder into the Allstarr container at the same path Jellyfin uses, for example <code>- {example}:{example}</code>, then choose Use.</p>{/if}
         <a href="https://github.com/SoPat712/allstarr/blob/dev/docs/user-guide.md#adding-to-your-library" target="_blank" rel="noreferrer">Library setup guide</a>
-        {#if selectedFolder}<form class="folder-form" onsubmit={event => { event.preventDefault(); void approveFolder(); }}>
+        {#if selectedFolder && !(selectedFolder.writable && !selectedFolder.rootId)}<form class="folder-form" onsubmit={event => { event.preventDefault(); void approveFolder(); }}>
           <label>Path inside Allstarr<input bind:value={folderPath} required placeholder="/music" /></label>
-          <p class="muted">Must be an existing writable folder. {setup?.allowedBaseConfigured ? "The server also restricts it to the configured allowed base." : ""}</p>
+          <p class="muted">Where {selectedFolder.name} (<code>{selectedFolder.backendPath}</code>) is mounted in the Allstarr container. Must be an existing writable folder. {setup?.allowedBaseConfigured ? "The server also restricts it to the configured allowed base." : ""}</p>
           <Button type="submit" variant="outline" disabled={folderBusy || !folderPath.trim()}>Use this library folder</Button>
-          {#if folderError}<p role="status" class="muted">{folderError}</p>{/if}
         </form>{/if}
+        {#if folderError}<p role="status" class="muted">{folderError}</p>{/if}
       </div>{/if}
       {#if roots.length}
       <div class="settings-row"><div><strong>Library folder</strong><small>One of the folders Jellyfin reads</small></div><SelectField label="Library folder" value={profile.libraryRootId ?? ""} options={[{ value: "", label: "Default library folder" }, ...roots.map(root => ({ value: root.id, label: root.name })), ...(profile.libraryRootId && !roots.some(root => root.id === profile.libraryRootId) ? [{ value: profile.libraryRootId, label: "Previously selected folder" }] : [])]} onchange={value => update({ libraryRootId: value || null })} /></div>
@@ -214,8 +227,13 @@
 <style>
   .folder-setup, .folder-form { display: grid; min-width: 0; gap: var(--space-3); padding: var(--space-4); }
   .folder-form { padding: 0; }
-  .folder-option { display: grid; min-width: 0; gap: var(--space-2); }
-  .folder-option code { overflow-wrap: anywhere; color: var(--color-ink-muted); font-size: var(--text-xs); }
+  .folder-list { display: grid; min-width: 0; margin: 0; padding: 0; list-style: none; border: 1px solid var(--color-edge); border-radius: var(--radius-md); }
+  .folder-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: var(--space-3); min-width: 0; min-height: 3.25rem; padding: var(--space-2) var(--space-3); }
+  .folder-row + .folder-row { border-top: 1px solid var(--color-edge); }
+  .folder-row > div { display: grid; min-width: 0; gap: 0.125rem; }
+  .folder-row strong { color: var(--color-ink); font-size: var(--text-sm); font-weight: 500; }
+  .folder-row code { overflow: hidden; color: var(--color-ink-muted); font-size: var(--text-xs); text-overflow: ellipsis; white-space: nowrap; }
+  .folder-row small { color: var(--color-ink-muted); font-size: var(--text-xs); }
   .folder-form label { display: grid; gap: var(--space-2); color: var(--color-ink-muted); font-size: var(--text-sm); }
   .folder-form input { width: 100%; min-width: 0; padding: var(--space-3); border: 1px solid var(--color-edge); border-radius: var(--radius-md); background: var(--color-panel-raised); color: var(--color-ink); }
   .promotion-settings { display: grid; min-width: 0; gap: var(--space-4); }

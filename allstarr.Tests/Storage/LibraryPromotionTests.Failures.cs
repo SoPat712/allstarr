@@ -130,6 +130,24 @@ public sealed partial class LibraryPromotionTests
             (await Assert.ThrowsAsync<PromotionException>(() => roots.RequireAsync(rootId, default))).Failure);
     }
 
+    [Fact]
+    public async Task AlmostFullLibraryDriveStopsBeforeAnythingIsAdded()
+    {
+        var music = Path.Combine(directory, "library", "music");
+        var full = new PromotionRoots(settings.Object, factory, new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?> { ["Promotion:MinimumFreeBytes"] = long.MaxValue.ToString() }).Build());
+        var failure = await Assert.ThrowsAsync<PromotionException>(() => full.RequireAsync(rootId, default));
+        Assert.Equal(PromotionFailure.LibraryFolderFull, failure.Failure);
+        Assert.Equal(503, failure.Status);
+        Assert.Equal("library-folder-full", failure.Reason);
+        var roomy = new PromotionRoots(settings.Object, factory, new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?> { ["Promotion:MinimumFreeBytes"] = "0" }).Build());
+        roomy.RequireFreeSpace(music, 1);
+        Assert.Equal(PromotionFailure.LibraryFolderFull,
+            Assert.Throws<PromotionException>(() => roomy.RequireFreeSpace(music, long.MaxValue)).Failure);
+        Assert.NotNull(roomy.FreeBytes(music));
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

@@ -25,7 +25,7 @@ async function fixture(page: Page, admin = true, membership: "found" | "empty" |
     }
     window.EventSource = Updates as unknown as typeof EventSource;
   });
-  const calls = { membership: 0, details: 0, previews: 0, downloads: 0, roots: [] as any[] };
+  const calls = { membership: 0, details: 0, previews: 0, downloads: 0, roots: [] as any[], mounted: false };
   await page.route("**/api/admin/**", async route => {
     const url = new URL(route.request().url()), path = url.pathname;
     const reply = (body: unknown, status = 200) => route.fulfill({ json: body, status });
@@ -38,7 +38,7 @@ async function fixture(page: Page, admin = true, membership: "found" | "empty" |
     if (path.endsWith("/library-promotions/preview")) { calls.previews++; return reply({ reason: "library-folder-not-set", error: "Not set up" }, 503); }
     if (path.endsWith("/library-promotions/roots")) { if (route.request().method() === "PUT") calls.roots = route.request().postDataJSON(); return reply(calls.roots); }
     if (path.endsWith("/library-promotions/setup")) return reply({ ready: calls.roots.length > 0, allowedBaseConfigured: false, reason: calls.roots.length ? null : "library-folder-not-set", rootId: calls.roots[0]?.id ?? null });
-    if (path.endsWith("/library-promotions/folders")) return reply({ available: true, reason: null, folders: [{ name: "Music", backendPath: "/media/music", path: calls.roots[0]?.path ?? "/media/music", mapped: !!calls.roots.length, reachable: !!calls.roots.length, writable: !!calls.roots.length, status: calls.roots.length ? "writable" : "unreachable", rootId: calls.roots[0]?.id ?? null }] });
+    if (path.endsWith("/library-promotions/folders")) return reply({ available: true, reason: null, folders: [{ name: "Music", backendPath: "/media/music", path: calls.roots[0]?.path ?? "/media/music", mapped: (calls.roots[0]?.path ?? "/media/music") !== "/media/music", reachable: calls.mounted || !!calls.roots.length, writable: calls.mounted || !!calls.roots.length, status: calls.mounted || calls.roots.length ? "writable" : "unreachable", rootId: calls.roots[0]?.id ?? null, freeBytes: calls.mounted || calls.roots.length ? 33 * 1024 ** 3 : null }] });
     if (path.includes("/library-promotions/profiles/")) {
       if (path.endsWith("/preview")) return reply({ script: profile.namingScript, scriptOnly: false, tokens: [], examples: [], errors: [] });
       const household = { values: profile, addWithoutApproval: "admins" };
@@ -73,8 +73,10 @@ for (const width of [1280, 390]) {
     expect(calls.membership).toBe(1);
     await panel.getByRole("link", { name: "Open library settings", exact: true }).click();
     await expect(page.getByRole("heading", { name: "No library folder yet", exact: true })).toBeVisible();
-    await expect(page.getByText("Allstarr can't reach this folder", { exact: true })).toBeVisible();
-    await expect(page.getByText("- /path/to/music:/music", { exact: true })).toBeVisible();
+    const folders = page.getByRole("list", { name: "Jellyfin music folders", exact: true });
+    await expect(folders.getByRole("listitem")).toHaveCount(1);
+    await expect(folders.getByRole("listitem").first()).toContainText("Can't reach");
+    await expect(page.getByText("- /media/music:/media/music", { exact: true })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Quality", exact: true })).toBeVisible();
     await expect(page.getByRole("heading", { name: "File names and folders", exact: true })).toBeVisible();
     await capture(page, "library-no-folder", width, "dark");
@@ -113,10 +115,24 @@ test("Membership errors finish loading with the unavailable message", async ({ p
 
 test("An administrator maps and approves a discovered music folder without a required base", async ({ page }) => {
   const calls = await fixture(page); await page.goto("/#/settings/adding-to-library");
-  await page.getByRole("button", { name: "Choose or map folder", exact: true }).click();
+  await page.getByRole("button", { name: "Map /media/music", exact: true }).click();
   await page.getByRole("textbox", { name: "Path inside Allstarr", exact: true }).fill("/music");
   await page.getByRole("button", { name: "Use this library folder", exact: true }).click();
-  await expect(page.getByText("Allstarr can add songs here", { exact: true })).toBeVisible();
+  const row = page.getByRole("list", { name: "Jellyfin music folders", exact: true }).getByRole("listitem");
+  await expect(row).toContainText("In use"); await expect(row).toContainText("Inside Allstarr: /music");
+  await expect(page.getByRole("button", { name: "Change /media/music", exact: true })).toBeVisible();
   expect(calls.roots).toHaveLength(1); expect(calls.roots[0]).toMatchObject({ path: "/music", backendPath: "/media/music", name: "Music" });
+  await expect(page.getByRole("heading", { name: "No library folder yet", exact: true })).toHaveCount(0);
+});
+
+test("A folder mounted at Jellyfin's path is used in one click", async ({ page }) => {
+  const calls = await fixture(page); calls.mounted = true; await page.goto("/#/settings/adding-to-library");
+  const row = page.getByRole("list", { name: "Jellyfin music folders", exact: true }).getByRole("listitem");
+  await expect(row).toContainText("Ready"); await expect(row).toContainText("33 GiB free");
+  await expect(page.getByText("- /media/music:/media/music", { exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "Use /media/music", exact: true }).click();
+  await expect(row).toContainText("In use");
+  expect(calls.roots).toHaveLength(1); expect(calls.roots[0]).toMatchObject({ path: "/media/music", backendPath: "/media/music", name: "Music" });
+  await expect(page.getByRole("textbox", { name: "Path inside Allstarr", exact: true })).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "No library folder yet", exact: true })).toHaveCount(0);
 });

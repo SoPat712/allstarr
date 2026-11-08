@@ -4,6 +4,7 @@ public enum PromotionFailure
 {
     LibraryFolderNotSet,
     LibraryFolderUnavailable,
+    LibraryFolderFull,
     SourceChanged,
     DestinationExists,
     PromotionChanged,
@@ -18,6 +19,7 @@ public sealed class PromotionException(PromotionFailure failure) : InvalidOperat
     {
         PromotionFailure.LibraryFolderNotSet => "library-folder-not-set",
         PromotionFailure.LibraryFolderUnavailable => "library-folder-unavailable",
+        PromotionFailure.LibraryFolderFull => "library-folder-full",
         PromotionFailure.SourceChanged => "source-changed",
         PromotionFailure.DestinationExists => "destination-exists",
         PromotionFailure.PromotionChanged => "promotion-changed",
@@ -26,7 +28,7 @@ public sealed class PromotionException(PromotionFailure failure) : InvalidOperat
     };
     public int Status => Failure switch
     {
-        PromotionFailure.LibraryFolderNotSet or PromotionFailure.LibraryFolderUnavailable => 503,
+        PromotionFailure.LibraryFolderNotSet or PromotionFailure.LibraryFolderUnavailable or PromotionFailure.LibraryFolderFull => 503,
         PromotionFailure.NotAuthorized => 403,
         PromotionFailure.InvalidRequest => 400,
         _ => 409
@@ -36,6 +38,7 @@ public sealed class PromotionException(PromotionFailure failure) : InvalidOperat
     {
         PromotionFailure.LibraryFolderNotSet => "Adding to your library isn't set up. Allstarr needs write access to the music folder Jellyfin reads.",
         PromotionFailure.LibraryFolderUnavailable => "The approved library folder is unavailable. Ask an administrator to check its mount and write access.",
+        PromotionFailure.LibraryFolderFull => "The library drive is almost full, so nothing was added. Free up space on it, then try again.",
         PromotionFailure.SourceChanged => "The source copy changed or is no longer available. Refresh and choose a verified complete copy.",
         PromotionFailure.DestinationExists => "A file already exists at the destination. Review it before trying again.",
         PromotionFailure.PromotionChanged => "The promotion changed. Review its current status before trying again.",

@@ -28,7 +28,7 @@ export type NamingPreview = {
   errors: NamingError[];
 };
 export type PromotionRoot = { id: string; name: string; path?: string; backendPath?: string | null };
-export type PromotionFolder = { name: string; backendPath: string; path: string; mapped: boolean; reachable: boolean; writable: boolean; status: string; rootId: string | null };
+export type PromotionFolder = { name: string; backendPath: string; path: string; mapped: boolean; reachable: boolean; writable: boolean; status: string; rootId: string | null; freeBytes?: number | null };
 export type PromotionFolders = { available: boolean; reason: string | null; folders: PromotionFolder[] };
 const base = "/api/admin/library-promotions/profiles";
 const put = (body: unknown): RequestInit => ({ method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });

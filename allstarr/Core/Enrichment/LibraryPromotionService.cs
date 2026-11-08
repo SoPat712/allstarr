@@ -357,6 +357,7 @@ public sealed partial class LibraryPromotionService(IDbContextFactory<AllstarrDb
                 var current = await libraryAccess.ResolveUserAsync(run.OwnerUserId, token);
                 if (!current.Access.Allows(request.BackendLibraryId)) throw new UnauthorizedAccessException("Library access changed before placement.");
                 Destination(root.Path, plan);
+                roots.RequireFreeSpace(root.Path, tagged.Length);
                 using var scope = scopes.CreateScope();
                 var placed = await scope.ServiceProvider.GetRequiredService<FilePlacementService>().PlacePromotionAsync(new(
                     new(root.Id, root.Path, run.OwnerUserId), path, plan.NamingScript, plan.Track, execution.Claim.JobId,

@@ -462,6 +462,7 @@ public sealed partial class LibraryPromotionService
                 await VerifyAsync(TrackPath(run.Id, track), track.ContentSha256!, track.Length, token);
                 var relative = PromotionNaming.Render(album.Profile.NamingScript, PromotionSongFields.FromSong(track.Song, track.Extension)).RelativePath
                     ?? throw new ArgumentException("The naming script does not produce a safe path.");
+                roots.RequireFreeSpace(root.Path, track.Length);
                 using var scope = scopes.CreateScope();
                 var placed = await scope.ServiceProvider.GetRequiredService<FilePlacementService>().PlacePromotionAsync(new(
                     new(root.Id, root.Path, run.OwnerUserId), TrackPath(run.Id, track), album.Profile.NamingScript,
