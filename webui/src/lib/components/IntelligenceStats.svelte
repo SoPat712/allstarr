@@ -120,7 +120,7 @@
     <section class="recap-hero panel" aria-label="Summary">
       {#if heroArtist}
         <div class="hero-artist">
-          <MediaArtwork url={heroArtist.artworkUrl} class="hero-art" />
+          {#if heroArtist.artworkUrl}<MediaArtwork url={heroArtist.artworkUrl} class="hero-art" />{/if}
           <div><small>{year ? `${year} in music` : "Your top artist"}</small><strong>{heroArtist.artist}</strong><span>{countLabel(heroArtist.playCount, "play")}</span></div>
         </div>
       {/if}
@@ -209,17 +209,20 @@
   .recap-imports { border: 1px solid var(--color-edge); border-radius: var(--radius-lg); overflow: hidden; }
   .recap-imports > summary { display: flex; align-items: center; justify-content: space-between; min-height: 48px; padding: var(--space-3) var(--space-4); color: var(--color-signal-text); cursor: pointer; list-style: none; font-size: var(--text-sm); }
   .recap-imports > summary::-webkit-details-marker { display: none; }
-  .recap-hero { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-6); padding: var(--surface-gutter); }
-  .hero-artist { display: flex; align-items: center; gap: var(--space-4); min-width: min(100%, 280px); flex: 1 1 280px; }
+  /* A tonal top-artist tile beside six boxed numbers. */
+  .recap-hero { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 2fr); gap: var(--space-3); padding: 0; border: 0; background: none; box-shadow: none; }
+  .hero-artist { display: flex; align-items: center; gap: var(--space-4); min-width: 0; border-radius: var(--radius-lg); padding: var(--space-5); background: var(--color-signal-muted); color: var(--color-signal-text); }
   .hero-artist :global(.hero-art) { flex: none; width: 96px; height: 96px; border-radius: 50%; overflow: hidden; }
   .hero-artist :global(.hero-art img) { width: 100%; height: 100%; object-fit: cover; }
   .hero-artist div { display: grid; gap: var(--space-1); min-width: 0; }
-  .hero-artist small { color: var(--color-ink-muted); font-size: var(--text-sm); }
+  .hero-artist small { font-size: .7rem; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; }
   .hero-artist strong { font-size: clamp(1.5rem, 3vw, 2rem); font-weight: 600; line-height: 1.15; overflow-wrap: anywhere; }
-  .hero-artist span { color: var(--color-ink-muted); font-size: var(--text-sm); }
-  .stats-numbers { display: grid; grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr)); gap: var(--space-4) var(--space-6); flex: 2 1 420px; min-width: 0; }
-  .stats-numbers article { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; }
-  .stats-numbers strong { font-size: clamp(1.25rem, 2.2vw, 1.75rem); font-weight: 600; line-height: 1.2; font-variant-numeric: tabular-nums; }
+  .hero-artist span { font-size: var(--text-sm); }
+  .stats-numbers { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-2); min-width: 0; }
+  .stats-numbers article { display: grid; align-content: start; gap: 2px; min-width: 0; border-radius: var(--radius-md); padding: var(--space-3); background: var(--color-panel-raised); }
+  .stats-numbers strong { font-size: 1.3rem; font-weight: 700; line-height: 1.1; font-variant-numeric: tabular-nums; }
+  .stats-numbers article > span { color: var(--color-ink-muted); font-size: .75rem; text-transform: lowercase; }
+  @media (max-width: 760px) { .recap-hero { grid-template-columns: minmax(0, 1fr); } .stats-numbers { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
   .stats-numbers small, footer, .rank, .stats-name small, .chart-card header small, .new-artists small { color: var(--color-ink-muted); font-size: var(--text-sm); }
   .chart-card { display: grid; gap: var(--space-4); padding: var(--surface-gutter); min-width: 0; }
   .chart-card header, .new-artists header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: var(--space-1) var(--space-3); }

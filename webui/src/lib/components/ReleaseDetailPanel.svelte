@@ -35,7 +35,7 @@
   {#snippet header()}{#if entry}Released {releaseDate(entry.releaseDate)}{entry.edition ? ` · ${entry.edition}` : ""}{/if}{/snippet}
   {#if entry}
     <div class="release-cover"><MediaArtwork url={entry.artworkUrl} /></div>
-    <div class="follow-state">{#if followed}<StatePill tone="ok" text={`Following ${entry.artist}`} /><Button variant="text" class="destructive" disabled={busy} onclick={() => onunfollow(followed!)}>Unfollow</Button>{:else}<span>{entry.artist}</span><Button variant="outline" disabled={busy} onclick={onfind}>Follow artist</Button>{/if}</div>
+    <div class="follow-state">{#if followed}<StatePill tone="ok" text={`Following ${entry.artist}`} /><Button variant="text" disabled={busy} onclick={() => onunfollow(followed!)}>Unfollow</Button>{:else}<span>{entry.artist}</span><Button variant="outline" disabled={busy} onclick={onfind}>Follow artist</Button>{/if}</div>
     <section class="release-tracks" aria-label="Tracks"><h3>Tracks</h3>
       {#if tracks?.providerId}<p class="tracks-source">From {humanize(tracks.providerId)}</p>{/if}
       {#if tracksFailed}<p>The track list could not be loaded.</p>
