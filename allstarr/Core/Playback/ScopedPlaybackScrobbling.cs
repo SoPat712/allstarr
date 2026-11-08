@@ -66,7 +66,11 @@ public sealed class ScopedPlaybackScrobbleDelivery(IDbContextFactory<AllstarrDbC
         // With local scrobbling off, songs from the server's own library are left to its scrobbler
         // (for example Jellyfin's Last.fm or ListenBrainz plugin), so each play counts once.
         if (scrobbling?.Value.LocalTracksEnabled == false && payload.SourceKind == "protocol" &&
-            !JellyfinItemIdComparer.IsExternalId(payload.ItemId)) return;
+            !JellyfinItemIdComparer.IsExternalId(payload.ItemId))
+        {
+            await IgnoreLocalLibraryScrobbleAsync(payload, cancellationToken);
+            return;
+        }
         if (await SyntheticActivityPolicy.IsExcludedAsync(factory, payload, cancellationToken)) return;
         var timer = Stopwatch.StartNew();
         await using var db = await factory.CreateDbContextAsync(cancellationToken);
@@ -304,6 +308,30 @@ public sealed class ScopedPlaybackScrobbleDelivery(IDbContextFactory<AllstarrDbC
         }
         if (retryableFailure != null) ExceptionDispatchInfo.Capture(retryableFailure).Throw();
         if (permanentFailure != null) ExceptionDispatchInfo.Capture(permanentFailure).Throw();
+    }
+
+    private async Task IgnoreLocalLibraryScrobbleAsync(PlaybackSignalPayload payload, CancellationToken cancellationToken)
+    {
+        var checkpointKey = CheckpointKey(payload);
+        await using var db = await factory.CreateDbContextAsync(cancellationToken);
+        var pending = await db.PlaybackDeliveryCheckpoints.Where(x =>
+            x.OwnerUserId == payload.Scope.OwnerUserId && x.SignalKey == checkpointKey &&
+            x.State == ScopedPlaybackScrobbleOutcome.Retrying).ToArrayAsync(cancellationToken);
+        if (pending.Length == 0) return;
+        var now = DateTimeOffset.UtcNow;
+        var message = "Allstarr skipped this listen because local scrobbling is turned off and the server handles library songs.";
+        foreach (var row in pending)
+        {
+            row.State = ScopedPlaybackScrobbleOutcome.Ignored;
+            row.ProviderCode = "local-library-scrobble-disabled";
+            row.SafeMessage = message;
+            row.RetryAfter = null;
+            row.AttemptStartedAt = null;
+            row.RequiresReauthentication = false;
+            row.UpdatedAt = now;
+            row.Revision++;
+        }
+        await db.SaveChangesAsync(cancellationToken);
     }
 
     private static DateTimeOffset OriginalStart(PlaybackSignalPayload payload)

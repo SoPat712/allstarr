@@ -91,6 +91,8 @@ public static class ApplicationCachePolicyRegistry
             category = ApplicationCacheCategory.PlaylistDiscovery;
         if (key.StartsWith("track-matches:summary:v1:", StringComparison.Ordinal))
             category = ApplicationCacheCategory.DerivedProjection;
+        if (key.StartsWith("spotify:source-user:", StringComparison.Ordinal))
+            category = ApplicationCacheCategory.ProviderResponse;
         if (StartsWithAny(
                 key,
                 "odesli:tidal-to-spotify:v2:",

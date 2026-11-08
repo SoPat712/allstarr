@@ -424,6 +424,10 @@ public sealed partial class CollectionMigrationService(IDbContextFactory<Allstar
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
         catch (DbUpdateConcurrencyException) { return DurableJobCompletion.Cancelled(); }
+        catch (MigrationSourceBusyException busy)
+        {
+            return DurableJobCompletion.Defer("migration_source_busy", busy.Message, TimeSpan.FromSeconds(30));
+        }
         catch (Exception error) when (error is UnauthorizedAccessException or InvalidOperationException or InvalidDataException or PlaylistSourceUnavailableException or HttpRequestException)
         {
             foreach (var pending in db.ChangeTracker.Entries<PlaylistSourceEntryRecord>().Where(item => item.State == EntityState.Added).ToArray())
@@ -673,7 +677,7 @@ public sealed partial class CollectionMigrationService(IDbContextFactory<Allstar
         if (source.ProviderId != run.ProviderId || source.Context.Account!.AccountId != run.ProviderAccountId) throw new UnauthorizedAccessException();
         if (!allowRefresh && source.Context.Account.Revision != run.AccountRevision) throw new InvalidOperationException("Reconnect and resume.");
         var identity = await source.Implementation.GetSourceUserAsync(source.Context);
-        if (!identity.IsSuccess) throw new InvalidOperationException($"Restore the {source.Name} connection.");
+        if (!identity.IsSuccess) throw SourceUnavailable(source.Name, identity.Error);
         if (identity.RequireValue() != run.SourceUserId) throw new UnauthorizedAccessException();
     }
     // A busy service is asked again later; any other failure to say whose music it is needs the account reconnected.

@@ -138,6 +138,10 @@ public class CacheKeyBuilderTests
             "odesli:translate:v2:fixture:spotify",
             out var category));
         Assert.Equal(ApplicationCacheCategory.ProviderResponse, category);
+        Assert.True(ApplicationCachePolicyRegistry.TryClassify(
+            "spotify:source-user:00000000-0000-0000-0000-000000000001:2",
+            out var sourceUser));
+        Assert.Equal(ApplicationCacheCategory.ProviderResponse, sourceUser);
         Assert.False(ApplicationCachePolicyRegistry.TryClassify(
             "lyrics:Artist:Title:Album:240",
             out _));

@@ -147,6 +147,12 @@
     }
     if (!disposed && version === selectionVersion) { receiptCounts = counts; pendingCount = pending; }
   }
+  function noteSourceError(cause: unknown, fallback: string) {
+    const code = cause instanceof ApiError ? (cause.details as { code?: string } | null)?.code : undefined;
+    reconnect = code === "source_connection";
+    sourceBusy = code === "source_busy";
+    return (reconnect || sourceBusy) && cause instanceof Error ? cause.message : fallback;
+  }
   async function refresh() {
     if (!runId || reading) return;
     const id = runId;
@@ -157,7 +163,7 @@
       if (disposed || runId !== id || version !== selectionVersion) return;
       status = next; accountId = next.run.providerAccountId; providerId = next.run.providerId ?? "spotify";
       makePlaylists = next.run.makePlaylists ?? true;
-      remember(); rememberProvider(); error = "";
+      remember(); rememberProvider(); error = ""; reconnect = false; sourceBusy = false;
       if (next.run.state === "choosing" && !choices.length) await discover();
       if (!reviewInitialized && !next.provisional && ["review", "completed"].includes(next.run.state)) {
         reviewInitialized = true;
@@ -171,9 +177,13 @@
     } catch (cause) {
       if (disposed || id !== runId || version !== selectionVersion) return;
       if (cause instanceof ApiError && cause.status === 404) {
-        runId = ""; status = null; remember();
+        runId = ""; status = null; remember(); reconnect = false; sourceBusy = false;
         error = "The saved move is no longer available. You can find your music again.";
-      } else error = "Your progress could not be refreshed. Try refreshing again.";
+      } else {
+        reconnect = false;
+        sourceBusy = false;
+        error = noteSourceError(cause, "Your progress could not be refreshed. Try refreshing again.");
+      }
     } finally { if (version === selectionVersion) reading = false; }
   }
   async function load() {
@@ -217,9 +227,9 @@
   }
   async function act(action: () => Promise<unknown>, fallback: string) {
     if (busy) return;
-    busy = true; error = "";
+    busy = true; error = ""; reconnect = false; sourceBusy = false;
     try { await action(); }
-    catch { error = fallback; }
+    catch (cause) { error = noteSourceError(cause, fallback); }
     finally { busy = false; }
   }
   async function findMusic() {
@@ -227,11 +237,7 @@
     busy = true; error = ""; reconnect = false; sourceBusy = false;
     try { await discover(); }
     catch (cause) {
-      // A source that can't confirm whose music it is has to be reconnected; say so instead of a generic failure.
-      const code = cause instanceof ApiError ? (cause.details as { code?: string } | null)?.code : undefined;
-      reconnect = code === "source_connection";
-      sourceBusy = code === "source_busy";
-      error = (reconnect || sourceBusy) && cause instanceof Error ? cause.message : "Your music could not be found. Try again with this account.";
+      error = noteSourceError(cause, "Your music could not be found. Try again with this account.");
     } finally { busy = false; }
   }
   function selectKind(kind: string, checked: boolean) {

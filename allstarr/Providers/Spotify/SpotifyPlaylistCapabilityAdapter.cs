@@ -91,6 +91,9 @@ public sealed partial class SpotifyPlaylistCapabilityAdapter : IProviderPlaylist
             var key = context.Account is { } account ? $"spotify:source-user:{account.AccountId:N}:{account.Revision}" : null;
             var profile = await _pathfinder.GetProfileUsernameAsync(token, cancellationToken);
             if (profile.IsSuccess) return await RememberAsync(key, profile);
+            if (profile.Error?.Kind is ProviderErrorKind.Unauthorized or ProviderErrorKind.Forbidden
+                or ProviderErrorKind.AccountNeedsReauthentication)
+                return ProviderOutcome<string>.Failure(profile.Error);
             using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(WebApiOrigin, "v1/me"));
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
             using var response = await _http.SendAsync(request, cancellationToken);

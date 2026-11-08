@@ -500,6 +500,24 @@ public sealed partial class PlaybackSignalPipelineTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task LibraryScrobbleRetryCompletesAsIgnoredWhenLocalScrobblingIsOff()
+    {
+        var checkpoints = new EfPlaybackDeliveryCheckpointStore(factory);
+        var payload = Payload();
+        var checkpointKey = ScopedPlaybackScrobbleDelivery.CheckpointKey(payload);
+        await checkpoints.RecordAsync(user, payload.OccurrenceKey ?? payload.SignalKey, checkpointKey,
+            PlaybackScrobbleDeliveryKind.Completed, "lastfm",
+            ScopedPlaybackScrobbleResult.Retrying("transport-failure", "The scoped scrobble target could not be reached."), default);
+        var delivery = new ScopedPlaybackScrobbleDelivery(factory, [new Target("lastfm", true)], checkpoints, playbackTracks,
+            scrobbling: Options.Create(new ScrobblingSettings { LocalTracksEnabled = false }));
+        await delivery.DeliverAsync(payload, default);
+        await using var db = await factory.CreateDbContextAsync();
+        var row = await db.PlaybackDeliveryCheckpoints.SingleAsync();
+        Assert.Equal(ScopedPlaybackScrobbleOutcome.Ignored, row.State);
+        Assert.Equal("local-library-scrobble-disabled", row.ProviderCode);
+    }
+
+    [Fact]
     public async Task DurableCheckpointResumesAfterLaterTargetFailureWithoutRepeatingFirst()
     {
         var first = new Target("lastfm", true); var second = new Target("listenbrainz", true) { FailFirst = true };

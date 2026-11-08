@@ -1,10 +1,12 @@
 using System.Net;
+using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Providers.Spotify;
 using allstarr.Core.Storage;
+using allstarr.Services.Common;
 using Microsoft.Extensions.DependencyInjection;
 using Moq;
 
@@ -76,6 +78,37 @@ public sealed partial class SpotifyPlaylistCapabilityAdapterTests
 
         handler.MeStatus = HttpStatusCode.Unauthorized;
         Assert.False((await adapter.GetSourceUserAsync(known)).IsSuccess);
+    }
+
+    [Fact]
+    public async Task RejectedProfileDoesNotReuseRememberedSourceUserWhileMeIsBusy()
+    {
+        var handler = new SpotifyFakeHandler();
+        var adapter = new SpotifyPlaylistCapabilityAdapter(new HttpClient(handler), new FakeSecretAccessor("fixture-cookie"));
+        var known = Context(accountId: Guid.NewGuid());
+        Assert.Equal("profile-listener", (await adapter.GetSourceUserAsync(known)).RequireValue());
+        handler.ProfileAttributesStatus = HttpStatusCode.Unauthorized;
+        handler.MeStatus = HttpStatusCode.TooManyRequests;
+        Assert.False((await adapter.GetSourceUserAsync(known)).IsSuccess);
+    }
+
+    [Fact]
+    public async Task RememberedSourceUserSurvivesProcessRestartInCache()
+    {
+        var handler = new SpotifyFakeHandler();
+        var accountId = Guid.NewGuid();
+        var context = Context(accountId: accountId);
+        var key = $"spotify:source-user:{accountId:N}:{context.Account!.Revision}";
+        Assert.True(ApplicationCachePolicyRegistry.TryClassify(key, out _));
+        var cache = new TestMemoryApplicationCache();
+        var adapter = new SpotifyPlaylistCapabilityAdapter(new HttpClient(handler), new FakeSecretAccessor("fixture-cookie"), cache: cache);
+        Assert.Equal("profile-listener", (await adapter.GetSourceUserAsync(context)).RequireValue());
+        var restarted = new SpotifyPlaylistCapabilityAdapter(new HttpClient(handler), new FakeSecretAccessor("fixture-cookie"), cache: cache);
+        handler.ProfileAttributesStatus = HttpStatusCode.TooManyRequests;
+        handler.MeStatus = HttpStatusCode.TooManyRequests;
+        ((System.Collections.Concurrent.ConcurrentDictionary<string, string>)typeof(SpotifyPlaylistCapabilityAdapter)
+            .GetField("KnownSourceUsers", BindingFlags.NonPublic | BindingFlags.Static)!.GetValue(null)!).Clear();
+        Assert.Equal("profile-listener", (await restarted.GetSourceUserAsync(context)).RequireValue());
     }
 
     [Fact]

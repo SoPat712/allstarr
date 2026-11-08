@@ -193,7 +193,7 @@ public sealed partial class MigrationWizardFlowTests
         var run = await Selected("liked-songs");
         appleMissingToken = true;
         Assert.Equal(DurableJobCompletionKind.Failed, (await Step()).Kind);
-        await Assert.ThrowsAsync<InvalidOperationException>(() => Service().ChangeAsync(Context(owner), run, "resume", null, default));
+        await Assert.ThrowsAsync<MigrationSourceConnectionException>(() => Service().ChangeAsync(Context(owner), run, "resume", null, default));
         appleMissingToken = false;
         await Service().ChangeAsync(Context(owner), run, "resume", null, default);
         await Finish(run);

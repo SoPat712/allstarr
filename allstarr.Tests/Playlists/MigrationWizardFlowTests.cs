@@ -414,6 +414,21 @@ public sealed partial class MigrationWizardFlowTests : IAsyncLifetime
         Assert.EndsWith("to see your music.", reconnect.Message);
     }
 
+    [Fact]
+    public async Task DiscoveringAndCollectingBusySourcesDeferWithoutParkingTheRun()
+    {
+        var run = await Start();
+        rateLimited = true;
+        await Assert.ThrowsAsync<MigrationSourceBusyException>(() => Service().DiscoverAsync(Context(owner), run, null, default));
+        Assert.Equal("choosing", (await Service().StatusAsync(Context(owner), run, default)).Run.State);
+        rateLimited = false;
+        var collecting = await Selected("owned");
+        rateLimited = true;
+        var result = await Step();
+        Assert.Equal(DurableJobCompletionKind.Deferred, result.Kind);
+        Assert.Equal("collecting", (await Service().StatusAsync(Context(owner), collecting, default)).Run.State);
+    }
+
     private Task<Guid> Start() => Service().StartAsync(Context(owner), account, "request", default);
     private async Task<Guid> Selected(string source, bool keepInSync = false)
     {
