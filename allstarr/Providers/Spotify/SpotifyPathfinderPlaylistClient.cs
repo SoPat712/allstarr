@@ -621,12 +621,14 @@ public sealed partial class SpotifyPathfinderPlaylistClient
         int position,
         out string reasonCode)
     {
-        if (!TryPath(item, out var data, "itemV2", "data"))
+        // Playlist items carry the song under itemV2; Liked Songs items carry it under track, with its uri beside it.
+        var liked = false;
+        if (!TryPath(item, out var data, "itemV2", "data") && !(liked = TryPath(item, out data, "track", "data")))
         {
             reasonCode = "missing_item_data";
             return null;
         }
-        var id = SpotifyId(String(data, "uri"), "track");
+        var id = SpotifyId(String(data, "uri") ?? (liked && TryPath(item, out var likedTrack, "track") ? String(likedTrack, "_uri") : null), "track");
         var title = String(data, "name");
         if (string.IsNullOrWhiteSpace(id))
         {
@@ -676,7 +678,7 @@ public sealed partial class SpotifyPathfinderPlaylistClient
             artwork = ArtworkUri(album);
         }
 
-        var durationMs = TryPath(data, out var duration, "trackDuration")
+        var durationMs = TryPath(data, out var duration, "trackDuration") || TryPath(data, out duration, "duration")
             ? Integer(duration, "totalMilliseconds")
             : null;
         bool? explicitValue = TryPath(data, out var rating, "contentRating")

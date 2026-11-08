@@ -35,6 +35,20 @@ public sealed partial class SpotifyPlaylistCapabilityAdapterTests
     }
 
     [Fact]
+    public async Task LikedSongsReadTheLibraryTrackShape()
+    {
+        var handler = new SpotifyFakeHandler { LikedSongs = true };
+        var adapter = new SpotifyPlaylistCapabilityAdapter(new HttpClient(handler), new FakeSecretAccessor("selected-cookie"));
+        var request = new ProviderPlaylistTracksRequest(new("spotify", ProviderResourceKind.Playlist, "liked-songs"), new ProviderPageRequest(2));
+        var track = Assert.Single((await adapter.GetPlaylistTracksAsync(Context(), request)).RequireValue().Tracks.Items);
+        Assert.Equal("liked-one", track.TrackId.Value);
+        Assert.Equal("Liked one", track.Metadata!.Title);
+        Assert.Equal(TimeSpan.FromMilliseconds(181000), track.Metadata.Duration);
+        Assert.Equal("liked-album", track.Metadata.AlbumId!.Value);
+        Assert.True(track.Metadata.IsExplicit);
+    }
+
+    [Fact]
     public async Task SourceUserComesFromTheWebPlayerProfileBeforeTheRateLimitedMeCall()
     {
         var handler = new SpotifyFakeHandler();
@@ -665,6 +679,7 @@ public sealed partial class SpotifyPlaylistCapabilityAdapterTests
         public bool GenerateProfilePlaylists { get; set; }
         public HttpStatusCode ProfileAttributesStatus { get; set; } = HttpStatusCode.OK;
         public HttpStatusCode MeStatus { get; set; } = HttpStatusCode.OK;
+        public bool LikedSongs { get; set; }
         public List<RequestProfile> WebPlayerProfiles { get; } = [];
         public List<string> MutationRequests { get; } = [];
         public List<string> MutationBodies { get; } = [];
@@ -777,7 +792,31 @@ public sealed partial class SpotifyPlaylistCapabilityAdapterTests
                     ? Json(HttpStatusCode.OK, new { data = new { me = new { profile = new { uri = "spotify:user:profile-listener", username = "profile-listener", name = "Listener" } } } })
                     : Json(ProfileAttributesStatus, new { error = "unavailable" }));
             if (decoded.Contains("operationName=fetchLibraryTracks", StringComparison.Ordinal))
-                return Task.FromResult(Json(HttpStatusCode.OK, new { data = new { me = new { library = new { tracks = new { totalCount = 0, items = System.Array.Empty<object>() } } } } }));
+                return Task.FromResult(Json(HttpStatusCode.OK, new
+                {
+                    data = new
+                    {
+                        me = new
+                        {
+                            library = new
+                            {
+                                tracks = new
+                                {
+                                    totalCount = LikedSongs ? 1 : 0,
+                                    items = LikedSongs
+                    ? new object[] { new { addedAt = new { isoString = "2026-11-01T00:00:00Z" }, track = new { _uri = "spotify:track:liked-one", data = new
+                    {
+                        __typename = "Track", name = "Liked one", duration = new { totalMilliseconds = 181000 },
+                        albumOfTrack = new { uri = "spotify:album:liked-album", name = "Liked album" },
+                        artists = new { items = new[] { new { uri = "spotify:artist:liked-artist", profile = new { name = "Liked artist" } } } },
+                        contentRating = new { label = "EXPLICIT" }
+                    } } } }
+                    : System.Array.Empty<object>()
+                                }
+                            }
+                        }
+                    }
+                }));
             if (decoded.Contains("operationName=fetchPlaylist", StringComparison.Ordinal))
                 return Task.FromResult(Json(HttpStatusCode.OK, PlaylistResponse()));
             if (decoded.Contains("operationName=libraryV3", StringComparison.Ordinal))
