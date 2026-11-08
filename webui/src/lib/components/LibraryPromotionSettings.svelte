@@ -75,7 +75,7 @@
   }
   function requestPreview() {
     if (!profile) return;
-    preview = null; errors = []; previewError = ""; previewPending = true;
+    previewError = ""; previewPending = true;
     previews.change(profile.namingScript);
   }
   function update(patch: Partial<PromotionProfile>) {
@@ -159,8 +159,8 @@
       <header><h3 id="naming-heading">File names and folders</h3><p>Drag fields to build the name, or edit the naming script directly (Picard syntax).</p></header>
       <div class="naming-content">
         <PromotionNamingBuilder script={profile.namingScript} onchange={namingScript => update({ namingScript })} />
-        <div class="naming-examples" aria-label="Live naming examples" aria-busy={previewPending}>
-          {#if previewPending}<p class="muted">Updating examples…</p>
+        <div class="naming-examples" class:updating={previewPending && preview} aria-label="Live naming examples" aria-busy={previewPending}>
+          {#if previewPending && !preview}<p class="muted">Loading examples…</p>
           {:else if previewError}<div role="alert"><p>{previewError}</p><Button variant="outline" onclick={requestPreview}>Retry examples</Button></div>
           {:else if preview && !preview.errors.length && !preview.examples.length}<p class="muted">No library examples are available yet. Examples will appear when songs are in your library or kept.</p>
           {:else if preview}{#each preview.examples as example}<div class="naming-example"><span>{exampleLabel(example.kind)}</span><div><code class="example-path" title={example.title}>{example.relativePath ?? "Could not render this name"}</code>{#if example.errors.length}{@render errorList(example.errors)}{/if}</div></div>{/each}{/if}
@@ -246,7 +246,8 @@
   .naming-content { display: grid; gap: var(--space-3); padding: var(--space-1) var(--space-4) var(--space-4); }
   header p { margin: var(--space-2) 0 0; font-size: var(--text-xs); color: var(--color-ink-muted); }
   header:has(p) { display: block; }
-  .naming-examples { display: grid; gap: var(--space-2); min-width: 0; }
+  .naming-examples { display: grid; gap: var(--space-2); min-width: 0; transition: opacity 160ms var(--ease-standard); }
+  .naming-examples.updating { opacity: .55; }
   .naming-example { display: grid; grid-template-columns: 6.5rem minmax(0, 1fr); align-items: baseline; gap: var(--space-3); font-size: var(--text-xs); }
   .naming-example > span { color: var(--color-ink-muted); }
   .example-path, textarea { display: block; width: 100%; min-width: 0; padding: var(--space-2) var(--space-3); border: 1px solid var(--color-edge); border-radius: var(--radius-md); background: var(--color-panel-raised); color: var(--color-ink); font: 0.76rem/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
