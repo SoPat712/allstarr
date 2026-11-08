@@ -7,6 +7,9 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using allstarr.Services.Common;
+using allstarr.Models.Settings;
+using allstarr.Services.Jellyfin;
+using Microsoft.Extensions.Options;
 
 namespace allstarr.Core.Playback;
 
@@ -55,10 +58,15 @@ public sealed class ScopedPlaybackScrobbleDelivery(IDbContextFactory<AllstarrDbC
     IPlaybackDeliveryCheckpointStore checkpoints,
     IPlaybackTrackResolver trackResolver,
     PlaybackDeliveryActivityStore? activity = null,
-    ILogger<ScopedPlaybackScrobbleDelivery>? logger = null) : IScopedPlaybackScrobbleDelivery
+    ILogger<ScopedPlaybackScrobbleDelivery>? logger = null,
+    IOptions<ScrobblingSettings>? scrobbling = null) : IScopedPlaybackScrobbleDelivery
 {
     public async Task DeliverAsync(PlaybackSignalPayload payload, CancellationToken cancellationToken)
     {
+        // With local scrobbling off, songs from the server's own library are left to its scrobbler
+        // (for example Jellyfin's Last.fm or ListenBrainz plugin), so each play counts once.
+        if (scrobbling?.Value.LocalTracksEnabled == false && payload.SourceKind == "protocol" &&
+            !JellyfinItemIdComparer.IsExternalId(payload.ItemId)) return;
         if (await SyntheticActivityPolicy.IsExcludedAsync(factory, payload, cancellationToken)) return;
         var timer = Stopwatch.StartNew();
         await using var db = await factory.CreateDbContextAsync(cancellationToken);

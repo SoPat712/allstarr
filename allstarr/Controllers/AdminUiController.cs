@@ -2069,7 +2069,13 @@ public class AdminUiController : ControllerBase
                 "ListenBrainz similar-song fallback",
                 "toggle",
                 "playback.listenBrainzSimilarEnabled",
-                helpText: "Uses the public ListenBrainz similar-recordings fallback when the provider and Last.fm have none. Default: on.")
+                helpText: "Uses the public ListenBrainz similar-recordings fallback when the provider and Last.fm have none. Default: on."),
+            Field(
+                "SCROBBLING_LOCAL_TRACKS_ENABLED",
+                "Scrobble songs from your own library",
+                "toggle",
+                "scrobbling.localTracksEnabled",
+                helpText: "Off by default. Leave off when your server already scrobbles them (for example Jellyfin's Last.fm or ListenBrainz plugin), so each play counts once. Songs streamed through Allstarr are always scrobbled.")
         ]),
         Section("paths", "Library paths",
         [

@@ -425,6 +425,9 @@ public sealed class HostCompositionTests
                 Assert.Equal("toggle", listenBrainz.Type);
                 Assert.Equal("playback.listenBrainzSimilarEnabled", listenBrainz.ValuePath);
             });
+        var localScrobbles = Assert.Single(general.Fields, item => item.Key == "SCROBBLING_LOCAL_TRACKS_ENABLED");
+        Assert.Equal("toggle", localScrobbles.Type);
+        Assert.Equal("scrobbling.localTracksEnabled", localScrobbles.ValuePath);
     }
 
     [Fact]

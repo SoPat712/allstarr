@@ -483,6 +483,22 @@ public sealed partial class PlaybackSignalPipelineTests : IAsyncLifetime
         Assert.Equal(expected, targets.Sum(x => x.Successes));
     }
 
+    [Theory]
+    [InlineData(false, false, 0)]
+    [InlineData(false, true, 2)]
+    [InlineData(true, false, 2)]
+    public async Task LibrarySongsAreLeftToTheServerUnlessLocalScrobblingIsOn(bool localTracks, bool streamed, int expected)
+    {
+        var targets = new[] { new Target("lastfm", true), new Target("listenbrainz", true) };
+        var delivery = new ScopedPlaybackScrobbleDelivery(factory, targets, new Checkpoints(), playbackTracks,
+            scrobbling: Options.Create(new ScrobblingSettings { LocalTracksEnabled = localTracks }));
+        var payload = streamed
+            ? Payload() with { ItemId = "ext-apple-song-1", SubmittedTrack = new PlaybackTrackSnapshot(null, null, "ext-apple-song-1", "Track", "Artist", null, 120_000) }
+            : Payload();
+        await delivery.DeliverAsync(payload, default);
+        Assert.Equal(expected, targets.Sum(x => x.Successes));
+    }
+
     [Fact]
     public async Task DurableCheckpointResumesAfterLaterTargetFailureWithoutRepeatingFirst()
     {

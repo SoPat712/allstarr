@@ -47,6 +47,7 @@
     EXTENSIONS_ALLOW_REMOTE_INSTALL: "Install extensions from outside your home network",
     PLAYBACK_LASTFM_SIMILAR_ENABLED: "Similar songs from Last.fm when a service has none",
     PLAYBACK_LISTENBRAINZ_SIMILAR_ENABLED: "Similar songs from ListenBrainz as a last resort",
+    SCROBBLING_LOCAL_TRACKS_ENABLED: "Scrobble songs from your own library",
     ADMIN_BIND_ANY_IP: "Admin page on all network interfaces", ADMIN_TRUSTED_SUBNETS: "Trusted admin networks",
     DEBUG_LOG_ALL_REQUESTS: "Log request usage", LIBRARY_DOWNLOAD_PATH: "Downloads", LIBRARY_KEPT_PATH: "Kept songs",
   };
@@ -63,6 +64,7 @@
     PLAYBACK_PREPARE_UPCOMING_SONGS: "Prepare the next Apple song after 30 seconds of playback. Uses cache space.",
     PLAYBACK_LASTFM_SIMILAR_ENABLED: "Use a connected Last.fm account when a service has no suggestions.",
     PLAYBACK_LISTENBRAINZ_SIMILAR_ENABLED: "Use ListenBrainz when the service and Last.fm have no suggestions.",
+    SCROBBLING_LOCAL_TRACKS_ENABLED: "Leave off when your server's own scrobbler (like Jellyfin's Last.fm plugin) sends them. Streamed songs always scrobble.",
     BACKEND_MUSIC_LIBRARY_IDS: "Choose libraries, or use every library your server allows.",
     ODESLI_ENABLED: "Uses Deezer, Apple Music and your enabled sources",
     ODESLI_API_KEY: "Optional. With a key, the official API is tried first. Leave unchanged to keep it.",
