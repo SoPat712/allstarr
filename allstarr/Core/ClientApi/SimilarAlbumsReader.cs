@@ -100,19 +100,36 @@ public sealed class SimilarAlbumsReader(IProtocolProviderGateway providers, Save
         {
             try
             {
-                var id = seed.ArtistIds.GetValueOrDefault(source);
-                if (id == null)
+                foreach (var id in await ArtistCandidatesAsync(execution, seed, source))
                 {
-                    var found = await providers.SearchAsync(execution, seed.Artist, 0, 0, 3, source);
-                    id = found.Artists.FirstOrDefault(item => item.ExternalProvider == source && SameName(item.Name, seed.Artist))?.ExternalId;
+                    var related = await providers.GetSimilarArtistsAsync(execution, source, id, RelatedArtists);
+                    if (related.Count > 0) return (source, related);
                 }
-                if (id == null) continue;
-                var related = await providers.GetSimilarArtistsAsync(execution, source, id, RelatedArtists);
-                if (related.Count > 0) return (source, related);
             }
             catch (Exception exception) when (exception is HttpRequestException or JsonException or InvalidOperationException) { }
         }
         return (null, []);
+    }
+
+    // Many artists share a name, and a service's artist search can rank an obscure namesake first. The artist of the
+    // same album on that service is the surest match; exact-name artists follow.
+    private async Task<IReadOnlyList<string>> ArtistCandidatesAsync(ProtocolExecutionContext execution, Seed seed, string source)
+    {
+        if (seed.ArtistIds.GetValueOrDefault(source) is { } known) return [known];
+        var candidates = new List<string>();
+        if (!string.IsNullOrWhiteSpace(seed.Title))
+        {
+            var albums = await providers.SearchAsync(execution, $"{seed.Artist} {seed.Title}", 0, 5, 0, source);
+            var album = albums?.Albums.FirstOrDefault(item => item.ExternalProvider == source &&
+                SameName(item.Artist, seed.Artist) && SameName(item.Title, seed.Title));
+            var artist = LocalLibraryService.ParseExternalResource(album?.ArtistId ?? "");
+            if (artist is { isExternal: true, type: "artist" } && artist.provider == source) candidates.Add(artist.externalId!);
+            else if (!string.IsNullOrWhiteSpace(album?.ArtistId) && !album.ArtistId.StartsWith("ext-", StringComparison.Ordinal)) candidates.Add(album.ArtistId);
+        }
+        var found = await providers.SearchAsync(execution, seed.Artist, 0, 0, 10, source);
+        candidates.AddRange((found?.Artists ?? []).Where(item => item.ExternalProvider == source && SameName(item.Name, seed.Artist))
+            .Select(item => item.ExternalId).OfType<string>().Take(5));
+        return candidates.Distinct(StringComparer.Ordinal).ToArray();
     }
 
     private async Task<ClientSimilarAlbum?> PickAsync(HttpContext http, ProtocolExecutionContext execution, Artist artist,

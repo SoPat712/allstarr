@@ -79,8 +79,14 @@ public sealed partial class ProtocolRouteFixtureTests
         var gateway = new Mock<IProtocolProviderGateway>();
         gateway.Setup(service => service.GetPlayableProviderOrderAsync(It.IsAny<ProviderActorContext>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(["apple-musickit"]);
-        gateway.Setup(service => service.SearchAsync(It.IsAny<ProtocolExecutionContext>(), "Seed Artist", 0, 0, 3, "deezer"))
-            .ReturnsAsync(new SearchResult { Artists = [new Artist { Name = "Seed Artist", ExternalProvider = "deezer", ExternalId = "seed" }] });
+        gateway.Setup(service => service.SearchAsync(It.IsAny<ProtocolExecutionContext>(), "Seed Artist Seed album", 0, 5, 0, "deezer"))
+            .ReturnsAsync(new SearchResult { Albums = [new Album { Title = "Seed album", Artist = "Seed Artist", ArtistId = "ext-deezer-artist-seed", ExternalProvider = "deezer" }] });
+        gateway.Setup(service => service.SearchAsync(It.IsAny<ProtocolExecutionContext>(), "Seed Artist", 0, 0, 10, "deezer"))
+            .ReturnsAsync(new SearchResult
+            {
+                Artists = [new Artist { Name = "Seed Artist", ExternalProvider = "deezer", ExternalId = "namesake" },
+                new Artist { Name = "Seed Artist", ExternalProvider = "deezer", ExternalId = "seed" }]
+            });
         gateway.Setup(service => service.GetSimilarArtistsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "seed", It.IsAny<int>()))
             .ReturnsAsync([new Artist { Name = "Service Friend", ExternalProvider = "deezer", ExternalId = "other" }]);
         gateway.Setup(service => service.GetArtistAlbumsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "other"))
@@ -104,5 +110,6 @@ public sealed partial class ProtocolRouteFixtureTests
         using var body = JsonDocument.Parse(text);
         Assert.Equal("deezer", body.RootElement.GetProperty("basedOn").GetString());
         Assert.Equal("ext-deezer-album-other-album", Assert.Single(body.RootElement.GetProperty("albums").EnumerateArray()).GetProperty("id").GetString());
+        gateway.Verify(service => service.GetSimilarArtistsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "namesake", It.IsAny<int>()), Times.Never);
     }
 }
