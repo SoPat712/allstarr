@@ -15,6 +15,7 @@ public sealed class SimilarAlbumsReader(IProtocolProviderGateway providers, Save
     JellyfinProxyService jellyfin, IProviderRegistry registry, LibraryProviderResolver libraryProvider)
 {
     private const int RelatedArtists = 24;
+    private const string RelatedArtistsSource = "deezer";
     private const int Lookups = 4;
     private static readonly TimeSpan FreshFor = TimeSpan.FromHours(6);
     private static readonly ConcurrentDictionary<string, (DateTimeOffset At, ClientSimilarAlbums Value)> Recent = new();
@@ -86,7 +87,9 @@ public sealed class SimilarAlbumsReader(IProtocolProviderGateway providers, Save
     private async Task<(string? Source, IReadOnlyList<Artist> Artists)> RelatedArtistsAsync(ProtocolExecutionContext execution, Seed seed)
     {
         if (string.IsNullOrWhiteSpace(seed.Artist)) return (null, []);
-        var sources = seed.ArtistIds.Keys.Concat(await providers.GetPlayableProviderOrderAsync(execution.RequireActor(), execution.CancellationToken))
+        // Deezer is the service that publishes related artists, so it is asked right after the album's own service.
+        var sources = seed.ArtistIds.Keys.Append(RelatedArtistsSource)
+            .Concat(await providers.GetPlayableProviderOrderAsync(execution.RequireActor(), execution.CancellationToken))
             .Distinct(StringComparer.Ordinal).Take(4);
         foreach (var source in sources)
         {

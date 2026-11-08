@@ -381,8 +381,8 @@ albums built from saved playlist songs are accepted; other item types return
 400 and unknown items 404. Responses use `Cache-Control: no-store`.
 
 `GET /allstarr/v1/items/{itemId}/similar?limit=12` (`similarAlbums`) returns
-`{itemId,basedOn,albums}` for an album. Allstarr asks the first service in the
-listener's source order that knows the album's artist for related artists, and
+`{itemId,basedOn,albums}` for an album. Allstarr asks the album's own service,
+then Deezer, then the listener's other sources for the artist's related artists, and
 picks one album for each: the listener's most played album by that artist when
 the library has one, otherwise the artist's newest album from the service
 (singles and compilations only when nothing else exists). `basedOn` names that

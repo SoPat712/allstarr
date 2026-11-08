@@ -3,6 +3,7 @@ using System.Text.Json;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Protocols;
 using allstarr.Models.Domain;
+using allstarr.Models.Search;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Moq;
@@ -70,5 +71,38 @@ public sealed partial class ProtocolRouteFixtureTests
 
         using var song = await client.GetAsync("/allstarr/v1/items/ext-deezer-song-mix-song/similar");
         Assert.Equal(HttpStatusCode.BadRequest, song.StatusCode);
+    }
+
+    [Fact]
+    public async Task ClientApi_SimilarAlbumsForALibraryAlbumFindTheArtistOnDeezer()
+    {
+        var gateway = new Mock<IProtocolProviderGateway>();
+        gateway.Setup(service => service.GetPlayableProviderOrderAsync(It.IsAny<ProviderActorContext>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(["apple-musickit"]);
+        gateway.Setup(service => service.SearchAsync(It.IsAny<ProtocolExecutionContext>(), "Seed Artist", 0, 0, 3, "deezer"))
+            .ReturnsAsync(new SearchResult { Artists = [new Artist { Name = "Seed Artist", ExternalProvider = "deezer", ExternalId = "seed" }] });
+        gateway.Setup(service => service.GetSimilarArtistsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "seed", It.IsAny<int>()))
+            .ReturnsAsync([new Artist { Name = "Service Friend", ExternalProvider = "deezer", ExternalId = "other" }]);
+        gateway.Setup(service => service.GetArtistAlbumsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "other"))
+            .ReturnsAsync([new Album { Id = "ext-deezer-album-other-album", Title = "Other album", Artist = "Service Friend", ExternalProvider = "deezer", ExternalId = "other-album" }]);
+        using var factory = ClientDetailsFactory(request => request.RequestUri!.AbsolutePath switch
+        {
+            "/Users/Me" => Json(200, """{"Id":"listener"}"""),
+            "/Users/listener/Items/library-seed" => Json(200, """{"Id":"library-seed","Type":"MusicAlbum","Name":"Seed album","AlbumArtist":"Seed Artist"}"""),
+            _ => Json(200, """{"Items":[],"TotalRecordCount":0}""")
+        }, services =>
+        {
+            services.RemoveAll<IProtocolProviderGateway>();
+            services.AddSingleton(gateway.Object);
+        });
+        using var client = CreateClientApiClient(factory);
+        client.DefaultRequestHeaders.Add("X-Emby-Token", "listener-token");
+
+        using var response = await client.GetAsync("/allstarr/v1/items/library-seed/similar");
+        var text = await response.Content.ReadAsStringAsync();
+        Assert.True(response.StatusCode == HttpStatusCode.OK, text);
+        using var body = JsonDocument.Parse(text);
+        Assert.Equal("deezer", body.RootElement.GetProperty("basedOn").GetString());
+        Assert.Equal("ext-deezer-album-other-album", Assert.Single(body.RootElement.GetProperty("albums").EnumerateArray()).GetProperty("id").GetString());
     }
 }
