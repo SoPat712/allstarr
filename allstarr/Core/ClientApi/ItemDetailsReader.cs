@@ -163,9 +163,15 @@ public sealed class ItemDetailsReader(
         }
         if (identities is ITrackMediaFactsStore mediaFacts)
             await mediaFacts.ApplyStoredMediaFactsAsync(execution.RequireActor(), songs.Values.ToArray(), token);
-        var servingProviders = new Dictionary<string, string?>(StringComparer.Ordinal);
-        foreach (var source in external.Where(source => source.Provider == "allstarr" && songs.ContainsKey(source.Id)))
-            servingProviders[source.Id] = gateway == null ? null : await gateway.GetStreamingProviderAsync(execution, source.Provider, source.ExternalId);
+        // Each song's playback route is planned on its own, so a playlist's songs are planned a few at a time.
+        using var routeGate = new SemaphoreSlim(Math.Clamp(Environment.ProcessorCount / 2, 1, 4));
+        var servingProviders = (await Task.WhenAll(external.Where(source => source.Provider == "allstarr" && songs.ContainsKey(source.Id))
+            .Select(async source =>
+            {
+                await routeGate.WaitAsync(token);
+                try { return (source.Id, Provider: gateway == null ? null : await gateway.GetStreamingProviderAsync(execution, source.Provider, source.ExternalId)); }
+                finally { routeGate.Release(); }
+            }))).ToDictionary(item => item.Id, item => item.Provider, StringComparer.Ordinal);
         var providers = new Dictionary<string, ItemDetailsProvider?>(StringComparer.Ordinal);
         var providerIds = songs.Values.Select(item => item.ExternalProvider!).Concat(servingProviders.Values.OfType<string>()).Distinct(StringComparer.Ordinal).ToArray();
         var icons = await ProviderArtworkResolver.ResolveIconsAsync(http.RequestServices, providerIds, token);
@@ -213,7 +219,7 @@ public sealed class ItemDetailsReader(
             if (snapshot != null)
             {
                 var matchId = local != null && recordingId.HasValue ? CanonicalRecordingRecord.DefaultPublicId(recordingId.Value) : id;
-                if (await matches.ReadAsync(http, execution, matchId, libraryMemo) is { } effectiveMatch)
+                if (await matches.ReadSummaryAsync(http, execution, matchId, libraryMemo) is { } effectiveMatch)
                     match = new(effectiveMatch.State, effectiveMatch.Confidence, effectiveMatch.Authority);
             }
             var state = states.FirstOrDefault(item => item.ItemId == id && item.IsFavorite);

@@ -23,9 +23,13 @@ public sealed class ItemMatchReader(
     ITrackIdentityService identities,
     IEffectiveProviderPolicyResolver policies, LibraryProviderResolver libraryProvider)
 {
-    public async Task<ClientItemMatch?> ReadAsync(HttpContext http, ProtocolExecutionContext execution, string itemId,
-        TrackMatchLibraryMemo? libraryMemo = null) =>
-        (await LoadAsync(http, execution, itemId, libraryMemo))?.Value;
+    public async Task<ClientItemMatch?> ReadAsync(HttpContext http, ProtocolExecutionContext execution, string itemId) =>
+        (await LoadAsync(http, execution, itemId))?.Value;
+
+    // Item details need only the state, confidence and who decided, so the candidates' ISRCs, icons and revision are skipped.
+    public async Task<ClientItemMatch?> ReadSummaryAsync(HttpContext http, ProtocolExecutionContext execution, string itemId,
+        TrackMatchLibraryMemo libraryMemo) =>
+        (await LoadAsync(http, execution, itemId, libraryMemo, summary: true))?.Value;
 
     public async Task<ClientItemMatch?> SetAsync(HttpContext http, ProtocolExecutionContext execution, string itemId, SetClientMatchRequest request)
     {
@@ -68,7 +72,7 @@ public sealed class ItemMatchReader(
     }
 
     private async Task<Match?> LoadAsync(HttpContext http, ProtocolExecutionContext execution, string itemId,
-        TrackMatchLibraryMemo? libraryMemo = null)
+        TrackMatchLibraryMemo? libraryMemo = null, bool summary = false)
     {
         var actor = Actor(execution);
         var token = execution.CancellationToken;
@@ -107,7 +111,7 @@ public sealed class ItemMatchReader(
                 snapshot = recorded;
         }
         if (snapshot == null) return null;
-        var revision = await TrackMatchRevision.ReadAsync(db, snapshot, actor.UserId, token);
+        var revision = summary ? "" : await TrackMatchRevision.ReadAsync(db, snapshot, actor.UserId, token);
         var review = await commands.GetClientReviewDataAsync(actor, snapshot.Id, token, libraryMemo);
         snapshot = review.Snapshots.OrderByDescending(item => item.RetrievedAt).ThenByDescending(item => item.SnapshotVersion)
             .ThenByDescending(item => item.Id).FirstOrDefault();
@@ -136,8 +140,8 @@ public sealed class ItemMatchReader(
             var routes = json.GetProperty("providerTrackIds");
             var route = !local && routes.ValueKind == JsonValueKind.Object ? routes.EnumerateObject()
                 .FirstOrDefault(pair => playableProviders.Contains(ExternalTrackPlaybackPolicy.Normalize(pair.Name))) : default;
-            var library = local ? await libraryProvider.ResolveAsync(http, execution) : null;
-            var providerId = local ? library!.Id : route.Name;
+            var library = local && !summary ? await libraryProvider.ResolveAsync(http, execution) : null;
+            var providerId = local ? library?.Id ?? "library" : route.Name;
             var targetId = local ? null : route.Value.GetString();
             if (string.IsNullOrEmpty(providerId) || !local && string.IsNullOrWhiteSpace(targetId)) continue;
             if (policy.Preferences.ExplicitFilter == "CleanOnly")
@@ -151,9 +155,9 @@ public sealed class ItemMatchReader(
             }
             var key = local ? $"local:{libraryId}" : $"{providerId}:{targetId}";
             registry.TryGet(providerId, out var descriptor);
-            var icon = (await ProviderArtworkResolver.ResolveIconsAsync(http.RequestServices, [providerId], token)).GetValueOrDefault(providerId);
+            var icon = summary ? null : (await ProviderArtworkResolver.ResolveIconsAsync(http.RequestServices, [providerId], token)).GetValueOrDefault(providerId);
             var isrc = Text(json, "candidateIsrc");
-            if (string.IsNullOrWhiteSpace(isrc))
+            if (string.IsNullOrWhiteSpace(isrc) && !summary)
                 isrc = local ? review.LibraryTracks.FirstOrDefault(item => item.Id == libraryId)?.Isrc
                     : await ReadStoredIsrcAsync(db, execution, snapshot, review.ProviderIdentities, providerId, targetId!, token);
             var candidate = new ClientMatchCandidate(Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(key))),
@@ -175,11 +179,11 @@ public sealed class ItemMatchReader(
             if (metadata != null && policy.Includes(metadata))
             {
                 registry.TryGet(provider!, out var descriptor);
-                var icon = (await ProviderArtworkResolver.ResolveIconsAsync(http.RequestServices, [provider!], token)).GetValueOrDefault(provider!);
+                var icon = summary ? null : (await ProviderArtworkResolver.ResolveIconsAsync(http.RequestServices, [provider!], token)).GetValueOrDefault(provider!);
                 current = new(Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes($"{provider}:{externalId}"))),
                     metadata.Title, metadata.Artist, metadata.Album,
                     metadata.PreciseDuration.HasValue ? (long)metadata.PreciseDuration.Value.TotalMilliseconds : metadata.Duration * 1000L,
-                    await ReadStoredIsrcAsync(db, execution, snapshot, review.ProviderIdentities, provider!, externalId!, token),
+                    summary ? null : await ReadStoredIsrcAsync(db, execution, snapshot, review.ProviderIdentities, provider!, externalId!, token),
                     icon?.Provider(provider!, descriptor?.DisplayName ?? provider!) ?? new(provider!, descriptor?.DisplayName ?? provider!, null),
                     true, 1, ["same_song"]);
                 candidates.Insert(0, new(current, null, provider, externalId));
@@ -196,7 +200,7 @@ public sealed class ItemMatchReader(
                 if (candidates[index].Value.CandidateId == current.CandidateId) candidates[index] = candidates[index] with { Value = current };
             confidence = 1;
         }
-        if (revision != await TrackMatchRevision.ReadAsync(db, snapshot, actor.UserId, token))
+        if (!summary && revision != await TrackMatchRevision.ReadAsync(db, snapshot, actor.UserId, token))
             throw new DbUpdateConcurrencyException("The match changed.");
         return new(new(state.ToString().ToLowerInvariant(), confidence, layers.EffectiveScope,
             current, candidates.Select(item => item.Value).DistinctBy(item => item.CandidateId).ToArray(), revision),
