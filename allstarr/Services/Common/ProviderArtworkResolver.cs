@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using allstarr.Core.Capabilities;
 using allstarr.Core.ClientApi;
 using allstarr.Core.Extensions;
@@ -104,9 +105,16 @@ internal static class ProviderArtworkResolver
         IReadOnlyCollection<string> providerIds, CancellationToken cancellationToken)
     {
         var http = services.GetService<IHttpContextAccessor>()?.HttpContext;
-        var result = http?.Items.TryGetValue(RequestCacheKey, out var cached) == true
-            ? (Dictionary<string, ProviderArtwork?>)cached! : new(StringComparer.Ordinal);
-        if (http != null) http.Items[RequestCacheKey] = result;
+        // One request can resolve icons from several tasks at once, such as a batch of item details.
+        ConcurrentDictionary<string, ProviderArtwork?> result;
+        if (http == null) result = new(StringComparer.Ordinal);
+        else
+            lock (http.Items)
+            {
+                result = http.Items.TryGetValue(RequestCacheKey, out var cached)
+                    ? (ConcurrentDictionary<string, ProviderArtwork?>)cached! : new(StringComparer.Ordinal);
+                http.Items[RequestCacheKey] = result;
+            }
         var registry = services.GetRequiredService<IProviderRegistry>();
         var environment = services.GetRequiredService<IWebHostEnvironment>();
         var descriptors = new Dictionary<string, ProviderDescriptor>(StringComparer.Ordinal);
