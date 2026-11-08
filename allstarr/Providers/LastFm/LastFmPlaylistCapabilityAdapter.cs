@@ -285,7 +285,7 @@ public sealed class LastFmPlaylistCapabilityAdapter(
         throw new ArgumentException("Unknown Last.fm playlist selection.");
     }
 
-    private static string PeriodLabel(string period) => period switch
+    internal static string PeriodLabel(string period) => period switch
     {
         "7day" => "7 days",
         "1month" => "1 month",

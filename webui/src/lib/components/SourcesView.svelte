@@ -1094,7 +1094,7 @@
     .accounts-table tr:last-child { border: 0; }.accounts-table td { padding: var(--space-1); border: 0; min-width: 0; }.accounts-table td:first-child { grid-column: 1; }.accounts-table td:nth-child(2), .accounts-table td:nth-child(3), .accounts-table td:nth-child(4) { grid-column: 1; padding-left: calc(28px + var(--space-4)); color: var(--color-ink-muted); font-size: var(--text-xs); }
     .accounts-table td:nth-child(5) { grid-column: 2; grid-row: 1; align-self: center; }.accounts-table td:last-child { grid-column: 2; grid-row: 2 / 5; justify-self: end; }
   }
-  @media (max-width: 599px) { .source-toolbar { align-items: stretch; }.source-toolbar :global(.filter-segments) { width: 100%; } }
+  @media (max-width: 599px) { .source-toolbar { align-items: stretch; }.source-toolbar :global(.seg.filter-segments) { width: 100%; flex-wrap: nowrap; overflow-x: auto; } }
   .source-setting-control {
     display: flex;
     min-width: 0;

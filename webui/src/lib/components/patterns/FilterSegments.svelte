@@ -35,6 +35,19 @@
     return () => observer.disconnect();
   });
 
+  // A filter row that scrolls instead of wrapping keeps the chosen filter in view, also after counts arrive.
+  $effect(() => {
+    void value; void options.map(option => `${option.label}${option.count}`);
+    const frame = requestAnimationFrame(() => {
+      const checked = group?.querySelector<HTMLElement>('[aria-checked="true"]');
+      if (!checked || group.scrollWidth <= group.clientWidth) return;
+      const box = group.getBoundingClientRect(), item = checked.getBoundingClientRect();
+      if (item.right > box.right) group.scrollLeft += item.right - box.right;
+      else if (item.left < box.left) group.scrollLeft -= box.left - item.left;
+    });
+    return () => cancelAnimationFrame(frame);
+  });
+
   function select(id: string) {
     value = id;
     focused = id;

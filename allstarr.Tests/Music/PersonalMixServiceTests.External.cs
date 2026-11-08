@@ -187,9 +187,9 @@ public sealed partial class PersonalMixServiceTests
     {
         var loved = await ExternalLink();
         var imported = await ExternalLink("spotify", "provider-playlist");
-        await ExternalLink("lastfm", "top:1month:50");
+        var top = await ExternalLink("lastfm", "top:1month:50");
         await ExternalLink("lastfm", "similar");
-        await ExternalLink("listenbrainz", "createdfor:weekly-jams");
+        var jams = await ExternalLink("listenbrainz", "createdfor:weekly-jams");
         await ExternalLink(listener: other);
         var invalid = await ExternalLink();
         await using (var db = factory.CreateDbContext())
@@ -210,7 +210,10 @@ public sealed partial class PersonalMixServiceTests
         Assert.Equal(4, cards.Length);
         Assert.DoesNotContain(cards, item => item.Id == imported.Id);
         Assert.Equal("Last.fm", cards.Single(item => item.Id == loved.Id).SourceLabel);
-        Assert.Equal("Kept in sync · Loved on Last.fm", cards.Single(item => item.Id == loved.Id).Description);
+        Assert.Equal("From Last.fm", cards.Single(item => item.Id == loved.Id).Description);
+        Assert.Equal("Your top tracks — 1 month", PersonalMixService.PendingExternalMix(top).Name);
+        Assert.Equal("Weekly Jams", PersonalMixService.PendingExternalMix(jams).Name);
+        Assert.Equal("From ListenBrainz", PersonalMixService.PendingExternalMix(jams).Description);
         Assert.Single(cards, item => item.SourceLabel == "ListenBrainz");
         Assert.All(cards, item => Assert.Equal("yourServices", item.Section));
         var json = JsonSerializer.SerializeToElement(Assert.IsType<OkObjectResult>(await Controller(owner, true).List()).Value);

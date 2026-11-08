@@ -430,6 +430,18 @@ for (const width of [320, 390, 430, 650]) for (const section of ["services", "ac
       });
     })).toBe(true);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    if (section !== "services" || width >= 600) return;
+    const filter = page.getByRole("radiogroup", { name: "Filter sources", exact: true });
+    const radios = filter.getByRole("radio");
+    expect(new Set(await radios.evaluateAll(items => items.map(item => Math.round(item.getBoundingClientRect().top)))).size).toBe(1);
+    await radios.last().click();
+    await page.reload();
+    await expect(radios.last()).toHaveAttribute("aria-checked", "true");
+    await expect.poll(() => radios.last().evaluate(item => {
+      const box = item.parentElement!.getBoundingClientRect(), target = item.getBoundingClientRect();
+      return target.left >= box.left - 1 && target.right <= box.right + 1;
+    })).toBe(true);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   });
 }
 

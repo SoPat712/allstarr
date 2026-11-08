@@ -1,3 +1,4 @@
+using System.Globalization;
 using allstarr.Core.Jobs;
 using allstarr.Core.ClientEvents;
 using allstarr.Core.Playlists;
@@ -79,11 +80,11 @@ public sealed partial class PersonalMixService
                 .Select(song => new PersonalMixItem(link.Id, projection!.SnapshotVersion, SafeSong(song),
                     link.SourceProviderId, "From your linked playlist", 0)).ToArray();
             result.Add(new(link.Id, "external", PlaylistVirtualizationService.DisplayName(link.SourceProviderId, projection?.Name ?? ExternalName(link)),
-                "Kept in sync · " + ExternalName(link), projection?.SnapshotVersion ?? 0,
+                "From " + ExternalSourceLabel(link), projection?.SnapshotVersion ?? 0,
                 projection?.RetrievedAt, new(items.Length > 0, items.Length > 0 ? "Your linked playlist is ready." : "Waiting for playable songs from your linked playlist."),
                 link.Enabled, items)
             {
-                SourceLabel = link.SourceProviderId == "lastfm" ? "Last.fm" : "ListenBrainz",
+                SourceLabel = ExternalSourceLabel(link),
                 Evidence = new(MixRecipes.For("external"), 0, 0, null, null, null, 0, 0,
                     projection?.SourceEntries.Count ?? items.Length, items.Length, items.Length, 0, items.Length,
                     new Dictionary<string, int>(), null, null, null)
@@ -93,18 +94,20 @@ public sealed partial class PersonalMixService
     }
 
     internal static PersonalMix PendingExternalMix(PlaylistLinkRecord link) => new(link.Id, "external", ExternalName(link),
-        "Kept in sync · " + ExternalName(link), 0, null, new(false, "Matching songs…"), true, [])
-    { SourceLabel = link.SourceProviderId == "lastfm" ? "Last.fm" : "ListenBrainz" };
+        "From " + ExternalSourceLabel(link), 0, null, new(false, "Matching songs…"), true, [])
+    { SourceLabel = ExternalSourceLabel(link) };
+
+    private static string ExternalSourceLabel(PlaylistLinkRecord link) => link.SourceProviderId == "lastfm" ? "Last.fm" : "ListenBrainz";
 
     private static string ExternalName(PlaylistLinkRecord link) => link.SourceProviderId == "listenbrainz"
         ? link.SourcePlaylistId == Providers.ListenBrainz.ListenBrainzPlaylistCapabilityAdapter.Recommended ? "Recommended for you"
             : link.SourcePlaylistId == Providers.ListenBrainz.ListenBrainzPlaylistCapabilityAdapter.FreshReleases ? "Fresh releases"
-            : "Created for you · " + link.SourcePlaylistId[11..].Replace('-', ' ')
+            : CultureInfo.InvariantCulture.TextInfo.ToTitleCase(link.SourcePlaylistId[11..].Replace('-', ' '))
         : link.SourcePlaylistId switch
         {
             "loved" => "Loved on Last.fm",
             "similar" => "Similar to your top tracks",
-            _ => "Your top tracks · " + link.SourcePlaylistId.Split(':')[1]
+            _ => "Your top tracks — " + Providers.LastFm.LastFmPlaylistCapabilityAdapter.PeriodLabel(link.SourcePlaylistId.Split(':')[1])
         };
 
     private async Task<bool> SetExternalInAppsAsync(UserRecord user, Guid id, bool enabled, CancellationToken token, string timeZoneId)
