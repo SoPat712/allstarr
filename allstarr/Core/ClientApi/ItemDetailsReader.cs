@@ -180,6 +180,7 @@ public sealed class ItemDetailsReader(
         var libraryProvider = native.Count > 0 ? await http.RequestServices.GetRequiredService<LibraryProviderResolver>().ResolveAsync(http, execution) : null;
         // Each song's match and lyrics reads stand alone, so a batch reads a few songs at once instead of one after another.
         using var gate = new SemaphoreSlim(Math.Clamp(Environment.ProcessorCount / 2, 1, 4));
+        var libraryMemo = new TrackMatchLibraryMemo();
         var built = await Task.WhenAll(requested.Select(async id =>
         {
             await gate.WaitAsync(token);
@@ -212,7 +213,7 @@ public sealed class ItemDetailsReader(
             if (snapshot != null)
             {
                 var matchId = local != null && recordingId.HasValue ? CanonicalRecordingRecord.DefaultPublicId(recordingId.Value) : id;
-                if (await matches.ReadAsync(http, execution, matchId) is { } effectiveMatch)
+                if (await matches.ReadAsync(http, execution, matchId, libraryMemo) is { } effectiveMatch)
                     match = new(effectiveMatch.State, effectiveMatch.Confidence, effectiveMatch.Authority);
             }
             var state = states.FirstOrDefault(item => item.ItemId == id && item.IsFavorite);

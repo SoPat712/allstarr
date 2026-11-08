@@ -103,8 +103,8 @@ public sealed partial class TrackMatchCommandService
     }
 
     public Task<TrackMatchReviewData> GetClientReviewDataAsync(TrackMatchActor actor, Guid snapshotId,
-        CancellationToken cancellationToken) =>
-        GetReviewDataCoreAsync(actor, null, null, snapshotId, 5000, cancellationToken, true);
+        CancellationToken cancellationToken, TrackMatchLibraryMemo? libraryMemo = null) =>
+        GetReviewDataCoreAsync(actor, null, null, snapshotId, 5000, cancellationToken, true, libraryMemo);
 
     public Task<TrackMatchReviewData> GetReviewDataAsync(
         TrackMatchActor actor,
@@ -117,7 +117,7 @@ public sealed partial class TrackMatchCommandService
 
     private async Task<TrackMatchReviewData> GetReviewDataCoreAsync(
         TrackMatchActor actor, string? backendLibraryId, string? search, Guid? externalSnapshotId,
-        int scanLimit, CancellationToken cancellationToken, bool includeSourceHistory)
+        int scanLimit, CancellationToken cancellationToken, bool includeSourceHistory, TrackMatchLibraryMemo? libraryMemo = null)
     {
         var timings = new List<(string Step, long At)> { ("start", Stopwatch.GetTimestamp()) };
         await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
@@ -208,13 +208,21 @@ public sealed partial class TrackMatchCommandService
             .Distinct()
             .ToArray();
         var backendInstances = snapshots.Select(item => item.BackendInstanceId).Distinct().ToArray();
-        var libraryQuery = (await AccessibleTracksAsync(db, actor, cancellationToken))
-            .Where(item => EF.Parameter(backendInstances).Contains(item.BackendInstanceId));
-        if (!string.IsNullOrWhiteSpace(backendLibraryId))
-            libraryQuery = libraryQuery.Where(item => item.BackendLibraryId == backendLibraryId.Trim());
-        var library = await libraryQuery.ToListAsync(cancellationToken);
-        var indexes = library.GroupBy(item => item.BackendInstanceId).ToDictionary(group => group.Key,
-            group => new TrackMatchCandidateIndex(group.Select(LocalCopyPreference.ToCandidate)));
+        async Task<TrackMatchLibrarySnapshot> LoadLibraryAsync()
+        {
+            var libraryQuery = (await AccessibleTracksAsync(db, actor, cancellationToken))
+                .Where(item => EF.Parameter(backendInstances).Contains(item.BackendInstanceId));
+            if (!string.IsNullOrWhiteSpace(backendLibraryId))
+                libraryQuery = libraryQuery.Where(item => item.BackendLibraryId == backendLibraryId.Trim());
+            var tracks = await libraryQuery.ToListAsync(cancellationToken);
+            return new(tracks, tracks.GroupBy(item => item.BackendInstanceId).ToDictionary(group => group.Key,
+                group => new TrackMatchCandidateIndex(group.Select(LocalCopyPreference.ToCandidate))));
+        }
+        var loadedLibrary = libraryMemo == null ? await LoadLibraryAsync() : await libraryMemo.GetAsync(
+            $"{actor.UserId:N}|{actor.IsAdministrator}|{string.Join(',', backendInstances.Order(StringComparer.Ordinal))}|{backendLibraryId?.Trim()}",
+            LoadLibraryAsync);
+        var library = loadedLibrary.Tracks.ToList();
+        var indexes = loadedLibrary.Indexes;
         foreach (var snapshot in snapshots)
         {
             if (indexes.TryGetValue(snapshot.BackendInstanceId, out var index) &&

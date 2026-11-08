@@ -23,8 +23,9 @@ public sealed class ItemMatchReader(
     ITrackIdentityService identities,
     IEffectiveProviderPolicyResolver policies, LibraryProviderResolver libraryProvider)
 {
-    public async Task<ClientItemMatch?> ReadAsync(HttpContext http, ProtocolExecutionContext execution, string itemId) =>
-        (await LoadAsync(http, execution, itemId))?.Value;
+    public async Task<ClientItemMatch?> ReadAsync(HttpContext http, ProtocolExecutionContext execution, string itemId,
+        TrackMatchLibraryMemo? libraryMemo = null) =>
+        (await LoadAsync(http, execution, itemId, libraryMemo))?.Value;
 
     public async Task<ClientItemMatch?> SetAsync(HttpContext http, ProtocolExecutionContext execution, string itemId, SetClientMatchRequest request)
     {
@@ -66,7 +67,8 @@ public sealed class ItemMatchReader(
         return await ReadAsync(http, execution, itemId);
     }
 
-    private async Task<Match?> LoadAsync(HttpContext http, ProtocolExecutionContext execution, string itemId)
+    private async Task<Match?> LoadAsync(HttpContext http, ProtocolExecutionContext execution, string itemId,
+        TrackMatchLibraryMemo? libraryMemo = null)
     {
         var actor = Actor(execution);
         var token = execution.CancellationToken;
@@ -106,7 +108,7 @@ public sealed class ItemMatchReader(
         }
         if (snapshot == null) return null;
         var revision = await TrackMatchRevision.ReadAsync(db, snapshot, actor.UserId, token);
-        var review = await commands.GetClientReviewDataAsync(actor, snapshot.Id, token);
+        var review = await commands.GetClientReviewDataAsync(actor, snapshot.Id, token, libraryMemo);
         snapshot = review.Snapshots.OrderByDescending(item => item.RetrievedAt).ThenByDescending(item => item.SnapshotVersion)
             .ThenByDescending(item => item.Id).FirstOrDefault();
         if (snapshot == null) return null;
