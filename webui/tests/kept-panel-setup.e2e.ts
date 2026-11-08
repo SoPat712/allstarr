@@ -25,7 +25,7 @@ async function fixture(page: Page, admin = true, membership: "found" | "empty" |
     }
     window.EventSource = Updates as unknown as typeof EventSource;
   });
-  const calls = { membership: 0, details: 0, previews: 0, downloads: 0, roots: [] as any[], mounted: false };
+  const calls = { membership: 0, details: 0, previews: 0, downloads: 0, roots: [] as any[], mounted: false, linked: false };
   await page.route("**/api/admin/**", async route => {
     const url = new URL(route.request().url()), path = url.pathname;
     const reply = (body: unknown, status = 200) => route.fulfill({ json: body, status });
@@ -38,6 +38,7 @@ async function fixture(page: Page, admin = true, membership: "found" | "empty" |
     if (path.endsWith("/library-promotions/preview")) { calls.previews++; return reply({ reason: "library-folder-not-set", error: "Not set up" }, 503); }
     if (path.endsWith("/library-promotions/roots")) { if (route.request().method() === "PUT") calls.roots = route.request().postDataJSON(); return reply(calls.roots); }
     if (path.endsWith("/library-promotions/setup")) return reply({ ready: calls.roots.length > 0, allowedBaseConfigured: false, reason: calls.roots.length ? null : "library-folder-not-set", rootId: calls.roots[0]?.id ?? null });
+    if (path.endsWith("/library-promotions/folders") && calls.linked) return reply({ available: true, reason: null, folders: [{ name: "Music", backendPath: "/media/music", path: "/media/.music", mapped: true, linked: true, reachable: true, writable: true, status: "writable", rootId: calls.roots[0]?.id ?? null, freeBytes: 33 * 1024 ** 3 }] });
     if (path.endsWith("/library-promotions/folders")) return reply({ available: true, reason: null, folders: [{ name: "Music", backendPath: "/media/music", path: calls.roots[0]?.path ?? "/media/music", mapped: (calls.roots[0]?.path ?? "/media/music") !== "/media/music", reachable: calls.mounted || !!calls.roots.length, writable: calls.mounted || !!calls.roots.length, status: calls.mounted || calls.roots.length ? "writable" : "unreachable", rootId: calls.roots[0]?.id ?? null, freeBytes: calls.mounted || calls.roots.length ? 33 * 1024 ** 3 : null }] });
     if (path.includes("/library-promotions/profiles/")) {
       if (path.endsWith("/preview")) return reply({ script: profile.namingScript, scriptOnly: false, tokens: [], examples: [], errors: [] });
@@ -123,6 +124,15 @@ test("An administrator maps and approves a discovered music folder without a req
   await expect(page.getByRole("button", { name: "Change /media/music", exact: true })).toBeVisible();
   expect(calls.roots).toHaveLength(1); expect(calls.roots[0]).toMatchObject({ path: "/music", backendPath: "/media/music", name: "Music" });
   await expect(page.getByRole("heading", { name: "No library folder yet", exact: true })).toHaveCount(0);
+});
+
+test("A linked music folder shows where it leads and is used there", async ({ page }) => {
+  const calls = await fixture(page); calls.linked = true; await page.goto("/#/settings/adding-to-library");
+  const row = page.getByRole("list", { name: "Jellyfin music folders", exact: true }).getByRole("listitem");
+  await expect(row).toContainText("Ready"); await expect(row).toContainText("Link to /media/.music");
+  await page.getByRole("button", { name: "Use /media/music", exact: true }).click();
+  await expect(row).toContainText("In use");
+  expect(calls.roots).toHaveLength(1); expect(calls.roots[0]).toMatchObject({ path: "/media/.music", backendPath: "/media/music", name: "Music" });
 });
 
 test("A folder mounted at Jellyfin's path is used in one click", async ({ page }) => {

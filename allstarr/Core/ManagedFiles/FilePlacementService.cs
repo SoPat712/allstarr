@@ -87,12 +87,16 @@ public sealed partial class FilePlacementService(IManagedFileOwnershipStore owne
             await ownership.IsPathReservedAsync(requestedTarget, cancellationToken)))
             throw new IOException("The promotion destination already exists; no existing file was overwritten.");
         var target = exactDestination ? requestedTarget : await ResolveCollisionAsync(requestedTarget, fingerprint, cancellationToken, numberedCollisions ? root : null);
+        var created = LibraryFileOwner.Missing(root, Path.GetDirectoryName(target)!);
         Directory.CreateDirectory(Path.GetDirectoryName(target)!);
         RejectSymlinksUnder(root, Path.GetDirectoryName(target)!);
+        LibraryFileOwner.MatchParent(created);
 
         var stagingDirectory = ContainedPath(root, ".allstarr-staging");
+        created = LibraryFileOwner.Missing(root, stagingDirectory);
         Directory.CreateDirectory(stagingDirectory);
         RejectSymlinksUnder(root, stagingDirectory);
+        LibraryFileOwner.MatchParent(created);
         var staging = Path.Combine(stagingDirectory, $"{Guid.NewGuid():N}.partial");
         pending = new PlacementJournal(
             1, request.Root.Id, request.Root.OwnerUserId, request.ScopeKey, referenceKey, root, target, staging,
@@ -113,6 +117,7 @@ public sealed partial class FilePlacementService(IManagedFileOwnershipStore owne
             RejectSymlinksUnder(root, Path.GetDirectoryName(target)!);
             files.MoveNoReplace(staging, target);
             finalized = true;
+            LibraryFileOwner.MatchParent(target);
             var identity = files.TryGetFileIdentity(target, out var currentIdentity) ? currentIdentity : null;
             var record = new ManagedFileRecord(Guid.NewGuid(), request.Root.Id, target, fingerprint, length, method,
                 request.Root.OwnerUserId, request.SourceJobId,

@@ -8,7 +8,7 @@ namespace allstarr.Core.Enrichment;
 public sealed record PromotionLibraryFolderSource(string Name, string BackendPath);
 public sealed record PromotionLibraryFolderDiscovery(bool Available, string? Reason, PromotionLibraryFolderSource[] Folders);
 public sealed record PromotionLibraryFolder(string Name, string BackendPath, string Path, bool Mapped,
-    bool Reachable, bool Writable, string Status, Guid? RootId, long? FreeBytes = null);
+    bool Reachable, bool Writable, string Status, Guid? RootId, long? FreeBytes = null, bool Linked = false);
 public sealed record PromotionLibraryFolderList(bool Available, string? Reason, PromotionLibraryFolder[] Folders);
 
 public sealed class PromotionLibraryFolders(JellyfinProxyService jellyfin, PromotionRoots roots)
@@ -66,7 +66,8 @@ public sealed class PromotionLibraryFolders(JellyfinProxyService jellyfin, Promo
         var folders = discovery.Folders.Select(source =>
         {
             var mapped = approved.FirstOrDefault(root => WithoutTrailingSeparator(root.BackendPath ?? root.Path) == source.BackendPath);
-            var path = mapped?.Path ?? source.BackendPath;
+            var followed = System.IO.Path.IsPathFullyQualified(source.BackendPath) ? PromotionRoots.FollowLinks(source.BackendPath) : source.BackendPath;
+            var path = mapped?.Path ?? followed;
             var reachable = false;
             var writable = false;
             var status = "unreachable";
@@ -93,7 +94,8 @@ public sealed class PromotionLibraryFolders(JellyfinProxyService jellyfin, Promo
                 }
             }
             return new PromotionLibraryFolder(source.Name, source.BackendPath, path,
-                path != source.BackendPath, reachable, writable, status, mapped?.Id, free);
+                path != source.BackendPath, reachable, writable, status, mapped?.Id, free,
+                followed != source.BackendPath && path == followed);
         }).ToArray();
         return new(discovery.Available, discovery.Reason ?? (folders.Any(folder => folder.Writable) ? null : "no-reachable-music-folder"), folders);
     }

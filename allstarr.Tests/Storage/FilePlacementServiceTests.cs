@@ -63,6 +63,35 @@ public sealed class FilePlacementServiceTests : IDisposable
         Assert.True(result.File.IsManaged);
     }
 
+    [Fact]
+    public async Task PlaceAsync_AddedFoldersAndFilesTakeTheOwnerOfTheFolderTheyLandIn()
+    {
+        var source = CreateSource("source/owned.flac", "audio-payload");
+        var targetRoot = Path.Combine(testRoot, "household");
+        var existing = Path.Combine(targetRoot, "Existing");
+        Directory.CreateDirectory(existing);
+        Assert.Equal([Path.Combine(targetRoot, "Artist"), Path.Combine(targetRoot, "Artist", "Album")],
+            LibraryFileOwner.Missing(targetRoot, Path.Combine(targetRoot, "Artist", "Album")));
+        var privileged = OperatingSystem.IsLinux() && Environment.IsPrivilegedProcess;
+        if (privileged) Assert.Equal(0, LibraryFileOwner.LChown(targetRoot, 1005, 1005));
+
+        var result = await new FilePlacementService(new MemoryOwnershipStore(), new RecordingOperations(hardLinkResult: false, reflinkResult: false))
+            .PlaceAsync(Request(source, targetRoot, sourceManaged: false));
+
+        Assert.Equal("audio-payload", await File.ReadAllTextAsync(result.File.CanonicalPath));
+        if (!privileged) return;
+        foreach (var path in new[] { Path.Combine(targetRoot, "Artist"), Path.Combine(targetRoot, "Artist", "Album"),
+                     Path.Combine(targetRoot, ".allstarr-staging"), result.File.CanonicalPath })
+        {
+            Assert.True(LibraryFileOwner.TryOwner(path, out var owner));
+            Assert.Equal((1005u, 1005u), owner);
+        }
+        Assert.True(LibraryFileOwner.TryOwner(existing, out var untouched));
+        Assert.Equal((0u, 0u), untouched);
+        Assert.True(LibraryFileOwner.TryOwner(source, out var original));
+        Assert.Equal((0u, 0u), original);
+    }
+
     [Theory]
     [InlineData("../{artist}/{title}")]
     [InlineData("/{artist}/{title}")]

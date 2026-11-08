@@ -135,6 +135,28 @@ public sealed class PromotionRoots(IDurableRuntimeSettings settings, IDbContextF
         return full;
     }
 
+    // Jellyfin can read a music folder through a link; Allstarr writes to the folder the link leads to.
+    internal static string FollowLinks(string path)
+    {
+        try
+        {
+            for (var pass = 0; pass < 8; pass++)
+            {
+                var current = System.IO.Path.GetPathRoot(path)!;
+                foreach (var part in path[current.Length..].Split(System.IO.Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries))
+                {
+                    current = System.IO.Path.Combine(current, part);
+                    if (new DirectoryInfo(current).ResolveLinkTarget(returnFinalTarget: true) is { } target)
+                        current = System.IO.Path.GetFullPath(target.FullName);
+                }
+                if (current == path) return path;
+                path = current;
+            }
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException) { }
+        return path;
+    }
+
     internal static void RejectLinks(string path)
     {
         var current = System.IO.Path.GetPathRoot(System.IO.Path.GetFullPath(path))!;

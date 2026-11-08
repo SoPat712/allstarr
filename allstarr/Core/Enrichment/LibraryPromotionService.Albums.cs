@@ -695,6 +695,7 @@ public sealed partial class LibraryPromotionService
                     }
                     PromotionRoots.RejectLinks(pair.Target);
                     File.Move(temporary, pair.Target, false);
+                    LibraryFileOwner.MatchParent(pair.Target);
                 }
                 finally { File.Delete(temporary); }
             }

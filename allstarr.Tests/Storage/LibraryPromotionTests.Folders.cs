@@ -79,6 +79,39 @@ public sealed partial class LibraryPromotionTests
     }
 
     [Fact]
+    public async Task PromotionFolders_FollowALinkedMusicFolderToWhereItLeads()
+    {
+        await SetPromotionRoleAsync(true, false);
+        var real = Path.Combine(directory, ".linked-target");
+        var link = Path.Combine(directory, "temp", "linked-music");
+        var broken = Path.Combine(directory, "temp", "broken-music");
+        Directory.CreateDirectory(real);
+        Directory.CreateDirectory(Path.GetDirectoryName(link)!);
+        Directory.CreateSymbolicLink(link, real);
+        Directory.CreateSymbolicLink(broken, Path.Combine(directory, "gone"));
+        var configured = FolderRoots([]);
+        using var client = new HttpClient(new FolderResponseHandler(JsonSerializer.Serialize(new[]
+            { new { Name = "Music", CollectionType = "music", Locations = new[] { link, broken } } })));
+        var discovery = FolderDiscovery(configured, client);
+
+        var folders = (await discovery.ReadAsync(FolderSession(true))).Folders;
+        var linked = Assert.Single(folders, folder => folder.BackendPath == link);
+        Assert.Equal(real, linked.Path);
+        Assert.True(linked.Linked);
+        Assert.True(linked.Mapped);
+        Assert.Equal("writable", linked.Status);
+        Assert.Equal("unreachable", Assert.Single(folders, folder => folder.BackendPath == broken).Status);
+
+        var root = new PromotionRoot(Guid.NewGuid(), linked.Name, linked.Path, linked.BackendPath);
+        Assert.IsType<OkObjectResult>(await FolderController(configured, discovery, true).SaveRoots([root], default));
+        Assert.Equal(root, await configured.RequireAsync(root.Id, default));
+        var approved = Assert.Single((await discovery.ReadAsync(FolderSession(true))).Folders, folder => folder.BackendPath == link);
+        Assert.Equal(root.Id, approved.RootId);
+        Assert.True(approved.Linked);
+        Assert.Empty(Directory.EnumerateFileSystemEntries(real));
+    }
+
+    [Fact]
     public async Task PromotionFolders_RejectUnverifiedSourcesAndArbitraryNewPaths()
     {
         await SetPromotionRoleAsync(true, false);

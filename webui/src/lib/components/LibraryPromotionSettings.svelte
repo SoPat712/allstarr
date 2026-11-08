@@ -196,7 +196,7 @@
           {#each discovery.folders as folder (folder.backendPath)}
             {@const action = folder.rootId ? "Change" : folder.writable ? "Use" : "Map"}
             <li class="folder-row"><div><strong>{folder.name}</strong><code title={folder.backendPath}>{folder.backendPath}</code>
-              {#if folder.mapped}<code title={folder.path}>Inside Allstarr: {folder.path}</code>{/if}
+              {#if folder.mapped}<code title={folder.path}>{folder.linked ? "Link to" : "Inside Allstarr:"} {folder.path}</code>{/if}
               {#if folder.freeBytes != null}<small>{formatDownloadSize(folder.freeBytes)} free</small>{/if}</div>
               <StatePill compact tone={folder.writable && folder.status !== "almost-full" ? "ok" : "warn"} text={folderState(folder)} />
               <Button variant="outline" size="sm" aria-label={`${action} ${folder.backendPath}`} disabled={folderBusy}
