@@ -3790,14 +3790,9 @@ test("Mappings keep phone filters, differences and menus readable", async ({ pag
   await page.goto("#/library/mappings");
   const filters = page.getByRole("radiogroup", { name: "Match filters" });
   await expect(filters).toBeVisible();
-  await expect.poll(() => filters.getByRole("radio").evaluateAll(items => new Set(items.map(item => item.getBoundingClientRect().top)).size)).toBeGreaterThan(1);
-  await expect.poll(() => filters.evaluate(rail => {
-    const bounds = rail.getBoundingClientRect();
-    return [...rail.querySelectorAll("button")].every(button => {
-      const box = button.getBoundingClientRect();
-      return box.left >= bounds.left && box.right <= bounds.right;
-    });
-  })).toBe(true);
+  // On a phone the filters stay one row that scrolls sideways.
+  await expect.poll(() => filters.getByRole("radio").evaluateAll(items => new Set(items.map(item => Math.round(item.getBoundingClientRect().top))).size)).toBe(1);
+  await expect.poll(() => filters.evaluate(rail => rail.scrollWidth > rail.clientWidth && getComputedStyle(rail).overflowX === "auto")).toBe(true);
   await expect.poll(() => filters.getByRole("radio").evaluateAll(items => items.every(item => item.getBoundingClientRect().height >= 44))).toBe(true);
   const row = page.locator(".mapping-row").first();
   await expect(row.locator(".item-row")).toContainText("Not Remix");

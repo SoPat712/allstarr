@@ -88,4 +88,6 @@
 <style>
   .filter-segments { flex-wrap: wrap; overflow: hidden; }
   .filter-segments.wrapped { border-radius: var(--radius-list); }
+  /* On phones the row stays one line and scrolls sideways. */
+  @media (max-width: 599px) { .filter-segments { flex-wrap: nowrap; max-width: 100%; overflow-x: auto; scrollbar-width: none; } }
 </style>
