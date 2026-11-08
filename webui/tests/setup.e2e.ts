@@ -196,7 +196,7 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
     await access.getByRole("button", { name: "Try again", exact: true }).click();
     await expect(access.getByRole("alert")).toHaveCount(0);
     await page.goto("#/settings/storage");
-    await page.getByText("Advanced: activity retention, cache durations, saved-file verification", { exact: true }).click();
+    await page.getByText("Advanced: cache times, file checks and cleanup", { exact: true }).click();
     const files = page.getByRole("article", { name: "Saved-file verification" });
     await expect(files.getByRole("status")).toContainText("need review");
     await files.getByRole("button", { name: "Verify saved files" }).click();

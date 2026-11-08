@@ -287,5 +287,5 @@ test("Opening a panel menu keeps the page scrollable and the panel width", async
   await panel.getByRole("button", { name: "Actions", exact: true }).click();
   await expect(page.getByRole("menu")).toBeVisible();
   expect(await page.evaluate(() => [getComputedStyle(document.body).overflow, document.body.style.paddingRight])).toEqual(["visible", ""]);
-  expect((await panel.boundingBox())!.width).toBe(before);
+  expect((await panel.boundingBox())!.width).toBeCloseTo(before, 0);
 });

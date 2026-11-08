@@ -124,7 +124,7 @@ for (const width of [1280, 390]) for (const theme of ["dark", "light"] as const)
           if (!await fold.isVisible()) continue;
           const shown = await fold.evaluate(element => ({ marker: getComputedStyle(element).listStyleType, label: element.textContent?.trim() ?? "" }));
           expect(shown.marker).toBe("none");
-          expect(shown.label).toMatch(/^(Advanced|Exact quality asked from each service|See the details)/);
+          expect(shown.label).toMatch(/^(Advanced|Exact quality asked from each service|See the details|More filters|Copy details|Choose individual collections|See songs)/);
         }
         if (path === "settings") {
           if (width === 1280) expect((await page.locator(".settings-nav").boundingBox())!.width).toBe(170);

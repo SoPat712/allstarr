@@ -1026,6 +1026,7 @@
 {/if}
 
 <style>
+  :global(.bits-menu-heading) { padding: .5rem .7rem .25rem; color: var(--color-ink-muted); font-size: .6875rem; font-weight: 500; }
   #scrobble-problems:has(:global(.delivery-groups[hidden])) { display: none; }
   .sources-redesign { display: grid; min-width: 0; gap: var(--space-4); }
   .sources-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--space-3); }
