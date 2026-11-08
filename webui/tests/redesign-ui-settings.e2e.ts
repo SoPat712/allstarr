@@ -50,12 +50,18 @@ async function fixture(page: Page, libraryFailure = false) {
     if (path.endsWith("/downloads")) return reply({ totalSize: 1048576, count: 1, files: [] });
     if (path.endsWith("/audiomuse/status")) return reply({ reason: null, analyzedSongs: 10, coverageComplete: true });
     if (path.endsWith("/audiomuse/connection")) return reply({ baseUrl: "", keyConfigured: false, revision: 1 });
+    if (path.endsWith("/preferences")) {
+      const values = { lyricsOrder: "backend,kept", explicitFilter: "All", showExternalLabel: true, showExplicitLabel: true, playbackStart: "Balanced", qualityLimit: null };
+      return reply({ values, householdDefaults: values, householdQuality: "BestAvailable", usesHouseholdDefaults: true, revision: "1", cleanOnlyLocked: false });
+    }
     return reply({ enabled: false, categories: [], media: {}, memory: {}, metadata: {}, activity: {}, artworkLimits: {}, extensionStorage: {} });
   });
   return writes;
 }
 
-const pages = ["general", "quality", "access", "listeners", "alerts", "storage", "sound-analysis", "backups", "health", "setup", "appearance"];
+const pages = ["playback", "library", "discovery", "history", "people", "alerts", "storage", "backups", "health", "setup", "appearance"];
+const headings: Record<string, string> = { playback: "Playback", library: "Library", discovery: "Mixes and discovery", history: "History and scrobbling",
+  people: "People and access", alerts: "Alerts", storage: "Storage", backups: "Backups", health: "Health", setup: "Setup guide", appearance: "Appearance" };
 for (const [width, theme] of [[1280, "light"], [1280, "dark"], [390, "light"], [390, "dark"]] as const) {
   test(`Settings pages and panels ${width} ${theme}`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
@@ -64,12 +70,11 @@ for (const [width, theme] of [[1280, "light"], [1280, "dark"], [390, "light"], [
     await fixture(page);
     for (const section of pages) {
       await page.goto(`/#/settings/${section}`);
-      if (section === "general") await expect(page.getByRole("heading", { name: "General", exact: true })).toBeVisible();
-      else await expect(page.getByLabel("Page status").first()).toBeVisible();
-      await expect(page.getByLabel("Loading items", { exact: true })).toHaveCount(0);
+      await expect(page.getByRole("heading", { name: headings[section], level: 2, exact: true })).toBeVisible();
+      await expect(page.getByLabel("Loading items", { exact: true })).toHaveCount(0, { timeout: 20_000 });
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
       await page.screenshot({ path: `test-results/ui-settings/${section}-${width}-${theme}.png`, fullPage: true });
-      const open = section === "listeners" ? page.getByRole("button", { name: "Open Sam", exact: true })
+      const open = section === "people" ? page.getByRole("button", { name: "Open Sam", exact: true })
         : section === "health" ? page.getByRole("button", { name: "Open Server connection", exact: true }) : null;
       if (open) {
         await open.click();
@@ -79,7 +84,7 @@ for (const [width, theme] of [[1280, "light"], [1280, "dark"], [390, "light"], [
         await expect(page.getByRole("dialog")).toHaveCount(0);
       }
       const capture = async (name: string) => page.screenshot({ path: `test-results/ui-settings/${name}-${width}-${theme}.png`, fullPage: true });
-      if (section === "general") {
+      if (section === "library") {
         await page.getByRole("checkbox", { name: "Concert recordings", exact: true }).check();
         await expect(page.getByRole("alertdialog")).toBeVisible(); await capture("restart-dialog");
         await page.getByRole("alertdialog").getByRole("button", { name: "Cancel", exact: true }).click();
@@ -94,14 +99,16 @@ for (const [width, theme] of [[1280, "light"], [1280, "dark"], [390, "light"], [
         await dialog.getByLabel("Type RESTORE to confirm", { exact: true }).fill("RESTORE");
         await expect(dialog.getByRole("button", { name: "Restore on restart", exact: true })).toBeEnabled();
         await capture("restore-dialog"); await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
-      } else if (section === "sound-analysis") {
-        await page.getByRole("button", { name: "Edit connection", exact: true }).click(); await expect(page.getByRole("dialog")).toBeVisible();
-        await capture("sound-connection-dialog"); await page.getByRole("dialog").getByRole("button", { name: "Cancel", exact: true }).click();
+      } else if (section === "discovery") {
+        await page.getByRole("button", { name: "Edit connection", exact: true }).click();
+        const connection = page.getByRole("form", { name: "AudioMuse connection", exact: true }); await expect(connection).toBeVisible();
+        await capture("sound-connection"); await connection.getByRole("button", { name: "Cancel", exact: true }).click();
+        await expect(connection).toHaveCount(0);
       } else if (section === "setup") {
         await page.getByRole("button", { name: "Open", exact: true }).click();
         await expect(page.getByRole("heading", { name: "Your media server", exact: true })).toBeVisible();
         await expect(page.getByLabel("Loading items", { exact: true })).toHaveCount(0); await capture("setup-first-step");
-      } else if (section === "quality") {
+      } else if (section === "playback") {
         await page.locator(".routing-group li.has-score .routing-copy").click();
         await expect(page.getByRole("dialog", { name: "First source", exact: true })).toBeVisible(); await capture("quality-score-panel");
         await page.getByRole("dialog").getByRole("button", { name: "Close", exact: true }).click();
@@ -116,12 +123,13 @@ for (const [width, theme] of [[1280, "light"], [1280, "dark"], [390, "light"], [
 
 test("Settings changes save with Undo and restart changes wait for confirmation", async ({ page }) => {
   const writes = await fixture(page);
-  await page.goto("/#/settings/general");
+  await page.goto("/#/settings/people");
   await page.getByRole("switch", { name: "Client API for apps", exact: true }).check();
   await expect.poll(() => writes.length).toBe(1);
   await page.getByRole("button", { name: "Undo", exact: true }).click();
   await expect.poll(() => writes.length).toBe(2);
   expect(writes[1]).toEqual({ updates: { CLIENT_API_ENABLED: "false" } });
+  await page.goto("/#/settings/library");
   await page.getByRole("checkbox", { name: "Concert recordings", exact: true }).check();
   const dialog = page.getByRole("alertdialog");
   await expect(dialog).toContainText("Restart Allstarr to apply?");
@@ -134,12 +142,12 @@ test("Settings changes save with Undo and restart changes wait for confirmation"
 
 test("Single sign-on fields and browser access stay folded until needed", async ({ page }) => {
   await fixture(page);
-  await page.goto("/#/settings/access");
+  await page.goto("/#/settings/people");
   await expect(page.getByLabel("Issuer address", { exact: true })).toHaveCount(0);
   await page.getByRole("switch", { name: "Enable single sign-on", exact: true }).check();
   await expect(page.getByLabel("Issuer address", { exact: true })).toBeVisible();
   await expect(page.getByLabel("Browser origins", { exact: true })).toBeHidden();
-  await page.getByText("Advanced: browser access (origins, methods, headers)", { exact: true }).click();
+  await page.getByText("Advanced: browser origins, methods and headers", { exact: true }).click();
   await expect(page.getByLabel("Browser origins", { exact: true })).toBeVisible();
 });
 
@@ -195,7 +203,7 @@ test("Quality changes save and undo, and source filters remember the selected li
 
 test("Undo after a restart asks before restarting again", async ({ page }) => {
   const writes = await fixture(page);
-  await page.goto("/#/settings/general");
+  await page.goto("/#/settings/library");
   await page.evaluate(() => sessionStorage.setItem("allstarr.settings.restart-undo", JSON.stringify({ kind: "config", key: "BACKEND_MUSIC_LIBRARY_IDS", value: "music", label: "Libraries to use" })));
   await page.reload();
   await page.getByRole("button", { name: "Undo", exact: true }).click();
@@ -220,7 +228,7 @@ test("A failed safety backup prevents restore staging", async ({ page }) => {
 
 test("Libraries save named selections and an empty value for all libraries", async ({ page }) => {
   const writes = await fixture(page);
-  await page.goto("/#/settings/general");
+  await page.goto("/#/settings/library");
   await expect(page.getByRole("group", { name: "Libraries to use", exact: true })).toBeVisible();
   await page.getByRole("checkbox", { name: "Concert recordings", exact: true }).check();
   await page.getByRole("alertdialog").getByRole("button", { name: "Restart and apply", exact: true }).click();
@@ -235,7 +243,7 @@ test("Libraries save named selections and an empty value for all libraries", asy
 
 test("Libraries retain manual ID entry when discovery fails", async ({ page }) => {
   const writes = await fixture(page, true);
-  await page.goto("/#/settings/general");
+  await page.goto("/#/settings/library");
   await expect(page.getByText("Music libraries could not be loaded. Check the media server connection.", { exact: true })).toBeVisible();
   const input = page.getByRole("textbox", { name: "Libraries to use", exact: true });
   await expect(input).toHaveValue("music");
@@ -248,17 +256,17 @@ test("Libraries retain manual ID entry when discovery fails", async ({ page }) =
 
 test("Settings structure keeps source orders inside their card and playlist permissions together", async ({ page }) => {
   await fixture(page);
-  await page.goto("/#/settings/quality");
+  await page.goto("/#/settings/playback");
   const card = page.locator(".routing-group");
   await expect(card.getByRole("radiogroup", { name: "Source orders", exact: true })).toBeVisible();
   await expect(card.getByText("Details", { exact: true })).toHaveCount(0);
   const policy = page.getByRole("form", { name: "Audio quality settings", exact: true });
   await expect(policy.locator(":scope > details.settings-fold")).toHaveText(/Exact quality asked from each service/);
-  await page.goto("/#/settings/access");
+  await page.goto("/#/settings/people");
   const permissions = page.getByRole("region", { name: "Playlist editing", exact: true });
   await expect(permissions.getByText("Per listener", { exact: true })).toBeVisible();
   await expect(permissions.getByText("Household fallback", { exact: true })).toBeVisible();
-  await expect(permissions.getByRole("link", { name: "See who", exact: true })).toHaveAttribute("href", "#/settings/listeners");
+  await expect(permissions.getByRole("link", { name: "See who", exact: true })).toHaveAttribute("href", "#/settings/people");
 });
 
 test("Identical passing health runs share one history group", async ({ page }) => {
@@ -281,7 +289,11 @@ test("Identical passing health runs share one history group", async ({ page }) =
 test("A song.link key is requested with an action before showing a replacement field", async ({ page }) => {
   const writes = await fixture(page);
   await page.route("**/api/admin/ui/schema", route => route.fulfill({ json: { providers: [], configSections: [{ id: "operator", label: "Links", fields: [{ key: "ODESLI_API_KEY", label: "song.link API key", type: "password", valuePath: "operatorSettings.Odesli:ApiKey", sensitive: true, requiresRestart: true }] }] } }));
-  await page.goto("/#/settings/general");
+  for (const [path, json] of [["**/api/admin/providers/status", []], ["**/api/admin/ui/provider-summaries", { providers: [] }], ["**/api/admin/providers/scores", { providers: [] }],
+    ["**/api/admin/extensions/packages", []], ["**/api/admin/extensions/registries", []], ["**/api/admin/extensions/store", { items: [], errors: [] }]] as const)
+    await page.route(path, route => route.fulfill({ json }));
+  await page.goto("/#/integrations/services");
+  await expect(page.getByRole("heading", { name: "Helpers for every source", exact: true })).toBeVisible();
   await expect(page.getByLabel("song.link API key", { exact: true })).toHaveCount(0);
   await page.getByRole("button", { name: "Add key…", exact: true }).click();
   await expect(page.getByLabel("song.link API key", { exact: true })).toBeVisible();

@@ -85,15 +85,15 @@ test("Accounts omit unavailable labels while retaining source and owner", async 
   await capture(page, "accounts");
 });
 
-test("General timing folds inside its card without nesting forms", async ({ page }) => {
+test("Advanced settings fold inside their card without nesting forms", async ({ page }) => {
   await settingsFixture(page);
-  await page.goto("/#/settings");
-  const links = page.getByRole("form", { name: "Song links and extensions settings", exact: true });
-  const fold = links.locator(":scope > .settings-fold");
-  await expect(fold.locator("summary")).toHaveText("Advanced: wait between song.link lookups");
+  await page.goto("/#/settings/people");
+  const network = page.getByRole("form", { name: "Network settings", exact: true });
+  const fold = network.locator(":scope > .settings-fold");
+  await expect(fold.locator("summary")).toHaveText("Advanced: browser origins, methods and headers");
   await fold.locator("summary").click();
-  await expect(links.locator("form")).toHaveCount(0);
-  await expect(fold.getByRole("group", { name: "Song link timing settings", exact: true })).toBeVisible();
+  await expect(network.locator("form")).toHaveCount(0);
+  await expect(fold.getByRole("group", { name: "Browser access settings", exact: true })).toBeVisible();
   await capture(page, "settings");
 });
 

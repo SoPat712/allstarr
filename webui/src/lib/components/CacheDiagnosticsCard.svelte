@@ -36,7 +36,7 @@
 
   function bytes(value?: number | null) {
     if (!value) return "0 B";
-    const units = ["B", "KiB", "MiB", "GiB", "TiB"];
+    const units = ["B", "KB", "MB", "GB", "TB"];
     const power = Math.min(Math.floor(Math.log(value) / Math.log(1024)), units.length - 1);
     return `${(value / 1024 ** power).toFixed(power ? 1 : 0)} ${units[power]}`;
   }

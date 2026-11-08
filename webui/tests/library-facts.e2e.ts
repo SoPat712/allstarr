@@ -80,22 +80,22 @@ for (const width of [1280, 390]) {
     await page.route("**/api/admin/storage", route => route.fulfill({ json: storage }));
     await page.route("**/api/admin/downloads?*", route => route.fulfill({ json: { files: [], count: 0, totalSize: mib } }));
     await page.goto("/#/settings/storage");
-    await expect(page.getByText("3 MiB database", { exact: true })).toBeVisible();
-    await expect(page.getByLabel("Status breakdown").getByText("Database (MiB)", { exact: true })).toBeVisible();
+    await expect(page.getByText("3 MB database", { exact: true })).toBeVisible();
+    await expect(page.getByLabel("Status breakdown").getByText("Database (MB)", { exact: true })).toBeVisible();
     await capture(page, "storage", width);
     if (width === 390) await expectContainedMobileGeometry(page);
     await page.route("**/api/admin/storage", route => route.fulfill({ json: { ...storage, databaseBytes: null } }));
     await page.reload();
-    await expect(page.getByText("1 MiB kept", { exact: true })).toBeVisible();
-    await expect(page.getByLabel("Status breakdown").getByText("Database (MiB)", { exact: true })).toHaveCount(0);
+    await expect(page.getByText("1 MB kept", { exact: true })).toBeVisible();
+    await expect(page.getByLabel("Status breakdown").getByText("Database (MB)", { exact: true })).toHaveCount(0);
   });
 
   test(`Backups show measured database and archive sizes at ${width}`, async ({ page }) => {
     await settingsFixture(page);
     await page.route("**/api/admin/storage", route => route.fulfill({ json: storage }));
     await page.goto("/#/settings/backups");
-    await expect(page.getByText("3 MiB database", { exact: true })).toBeVisible();
-    await expect(page.getByRole("table").locator(width === 390 ? ".phone-backup-size" : ".number")).toHaveText("2 MiB");
+    await expect(page.getByText("3 MB database", { exact: true })).toBeVisible();
+    await expect(page.getByRole("table").locator(width === 390 ? ".phone-backup-size" : ".number")).toHaveText("2 MB");
     await expect(page.getByRole("table").locator(width === 390 ? ".phone-backup-size" : ".number")).toBeVisible();
     await capture(page, "backups", width);
     if (width === 390) await expectContainedMobileGeometry(page);
@@ -113,15 +113,15 @@ for (const width of [1280, 390]) {
     const table = page.getByRole("table", { name: "Accounts", exact: true });
     await expect(table.locator('[data-label="Account"]').first()).toHaveText("Evening account, Family account");
     await expect(table).not.toContainText("Not provided");
-    await expect(table.locator("tbody tr").last()).not.toContainText("Evening account");
+    await expect(table.locator("tbody tr").filter({ hasText: "Qobuz" })).not.toContainText("Evening account");
     await expect(page.getByRole("form", { name: "Link listener profiles", exact: true })).toBeVisible();
     await capture(page, "accounts", width);
     if (width === 390) await expectContainedMobileGeometry(page);
   });
 
-  test(`General restart descriptions have readable separator spacing at ${width}`, async ({ page }) => {
+  test(`Library restart descriptions have readable separator spacing at ${width}`, async ({ page }) => {
     await settingsFixture(page);
-    await page.goto("/#/settings/general");
+    await page.goto("/#/settings/library");
     const notes = page.locator(".restart-note");
     await expect(notes.first()).toBeVisible();
     for (const note of await notes.all()) {

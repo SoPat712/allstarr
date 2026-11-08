@@ -35,8 +35,8 @@ async function mockSoundSettings(page: Page, administrator = true, initialStatus
 }
 
 async function openSoundSettings(page: Page) {
-  await page.goto("/#/settings/sound-analysis");
-  await expect(page.getByRole("heading", { name: "Sound analysis", exact: true })).toBeVisible();
+  await page.goto("/#/settings/discovery");
+  await expect(page.getByRole("heading", { name: "Mixes and discovery", exact: true })).toBeVisible();
 }
 
 test("Administrator connects and a blank key keeps the saved key", async ({ page }) => {
@@ -44,16 +44,16 @@ test("Administrator connects and a blank key keeps the saved key", async ({ page
   await openSoundSettings(page);
   await expect(page.getByText("Not set up", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Edit connection", exact: true }).click();
-  const dialog = page.getByRole("dialog", { name: "AudioMuse connection", exact: true });
+  const dialog = page.getByRole("form", { name: "AudioMuse connection", exact: true });
   await expect(dialog.getByLabel("API key", { exact: true })).toHaveAttribute("type", "password");
   await dialog.getByLabel("AudioMuse address").fill("http://sounds.invalid:8600");
   await dialog.getByLabel("API key", { exact: true }).fill("test-secret");
   await dialog.getByRole("button", { name: "Save", exact: true }).click();
   await expect(dialog).toBeHidden();
-  await expect(page.getByText("Key saved", { exact: true })).toBeVisible();
   await expect(page.getByText("Connected · 1,240 songs analyzed", { exact: true })).toBeVisible();
   await expect(page.locator("body")).not.toContainText("test-secret");
   await page.getByRole("button", { name: "Edit connection", exact: true }).click();
+  await expect(dialog.getByText("Key saved. Leave blank to keep it.", { exact: true })).toBeVisible();
   await expect(dialog.getByLabel("API key", { exact: true })).toHaveValue("");
   await dialog.getByLabel("AudioMuse address").fill("http://sounds.invalid:8601");
   await dialog.getByRole("button", { name: "Save", exact: true }).click();
@@ -82,7 +82,7 @@ test("Unavailable connection and incomplete coverage preserve an open draft on r
   await expect(page.getByText("Connected · At least 120 songs analyzed", { exact: true })).toBeVisible();
   const reads = state.reads;
   await page.getByRole("button", { name: "Edit connection", exact: true }).click();
-  const dialog = page.getByRole("dialog", { name: "AudioMuse connection", exact: true });
+  const dialog = page.getByRole("form", { name: "AudioMuse connection", exact: true });
   await dialog.getByLabel("AudioMuse address").fill("http://draft.invalid");
   state.connection.baseUrl = "http://changed.invalid:8600";
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));
@@ -104,7 +104,7 @@ test("Connection saves can be retried after a temporary error", async ({ page })
   });
   await openSoundSettings(page);
   await page.getByRole("button", { name: "Edit connection", exact: true }).click();
-  const dialog = page.getByRole("dialog", { name: "AudioMuse connection", exact: true });
+  const dialog = page.getByRole("form", { name: "AudioMuse connection", exact: true });
   await dialog.getByLabel("AudioMuse address").fill("http://sounds.invalid:8601");
   await dialog.getByRole("button", { name: "Save", exact: true }).click();
   await expect(dialog.getByRole("alert")).toContainText("The connection could not be saved.");

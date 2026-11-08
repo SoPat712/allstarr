@@ -116,7 +116,7 @@
 {#if kind === "backend"}
   <section class="settings-card" aria-label="Playlist editing">
     <header><div><h3>Playlist editing</h3><small>Keeps media-server playlists in the same order as their source.</small></div></header>
-    <div class="settings-row"><div><strong>Per listener</strong><small>Each listener allows it in Sources › Accounts{#if playlistListeners} · {playlistListeners.filter(listener => listener.playlistEditingAllowed).length} of {playlistListeners.length} have{/if}.</small></div><Button variant="text" href="#/settings/listeners">See who</Button></div>
+    <div class="settings-row"><div><strong>Per listener</strong><small>Each listener allows it in Sources › Accounts{#if playlistListeners} · {playlistListeners.filter(listener => listener.playlistEditingAllowed).length} of {playlistListeners.length} have{/if}.</small></div><Button variant="text" href="#/settings/people">See who</Button></div>
     <div class="settings-row"><div><strong>Household fallback</strong><small>An administrator sign-in used when a listener hasn’t allowed it.</small></div><Button variant="outline" disabled={!backend?.supported || !backend.connectionSaved} onclick={() => { editing = true; enabled = true; restored = false; }}>{connected ? "Change…" : "Set up…"}</Button></div>
   </section>
 {/if}

@@ -232,7 +232,9 @@
   :global(body:has([data-side-panel][data-expanded="true"]) .workspace > *) { visibility: hidden; pointer-events: none; }
   :global(body:has([data-side-panel][data-mode="docked"]) .workspace > .workspace-header) { margin-right: var(--side-panel-offset, 0px); }
   :global(body:has([data-side-panel][data-mode="docked"]) .workspace > .segmented-nav:has(.route-tabs)) { width: calc(100% - var(--side-panel-offset, 0px)); }
-  @media (min-width: 900px) { :global(.side-panel) { width: var(--panel-width); } .panel-grip { display: none; } }
+  @media (min-width: 900px) { :global(.side-panel) { width: var(--panel-width); transition: width 340ms var(--ease-emphasized); } .panel-grip { display: none; } }
+  /* Expanding grows the panel over the page; the page hides once the panel covers it. */
+  :global(body:has([data-side-panel][data-expanded="true"]) .workspace > *) { transition: visibility 0s linear 340ms; }
   @media (min-width: 600px) { :global(.side-panel[data-expanded="true"]) { inset: 0 0 0 auto; width: var(--panel-width); } }
   @keyframes panel-in { from { opacity: 0; transform: translateX(100%); } to { opacity: 1; transform: translateX(0); } }
   @keyframes panel-out { from { opacity: 1; transform: translateX(0); } to { opacity: 0; transform: translateX(100%); } }
@@ -246,5 +248,5 @@
     @keyframes panel-out { from { opacity: 1; transform: translateY(0); } to { opacity: 0; transform: translateY(100%); } }
   }
   @media (min-width: 600px) and (max-width: 759px) { :global(.side-panel[data-expanded="true"]) { height: calc(100dvh - var(--mobile-nav-height)); } }
-  @media (prefers-reduced-motion: reduce) { :global(.side-panel[data-state]) { animation: none; } }
+  @media (prefers-reduced-motion: reduce) { :global(.side-panel[data-state]) { animation: none; } :global(.side-panel) { transition: none !important; } }
 </style>

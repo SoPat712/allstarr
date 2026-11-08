@@ -7,6 +7,8 @@
 .settings-surface .settings-card .settings-row { padding: var(--space-3) var(--space-4); grid-template-columns: minmax(0, 1fr) minmax(10rem, 17rem); gap: var(--space-3); }
 .settings-surface .settings-toggle { display: flex; min-height: 44px; justify-content: end; align-items: center; }
 .settings-surface .settings-row output { text-align: right; }
+/* An Advanced fold on its own is a card, with the same edge and corners; inside a card it is the card's last row. */
+.settings-surface .settings-fold:not(.settings-card .settings-fold, .settings-fold .settings-fold) { border: 1px solid var(--color-edge); border-radius: var(--radius-list); }
 .settings-card .settings-fold, .settings-card .settings-fields > .settings-fold { border: 0; border-top: 1px solid var(--color-edge); border-radius: 0; }
 .settings-fold .settings-fold { border-inline: 0; border-bottom: 0; border-radius: 0; }
 .settings-fold :is(.settings-card, .settings-fields) { border-inline: 0; border-bottom: 0; border-radius: 0; }
@@ -46,3 +48,7 @@
 .settings-surface .cache-actions > [data-slot="button"]:not(:last-child), .settings-surface .cache-category-list [data-slot="button"] { border-color: transparent; background: transparent; color: var(--danger); box-shadow: none; }
 
 .settings-surface .settings-card:has(> .empty-state:only-child) { border: 0; background: transparent; }
+/* Says whether a card's settings apply to everyone or only to you. */
+.settings-card-title { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.scope-tag { display: inline-flex; padding: 4px 7px; border-radius: 6px; background: var(--color-panel-raised); color: var(--color-ink-muted); font-size: .66rem; font-weight: 500; letter-spacing: .04em; line-height: 1; text-transform: uppercase; }
+.scope-tag[data-scope="you"] { background: var(--color-signal-muted); color: var(--color-signal-text); }

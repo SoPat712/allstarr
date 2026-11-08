@@ -6,7 +6,7 @@
     text,
     icon,
     children,
-    filled = false,
+    filled = true,
     compact = false,
   }: {
     tone?: "ok" | "warn" | "stop" | "neutral" | "info";

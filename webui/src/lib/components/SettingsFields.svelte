@@ -2,7 +2,7 @@
   import { Lock } from "@lucide/svelte";
   import type { Snippet } from "svelte";
   import { settings, type ConfigField, type ConfigSection, type PlaybackStart } from "$lib/api";
-  import { settingRestartNote, settingValue, splitLibraryIds, joinLibraryIds } from "$lib/settings-fields";
+  import { settingHelp, settingNames, settingRestartNote, settingValue, splitLibraryIds, joinLibraryIds } from "$lib/settings-fields";
   import { fieldValue, playbackStartOptions } from "$lib/settings";
   import { rememberRestartUndo } from "$lib/settings-restart";
   import { toast } from "$lib/toasts";
@@ -41,38 +41,20 @@
       if (next) change(field, next);
     }, 350);
   }
-  const names: Record<string, string> = {
-    STORAGE_MODE: "Cache played songs", CACHE_DURATION_HOURS: "Keep cached songs for (hours)",
-    BACKEND_MUSIC_LIBRARY_IDS: "Libraries to use", ODESLI_ENABLED: "Find the same song on other services",
-    ODESLI_API_KEY: "song.link API key", ODESLI_RATE_LIMIT_MS: "Wait between song.link lookups (milliseconds)",
-    EXTENSIONS_ALLOW_REMOTE_INSTALL: "Install extensions from outside your home network",
-    PLAYBACK_LASTFM_SIMILAR_ENABLED: "Similar songs from Last.fm when a service has none",
-    PLAYBACK_LISTENBRAINZ_SIMILAR_ENABLED: "Similar songs from ListenBrainz as a last resort",
-    SCROBBLING_LOCAL_TRACKS_ENABLED: "Scrobble songs from your own library",
-    ADMIN_BIND_ANY_IP: "Admin page on all network interfaces", ADMIN_TRUSTED_SUBNETS: "Trusted admin networks",
-    DEBUG_LOG_ALL_REQUESTS: "Log request usage", LIBRARY_DOWNLOAD_PATH: "Downloads", LIBRARY_KEPT_PATH: "Kept songs",
+  const names = settingNames;
+  const sectionDescriptions: Record<string, string> = {
+    "song-links": "Find links to the same song across your enabled services.",
+    "cloudflare": "Only for sources that sit behind Cloudflare checks.",
+    "playback-defaults": "Listeners can choose their own, within these limits.",
+    "libraries": "Each listener still sees only the libraries your media server allows them.",
+    "more": "Settings that don't have their own page yet.",
   };
   const label = (field: ConfigField) => names[field.key] ?? field.label;
   const locked = (field: ConfigField) => field.readOnly || field.ownership === "deployment";
   const toggle = (field: ConfigField) => ["toggle", "boolean"].includes(field.type);
   const original = (field: ConfigField) => settingValue(config, field);
   const value = (field: ConfigField) => drafts[field.key] ?? original(field);
-  const help: Record<string, string> = {
-    CLIENT_API_ENABLED: "Let signed-in music apps use song details, lyrics and mixes.",
-    LISTENERS_CAN_CONNECT_OWN_ACCOUNTS: "Let listeners connect personal accounts. Existing connections stay usable.",
-    DOWNLOAD_MODE: "Save just the song, or its whole album.",
-    PLAYBACK_START_PREFERENCE: "Balanced favors quality when starts stay under 3 seconds.",
-    PLAYBACK_PREPARE_UPCOMING_SONGS: "Prepare the next Apple song after 30 seconds of playback. Uses cache space.",
-    PLAYBACK_LASTFM_SIMILAR_ENABLED: "Use a connected Last.fm account when a service has no suggestions.",
-    PLAYBACK_LISTENBRAINZ_SIMILAR_ENABLED: "Use ListenBrainz when the service and Last.fm have no suggestions.",
-    SCROBBLING_LOCAL_TRACKS_ENABLED: "Leave off when your server's own scrobbler (like Jellyfin's Last.fm plugin) sends them. Streamed songs always scrobble.",
-    BACKEND_MUSIC_LIBRARY_IDS: "Choose libraries, or use every library your server allows.",
-    ODESLI_ENABLED: "Uses Deezer, Apple Music and your enabled sources",
-    ODESLI_API_KEY: "Optional. With a key, the official API is tried first. Leave unchanged to keep it.",
-    STORAGE_MODE: "Songs saved after streaming start faster next time. Hearts, Keep and retained playlists protect their copies in either mode.",
-    CACHE_DURATION_HOURS: "After the last play. The size limit can remove cached songs sooner.",
-    MATCHING_LOCAL_PREFERENCE_PERCENT: "Only for matches below the automatic threshold. Never raises confidence.",
-  };
+  const help = settingHelp;
   const displayValue = (field: ConfigField) => edits[field.key]?.value ?? value(field);
   const externallyChanged = $derived(section.fields.some(field => edits[field.key] && edits[field.key].base !== original(field)));
   function edit(field: ConfigField, next: string) {
@@ -161,12 +143,12 @@
 </script>
 
 <svelte:element this={embedded ? "div" : "form"} role={embedded ? "group" : undefined} class="settings-card settings-disclosure" aria-label={`${section.label} settings`} onsubmit={(event: SubmitEvent) => event.preventDefault()}>
-  <header><div><h3>{section.label}</h3>{#if section.id === "links"}<p>Find links to the same song across your enabled services.</p>{/if}</div></header>
+  <header><div>{#if embedded}<h3>{section.label}</h3>{:else}<div class="settings-card-title"><h3>{section.label}</h3><span class="scope-tag" data-scope="everyone">Everyone</span></div>{/if}{#if sectionDescriptions[section.id]}<p>{sectionDescriptions[section.id]}</p>{/if}</div></header>
   {#if externallyChanged}<div class="degraded-banner" role="status"><p><strong>Someone else changed these settings.</strong> Your unsaved edits are kept.</p><Button variant="outline" type="button" onclick={() => { edits = {}; drafts = {}; error = ""; }}>Reload server values</Button></div>{/if}
   <div class="settings-fields">
     {#each section.fields as field (field.key)}
       {@const hint = help[field.key] || (field.helpText && !field.helpText.startsWith("Saved in the data folder") ? field.helpText : "")}
-      <div class="setting-field settings-row" class:wide-control={field.type === "audio-quality" || field.key === "PLAYBACK_START_PREFERENCE"} class:quality-row={field.type === "audio-quality"}>
+      <div class="setting-field settings-row" data-setting={field.key} class:wide-control={field.type === "audio-quality" || field.key === "PLAYBACK_START_PREFERENCE"} class:quality-row={field.type === "audio-quality"}>
         <div class:sr-only={field.type === "audio-quality"}>
           <label for={`${id}-${field.key}`}><strong>{label(field)}</strong></label>
           {#if !locked(field) && (hint || field.requiresRestart)}<small>{hint}{#if field.requiresRestart}<span class="restart-note">{settingRestartNote(hint)}</span>{/if}</small>{/if}

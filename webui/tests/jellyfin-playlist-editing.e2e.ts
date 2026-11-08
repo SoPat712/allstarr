@@ -252,8 +252,9 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     await expect(panel).toContainText("Fixing order on the next sync");
     await expect(row.getByRole("link", { name: "Allow editing" })).toHaveCount(0);
     await expect(row.getByRole("button", { name: "Rebuild", exact: true })).toHaveCount(0);
+    await expect(panel).toContainText("Nothing is missing; only the order is off.");
     await screenshot(page, `playlist-fixing-${width}-${theme}`);
-    await panel.getByRole("button", { name: "Sync now", exact: true }).click();
+    await panel.getByRole("button", { name: "Fix now", exact: true }).click();
     await expect(row.getByText("Fixing order on the next sync", { exact: true })).toHaveCount(0);
     expect(fixture.writes).toEqual([{ method: "POST", path: `/api/admin/playlist-links/${playlist.id}/run`, body: {} }]);
     expect(fixture.listReads()).toBeGreaterThan(1);
@@ -274,4 +275,17 @@ test("Playlist order status accepts spaced outcome codes", async ({ page }) => {
   await page.goto("/#/library/playlists");
   await expect(page.locator(".playlist-row").getByText("Order fixing", { exact: true })).toBeVisible();
   await expect(await openPanel(page)).toContainText("Fixing order on the next sync");
+});
+
+test("Opening a panel menu keeps the page scrollable and the panel width", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await mockJellyfin(page, { granted: true });
+  await page.goto("/#/library/playlists");
+  const panel = await openPanel(page);
+  await expect(panel).toBeVisible();
+  const before = (await panel.boundingBox())!.width;
+  await panel.getByRole("button", { name: "Actions", exact: true }).click();
+  await expect(page.getByRole("menu")).toBeVisible();
+  expect(await page.evaluate(() => [getComputedStyle(document.body).overflow, document.body.style.paddingRight])).toEqual(["visible", ""]);
+  expect((await panel.boundingBox())!.width).toBe(before);
 });

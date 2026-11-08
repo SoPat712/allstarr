@@ -62,7 +62,7 @@
   }
   function size(value?: number | null) {
     return typeof value === "number" && Number.isFinite(value) && value > 0
-      ? `${(value / 1024 / 1024).toLocaleString(undefined, { maximumFractionDigits: 1 })} MiB` : "Size unavailable";
+      ? `${(value / 1024 / 1024).toLocaleString(undefined, { maximumFractionDigits: 1 })} MB` : "Size unavailable";
   }
   function message(cause: unknown, fallback: string) {
     if (cause instanceof ApiError) {
@@ -154,11 +154,11 @@
       if (selectedBackup) {
         const response = await fetch(settings.backupDownloadUrl(selectedBackup.id), { credentials: "same-origin", cache: "no-store" });
         if (!response.ok) throw new Error("This backup could not be downloaded and verified. Nothing was restored.");
-        if (Number(response.headers.get("content-length")) > 1024 ** 3) throw new Error("Choose a backup ZIP smaller than 1 GiB.");
+        if (Number(response.headers.get("content-length")) > 1024 ** 3) throw new Error("Choose a backup ZIP smaller than 1 GB.");
         const blob = await response.blob();
         file = new File([blob], selectedBackup.fileName, { type: "application/zip" });
       }
-      if (!file || file.size > 1024 ** 3) throw new Error("Choose a backup ZIP smaller than 1 GiB.");
+      if (!file || file.size > 1024 ** 3) throw new Error("Choose a backup ZIP smaller than 1 GB.");
       const result = await settings.restore(file);
       toast.success(result.message);
       restoreOpen = false; restoreFile = null; selectedBackup = null;
@@ -203,7 +203,7 @@
         {#if !ready}<p class="settings-impact" role="status">The backup list is unavailable until durable storage is ready.</p>
         {:else if data.backups.length}
           <table class="settings-table"><thead><tr><th>Made</th><th>Size</th><th>State</th><th></th></tr></thead><tbody>
-            {#each data.backups as backup (backup.id)}<tr title={backup.fileName}><td>{date(backup.createdAt)}<small>{backup.origin === "scheduled" ? "Scheduled" : backup.origin === "manual" ? "Manual" : "Existing backup"}{backup.retentionBuckets?.length ? ` · ${backup.retentionBuckets.join(", ")}` : ""}{#if backup.bytes != null}<span class="phone-backup-size">{size(backup.bytes)}</span>{/if}</small></td><td class="number">{size(backup.bytes)}</td><td><StatePill tone={backup.status === "verified" ? "ok" : backup.status === "changed" || backup.status === "invalid" ? "warn" : "neutral"} text={backup.status === "verified" ? "Verified" : backup.status === "changed" ? "File changed" : backup.status === "invalid" ? "Verification failed" : "Verify on download"} /></td><td><div class="backup-actions"><Button variant="text" size="sm" disabled={backup.status === "changed" || backup.status === "invalid"} href={settings.backupDownloadUrl(backup.id)} download={backup.fileName}>Download</Button><DropdownMenu.Root><DropdownMenu.Trigger class="icon-button" aria-label={`More actions for ${date(backup.createdAt)}`}><MoreHorizontal size={18} /></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content class="menu-content"><DropdownMenu.Item class="menu-item settings-danger" disabled={Boolean(action) || pending || active || backup.status === "changed" || backup.status === "invalid"} onSelect={() => openRestore(backup)}>Restore…</DropdownMenu.Item></DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root></div></td></tr>{/each}
+            {#each data.backups as backup (backup.id)}<tr title={backup.fileName}><td>{date(backup.createdAt)}<small>{backup.origin === "scheduled" ? "Scheduled" : backup.origin === "manual" ? "Manual" : "Existing backup"}{backup.retentionBuckets?.length ? ` · ${backup.retentionBuckets.join(", ")}` : ""}{#if backup.bytes != null}<span class="phone-backup-size">{size(backup.bytes)}</span>{/if}</small></td><td class="number">{size(backup.bytes)}</td><td><StatePill tone={backup.status === "verified" ? "ok" : backup.status === "changed" || backup.status === "invalid" ? "warn" : "neutral"} text={backup.status === "verified" ? "Verified" : backup.status === "changed" ? "File changed" : backup.status === "invalid" ? "Verification failed" : "Verify on download"} /></td><td><div class="backup-actions"><Button variant="text" size="sm" disabled={backup.status === "changed" || backup.status === "invalid"} href={settings.backupDownloadUrl(backup.id)} download={backup.fileName}>Download</Button><DropdownMenu.Root><DropdownMenu.Trigger class="icon-button" aria-label={`More actions for ${date(backup.createdAt)}`}><MoreHorizontal size={18} /></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content preventScroll={false} class="menu-content"><DropdownMenu.Item class="menu-item settings-danger" disabled={Boolean(action) || pending || active || backup.status === "changed" || backup.status === "invalid"} onSelect={() => openRestore(backup)}>Restore…</DropdownMenu.Item></DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root></div></td></tr>{/each}
           </tbody></table>
         {:else}<EmptyState title="No backups yet" description="Back up now to save your settings, accounts and history.">{#snippet icon()}<Archive size={24} />{/snippet}</EmptyState>{/if}
         <footer class="restore-upload" class:has-file={Boolean(restoreFile)}><div class="settings-row"><div><strong>Restore from a file</strong><small>Choose a backup ZIP. Saved sign-ins are included; audio and caches need separate backups.</small></div>{#key pickerRevision}<FilePicker label="Backup ZIP file" accept=".zip,application/zip" buttonLabel="Choose a backup ZIP" disabled={Boolean(action) || pending || active} onselect={files => { restoreFile = files[0] ?? null; if (restoreFile) openRestore(); }} />{/key}</div></footer>

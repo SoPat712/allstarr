@@ -65,7 +65,7 @@ describe("personal mix presentation", () => {
     expect(mixNextStep("daily-1", "Play about 80 more songs.", false).label).toBe("Import history");
     expect(mixNextStep("discover-weekly", "Connect a service.", false).href).toBe("#/sources");
     expect(mixNextStep("release-radar", "Follow artists.", false).label).toBe("Follow artists");
-    expect(mixNextStep("chill", "Add songs.", true).href).toBe("#/settings/sound-analysis");
+    expect(mixNextStep("chill", "Add songs.", true).href).toBe("#/settings/discovery");
     expect(mixNextStep("chill", "Add songs.", false).label).toBe("Open library");
   });
   it("marks more, less and never nudges", () => {

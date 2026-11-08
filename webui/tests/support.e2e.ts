@@ -136,7 +136,7 @@ test("guide rejects private URL fields and offers copy selection when clipboard 
   await mockSupport(page, true);
   await page.goto("/#/getting-started");
   const address = page.getByLabel("Music-client address", { exact: true });
-  await expect(page.getByRole("link", { name: "Set the household address" })).toHaveAttribute("href", "#/settings/access");
+  await expect(page.getByRole("link", { name: "Set the household address" })).toHaveAttribute("href", "#/settings/people");
   await address.fill("https://listener:private@music.test/?api_key=private");
   await expect(page.getByRole("button", { name: "Copy server address" })).toBeDisabled();
   await page.getByRole("button", { name: "Jellyfin Web Web browser", exact: true }).click();
@@ -151,8 +151,8 @@ test("guide rejects private URL fields and offers copy selection when clipboard 
 
 test("the administrator address field loads its durable value and updates the guide without restart", async ({ page }) => {
   const state = await mockSupport(page, true);
-  await page.goto("/#/settings/network");
-  const form = page.getByRole("form", { name: "Addresses and network settings", exact: true });
+  await page.goto("/#/settings/people");
+  const form = page.getByRole("form", { name: "Apps settings", exact: true });
   const address = form.getByRole("textbox", { name: "Music-client address", exact: true });
   await expect(address).toHaveValue("http://music.test:5274");
   await address.fill("https://music.test/gateway");

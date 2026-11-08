@@ -131,7 +131,7 @@
           <Button variant="secondary" aria-label="Copy username" onclick={() => void copy(context!.username, usernameField)}><Copy size={16} aria-hidden="true" />Copy</Button>
         </span>
       </div>
-      {#if administrator}<footer><Button variant="outline" href="#/settings/access">Set the household address</Button></footer>{/if}
+      {#if administrator}<footer><Button variant="outline" href="#/settings/people">Set the household address</Button></footer>{/if}
     </div>
 
         <ol class="app-steps" aria-label="Connection steps">{#each activeApp.steps as step, index}<li><span class="step-circle" aria-hidden="true">{index + 1}</span><span>{step}</span></li>{/each}</ol>
@@ -166,7 +166,7 @@
 {/if}
 
 <style>
-  .connect-apps { min-width: 0; }
+  .connect-apps { min-width: 0; max-width: none; }
   .connection-card { display: grid; gap: var(--space-4); padding: var(--surface-gutter); border-bottom: 1px solid var(--color-edge); }
   .connection-card :global(footer) { padding: 0; border: 0; }
   .connection-field { display: grid; gap: var(--space-2); }

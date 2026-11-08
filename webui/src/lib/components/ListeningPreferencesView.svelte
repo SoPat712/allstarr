@@ -296,7 +296,7 @@
 
 
     <section class="settings-card preferences-panel" aria-label="What you hear">
-      <header><h3>What you hear</h3></header>
+      <header>{#if administrator}<div class="settings-card-title"><h3>What you hear</h3><span class="scope-tag" data-scope="you">Just you</span></div>{:else}<h3>What you hear</h3>{/if}</header>
       <div class="settings-row">
         <div><strong>Explicit songs</strong><small>{snapshot.cleanOnlyLocked ? "Your administrator turned this on." : filterOptions.find(option => option.value === explicitFilter)?.description ?? "Choose a release filter."}</small></div>
         <SelectField label="Explicit songs" value={explicitFilter} options={filterOptions} disabled={controlsDisabled || snapshot.cleanOnlyLocked} onchange={value => void changePreference("explicitFilter", value)} />
@@ -351,7 +351,6 @@
         </div>
       </section>
 
-      {#if administrator}<div class="settings-row"><div><strong>Household limits</strong><small>The highest quality everyone can use.</small></div><Button variant="text" href="#/settings/quality">Change the household limit</Button></div>{/if}
     </div>
 
       <footer class="preferences-actions">

@@ -184,7 +184,7 @@
       </div>
     {/if}
 
-    <PageStatus items={[{ label: `${groups.length} source orders` }, { label: "Changes save as you make them" }]} />
+    {#if !embedded}<PageStatus items={[{ label: `${groups.length} source orders` }, { label: "Changes save as you make them" }]} />{/if}
     {#if policyFields.length}
       <SettingsFields section={{ id: "quality-policy", label: "Audio quality", fields: policyFields }} {config} onChanged={async () => { await refresh(); loadScores(); }} />
     {/if}

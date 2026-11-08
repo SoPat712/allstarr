@@ -144,10 +144,10 @@ test("listener autosaves each change and resets with the latest returned revisio
 
   await page.goto("/");
   await page.getByRole("button", { name: "More destinations" }).click();
-  await page.getByRole("link", { name: /Listening preferences/ }).click();
-  await expect(page).toHaveURL(/#\/settings\/preferences$/);
+  await page.getByRole("link", { name: /Playback settings/ }).click();
+  await expect(page).toHaveURL(/#\/settings\/playback$/);
   await expect(page.getByRole("heading", { name: "Settings", level: 1 })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Listening preferences", level: 2 })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Playback", level: 2 })).toBeVisible();
 
   await chooseFilter(page, "Hide clean/edited versions");
   await expect(page.getByRole("switch", { name: "Show [A] for external tracks", exact: true })).toBeEnabled();
@@ -195,7 +195,7 @@ test("administrator reloads a 409 conflict before saving against the refreshed r
   });
 
   await page.goto("/");
-  await page.getByRole("link", { name: "Listening preferences" }).click();
+  await page.getByRole("link", { name: "Your playback settings" }).click();
   await chooseFilter(page, "Clean only");
   await expect(page.locator(".preferences-view").getByRole("alert")).toContainText("changed in another session");
   await page.getByRole("button", { name: "Reload latest" }).click();
@@ -324,7 +324,8 @@ for (const administrator of [false, true]) {
     });
     await page.goto("/#/preferences");
     const quality = page.getByRole("button", { name: "Quality limit", exact: true });
-    await expect(page.getByRole("link", { name: "Change the household limit", exact: true })).toHaveCount(administrator ? 1 : 0);
+    // The household limit sits on the same Playback page now, so there is no link to it.
+    await expect(page.getByRole("link", { name: "Change the household limit", exact: true })).toHaveCount(0);
     await quality.click();
     await expect(page.getByRole("option", { name: "Best available", exact: true })).toHaveCount(0);
     await page.getByRole("option", { name: "High lossy · about 320 kbps", exact: true }).click();

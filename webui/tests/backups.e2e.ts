@@ -204,8 +204,8 @@ test("A failed backup admission shows its safe reason and can be retried", async
 
 test("Inactive settings never request backup policy", async ({ page }) => {
   const mock = await mockBackups(page);
-  await page.goto("/#/settings/general");
-  await expect(page.getByRole("heading", { name: "General", level: 2, exact: true })).toBeVisible();
+  await page.goto("/#/settings/playback");
+  await expect(page.getByRole("heading", { name: "Playback", level: 2, exact: true })).toBeVisible();
   expect(mock.state.storageReads).toBe(0);
   await page.locator(".settings-nav").getByRole("link", { name: "Backups", exact: true }).click();
   await expect(page.getByRole("form", { name: "Backup schedule", exact: true })).toBeVisible();
@@ -240,6 +240,6 @@ for (const width of [1280, 390]) test(`Unknown backup facts stay neutral and cha
   await expect(page.getByText("File changed", { exact: false })).toBeVisible();
   await expect(page.getByRole("link", { name: "Download", exact: true })).toBeDisabled();
   await expect(page.getByRole("link", { name: "Download", exact: true })).not.toHaveAttribute("href");
-  await expect(page.getByText(/Invalid Date|0 MiB/)).toHaveCount(0);
+  await expect(page.getByText(/Invalid Date|^0 MB$/)).toHaveCount(0);
   await expect(page.getByLabel("Page status")).toContainText("Not available");
 });

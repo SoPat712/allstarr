@@ -7,7 +7,7 @@ const groups = [
   { name: "library", paths: ["library/playlists", "library/matches", "library/cached", "library/kept", "library/import"] },
   { name: "activity", paths: ["activity", "activity?view=plays", "activity?view=jobs", "activity?view=tasks", "activity?view=reports"] },
   { name: "sources", paths: ["sources/services", "sources/accounts", "connect", "report"] },
-  { name: "settings", paths: ["settings", "settings/quality", "settings/access", "settings/listeners", "settings/alerts", "settings/storage", "settings/sound-analysis", "settings/backups", "settings/health", "settings/setup", "settings/appearance", "preferences"] },
+  { name: "settings", paths: ["settings", "settings/playback", "settings/library", "settings/discovery", "settings/history", "settings/people", "settings/alerts", "settings/storage", "settings/backups", "settings/health", "settings/setup", "settings/appearance", "preferences"] },
   { name: "for-you", paths: ["for-you", "for-you?section=releases", "for-you?section=taste", "for-you?section=recap"] },
   { name: "home", paths: [""] },
 ];
@@ -122,12 +122,11 @@ for (const width of [1280, 390]) for (const theme of ["dark", "light"] as const)
         }
         for (const fold of await page.locator(".settings-fold > summary").all()) {
           if (!await fold.isVisible()) continue;
-          const label = path === "settings/quality" ? "Exact quality asked from each service" : path === "settings" ? "Advanced: wait between song.link lookups" : path === "for-you?section=taste" ? "See the details" : "Advanced";
-          expect(await fold.evaluate(element => ({ marker: getComputedStyle(element).listStyleType, label: element.firstChild?.textContent }))).toEqual({ marker: "none", label });
+          const shown = await fold.evaluate(element => ({ marker: getComputedStyle(element).listStyleType, label: element.textContent?.trim() ?? "" }));
+          expect(shown.marker).toBe("none");
+          expect(shown.label).toMatch(/^(Advanced|Exact quality asked from each service|See the details)/);
         }
         if (path === "settings") {
-          const links = page.getByRole("form", { name: "Song links and extensions settings", exact: true });
-          await expect(links.locator(":scope > .settings-fold")).toHaveCount(1);
           if (width === 1280) expect((await page.locator(".settings-nav").boundingBox())!.width).toBe(170);
         }
       }

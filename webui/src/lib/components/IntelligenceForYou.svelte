@@ -151,7 +151,7 @@
       <header><h2>Get more from your mixes</h2><button type="button" class="icon-button" aria-label="Hide tips" onclick={hide}><X size={18} aria-hidden="true" /></button></header>
       {#if !dailyReady}<div class="check-row"><span>Listen to {remaining ? `about ${countLabel(Number(remaining), "more song")}` : "more songs"} — or import your history</span><Button variant="secondary" size="sm" onclick={() => importOpen = true}>Import history</Button></div>{/if}
       {#if !connected}<div class="check-row"><span>Connect Last.fm or ListenBrainz for more discoveries</span><Button variant="secondary" size="sm" href="#/sources">Connect</Button></div>{/if}
-      {#if administrator && !soundReady}<div class="check-row"><span>Turn on sound analysis for mood mixes</span><Button variant="secondary" size="sm" href="#/settings/sound-analysis">Set up</Button></div>{/if}
+      {#if administrator && !soundReady}<div class="check-row"><span>Turn on sound analysis for mood mixes</span><Button variant="secondary" size="sm" href="#/settings/discovery">Set up</Button></div>{/if}
     </section>{/if}
     {#if error}<ErrorState title="Couldn't load your mixes" detail={error} onretry={load} />{/if}
     {#if !error && !made.some(item => item.readiness.ready)}<EmptyState title="Your mixes will appear here" description="Your mixes will appear here. Play some music, or import your history to start right away." />{/if}

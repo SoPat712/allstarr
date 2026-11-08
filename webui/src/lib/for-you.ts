@@ -64,7 +64,7 @@ export function mixNextStep(kind: string, message: string, administrator: boolea
   if (/^Connect/i.test(message) || kind === "external") return { href: "#/sources", label: "Connect" };
   if (/^Follow/i.test(message)) return { href: "#/for-you?section=releases", label: "Follow artists" };
   if (["chill", "focus", "workout", "party", "sleep"].includes(kind)) return administrator
-    ? { href: "#/settings/sound-analysis", label: "Set up sound analysis" } : { href: "#/library/playlists", label: "Open library" };
+    ? { href: "#/settings/discovery", label: "Set up sound analysis" } : { href: "#/library/playlists", label: "Open library" };
   if (kind === "custom") return { href: "#/for-you", label: "Try another song" };
   return { href: "#/for-you?import=1", label: "Import history" };
 }

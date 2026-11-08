@@ -63,8 +63,8 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     await page.setViewportSize({ width, height: 900 });
     await page.emulateMedia({ colorScheme: theme, reducedMotion: "reduce" });
     const mock = await mockCapacity(page);
-    await page.goto("/#/settings/general");
-    await expect(page.getByRole("heading", { name: "General", exact: true })).toBeVisible();
+    await page.goto("/#/settings/playback");
+    await expect(page.getByRole("heading", { name: "Playback", exact: true })).toBeVisible();
     await expect(page.getByRole("form", { name: "Audio limits settings", exact: true })).toHaveCount(0);
     await page.goto("/#/settings/storage");
     const form = page.getByRole("form", { name: "Audio limits settings", exact: true });

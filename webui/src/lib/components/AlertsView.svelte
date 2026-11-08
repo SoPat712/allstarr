@@ -33,11 +33,11 @@
   let disposed = false;
   const kinds = [{ value: "ntfy", label: "ntfy" }, { value: "discord", label: "Discord" }, { value: "webhook", label: "Webhook" }];
   const thresholdFields: { key: keyof AlertThresholdDraft; label: string; max: number; step: string }[] = [
-    { key: "warningGiB", label: "Warning free space (GiB)", max: 1048576, step: "any" },
+    { key: "warningGiB", label: "Warning free space (GB)", max: 1048576, step: "any" },
     { key: "warningPercent", label: "Warning free space (%)", max: 99, step: "any" },
-    { key: "criticalGiB", label: "Critical free space (GiB)", max: 1048576, step: "any" },
+    { key: "criticalGiB", label: "Critical free space (GB)", max: 1048576, step: "any" },
     { key: "criticalPercent", label: "Critical free space (%)", max: 99, step: "any" },
-    { key: "hysteresisGiB", label: "Recovery margin (GiB)", max: 1048576, step: "any" },
+    { key: "hysteresisGiB", label: "Recovery margin (GB)", max: 1048576, step: "any" },
     { key: "hysteresisPercent", label: "Recovery margin (%)", max: 50, step: "any" },
     { key: "cooldownMinutes", label: "Repeat alert interval (minutes)", max: 1440, step: "1" },
   ];
@@ -183,7 +183,7 @@
               {@const delivery = lastDelivery(channel.id)}
               <div class="channel-row"><div><strong>{channel.displayName}</strong><small>{kindLabel(channel.kind)} · {channel.hasDestination ? `Saved${savedHost(channel) ? ` · ${savedHost(channel)}` : ""}` : "No destination saved"}</small><small>Last delivery: {alertDeliveryLabel(delivery)}{delivery ? ` · ${alertDate(delivery.createdAt)}` : ""}</small>{#if delivery?.safeError}<small>{delivery.safeError}</small>{/if}{#if delivery?.status === "retrying" && delivery.nextAttemptAt}<small>Next attempt: {alertDate(delivery.nextAttemptAt)}</small>{/if}</div>
                 <div class="channel-actions"><Switch aria-label={`Enable ${channel.displayName}`} checked={channel.enabled} disabled={Boolean(action)} onchange={event => toggle(channel, event.currentTarget.checked)} /><Button variant="outline" size="sm" disabled={Boolean(action)} aria-label={`Edit ${channel.displayName}`} onclick={() => edit(channel, forHousehold)}>Edit</Button>
-                  <DropdownMenu.Root><DropdownMenu.Trigger class="icon-button" aria-label={`More actions for ${channel.displayName}`}><MoreHorizontal size={18} /></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content class="menu-content"><DropdownMenu.Item class="menu-item" disabled={Boolean(action) || !channel.enabled} onSelect={() => testChannel(channel)}>Send test to {channel.displayName}</DropdownMenu.Item></DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root>
+                  <DropdownMenu.Root><DropdownMenu.Trigger class="icon-button" aria-label={`More actions for ${channel.displayName}`}><MoreHorizontal size={18} /></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content preventScroll={false} class="menu-content"><DropdownMenu.Item class="menu-item" disabled={Boolean(action) || !channel.enabled} onSelect={() => testChannel(channel)}>Send test to {channel.displayName}</DropdownMenu.Item></DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root>
                 </div>
               </div>
             {/each}

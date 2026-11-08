@@ -15,6 +15,6 @@
   <div class="degraded-banner" role="status">
     <span aria-hidden="true">!</span>
     <p><strong>Media-server access needs attention.</strong> Restore access to resume playlist sync and library scans.</p>
-    <Button variant="secondary" href="#/settings/access">Open media-server access</Button>
+    <Button variant="secondary" href="#/settings/people">Open media-server access</Button>
   </div>
 {/if}

@@ -676,34 +676,40 @@
   <dl class="source-facts"><dt>Quality</dt><dd>{qualityOf(source.id) || "Not measured yet"}</dd><dt>Score</dt><dd>{scoreOf(source.id) ?? "Not measured yet"}</dd><dt>Accounts</dt><dd>{providerAccounts(source.id).filter(account => account.enabled).length} of {providerAccounts(source.id).length} on</dd><dt>Start time</dt><dd>{sourceStartTimeLabel(measurements.find(item => item.providerId === source.id), scores.find(item => item.providerId.toLowerCase() === source.id.toLowerCase()))}</dd></dl>
 {/snippet}
 
-{#snippet accountMenu(account: ProviderAccount)}
-  <DropdownMenu.Root>
-    <DropdownMenu.Trigger class="icon-button" aria-label={`Actions for ${account.displayName}`} disabled={Boolean(action)}><MoreHorizontal size={18} aria-hidden="true" /></DropdownMenu.Trigger>
-    <DropdownMenu.Portal><DropdownMenu.Content class="bits-menu" sideOffset={6} align="end">
+{#snippet accountItems(account: ProviderAccount)}
       <DropdownMenu.Item class="bits-menu-item" onSelect={() => window.location.hash = servicePath(account.providerId, account.id)}>Account details</DropdownMenu.Item>
       {#if account.canManage}<DropdownMenu.Item class="bits-menu-item" onSelect={() => configure(account)}>Reconnect</DropdownMenu.Item>{/if}
       {#if account.canChangeAudience}<DropdownMenu.Item class="bits-menu-item" onSelect={() => manageAccess(account)}>Edit access</DropdownMenu.Item>{/if}
       {#if administrator && account.canManage}<DropdownMenu.Item class="bits-menu-item" onSelect={() => void test(account)}>Test connection</DropdownMenu.Item>{/if}
       {#if account.canManage}<DropdownMenu.Item class="bits-menu-item" onSelect={() => void toggle(account)}>{account.enabled ? "Pause" : "Enable"}</DropdownMenu.Item><DropdownMenu.Separator /><DropdownMenu.Item class="bits-menu-item danger-item" onSelect={() => { removal = account; removeOpen = true; }}>Remove…</DropdownMenu.Item>{/if}
+{/snippet}
+
+{#snippet accountMenu(group: ProviderAccount[], label: string)}
+  <DropdownMenu.Root>
+    <DropdownMenu.Trigger class="icon-button" aria-label={`Actions for ${group.length > 1 ? `${label} accounts` : group[0].displayName}`} disabled={Boolean(action)}><MoreHorizontal size={18} aria-hidden="true" /></DropdownMenu.Trigger>
+    <DropdownMenu.Portal><DropdownMenu.Content preventScroll={false} class="bits-menu" sideOffset={6} align="end">
+      {#if group.length === 1}{@render accountItems(group[0])}
+      {:else}{#each group as item, index (item.id)}{#if index}<DropdownMenu.Separator />{/if}<DropdownMenu.Group><DropdownMenu.GroupHeading class="bits-menu-heading">{item.displayName}</DropdownMenu.GroupHeading>{@render accountItems(item)}</DropdownMenu.Group>{/each}{/if}
     </DropdownMenu.Content></DropdownMenu.Portal>
   </DropdownMenu.Root>
 {/snippet}
 
 {#snippet accountList()}
   {#if filteredAccounts.length}
-    {@const groups = [...new Set(filteredAccounts.map(account => account.providerId))].map(id => filteredAccounts.filter(account => account.providerId === id))}
+    {@const serviceName = (account: ProviderAccount) => providerDisplayName(providers, account.providerId)}
+    {@const groups = [...new Set(filteredAccounts.map(serviceName))].toSorted((left, right) => left.localeCompare(right)).map(name => filteredAccounts.filter(account => serviceName(account) === name))}
     {@const labels = new Map(filteredAccounts.map(item => [item.id, accountDisplayLabel(item, providerDisplayName(providers, item.providerId))]))}
     {@const hasLabels = [...labels.values()].some(Boolean)}
-    <div class="accounts-table-wrap"><table class="accounts-table" aria-label="Accounts"><thead><tr><th>Service</th>{#if hasLabels}<th>Account</th>{/if}<th>Owner</th><th>Shared with</th><th>State</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody>
-      {#each groups as group (group[0].providerId)}
+    <div class="accounts-table-wrap"><table class="accounts-table" aria-label="Accounts"><thead><tr><th>Service</th>{#if hasLabels}<th>Account</th>{/if}<th>Owner</th><th class="shared-column">Shared with</th><th>State</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody>
+      {#each groups as group (serviceName(group[0]))}
         {@const account = group[0]}
         <tr class:account-selected={group.some(item => focusAccount === item.id)} id={`connection-${account.id}`}>
           <td data-label="Service"><a class="account-opener" href={servicePath(account.providerId, account.id)} data-sveltekit-keepfocus data-sveltekit-noscroll aria-label={`Open ${providerDisplayName(providers, account.providerId)} account`}><ProviderArtwork id={account.providerId} definition={provider(account.providerId)} decorative /><strong>{providerDisplayName(providers, account.providerId)}{group.length > 1 ? ` · ${countLabel(group.length, "account")}` : ""}</strong></a></td>
           {#if hasLabels}{@const accountLabels = [...new Set(group.map(item => labels.get(item.id)).filter(Boolean))].join(", ")}<td data-label={accountLabels ? "Account" : undefined}>{accountLabels}</td>{/if}
-          <td data-label="Owner">{[...new Set(group.map(item => item.ownerDisplayName || item.creatorDisplayName).filter(Boolean))].join(", ")}</td>
+          <td data-label="Owner">{[...new Set(group.map(item => item.ownerDisplayName || item.creatorDisplayName || (item.scope === "Shared" ? "Household" : "")).filter(Boolean))].join(", ")}</td>
           <td data-label="Shared with">{[...new Set(group.map(item => item.scope === "Shared" ? "Everyone" : `Just ${item.ownerDisplayName || "you"}`))].join(", ")}</td>
           <td data-label="State">{#each [...new Set(group.map(accountState))] as state}<StatePill tone={state === "Working" ? "ok" : state === "Service down" ? "stop" : ["Off", "Connected"].includes(state) ? "neutral" : "warn"} text={state} />{/each}</td>
-          <td><div class="account-menus">{#each group as item (item.id)}{#if item.canManage || item.canChangeAudience}{@render accountMenu(item)}{:else}<span class="muted">Read only</span>{/if}{/each}</div></td>
+          <td><div class="account-menus">{#if group.some(item => item.canManage || item.canChangeAudience)}{@render accountMenu(group.filter(item => item.canManage || item.canChangeAudience), serviceName(account))}{:else}<span class="muted">Read only</span>{/if}</div></td>
         </tr>
       {/each}
     </tbody></table></div>
@@ -782,7 +788,7 @@
       <section class="settings-card">
         <div class="settings-row">
           <div><strong>Sound analysis (AudioMuse)</strong><small>Manage the connection and household mix publishing in Settings.</small></div>
-          {#if administrator}<Button href="#/settings/sound-analysis">Configure</Button>{/if}
+          {#if administrator}<Button href="#/settings/discovery">Configure</Button>{/if}
         </div>
       </section>
     {:else}
@@ -810,7 +816,7 @@
                     <DropdownMenu.Root>
                       <DropdownMenu.Trigger class="icon-button" disabled={Boolean(action)} aria-label={`Actions for ${account.displayName}`}><MoreHorizontal size={18} aria-hidden="true" /></DropdownMenu.Trigger>
                       <DropdownMenu.Portal>
-                        <DropdownMenu.Content class="bits-menu" sideOffset={6} align="end">
+                        <DropdownMenu.Content preventScroll={false} class="bits-menu" sideOffset={6} align="end">
                           {#if account.canChangeAudience}<DropdownMenu.Item class="bits-menu-item" onSelect={() => manageAccess(account)}>Edit access</DropdownMenu.Item>{/if}
                           {#if account.canManage}<DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => void toggle(account)}>{account.enabled ? "Disable" : "Enable"}</DropdownMenu.Item>{/if}
                           <DropdownMenu.Separator />
@@ -952,6 +958,7 @@
         {:else}<EmptyState title={providers.length ? "No sources in this view" : "No services connected"} description={providers.length ? "Choose another filter or search for a source." : "Connect a service so Allstarr can find songs you don't have."}>{#snippet icon()}<Radio size={24} />{/snippet}</EmptyState>{/each}
       </div>
       {#if administrator}{#await import("$lib/components/ExtensionsView.svelte") then { default: ExtensionsView }}<ExtensionsView view="attention" extensionId={pageId} onchanged={refresh} />{/await}{/if}
+      {#if administrator && !pageId}{#await import("$lib/components/SourceHelpers.svelte") then { default: SourceHelpers }}<SourceHelpers {schema} {config} {refresh} />{/await}{/if}
     {/if}
   </section>
 
@@ -1087,7 +1094,9 @@
     .sources-heading-actions :global(button), .service-advanced :global(button), .service-advanced :global([data-slot="button"]) { min-height: 44px; }
   }
   @media (max-width: 380px) { .sources-heading-actions { grid-template-columns: minmax(0, 1fr); } }
-  @container (max-width: 640px) {
+  /* Beside a docked panel the table keeps its rows and drops the audience column; only phones get stacked rows. */
+  @container (min-width: 600px) and (max-width: 700px) { .accounts-table .shared-column, .accounts-table td[data-label="Shared with"] { display: none; } }
+  @container (max-width: 599px) {
     .accounts-table, .accounts-table tbody, .accounts-table tr, .accounts-table td { display: block; }
     .accounts-table td:empty { display: none; }
     .accounts-table thead { display: none; }.accounts-table tr { display: grid; grid-template-columns: minmax(0, 1fr) auto; padding: var(--space-3); border-bottom: 1px solid var(--color-edge); }

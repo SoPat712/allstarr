@@ -66,7 +66,7 @@ export function qualityWarning(file: ManagedDownload) {
 export function formatDownloadSize(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
   const unit = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), 4);
-  return `${(bytes / 1024 ** unit).toLocaleString(undefined, { maximumFractionDigits: 2 })} ${["B", "KiB", "MiB", "GiB", "TiB"][unit]}`;
+  return `${(bytes / 1024 ** unit).toLocaleString(undefined, { maximumFractionDigits: 2 })} ${["B", "KB", "MB", "GB", "TB"][unit]}`;
 }
 
 export function lowerDownloadQuality(file: ManagedDownload) {

@@ -139,7 +139,8 @@
           : { limit: 100, scope });
         if (disposed) return;
         error = "";
-        if (mode === "initial" && page === 0) items = response.items;
+        // The first page shows at once; earlier pages fill in below it.
+        if (mode === "initial" && page === 0) { items = response.items; loading = false; }
         else if (mode !== "refresh") items = mergeActivity(items, response.items);
         else {
           const added = response.items.filter((item) => !knownIds.has(item.id));

@@ -996,11 +996,11 @@ test("core release exposes personal mixes without development APIs", async ({ pa
   await expect(page.getByRole("navigation", { name: "For you sections" }).getByRole("tab", { name: "For you", exact: true })).toHaveAttribute("aria-selected", "true");
   await page.goto("#/integrations/services?source=audiomuse-ai&section=configuration");
   const configure = page.getByRole("link", { name: "Configure", exact: true });
-  await expect(configure).toHaveAttribute("href", "#/settings/sound-analysis");
+  await expect(configure).toHaveAttribute("href", "#/settings/discovery");
   await configure.click();
-  await expect(page.getByRole("heading", { name: "Sound analysis", exact: true })).toBeVisible();
-  await page.getByRole("region", { name: "AudioMuse connection", exact: true }).getByRole("button", { name: "Edit connection", exact: true }).click();
-  await expect(page.getByRole("dialog", { name: "AudioMuse connection", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Mixes and discovery", exact: true })).toBeVisible();
+  await page.getByRole("region", { name: "AudioMuse", exact: true }).getByRole("button", { name: "Edit connection", exact: true }).click();
+  await expect(page.getByRole("form", { name: "AudioMuse connection", exact: true })).toBeVisible();
   expect(intelligenceRequests).toEqual([]);
 });
 
@@ -1243,8 +1243,8 @@ for (const viewport of viewports) {
       await expect(sourceDialog.getByLabel("Access token")).toHaveValue("");
       await sourceDialog.getByRole("button", { name: "Cancel" }).click();
       await page.goto("#/settings/routing");
-      await expect(page.getByRole("heading", { name: "Quality and routing", level: 2 })).toBeVisible();
-      await expect(page.getByText(/Your own music always comes first/)).toBeVisible();
+      await expect(page.getByRole("heading", { name: "Playback", level: 2 })).toBeVisible();
+      await expect(page.getByText(/What plays, at what quality and from where/)).toBeVisible();
       await expect(page.getByRole("button", { name: "Save playback and matching" })).toHaveCount(0);
       await expect(page.getByRole("button", { name: "Move Jellyfin up" })).toHaveCount(0);
       await expect(page.locator(".provider-art").first()).toHaveCSS("border-top-width", "0px");
@@ -1290,7 +1290,7 @@ for (const viewport of viewports) {
       await expect(storage.getByRole("heading", { name: "Storage", level: 2, exact: true })).toBeVisible();
       await expect(storage).toHaveAttribute("aria-busy", "false");
       const advanced = storage.locator("details").filter({ has: page.getByText(
-        "Advanced: activity retention, cache durations, saved-file verification", { exact: true }) });
+        "Advanced: cache times, file checks and cleanup", { exact: true }) });
       await advanced.locator(":scope > summary").click();
       // The verification card loads above the cache actions and changes their position.
       await expect(storage.getByRole("article", { name: "Saved-file verification" })
@@ -1629,12 +1629,13 @@ for (const viewport of viewports) {
       await page.getByRole("button", { name: "Close source connection dialog" }).click();
       await page.goto("#/integrations/services?source=audiomuse-ai&section=configuration");
       const soundSettings = page.getByRole("link", { name: "Configure", exact: true });
-      await expect(soundSettings).toHaveAttribute("href", "#/settings/sound-analysis");
+      await expect(soundSettings).toHaveAttribute("href", "#/settings/discovery");
       await expect(page.locator(".service-page")).toContainText("Sound analysis (AudioMuse)");
       await soundSettings.click();
       await page.getByRole("button", { name: "Edit connection", exact: true }).click();
-      const soundConnection = page.getByRole("dialog", { name: "AudioMuse connection", exact: true });
+      const soundConnection = page.getByRole("form", { name: "AudioMuse connection", exact: true });
       await expect(soundConnection.getByLabel("AudioMuse address", { exact: true })).toBeVisible();
+      await soundConnection.getByRole("button", { name: "Save", exact: true }).scrollIntoViewIfNeeded();
       await expect(soundConnection.getByRole("button", { name: "Save", exact: true })).toBeInViewport();
       await soundConnection.getByRole("button", { name: "Cancel", exact: true }).click();
       await expect(soundConnection).toBeHidden();
@@ -2200,7 +2201,7 @@ test("provider readiness separates provider names from account labels", async ({
   } }));
   await page.goto("#/sources/accounts");
   const rows = page.getByRole("table", { name: "Accounts", exact: true }).locator("tbody tr");
-  await expect(rows.locator('td[data-label="Service"] strong')).toHaveText(definitions.map(provider => provider.name));
+  await expect(rows.locator('td[data-label="Service"] strong')).toHaveText(definitions.map(provider => provider.name).toSorted((left, right) => left.localeCompare(right)));
   const deezer = rows.filter({ hasText: "Deezer" });
   await expect(deezer.locator('td[data-label="Account"]')).toHaveText("Road trip");
   await expect(deezer.locator('td[data-label="Shared with"]')).toHaveText("Everyone");
@@ -2607,12 +2608,12 @@ for (const [administrator, backend] of [[true, "Jellyfin"], [false, "Navidrome"]
     await expect(page.locator(".profile strong")).toHaveText("Taylor");
     await expect(page.locator(".profile small")).toHaveText(administrator ? "Administrator" : "Listener");
     await expect(page.getByRole("button", { name: "Sign out", exact: true })).toBeVisible();
-    await expect(nav.getByRole("link", { name: "Listening preferences", exact: true })).toHaveCount(0);
+    await expect(nav.getByRole("link", { name: "Playback settings", exact: true })).toHaveCount(0);
     if (administrator) await expect(page.getByText(/^Allstarr · beta /)).toBeVisible();
     const settingsNav = page.getByRole("navigation", { name: "Settings sections", exact: true }).first();
     await expect(settingsNav.getByText("You", { exact: true })).toBeVisible();
-    await settingsNav.getByRole("link", { name: "Listening preferences", exact: true }).click();
-    await expect(page).toHaveURL(/#\/settings\/preferences$/);
+    await settingsNav.getByRole("link", { name: "Playback", exact: true }).click();
+    await expect(page).toHaveURL(/#\/settings\/playback$/);
     await expect(nav.getByRole("link", { name: "Settings", exact: true })).toHaveAttribute("aria-current", "page");
   });
 }
@@ -4012,7 +4013,7 @@ test("Cached owns track storage and retention controls", async ({ page }) => {
   await expect(page.getByText("Playback cache on", { exact: true })).toHaveCount(0);
   await page.getByRole("link", { name: "Cache settings", exact: true }).click();
   await expect(page.locator('input[name="CACHE_DURATION_HOURS"]')).toHaveValue("24");
-  await page.getByText("Advanced: activity retention, cache durations, saved-file verification", { exact: true }).click();
+  await page.getByText("Advanced: cache times, file checks and cleanup", { exact: true }).click();
   await expect(page.locator('input[name="CACHE_TRANSCODE_MINUTES"]')).toHaveValue("60");
   await page.locator('input[name="CACHE_DURATION_HOURS"]').fill("48");
   await page.locator('input[name="CACHE_DURATION_HOURS"]').blur();
@@ -4105,14 +4106,14 @@ test("Settings fields share columns, control baselines, and a compact action rai
             helpText: "Edit the deployment configuration and recreate the container to apply this value.",
           },
           {
-            key: "DOWNLOAD_MODE",
+            key: "TEST_DOWNLOAD_MODE",
             label: "Download mode",
             type: "select",
             valuePath: "downloads.mode",
             options: ["Track", "Album"],
           },
           {
-            key: "EXPLICIT_FILTER",
+            key: "TEST_EXPLICIT_FILTER",
             label: "Explicit filter",
             type: "select",
             valuePath: "playback.explicitFilter",
@@ -4132,7 +4133,7 @@ test("Settings fields share columns, control baselines, and a compact action rai
   }));
 
   await page.goto("#/settings/general");
-  const section = page.getByRole("form", { name: "Defaults for everyone settings" });
+  const section = page.getByRole("form", { name: "More settings" });
   const fields = section.locator(".setting-field");
   await expect(fields).toHaveCount(3);
 
@@ -4159,7 +4160,8 @@ test("Settings fields share columns, control baselines, and a compact action rai
   await expect(section.getByRole("button", { name: "Save changes to General" })).toHaveCount(0);
   if (process.env.ALLSTARR_SCREENSHOT_DIR)
     await page.screenshot({ path: `${process.env.ALLSTARR_SCREENSHOT_DIR}/settings-aligned-fields-mobile.png`, fullPage: true });
-  await section.getByRole("radiogroup", { name: "Download mode", exact: true }).getByRole("radio", { name: "Whole album", exact: true }).click();
+  await section.getByRole("button", { name: "Download mode", exact: true }).click();
+  await page.getByRole("option", { name: "Album", exact: true }).click();
   await expect(page.getByText("Saved · Download mode", { exact: true })).toBeVisible();
 });
 
@@ -4378,7 +4380,7 @@ test("Mobile primary navigation stays contained and moves secondary tasks into M
     await expect(sheet).toBeVisible();
     await expect(sheet.getByRole("link", { name: /Sources/ })).toBeVisible();
     await expect(sheet.getByRole("link", { name: /Settings/ })).toBeVisible();
-    await expect(sheet.getByRole("link", { name: /Listening preferences/ })).toBeVisible();
+    await expect(sheet.getByRole("link", { name: /Playback settings/ })).toBeVisible();
     await expect(sheet.getByRole("link", { name: /Intelligence|Insights/ })).toHaveCount(0);
     expect(await sheet.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
     if (process.env.ALLSTARR_SCREENSHOT_DIR)
@@ -4872,7 +4874,7 @@ test("Settings loads only the active section owners", async ({ page }) => {
   page.on("request", (request) => requests.push(new URL(request.url()).pathname));
   await mockApi(page);
   await page.goto("#/settings/general");
-  await expect(page.getByRole("heading", { name: "General", level: 2 })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Playback", level: 2 })).toBeVisible();
   expect(requests).toContain("/api/admin/config");
   expect(requests).not.toContain("/api/admin/provider-accounts");
   expect(requests).not.toContain("/api/admin/storage");
@@ -5155,7 +5157,7 @@ test("Settings preserves dirty drafts during live refresh and scrolls mobile tab
     }),
   }));
   await page.goto("#/settings/storage");
-  await page.getByText("Advanced: activity retention, cache durations, saved-file verification", { exact: true }).click();
+  await page.getByText("Advanced: cache times, file checks and cleanup", { exact: true }).click();
   const cache = page.getByRole("form", { name: "Retention and cache settings" });
   const input = cache.getByLabel("Search results minutes");
   await input.fill("27");
@@ -5228,7 +5230,7 @@ test("Maintenance reports cache budgets and confirms category purge", async ({ p
   page.on("request", (request) => requests.push(new URL(request.url()).pathname));
   await mockApi(page);
   await page.goto("#/settings/storage");
-  await page.getByText("Advanced: activity retention, cache durations, saved-file verification", { exact: true }).click();
+  await page.getByText("Advanced: cache times, file checks and cleanup", { exact: true }).click();
   await expect(page.getByRole("form", { name: "Retention and cache settings" })).toBeVisible();
   const card = page.locator(".cache-diagnostics-card");
 
@@ -7109,7 +7111,7 @@ test("Playback diagnostic errors stay readable and persistent", async ({ page })
 test("Quality and routing lives in Settings, not Sources", async ({ page }) => {
   await mockApi(page);
   await page.goto("#/integrations/routing");
-  await expect(page.getByRole("heading", { name: "Quality and routing", level: 2 })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Playback", level: 2 })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Settings", level: 1 })).toBeVisible();
   await page.goto("#/integrations/services");
   await expect(page.getByRole("tab", { name: /routing/i })).toHaveCount(0);
@@ -7970,7 +7972,7 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
     const link = warning.getByRole("link", { name: "Open media-server access" });
     await link.focus();
     await page.keyboard.press("Enter");
-    await expect(page).toHaveURL(/#\/settings\/access$/);
+    await expect(page).toHaveURL(/#\/settings\/people$/);
     const restore = page.getByRole("region", { name: "Restore legacy media-server access" });
     await expect(restore).toBeVisible();
     expect(applied).toBe(0);
@@ -8052,7 +8054,7 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
     const warning = page.getByRole("status").filter({ hasText: "Restore media-server access to resume playlist sync and library scans." });
     await expect(warning).toHaveCount(1);
     const link = warning.getByRole("link", { name: "Open media-server access" });
-    await expect(link).toHaveAttribute("href", "#/settings/access");
+    await expect(link).toHaveAttribute("href", "#/settings/people");
     await link.focus();
     await expect(link).toBeFocused();
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
@@ -8365,8 +8367,8 @@ test("Cross-service links explain built-in lookups and preserve the optional mas
       "Odesli:Enabled": true, "Odesli:RateLimitMs": 6000, "Odesli:ApiKey": "********",
     } } });
   });
-  await page.goto("#/settings/general");
-  const card = page.getByRole("form", { name: "Song links and extensions settings" });
+  await page.goto("#/integrations/services");
+  const card = page.getByRole("form", { name: "song.link settings" });
   await expect(card.getByText("Find links to the same song across your enabled services.", { exact: true })).toBeVisible();
   await expect(card.getByText("Optional. With a key, the official API is tried first. Leave unchanged to keep it.")).toBeVisible();
   const key = card.getByLabel("song.link API key", { exact: true });
@@ -8903,11 +8905,11 @@ for (const width of [390, 1280]) for (const scheme of ["light", "dark"] as const
       requests.push(route.request().postDataJSON());
       return route.fulfill({ json: { ok: true, message: "Solver reachable", version: "unknown" } });
     });
-    await page.goto("#/settings/general");
-    await expect(page.getByRole("heading", { name: "General", level: 2 })).toBeVisible();
+    await page.goto("#/settings/people");
+    await expect(page.getByRole("heading", { name: "People and access", level: 2 })).toBeVisible();
     await expect(page.getByLabel(/^Challenge solver URL/)).toHaveCount(0);
-    await page.locator(`a[href="#/settings/access"]:visible`).first().click();
-    await expect(page.getByRole("heading", { name: "Access and network", level: 2 })).toBeVisible();
+    await page.goto("#/integrations/services");
+    await expect(page.getByRole("heading", { name: "Helpers for every source", exact: true })).toBeVisible();
     const url = page.getByRole("textbox", { name: /^Challenge solver URL/ });
     await expect(url).toHaveValue("http://saved-solver:8191");
     await expect(url).toHaveAttribute("placeholder", "http://flaresolverr:8191");

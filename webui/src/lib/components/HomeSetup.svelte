@@ -27,7 +27,7 @@
   const stats = $derived(snapshot.stats);
   const name = (id: string) => providerDisplayName(snapshot.providerCatalog ?? [], id);
   function bytes(value: number) {
-    const units = ["B", "KiB", "MiB", "GiB"];
+    const units = ["B", "KB", "MB", "GB"];
     const index = Math.min(3, Math.floor(Math.log(Math.max(1, value)) / Math.log(1024)));
     return `${new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(value / 1024 ** index)} ${units[index]}`;
   }

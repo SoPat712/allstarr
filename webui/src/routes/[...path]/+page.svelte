@@ -28,9 +28,9 @@
     { href: "#/report", label: "Report a problem", mobileLabel: "Report", icon: "report", mobile: false },
   ];
   const preferencesDestination: (typeof destinations)[number] = {
-    href: "#/settings/preferences",
-    label: "Listening preferences",
-    mobileLabel: "Preferences",
+    href: "#/settings/playback",
+    label: "Playback settings",
+    mobileLabel: "Playback",
     icon: "headphones",
     mobile: false,
   };
@@ -108,17 +108,17 @@
     }
     if (["/library/missing", "/library/migration"].includes(path)) return "/library/mappings";
     if (path === "/sources") return "/integrations/services";
-    if (path === "/preferences") return "/settings/preferences";
+    if (path === "/preferences") return "/settings/playback";
     if (path === "/settings/accounts") return "/integrations/accounts";
     if (path === "/settings/extensions") return "/integrations/services";
-    if (["/settings/routing", "/settings/playback", "/integrations/routing"].includes(path)) return "/settings/quality";
+    if (["/settings/routing", "/integrations/routing"].includes(path)) return "/settings/playback";
     if (path === "/integrations/extensions") return "/integrations/services";
     return path;
   }
 
   const route = $derived(currentRoute(`/${page.params.path ?? ""}`));
   const forbiddenRoute = $derived(!administrator && (
-    (route.startsWith("/settings") && !["/settings", "/settings/appearance", "/settings/preferences", "/settings/alerts", "/settings/adding-to-library"].includes(route)) ||
+    (route.startsWith("/settings") && !["/settings", "/settings/appearance", "/settings/playback", "/settings/preferences", "/settings/alerts", "/settings/adding-to-library"].includes(route)) ||
     route === "/library/cached" ||
     route === "/library/kept" ||
     (route === "/intelligence" && developmentIntelligence)
@@ -604,7 +604,7 @@
           {/if}
         </span>
         <div class="min-w-0">
-          <a class="block min-w-0 text-inherit no-underline" href="#/settings/preferences" aria-label="Listening preferences" aria-current={route === "/settings/preferences" ? "page" : undefined}>
+          <a class="block min-w-0 text-inherit no-underline" href="#/settings/playback" aria-label="Your playback settings" aria-current={route === "/settings/playback" ? "page" : undefined}>
             <strong>{session.user?.name}</strong>
             <small>{administrator ? "Administrator" : "Listener"}</small>
           </a>
@@ -681,7 +681,7 @@
           <p>Your Home, listening preferences, playlists, accounts, and personal activity remain available.</p>
           <div class="flex flex-wrap justify-center gap-2">
             <Button href="#/">Go to Home</Button>
-            <Button href="#/settings/preferences">Listening preferences</Button>
+            <Button href="#/settings/playback">Playback settings</Button>
           </div>
         </section>
       {:else if ActiveView && loadedViewKey === viewKey(route)}
@@ -751,7 +751,7 @@
                 <span class="nav-icon"><UiIcon name={destination.icon} /></span>
                 <span>
                   <strong>{destination.label}</strong>
-                  <small>{destination.href === "#/settings/preferences" ? "Content and track labels for your account" : destination.href === "#/connect" ? "Connect music apps and get help" : destination.href === "#/report" ? "Send a note to your administrator" : destination.label === "Sources" ? (administrator ? "Music services, accounts and extensions" : "Music services and your accounts") : "Deployment and operator controls"}</small>
+                  <small>{destination.href === "#/settings/playback" ? "Quality, explicit songs and track labels for your account" : destination.href === "#/connect" ? "Connect music apps and get help" : destination.href === "#/report" ? "Send a note to your administrator" : destination.label === "Sources" ? (administrator ? "Music services, accounts and extensions" : "Music services and your accounts") : "Deployment and operator controls"}</small>
                 </span>
               </a>
             {/each}

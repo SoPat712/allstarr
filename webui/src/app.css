@@ -2306,6 +2306,13 @@
     opacity: var(--disabled-opacity);
   }
 
+  .bits-menu-heading {
+    padding: 0.5rem 0.7rem 0.25rem;
+    color: var(--color-ink-muted);
+    font-size: 0.6875rem;
+    font-weight: 500;
+  }
+
   .bits-menu [role="separator"] {
     height: 1px;
     margin: 0.2rem 0.35rem;
@@ -6631,6 +6638,23 @@
 
   .backup-list {
     padding: 0 var(--space-4);
+  }
+}
+
+/* A settings card in a narrow container, such as a side panel, stacks each row like a phone does. */
+@container (max-width: 560px) {
+  .settings-card .settings-row,
+  .settings-card .setting-field.settings-row {
+    grid-template-columns: minmax(0, 1fr);
+    padding: var(--space-3) var(--space-4);
+  }
+
+  .settings-card .settings-row:has(> .settings-toggle) {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .settings-row > [data-slot="button"] {
+    justify-self: start;
   }
 }
 

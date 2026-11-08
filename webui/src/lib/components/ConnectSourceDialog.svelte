@@ -39,6 +39,15 @@
   let initialized = $state(false);
 
   let choices = $state<ProviderDefinition[]>([]);
+  // One plain line per service, in the order listeners care about; internal categories such as health are left out.
+  const categoryWords: [string, string][] = [["streaming", "playback"], ["download", "downloads"], ["lyrics", "lyrics"],
+    ["playlists", "playlists"], ["playlist", "playlists"], ["scrobbling", "listens"], ["metadata", "song details"]];
+  function whatItDoes(categories: string[]) {
+    const words = [...new Set(categoryWords.filter(([category]) => categories.includes(category)).map(([, word]) => word))];
+    const text = words.join(", ");
+    return text ? text[0].toUpperCase() + text.slice(1) : "Your account and library";
+  }
+
   function tileKey(event: KeyboardEvent, index: number) {
     const grid = (event.currentTarget as HTMLElement).parentElement;
     const columns = grid ? getComputedStyle(grid).gridTemplateColumns.split(" ").length : 1;
@@ -149,7 +158,7 @@
       {#if !account && step === 1}
         <div class="connection-tiles" role="radiogroup" aria-label="Service">
           {#each choices as choice, index}
-            <button class="connection-tile" type="button" role="radio" aria-checked={providerId === choice.id} tabindex={providerId === choice.id ? 0 : -1} onkeydown={event => tileKey(event, index)} onclick={() => providerId = choice.id}><ProviderMark id={choice.id} definition={choice} decorative /><strong>{choice.name}</strong><small>{sourceOriginLabel(choice)}</small><small>{(choice.categories ?? []).map(category => ({ metadata: "Song details", streaming: "Playback", download: "Downloads", scrobbling: "Listens", playlists: "Playlists", lyrics: "Lyrics" })[category] ?? category).join(", ") || "Your account and library"}</small></button>
+            <button class="connection-tile" type="button" role="radio" aria-checked={providerId === choice.id} tabindex={providerId === choice.id ? 0 : -1} onkeydown={event => tileKey(event, index)} onclick={() => providerId = choice.id}><ProviderMark id={choice.id} definition={choice} decorative /><strong>{choice.name}</strong><small>{sourceOriginLabel(choice)}</small><small>{whatItDoes(choice.categories ?? [])}</small></button>
           {/each}
         </div>
         <footer class="dialog-actions"><Dialog.Close class={buttonVariants({ variant: "text" })}>Cancel</Dialog.Close><Button disabled={!selected} onclick={() => step = 2}>Next</Button></footer>
@@ -241,11 +250,12 @@
   .connection-tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-3); padding-block: var(--space-2); }
   .connection-tile { display: grid; min-height: 112px; min-width: 0; gap: var(--space-2); align-content: start; border: 1px solid var(--color-edge); border-radius: var(--radius-md); padding: var(--space-3); background: var(--color-panel); color: var(--color-ink); text-align: left; cursor: pointer; }
   .connection-tile[aria-checked="true"] { outline: 1px solid var(--color-signal); border-color: var(--color-signal); }
-  :global(.connect-source-dialog) { --dialog-width: 44rem; padding: var(--space-5); max-width: min(44rem, calc(100vw - 2rem)); }
+  :global(.connect-source-dialog) { --dialog-width: 44rem; padding: var(--space-5) var(--space-5) 0; max-width: min(44rem, calc(100vw - 2rem)); }
   :global(.connect-source-dialog) > header { border: 0; padding: 0; margin-bottom: var(--space-3); }
   :global(.connect-source-dialog) > form { padding: 0; }
   .connection-steps + header { margin-top: var(--space-4); }
-  .dialog-actions { position: sticky; bottom: 0; z-index: 1; margin: var(--space-3) 0 0; padding: var(--space-3) 0; border-top: 1px solid var(--color-edge); background: var(--color-panel); }
+  /* The footer carries the dialog's bottom padding, so scrolled tiles never show beneath it. */
+  .dialog-actions { position: sticky; bottom: 0; z-index: 1; margin: var(--space-3) 0 0; padding: var(--space-3) 0 var(--space-5); border-top: 1px solid var(--color-edge); background: var(--color-panel); }
   .connection-tile small, .connection-check-note { color: var(--color-ink-muted); font-size: var(--text-xs); }
   .connection-tile strong { font-size: var(--text-sm); }
   .connection-check-note { margin: 0; }

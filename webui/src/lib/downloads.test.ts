@@ -29,7 +29,7 @@ describe("managed download presentation", () => {
   it("formats measured storage bytes including an empty file", () => {
     expect(formatDownloadSize(0)).toBe("0 B");
     expect(formatDownloadSize(512)).toBe("512 B");
-    expect(formatDownloadSize(3 * 1024 ** 2)).toBe("3 MiB");
+    expect(formatDownloadSize(3 * 1024 ** 2)).toBe("3 MB");
   });
   it("formats real keepers, multiple people and restricted names", () => {
     expect(keptByText(undefined)).toBe("");

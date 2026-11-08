@@ -120,10 +120,11 @@ for (const width of [1280, 390]) for (const theme of ["dark", "light"] as const)
     await page.addInitScript(value => localStorage.setItem("allstarr.theme", value), theme);
     await panelFixture(page);
     await sourceChoices(page);
-    for (const path of ["activity", "activity?view=plays", "activity?view=jobs", "activity?view=tasks", "activity?view=reports", "sources/services", "sources/services/qobuz", "sources/accounts", "library/playlists", "library/matches", "library/cached", "library/kept", "library/import", "settings/appearance", "settings/listeners", "report"]) {
+    for (const path of ["activity", "activity?view=plays", "activity?view=jobs", "activity?view=tasks", "activity?view=reports", "sources/services", "sources/services/qobuz", "sources/accounts", "library/playlists", "library/matches", "library/cached", "library/kept", "library/import", "settings/appearance", "settings/people", "report"]) {
       await page.goto(`/#/${path}`);
       await expect(page.locator(".workspace-header h1")).toBeVisible();
       await expect(page.locator(".skeleton-panel")).toHaveCount(0);
+      await expect(page.getByLabel("Loading items", { exact: true })).toHaveCount(0);
       if (path === "sources/services/qobuz") {
         await expect(page.locator("[data-side-panel]")).toBeVisible();
         await expect(page.getByRole("radiogroup", { name: "Use this source for you", exact: true })).toBeVisible();
@@ -153,10 +154,10 @@ for (const width of [1280, 390]) for (const theme of ["dark", "light"] as const)
       await capture(page, info, `${path.replace(/[/?=]/g, "-")}-${width}-${theme}`);
     }
     await settingsFixture(page);
-    await page.goto("/#/settings/quality");
+    await page.goto("/#/settings/playback");
     await expect(page.locator(".routing-view")).toBeVisible();
     await expect(page.locator(".routing-view")).toHaveAttribute("aria-busy", "false");
-    for (const group of await page.locator(".seg").all()) {
+    for (const group of await page.locator(".routing-view .seg").all()) {
       const first = group.locator(":scope > button").first();
       await first.click();
       await expect(first).toHaveCSS("outline-style", "none");
