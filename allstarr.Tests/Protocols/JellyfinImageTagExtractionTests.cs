@@ -68,4 +68,14 @@ public class JellyfinImageTagExtractionTests
             source,
             JellyfinController.SelectExternalArtworkVariant(source, "apple-download", null, null));
     }
+
+    [Theory]
+    [InlineData("https://i.scdn.co/image/ab67616d00001e02eda9478c39a21e1cdc6609ca", 96, "https://i.scdn.co/image/ab67616d0000b273eda9478c39a21e1cdc6609ca")]
+    [InlineData("https://i.scdn.co/image/ab67616d00001e02eda9478c39a21e1cdc6609ca", 600, "https://i.scdn.co/image/ab67616d000082c1eda9478c39a21e1cdc6609ca")]
+    [InlineData("https://i.scdn.co/image/ab67616d00004851eda9478c39a21e1cdc6609ca", null, "https://i.scdn.co/image/ab67616d000082c1eda9478c39a21e1cdc6609ca")]
+    [InlineData("https://i.scdn.co/image/ab67706c0000da84f0e6e2a1b0c2d3e4f5a6b7c8", 600, "https://i.scdn.co/image/ab67706c0000da84f0e6e2a1b0c2d3e4f5a6b7c8")]
+    [InlineData("https://cdn-images.dzcdn.net/images/cover/0a1b2c/250x250-000000-80-0-0.jpg", 300, "https://cdn-images.dzcdn.net/images/cover/0a1b2c/600x600-000000-80-0-0.jpg")]
+    [InlineData("https://cdn-images.dzcdn.net/images/cover/0a1b2c/250x250-000000-80-0-0.jpg", null, "https://cdn-images.dzcdn.net/images/cover/0a1b2c/1000x1000-000000-80-0-0.jpg")]
+    public void SpotifyAndDeezerCovers_UseALargeEnoughSize(string source, int? width, string expected) =>
+        Assert.Equal(expected, JellyfinController.SelectExternalArtworkVariant(new Uri(source), "spotify", width, null).ToString());
 }

@@ -15,10 +15,10 @@ public sealed partial class TrackIdentityService
         await using var db = await _contextFactory.CreateDbContextAsync(cancellationToken);
         await ValidateActorAsync(db, actor, cancellationToken);
         var kind = DisplayResourceKind(resource);
-        var hash = CanonicalCatalogKeys.Hash(resource.Value);
+        var keys = CanonicalCatalogKeys.StoredKeys(resource.Value);
         var userId = actor.EffectiveUserId;
         var snapshots = await db.ExternalMetadataSnapshots.AsNoTracking().Where(item =>
-            item.ProviderId == resource.ProviderId && item.ResourceKind == kind && item.ExternalIdHash == hash &&
+            item.ProviderId == resource.ProviderId && item.ResourceKind == kind && keys.Contains(item.ExternalIdHash) &&
             (item.OwnerUserId == userId || userId == null && item.ProviderAccountId == null) &&
             (item.ProviderAccountId == null || db.ProviderAccounts.Any(account => account.Id == item.ProviderAccountId &&
                 account.Enabled && (account.OwnerUserId == null || account.OwnerUserId == userId))))
@@ -49,8 +49,8 @@ public sealed partial class TrackIdentityService
         }
         else
         {
-            var hash = CanonicalCatalogKeys.Hash(resource.Value);
-            query = query.Where(item => item.ProviderId == resource.ProviderId && item.ExternalIdHash == hash);
+            var keys = CanonicalCatalogKeys.StoredKeys(resource.Value);
+            query = query.Where(item => item.ProviderId == resource.ProviderId && keys.Contains(item.ExternalIdHash));
         }
         var snapshots = await query.ToArrayAsync(cancellationToken);
         foreach (var snapshot in snapshots.OrderByDescending(item => item.RetrievedAt).ThenByDescending(item => item.SnapshotVersion))

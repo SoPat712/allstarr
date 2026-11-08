@@ -208,24 +208,24 @@ public partial class JellyfinController : ControllerBase
         string externalId,
         CancellationToken cancellationToken)
     {
+        var kind = resourceKind switch
+        {
+            "song" => ProviderResourceKind.Track,
+            "album" => ProviderResourceKind.Album,
+            "artist" => ProviderResourceKind.Artist,
+            "playlist" => ProviderResourceKind.Playlist,
+            _ => (ProviderResourceKind?)null
+        };
         var protocol = HttpContext.GetProtocolExecutionContext();
         if (protocol?.Actor == null)
         {
-            var kind = resourceKind switch
-            {
-                "song" => ProviderResourceKind.Track,
-                "album" => ProviderResourceKind.Album,
-                "artist" => ProviderResourceKind.Artist,
-                "playlist" => ProviderResourceKind.Playlist,
-                _ => (ProviderResourceKind?)null
-            };
             return kind.HasValue
                 ? (await _providerGateway.GetPublicArtworkUriAsync(
                     provider, kind.Value, externalId, cancellationToken, storedRecordingOnly: provider == "allstarr"))?.AbsoluteUri
                 : null;
         }
 
-        return resourceKind switch
+        var cover = resourceKind switch
         {
             "song" => (await _providerGateway.GetSongAsync(protocol, provider, externalId))?.CoverArtUrl,
             "album" => (await _providerGateway.GetAlbumAsync(protocol, provider, externalId))?.CoverArtUrl,
@@ -233,6 +233,18 @@ public partial class JellyfinController : ControllerBase
             "playlist" => (await _providerGateway.GetPlaylistAsync(protocol, provider, externalId))?.CoverUrl,
             _ => null
         };
+        // A source that only reads playlists has no song details of its own; the artwork saved with the song still shows.
+        if (resourceKind is not ("song" or "album") || !ProviderArtworkFallback.IsFallback(provider, cover, resourceKind) || !kind.HasValue)
+            return cover;
+        try
+        {
+            return (await _providerGateway.GetPublicArtworkUriAsync(provider, kind.Value, externalId, cancellationToken))?.AbsoluteUri ?? cover;
+        }
+        catch (Exception error) when (error is not OperationCanceledException)
+        {
+            _logger.LogDebug(error, "Stored artwork unavailable for {Provider}/{ExternalId}", provider, externalId);
+            return cover;
+        }
     }
 
     #region Items
@@ -586,8 +598,8 @@ public partial class JellyfinController : ControllerBase
                 provider,
                 resourceKind,
                 resourceId,
-                // Albums without source art now take a saved song's cover, so earlier placeholders are not reused.
-                Revision: resourceKind == "album" ? JellyfinItemArtwork.AlbumArtRevision : null,
+                // Albums without source art now take a saved song's cover and covers come at a larger size, so earlier copies are not reused.
+                Revision: resourceKind is "album" or "song" ? JellyfinItemArtwork.AlbumArtRevision : null,
                 Width: width > 0 ? width : null,
                 Height: height > 0 ? height : null),
             async token =>
@@ -682,6 +694,23 @@ public partial class JellyfinController : ControllerBase
                 : height > 0
                     ? height.Value
                     : 0;
+        // Spotify keeps each cover at 64, 300 and 640 px and its original size; ask for at least twice a small request.
+        if (coverUri.Host.Equals("i.scdn.co", StringComparison.OrdinalIgnoreCase))
+        {
+            var spotify = Regex.Match(coverUri.AbsolutePath, "^/image/ab67616d(?:00004851|00001e02|0000b273|000082c1)([0-9a-f]+)$",
+                RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(50));
+            return spotify.Success
+                ? new UriBuilder(coverUri) { Path = $"/image/ab67616d{(size is > 0 and <= 300 ? "0000b273" : "000082c1")}{spotify.Groups[1].Value}" }.Uri
+                : coverUri;
+        }
+        // Deezer draws a cover at any square size up to 1000 px.
+        if (coverUri.Host.EndsWith(".dzcdn.net", StringComparison.OrdinalIgnoreCase))
+        {
+            var deezerSize = size > 0 ? Math.Clamp(size * 2, 500, 1000) : 1000;
+            var deezerPath = Regex.Replace(coverUri.AbsolutePath, @"/\d+x\d+-(?=[^/]+$)", $"/{deezerSize}x{deezerSize}-",
+                RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(50));
+            return deezerPath == coverUri.AbsolutePath ? coverUri : new UriBuilder(coverUri) { Path = deezerPath }.Uri;
+        }
         if (size == 0 ||
             !provider.StartsWith("apple", StringComparison.OrdinalIgnoreCase) ||
             !coverUri.Host.EndsWith(".mzstatic.com", StringComparison.OrdinalIgnoreCase))
