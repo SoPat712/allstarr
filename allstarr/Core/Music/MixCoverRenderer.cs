@@ -61,9 +61,23 @@ public sealed class MixCoverRenderer
             "party" => [PaperWhite, Pink, Yellow, Blue],
             "sleep" => [NavyPaper, "#f4dc8a", "#e9e2d0"],
             "custom" => Palettes[palette][..4],
-            "external" => input.Source == "lastfm" ? ["#d51007", "#f6efe6"] : ["#353070", "#eb743b", "#9a93e6"],
+            "external" => External(input),
             _ => throw new ArgumentException("Unknown mix kind.", nameof(input))
         };
+    }
+
+    // A service mix keeps its service's colour and takes two accents from which mix it is, so mixes from one service differ.
+    private static readonly string[] LastFmAccents = ["#f6efe6", "#ff9a5c", "#2a0b2e", "#f5c518", "#7a0a2a", "#ffd6c9", "#3a5bff"];
+    private static readonly string[] ListenBrainzAccents = ["#eb743b", "#9a93e6", "#f6e3c8", "#1d2a52", "#5ee7ff", "#ff6fae", "#e8d8b0"];
+
+    private static string[] External(MixCoverInput input)
+    {
+        var lastFm = input.Source == "lastfm";
+        var accents = lastFm ? LastFmAccents : ListenBrainzAccents;
+        var hash = Hash(input.SourcePlaylistId.Length > 0 ? input.SourcePlaylistId : input.Id);
+        var first = (int)(hash % (uint)accents.Length);
+        var second = (first + 1 + (int)(hash / (uint)accents.Length % (uint)(accents.Length - 1))) % accents.Length;
+        return [lastFm ? "#d51007" : "#353070", accents[first], accents[second]];
     }
 
     internal static uint Hash(string text)

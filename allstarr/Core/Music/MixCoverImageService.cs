@@ -27,7 +27,7 @@ public sealed class MixCoverImageService
 
     public static string GetTag(MixCoverInput input) =>
         Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(input))) +
-        "-gradient-v1";
+        "-gradient-v2";
 
     public IActionResult CreateResponse(MixCoverInput input, HttpContext context)
     {

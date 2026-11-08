@@ -32,6 +32,15 @@ public sealed class MixCoverRendererTests
     }
 
     [Theory]
+    [InlineData("lastfm", "loved", "similar")]
+    [InlineData("listenbrainz", "createdfor:weekly-jams", "createdfor:weekly-exploration")]
+    public void Mixes_from_one_service_get_different_covers(string source, string first, string second)
+    {
+        MixCoverInput Mix(string id) => new("fixture-" + id, 1, "external", "", "", "", source, id, "Mix", 10);
+        Assert.NotEqual(MixCoverRenderer.Render(Mix(first)), MixCoverRenderer.Render(Mix(second)));
+    }
+
+    [Theory]
     [InlineData("Neo SOUL", "R&B")]
     [InlineData("trap", "Hip-hop")]
     [InlineData("k-pop", "Pop")]

@@ -32,7 +32,7 @@ public sealed class MixCoverImageServiceTests
         var service = new MixCoverImageService(_ => throw new InvalidOperationException("Unexpected render"));
         var input = new MixCoverInput("mix-1", 1, "daily");
         var tag = MixCoverImageService.GetTag(input);
-        Assert.EndsWith("-gradient-v1", tag);
+        Assert.EndsWith("-gradient-v2", tag);
         var context = new DefaultHttpContext();
         context.Request.Headers.IfNoneMatch = $"\"{tag}\"";
         Assert.Equal(304, Assert.IsType<StatusCodeResult>(service.CreateResponse(input, context)).StatusCode);
