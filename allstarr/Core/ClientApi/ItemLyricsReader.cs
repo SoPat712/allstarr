@@ -35,7 +35,12 @@ public sealed class ItemLyricsReader(
         if (item == null) return null;
         if (sourceId == null) return await ReadRichAsync(execution with { RequestedItemId = itemId }, item);
         if (sourceId.Length == 0) return null;
-        // One version comes from the same lookup the version list uses, so every listed version can be read.
+        return await ReadVersionAsync(execution, item, itemId, sourceId);
+    }
+
+    // One version comes from the same lookup the version list uses, so every listed version can be read and pinned.
+    private async Task<RichLyrics?> ReadVersionAsync(ProtocolExecutionContext execution, LyricsItem item, string itemId, string sourceId)
+    {
         var candidates = await lyrics.FindAllAsync(execution with { RequestedItemId = itemId }, item.Song, item.ResourceKey,
             item.Sources with { OnlySourceId = sourceId, ReadOnly = true });
         var candidate = candidates.FirstOrDefault(candidate => candidate.SourceId == sourceId) ??
@@ -123,14 +128,11 @@ public sealed class ItemLyricsReader(
         var item = await ResolveAsync(http, execution, itemId);
         var recording = item == null ? null : await RecordingAsync(execution, item);
         if (item == null || recording == null) return null;
-        var result = await review.GetAsync(execution, recording.Value, "personal",
-            (id, token) => ReadBackendAsync(http, id, token));
-        var source = RecordingLyricsReview.SelectSource(result.Sources, request.SourceId);
-        if (source?.PreviewRevision == null)
+        // A pin names a source, not one copy of its text, so it only needs the source to still offer this song.
+        if (await ReadVersionAsync(execution, item, itemId, request.SourceId) == null)
             throw new LyricsChoiceConflictException("The lyrics source is unavailable.");
-        var choices = await review.ChooseAsync(execution, recording.Value, request.SourceId, "personal",
-            request.ExpectedRevision.ToExpected(), source.PreviewRevision, (id, token) => ReadBackendAsync(http, id, token));
-        return new(Chosen(choices, await ReadRichAsync(execution, item)), ClientLyricsRevision.From(choices.Revision));
+        var saved = await choices.SetAsync(execution, recording.Value, request.SourceId, "personal", request.ExpectedRevision.ToExpected());
+        return new(Chosen(saved, await ReadRichAsync(execution, item)), ClientLyricsRevision.From(saved.Revision));
     }
 
     public async Task<ClientLyricsSelection?> ClearAsync(HttpContext http, ProtocolExecutionContext execution, string itemId,

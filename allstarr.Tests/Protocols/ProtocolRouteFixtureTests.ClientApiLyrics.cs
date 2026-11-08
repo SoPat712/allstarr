@@ -260,6 +260,34 @@ public sealed partial class ProtocolRouteFixtureTests
     }
 
     [Fact]
+    public async Task ClientApi_LyricsPinKeepsTheSourceWhenItsTextChangesBetweenReads()
+    {
+        var recording = Guid.NewGuid();
+        var reads = 0;
+        var resolver = new Mock<IProtocolLyricsResolver>();
+        resolver.Setup(item => item.FindAllAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<Song>(), It.IsAny<string>(), It.IsAny<ProtocolLyricsSources>()))
+            .ReturnsAsync(() => new[]
+            {
+                new ProtocolLyricsCandidate("lrclib", new allstarr.Models.Lyrics.LyricsInfo { Source = "lrclib", SyncedLyrics = $"[00:01]Read {++reads}" })
+            });
+        using var factory = ClientLyricsFactory(recording, new(), configure: services =>
+        {
+            services.RemoveAll<IProtocolLyricsResolver>();
+            services.AddSingleton(resolver.Object);
+        });
+        using var client = CreateClientApiClient(factory);
+        client.DefaultRequestHeaders.Add("X-Emby-Token", "listener-token");
+        var (owner, _) = await SeedClientLyricsAsync(factory, recording);
+        const string path = "/allstarr/v1/items/ext-deezer-song-lyrics/lyrics";
+        var sources = await ReadClientLyricsJsonAsync(client, path + "/sources");
+        using var pin = await client.PutAsJsonAsync(path + "/source", new { sourceId = "lrclib", expectedRevision = sources["revision"] });
+        Assert.Equal(HttpStatusCode.OK, pin.StatusCode);
+        Assert.NotNull(JsonNode.Parse(await pin.Content.ReadAsStringAsync())!["revision"]!["personal"]);
+        await using var db = await factory.Services.GetRequiredService<IDbContextFactory<AllstarrDbContext>>().CreateDbContextAsync();
+        Assert.Equal("lrclib", Assert.Single(db.RecordingLyricsChoices.Where(choice => choice.OwnerUserId == owner && choice.RevokedAt == null)).SourceId);
+    }
+
+    [Fact]
     public async Task ClientApi_LyricsClearRestoresAutomaticAndUnavailableSourcesConflict()
     {
         var recording = Guid.NewGuid();
