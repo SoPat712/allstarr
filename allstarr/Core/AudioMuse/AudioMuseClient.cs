@@ -137,7 +137,8 @@ public sealed class AudioMuseClient(IHttpClientFactory clients, EncryptedSecretS
             throw new AudioMuseUnavailable(response.StatusCode switch
             {
                 HttpStatusCode.NotFound => notFound,
-                HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden or HttpStatusCode.BadRequest => "not_set_up",
+                HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden => "key_rejected",
+                HttpStatusCode.BadRequest => "not_set_up",
                 _ => "not_reachable"
             });
         }

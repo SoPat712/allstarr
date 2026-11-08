@@ -45,14 +45,17 @@ public sealed class AudioMuseDiscoveryTests
 
     [Theory]
     [InlineData("unreachable", "not_reachable")]
-    [InlineData("auth", "not_set_up")]
-    [InlineData("binding", "not_set_up")]
+    [InlineData("auth", "key_rejected")]
+    [InlineData("binding", "not_linked")]
     [InlineData("missing_api", "not_set_up")]
     [InlineData("malformed", "not_set_up")]
-    [InlineData("ambiguous", "not_set_up")]
+    [InlineData("ambiguous", "not_linked")]
+    [InlineData("old", "unsupported_version")]
+    [InlineData("next_major", "unsupported_version")]
+    [InlineData("newer", null)]
     [InlineData("models", "not_set_up")]
     [InlineData("empty", "too_little_analyzed_music")]
-    public async Task Status_explains_unavailability(string failure, string reason)
+    public async Task Status_explains_unavailability(string failure, string? reason)
     {
         await using var f = await ReadyAsync();
         var original = f.Respond;
@@ -65,6 +68,9 @@ public sealed class AudioMuseDiscoveryTests
             ("binding", "/api/servers") => Fixture.Json(Servers.Replace("jellyfin", "navidrome", StringComparison.Ordinal)),
             ("ambiguous", "/api/servers") => Fixture.Json(Servers.Replace("}]}", "},{\"server_id\":\"second\",\"server_type\":\"jellyfin\",\"creds\":{\"url\":\"http://backend.example:8096\"}}]}")),
             ("models", "/api/models") => Fixture.Json("{\"models\":[]}"),
+            ("old", "/api/version") => Fixture.Json("{\"app_version\":\"v3.6.3\"}"),
+            ("next_major", "/api/version") => Fixture.Json("{\"app_version\":\"v4.0.0\"}"),
+            ("newer", "/api/version") => Fixture.Json("{\"app_version\":\"v3.7.1\"}"),
             ("empty", "/api/models") => Fixture.Json(Models.Replace("20", "0", StringComparison.Ordinal)),
             _ => original(r)
         };

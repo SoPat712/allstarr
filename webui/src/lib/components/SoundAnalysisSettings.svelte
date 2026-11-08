@@ -20,7 +20,14 @@
   let refreshRequest = 0, connectionRequest = 0, disposed = false;
   const statusLabel = $derived(!status ? "Checking connection…" : status.reason === null
     ? `Connected · ${status.coverageComplete ? "" : "At least "}${countLabel(status.analyzedSongs, "song")} analyzed`
-    : ["not_enabled", "not_set_up"].includes(status.reason) ? "Not set up" : "Can't reach AudioMuse");
+    : ({
+      not_enabled: "Not set up",
+      key_rejected: "AudioMuse refused the key",
+      unsupported_version: "This AudioMuse version isn't supported",
+      not_linked: "AudioMuse isn't linked to this Jellyfin server",
+      too_little_analyzed_music: "Waiting for AudioMuse to analyze songs",
+      not_set_up: "AudioMuse isn't ready for Allstarr",
+    } as Record<string, string>)[status.reason] ?? "Can't reach AudioMuse");
 
   async function refresh() {
     if (action) return;

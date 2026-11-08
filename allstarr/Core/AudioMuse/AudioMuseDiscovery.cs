@@ -200,6 +200,10 @@ public sealed class AudioMuseDiscovery(IDbContextFactory<AllstarrDbContext> fact
         finally { _save.Release(); }
     }
 
+    // Allstarr was checked against AudioMuse 3.6.4; later 3.x releases keep the same API.
+    internal static bool SupportedVersion(string? version) =>
+        Version.TryParse(version?.Trim().TrimStart('v', 'V'), out var parsed) && parsed.Major == 3 && parsed >= new Version(3, 6, 4);
+
     private async Task<(AudioMuseEndpoint Endpoint, string Server, AudioMuseCoverage Coverage)> BoundAsync(ProtocolExecutionContext context, CancellationToken token)
     {
         var endpoint = await settings.EndpointAsync(token) ?? throw new AudioMuseUnavailable("not_enabled");
@@ -207,12 +211,12 @@ public sealed class AudioMuseDiscovery(IDbContextFactory<AllstarrDbContext> fact
             configuration["Backend:Type"] is { } backendType && !backendType.Equals("Jellyfin", StringComparison.OrdinalIgnoreCase) || context.BackendInstanceId != (configuration["Identity:BackendInstanceId"] ?? "primary"))
             throw new AudioMuseUnavailable("not_set_up");
         if (!await client.HealthAsync(endpoint, token)) throw new AudioMuseUnavailable("not_reachable");
-        if ((await client.VersionAsync(endpoint, token))?.TrimStart('v') != "3.6.4") throw new AudioMuseUnavailable("not_set_up");
+        if (!SupportedVersion(await client.VersionAsync(endpoint, token))) throw new AudioMuseUnavailable("unsupported_version");
         var servers = (await client.ServersAsync(endpoint, token)).Where(s => s.Type.Equals("jellyfin", StringComparison.OrdinalIgnoreCase)).ToArray();
         if (servers.Length > 1)
             servers = servers.Where(s => AudioMuseSettings.TryBaseUri(s.Url, out var uri) &&
                 AudioMuseSettings.TryBaseUri(configuration["Jellyfin:Url"], out var backend) && uri == backend).ToArray();
-        if (servers.Length != 1 || string.IsNullOrWhiteSpace(servers[0].Id)) throw new AudioMuseUnavailable("not_set_up");
+        if (servers.Length != 1 || string.IsNullOrWhiteSpace(servers[0].Id)) throw new AudioMuseUnavailable("not_linked");
         var coverage = await client.CoverageAsync(endpoint, servers[0].Id, token);
         if (coverage.ServerId != servers[0].Id || !coverage.Enabled || coverage.Analyzed == null || coverage.Total == null ||
             coverage.Analyzed > coverage.Total) throw new AudioMuseUnavailable("not_set_up");

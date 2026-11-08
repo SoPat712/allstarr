@@ -77,7 +77,7 @@ public sealed class AudioMuseCaptureTests
         f.Respond = r => r.RequestUri!.AbsolutePath == "/api/servers" ? Fixture.Json(servers.ToJsonString()) : original(r);
         Assert.Null((await f.Discovery.StatusAsync(f.Context, default)).Reason);
         servers["servers"]![0]!.AsObject().Remove("creds");
-        Assert.Equal("not_set_up", (await f.Discovery.StatusAsync(f.Context, default)).Reason);
+        Assert.Equal("not_linked", (await f.Discovery.StatusAsync(f.Context, default)).Reason);
     }
 
     [Fact]

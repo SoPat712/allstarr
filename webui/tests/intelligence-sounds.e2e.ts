@@ -114,3 +114,15 @@ test("Connection saves can be retried after a temporary error", async ({ page })
   await expect(dialog).toBeHidden();
   expect(state.connection.baseUrl).toBe("http://sounds.invalid:8601");
 });
+
+test("A saved key never reads as not set up when AudioMuse says why it can't be used", async ({ page }) => {
+  for (const [reason, label] of [["key_rejected", "AudioMuse refused the key"], ["unsupported_version", "This AudioMuse version isn't supported"],
+    ["not_linked", "AudioMuse isn't linked to this Jellyfin server"]] as const) {
+    await page.unrouteAll({ behavior: "ignoreErrors" });
+    await mockSoundSettings(page, true, { ...ready, reason, analyzedSongs: 0 });
+    await openSoundSettings(page);
+    await page.reload();
+    await expect(page.getByText(label, { exact: true })).toBeVisible();
+    await expect(page.getByText("Not set up", { exact: true })).toHaveCount(0);
+  }
+});
