@@ -487,11 +487,7 @@ public sealed class SavedLibraryReader(IDbContextFactory<AllstarrDbContext> fact
                               identity.ResourceKind == ProviderResourceKind.Track && identity.ExternalIdHash == metadata.ExternalIdHash &&
                               (identity.ProviderAccountId == metadata.ProviderAccountId || identity.ProviderAccountId == null && identity.Scope == ProviderIdentityScope.Catalog) &&
                               (identity.Verification == ProviderIdentityVerification.Verified || identity.Verification == ProviderIdentityVerification.Pinned)
-                          select new
-                          {
-                              entry.PlaylistSourceSnapshotId, metadata.PayloadJson, identity.ProviderId, identity.ExternalId,
-                              identity.VerificationMethod, identity.CanonicalRecordingId
-                          })
+                          select new { entry.PlaylistSourceSnapshotId, metadata.PayloadJson, identity.ProviderId, identity.ExternalId, identity.VerificationMethod, identity.CanonicalRecordingId })
             .ToArrayAsync(cancellationToken);
         foreach (var snapshot in snapshots)
         {
