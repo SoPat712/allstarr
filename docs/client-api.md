@@ -363,11 +363,16 @@ Song, album, and artist IDs use the Jellyfin surface, including native
 library IDs, service `ext-...` IDs, stored recording IDs, and Apple catalog
 aliases. These JSON routes use `Cache-Control: no-store`.
 
-`GET /allstarr/v1/mixes/{mixId}/cover` serves the same generated PNG as the
-dashboard. The list's `coverUrl` adds `?v=` with the cover's version, and a
-request for the current version may be kept for a year (`immutable`); the URL
-changes when the cover does. Other requests use a private cache with
-revalidation and return 304 for a matching `If-None-Match`. Unknown mixes and other listeners' mixes return 404,
+`GET /allstarr/v1/mixes/{mixId}/cover` serves the same cover as the dashboard
+and the mix's playlist image in Jellyfin and Subsonic apps: a JPEG 2×2 of the
+covers of four songs from different albums (one cover when the mix has fewer),
+or, for a mix without song art, a PNG gradient in colours of its own. The list's
+`coverUrl` adds `?v=` with the cover's version, and a request for the current
+version may be kept for a year (`immutable`); the URL changes when the cover
+does, including when the mix's songs change. A collage still missing a picture
+is sent with a one-minute cache and no version, so apps fetch it again. Other
+requests use a private cache with revalidation and return 304 for a matching
+`If-None-Match`. Unknown mixes and other listeners' mixes return 404,
 including conditional cover requests.
 
 `GET /allstarr/v1/items/{itemId}/appearances` (`appearances`) lists where an

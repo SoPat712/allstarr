@@ -974,7 +974,7 @@ public partial class SubsonicController : ControllerBase
         {
             var cover = await _virtualPlaylistProtocolAdapter.GetMixCoverAsync(
                 CurrentProtocolContext, mixCoverId ? mixPlaylistId : id, HttpContext.RequestAborted);
-            if (cover != null) return _mixCoverImages.CreateResponse(cover, HttpContext);
+            if (cover != null) return await _mixCoverImages.CreateResponseAsync(cover, HttpContext);
             if (mixCoverId) return NotFound();
         }
 

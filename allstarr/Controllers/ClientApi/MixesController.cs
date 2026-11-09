@@ -21,11 +21,11 @@ public sealed class MixesController(MixReader reader, MixCoverImageService cover
 
     [HttpGet("{mixId}/cover")]
     [EndpointName("getMixCover")]
-    [ProducesResponseType(typeof(byte[]), 200, "image/png")]
+    [ProducesResponseType(typeof(byte[]), 200, "image/jpeg", "image/png")]
     [ProducesResponseType(304)]
     public async Task<IActionResult> Cover(Guid mixId, [FromQuery(Name = "v")] string? version = null)
     {
-        try { return covers.CreateResponse(await reader.CoverAsync(Execution, mixId), HttpContext, version); }
+        try { return await covers.CreateResponseAsync(await reader.CoverAsync(Execution, mixId), HttpContext, version); }
         catch (UnauthorizedAccessException) { return NotFound(); }
         catch (KeyNotFoundException) { return NotFound(); }
         catch (ArgumentException) { return BadRequest(); }

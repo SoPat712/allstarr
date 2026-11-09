@@ -502,7 +502,7 @@ public partial class JellyfinController : ControllerBase
                 HttpContext.GetProtocolExecutionContext(), itemId, HttpContext.RequestAborted);
             if (cover != null)
                 return imageType.Equals("Primary", StringComparison.OrdinalIgnoreCase) && imageIndex == 0
-                    ? _mixCoverImages.CreateResponse(cover, HttpContext) : MissingExternalImage();
+                    ? await _mixCoverImages.CreateResponseAsync(cover, HttpContext) : MissingExternalImage();
         }
 
         if (_virtualPlaylistProtocolAdapter.IsVirtualPlaylistId(itemId))

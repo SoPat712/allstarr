@@ -159,7 +159,8 @@ public sealed partial class ProtocolRouteFixtureTests
         var path = $"/allstarr/v1/mixes/{mix.Id}/cover";
         using var first = await client.GetAsync(path);
         Assert.Equal(HttpStatusCode.OK, first.StatusCode);
-        Assert.Equal("image/png", first.Content.Headers.ContentType?.MediaType);
+        Assert.Equal(["library:native-mix-song"], MixCoverInput.From(mix).Art!);
+        Assert.Equal("image/jpeg", first.Content.Headers.ContentType?.MediaType);
         Assert.True(first.Headers.CacheControl?.Private);
         Assert.Equal(TimeSpan.Zero, first.Headers.CacheControl?.MaxAge);
         Assert.Equal('"' + MixCoverImageService.GetTag(MixCoverInput.From(mix)) + '"', first.Headers.ETag?.Tag);
@@ -168,7 +169,11 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.Equal(await first.Content.ReadAsByteArrayAsync(), await current.Content.ReadAsByteArrayAsync());
         using var stale = await client.GetAsync(path + "?v=0000000000000000");
         Assert.Equal(TimeSpan.Zero, stale.Headers.CacheControl?.MaxAge);
-        Assert.Equal(MixCoverRenderer.Render(MixCoverInput.From(mix)), await first.Content.ReadAsByteArrayAsync());
+        using (var collage = SkiaSharp.SKBitmap.Decode(await first.Content.ReadAsByteArrayAsync()))
+        {
+            Assert.Equal((600, 600), (collage.Width, collage.Height));
+            Assert.InRange(collage.GetPixel(300, 300).Red, 180, 220);
+        }
         using var conditional = new HttpRequestMessage(HttpMethod.Get, path);
         conditional.Headers.IfNoneMatch.Add(first.Headers.ETag!);
         using var unchanged = await client.SendAsync(conditional);
@@ -430,6 +435,11 @@ public sealed partial class ProtocolRouteFixtureTests
             "/Users/listener/Items/native-mix-song" => nativeVisible ? Json(200, nativeItem) : Json(404, "{}"),
             "/Users/listener/Items" => nativeVisible ? Json(200, "{\"Items\":[" + nativeItems + "]}") : Json(403, "{}"),
             "/Items" => Json(200, "{\"Items\":[" + nativeItem + "],\"TotalRecordCount\":1}"),
+            // The media server's album pictures, which mix covers are made from.
+            var path when path.EndsWith("/Images/Primary", StringComparison.Ordinal) => new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new ByteArrayContent(MixPicture()) { Headers = { ContentType = new("image/png") } }
+            },
             _ => Json(200, """{"Items":[],"TotalRecordCount":0}""")
         };
     }, services =>
@@ -439,6 +449,14 @@ public sealed partial class ProtocolRouteFixtureTests
         services.RemoveAll<IBackendLibraryAccessResolver>();
         services.AddSingleton<IBackendLibraryAccessResolver>(provider => new TestBackendLibraryAccess(provider.GetRequiredService<IDbContextFactory<AllstarrDbContext>>(), "library"));
     });
+
+    private static byte[] MixPicture()
+    {
+        using var bitmap = new SkiaSharp.SKBitmap(64, 64);
+        bitmap.Erase(new SkiaSharp.SKColor(200, 40, 90));
+        using var image = SkiaSharp.SKImage.FromBitmap(bitmap);
+        return image.Encode(SkiaSharp.SKEncodedImageFormat.Png, 100).ToArray();
+    }
 
     private static Song ClientMixSong() => new()
     {

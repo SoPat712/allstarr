@@ -43,7 +43,7 @@ public sealed partial class MixesController(PersonalMixService mixes, IDurableRu
                 var link = await db.PlaylistLinks.AsNoTracking().SingleAsync(item => item.Id == id && item.OwnerUserId == user.Id, token);
                 input = input with { Source = link.SourceProviderId, SourcePlaylistId = link.SourcePlaylistId };
             }
-            return covers.CreateResponse(input, HttpContext);
+            return await covers.CreateResponseAsync(input, HttpContext);
         }, token);
         return result is OkObjectResult { Value: IActionResult response } ? response : result;
     }
@@ -133,7 +133,7 @@ public sealed partial class MixesController(PersonalMixService mixes, IDurableRu
         mix.Readiness,
         inApps = mix.Added,
         appsAllowed = enabled,
-        coverArtwork = mix.Songs.Take(4).Select(item => item.Song.Id).ToArray(),
+        coverArtwork = MixCoverArt.Pick(mix.Songs.Select(item => item.Song)).Select(song => song.Id).ToArray(),
         initialJobId
     };
 

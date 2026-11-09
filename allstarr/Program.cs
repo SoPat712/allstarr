@@ -614,6 +614,7 @@ builder.Services.AddSingleton<allstarr.Core.Music.TasteService>();
 builder.Services.AddHostedService<allstarr.Core.Music.TasteWarmUp>();
 builder.Services.AddHostedService<allstarr.Core.Playback.ListeningStatsWarmUp>();
 builder.Services.AddSingleton<allstarr.Core.Music.PersonalMixService>();
+builder.Services.AddSingleton<allstarr.Core.Music.MixCoverArtLoader>();
 builder.Services.AddSingleton<allstarr.Core.Music.MixCoverImageService>();
 builder.Services.AddSingleton<IDurableJobHandler, allstarr.Core.Music.PersonalMixJobHandler>();
 builder.Services.AddSingleton<allstarr.Core.Music.MusicMixService>();

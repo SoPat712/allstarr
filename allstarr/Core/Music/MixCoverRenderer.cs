@@ -1,3 +1,4 @@
+using System.Globalization;
 using SkiaSharp;
 
 namespace allstarr.Core.Music;
@@ -5,39 +6,19 @@ namespace allstarr.Core.Music;
 public sealed class MixCoverRenderer
 {
     private const int Size = 600;
-    private const string Black = "#2a2826", White = "#f7f2e8", Cream = "#f1e8d6", PaperWhite = "#f6f2ea",
-        NavyPaper = "#1d2a52", Pink = "#ff48b0", Yellow = "#ffd400", Blue = "#0078bf", Red = "#e8443a",
-        Orange = "#ff6c2f", Green = "#00a95c", Navy = "#2e3b55";
-    private static readonly string[] Names = ["R&B", "Hip-hop", "Pop", "Indie rock", "Electronic", "Jazz", "Folk", "Metal", "Latin", "Classical"];
-    private static readonly string[][] Palettes =
-    [
-        [Cream, "#914e72", Pink, Orange, Black], [Cream, Yellow, Red, Black, Black],
-        ["#f6e3e1", Pink, Blue, Yellow, Navy], ["#d6bf98", "#00838a", Red, Navy, Black],
-        ["#1f1d1c", Pink, "#3fb6ff", Yellow, White], [Cream, Blue, Black, Orange, Black],
-        ["#d6bf98", Green, "#b8602d", Black, Black], ["#1f1d1c", "#bdb8b0", Red, "#5c5955", White],
-        [PaperWhite, Orange, "#00838a", Pink, Black], [PaperWhite, "#6f7a3a", "#b8602d", Black, Black]
-    ];
-    private static readonly string[][] Liquids =
-    [
-        ["#2a0b2e", "#c2366b", "#f29e4c", "#9b6bd6"], ["#15110c", "#e8a400", "#c8341c", "#6b4a2b"],
-        ["#ff6fae", "#ffd166", "#5ee7ff", "#a98bff"], ["#16302f", "#d9653b", "#2f9c95", "#e8d8b0"],
-        ["#070b26", "#3a5bff", "#c04cff", "#9dff3a"], ["#0c1a36", "#c99a3b", "#8a2f2f", "#3a6ea5"],
-        ["#3a2a17", "#c9762f", "#7f9f5f", "#efe0c2"], ["#0c0c0e", "#8a1c1c", "#5d636e", "#c0c4cc"],
-        ["#ff5a3c", "#ffd23f", "#00a6a6", "#7b2cbf"], ["#e9e2d2", "#2f4f3a", "#b08d57", "#8a8780"]
-    ];
-    private static readonly (string Word, int Palette)[] GenreWords =
-    [
-        ("r&b", 0), ("soul", 0), ("funk", 0), ("hip", 1), ("rap", 1), ("trap", 1), ("k-pop", 2), ("pop", 2),
-        ("indie", 3), ("rock", 3), ("punk", 3), ("alt", 3), ("edm", 4), ("house", 4), ("techno", 4), ("electr", 4), ("dance", 4),
-        ("jazz", 5), ("blues", 5), ("folk", 6), ("country", 6), ("acoustic", 6), ("metal", 7), ("hardcore", 7),
-        ("latin", 8), ("reggaeton", 8), ("salsa", 8), ("classical", 9), ("piano", 9), ("ambient", 9)
-    ];
+
     public static byte[] Render(MixCoverInput input)
     {
-        var colours = Colours(input).Select(SKColor.Parse).ToArray();
+        var (stops, angle) = Gradient(input);
         using var bitmap = new SKBitmap(Size, Size, SKColorType.Rgba8888, SKAlphaType.Premul);
         using var canvas = new SKCanvas(bitmap);
-        using var shader = SKShader.CreateLinearGradient(new(0, 0), new(Size, Size), colours, SKShaderTileMode.Clamp);
+        // The gradient runs through the centre at its angle and reaches every corner, as a CSS linear-gradient does.
+        var radians = angle * Math.PI / 180;
+        var (dx, dy) = ((float)Math.Cos(radians), (float)Math.Sin(radians));
+        var reach = Size / 2f * (Math.Abs(dx) + Math.Abs(dy));
+        const float centre = Size / 2f;
+        using var shader = SKShader.CreateLinearGradient(new(centre - dx * reach, centre - dy * reach),
+            new(centre + dx * reach, centre + dy * reach), stops.Select(SKColor.Parse).ToArray(), SKShaderTileMode.Clamp);
         using var paint = new SKPaint { Shader = shader };
         canvas.DrawRect(0, 0, Size, Size, paint);
         using var image = SKImage.FromBitmap(bitmap);
@@ -45,25 +26,84 @@ public sealed class MixCoverRenderer
         return png.ToArray();
     }
 
-    private static string[] Colours(MixCoverInput input)
+    // Four pictures make a 2×2 grid and one fills the square, each cropped to its centre. Null when a picture can't be read.
+    public static byte[]? RenderCollage(IReadOnlyList<byte[]> pictures)
     {
-        var palette = Palette(input.Tag);
-        if (input.Kind.StartsWith("daily-", StringComparison.Ordinal)) return Liquids[palette];
-        return input.Kind switch
+        if (pictures.Count is not (1 or 4)) return null;
+        var images = new List<SKImage>(pictures.Count);
+        try
         {
-            "discover-weekly" => [NavyPaper, "#e9e2d0", Yellow],
-            "release-radar" => [Cream, Green, Pink, Red],
-            "on-repeat" => [PaperWhite, Navy, Red],
-            "rewind" => [Cream, Orange, Pink],
-            "chill" => [PaperWhite, Blue],
-            "focus" => [PaperWhite, "#7fb3d8", Red, Black],
-            "workout" => [Cream, Red, Black],
-            "party" => [PaperWhite, Pink, Yellow, Blue],
-            "sleep" => [NavyPaper, "#f4dc8a", "#e9e2d0"],
-            "custom" => Palettes[palette][..4],
-            "external" => External(input),
-            _ => throw new ArgumentException("Unknown mix kind.", nameof(input))
+            foreach (var picture in pictures)
+            {
+                var image = SKImage.FromEncodedData(picture);
+                if (image == null || image.Width < 1 || image.Height < 1) return null;
+                images.Add(image);
+            }
+            using var bitmap = new SKBitmap(Size, Size, SKColorType.Rgba8888, SKAlphaType.Premul);
+            using var canvas = new SKCanvas(bitmap);
+            canvas.Clear(SKColors.Black);
+            var tile = images.Count == 4 ? Size / 2 : Size;
+            using var paint = new SKPaint { IsAntialias = true };
+            for (var index = 0; index < images.Count; index++)
+            {
+                var image = images[index];
+                var side = Math.Min(image.Width, image.Height);
+                var source = SKRect.Create((image.Width - side) / 2f, (image.Height - side) / 2f, side, side);
+                var target = SKRect.Create(index % 2 * tile, index / 2 * tile, tile, tile);
+                canvas.DrawImage(image, source, target, new SKSamplingOptions(SKCubicResampler.Mitchell), paint);
+            }
+            using var result = SKImage.FromBitmap(bitmap);
+            using var jpeg = result.Encode(SKEncodedImageFormat.Jpeg, 88);
+            return jpeg.ToArray();
+        }
+        finally
+        {
+            foreach (var image in images) image.Dispose();
+        }
+    }
+
+    // Colours and angle the web UI draws too (webui/src/lib/covers/cover-for.ts), so both agree.
+    internal static (string[] Stops, int Angle) Gradient(MixCoverInput input) =>
+        input.Kind == "external" ? (External(input), 45) : Bold(input.Id);
+
+    // Pale, bright and deep: saturation and brightness of the first stop, then of the second.
+    private static readonly (int Saturation, int Value, int NextSaturation, int NextValue)[] Tones =
+        [(42, 98, 72, 86), (86, 96, 82, 62), (78, 62, 70, 34)];
+
+    // Two stops seeded from the mix: a hue anywhere on the wheel, a second hue 40–75° away, a tone (pale, bright or
+    // deep) and an angle. Lightness tells covers apart at list size as much as hue does. Dark yellows turn olive and
+    // bright greens glare, so those are moved to a nearby tone.
+    internal static (string[] Stops, int Angle) Bold(string id)
+    {
+        var hash = Hash(id);
+        var hue = (int)((hash % 12 * 30 + (hash >> 4) % 17 + 352) % 360);
+        var swing = 40 + (int)((hash >> 9) % 36);
+        if ((hash >> 15 & 1) == 0) swing = -swing;
+        var tone = (int)((hash >> 20) % 3);
+        if (tone == 2 && hue is >= 35 and <= 80) tone = 1;
+        var (saturation, value, nextSaturation, nextValue) = Tones[tone];
+        if (tone == 1 && hue is >= 80 and <= 160) (saturation, value, nextSaturation) = (saturation - 22, value - 12, nextSaturation - 18);
+        return ([Hsv(hue + 360, saturation, value), Hsv(hue + swing + 360, nextSaturation, nextValue)], (int)((hash >> 16) % 360));
+    }
+
+    internal static string Hsv(int hue, int saturation, int value)
+    {
+        hue %= 360;
+        var chroma = value / 100.0 * (saturation / 100.0);
+        var x = chroma * (1 - Math.Abs(hue / 60.0 % 2 - 1));
+        var match = value / 100.0 - chroma;
+        var (red, green, blue) = hue switch
+        {
+            < 60 => (chroma, x, 0.0),
+            < 120 => (x, chroma, 0.0),
+            < 180 => (0.0, chroma, x),
+            < 240 => (0.0, x, chroma),
+            < 300 => (x, 0.0, chroma),
+            _ => (chroma, 0.0, x)
         };
+        static int Channel(double part) => (int)Math.Round(part * 255, MidpointRounding.AwayFromZero);
+        return string.Create(CultureInfo.InvariantCulture,
+            $"#{Channel(red + match):x2}{Channel(green + match):x2}{Channel(blue + match):x2}");
     }
 
     // A service mix keeps its service's colour and takes two accents from which mix it is, so mixes from one service differ.
@@ -91,11 +131,4 @@ public sealed class MixCoverRenderer
         }
         return value;
     }
-    private static int Palette(string tag)
-    {
-        var lower = tag.ToLowerInvariant();
-        foreach (var (word, palette) in GenreWords) if (lower.Contains(word, StringComparison.Ordinal)) return palette;
-        return (int)(Hash(lower) % Names.Length);
-    }
-    internal static string PaletteName(string tag) => Names[Palette(tag)];
 }
