@@ -123,7 +123,8 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.Equal("owned-art", items[0].GetProperty("ImageTags").GetProperty("Primary").GetString());
         Assert.Equal("library", items[0].GetProperty("AllstarrSource").GetString());
         Assert.Equal("MusicAlbum", items[1].GetProperty("Type").GetString());
-        Assert.Equal("Other album", items[1].GetProperty("Name").GetString());
+        // Service albums carry the same label as everywhere else in Jellyfin clients.
+        Assert.Equal("Other album [A]", items[1].GetProperty("Name").GetString());
         Assert.Equal("deezer", items[1].GetProperty("AllstarrSource").GetString());
         Assert.Equal("deezer", items[1].GetProperty("AllstarrProvider").GetProperty("id").GetString());
     }
@@ -138,6 +139,8 @@ public sealed partial class ProtocolRouteFixtureTests
             asked.Add(path);
             if (path == "/Users/Me") return Json(200, """{"Id":"listener"}""");
             if (path == "/Users/listener/Items/lib-song") return Json(200, """{"Id":"lib-song","Type":"Audio","Name":"Library song"}""");
+            if (path == "/Items" && request.RequestUri.Query.Contains("ids=lib-song", StringComparison.OrdinalIgnoreCase))
+                return Json(200, """{"Items":[{"Id":"lib-song","Type":"Audio","Name":"Library song"}],"TotalRecordCount":1}""");
             if (path == "/Items/lib-song/Similar") return Json(200, """{"Items":[{"Id":"native-similar","Type":"Audio","Name":"Native pick"}],"TotalRecordCount":1}""");
             return Json(200, """{"Items":[],"TotalRecordCount":0}""");
         }, _ => { });
