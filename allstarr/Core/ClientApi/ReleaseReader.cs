@@ -23,9 +23,18 @@ public sealed class ReleaseReader(NewReleasesService releases, IProtocolProvider
             return new ClientRelease(entry.Id, entry.Title, entry.Type, entry.ReleaseDate,
                 new(artistId == null ? null : ClientCatalogIds.Resource(source.ArtistProviderId ?? source.ProviderId, ProviderResourceKind.Artist, artistId), entry.Artist),
                 ClientCatalogIds.Resource(source.ProviderId, ProviderResourceKind.Album, source.AlbumId), $"/allstarr/v1/releases/{entry.Id}/cover");
-        }).ToArray(), follows.Select(artist => new ClientReleaseArtist(
-            ClientCatalogIds.Resource(artist.ProviderId, ProviderResourceKind.Artist, artist.ArtistId), artist.DisplayName)).ToArray());
+        }).ToArray(), follows.Select(artist =>
+        {
+            var id = ClientCatalogIds.Resource(artist.ProviderId, ProviderResourceKind.Artist, artist.ArtistId);
+            return new ClientReleaseArtist(id, artist.DisplayName, ArtistImage(id));
+        }).ToArray());
     }
+
+    // The picture the artist's own item shows, by the same image path, so apps load it through their usual artwork cache
+    // instead of reading each artist first.
+    private static string? ArtistImage(string? id) => id == null ? null : id.StartsWith("ext-", StringComparison.Ordinal)
+        ? $"/Items/{Uri.EscapeDataString(id)}/Images/Primary?tag={Uri.EscapeDataString(JellyfinItemArtwork.PrimaryImageTag(id, false))}"
+        : $"/Items/{Uri.EscapeDataString(id)}/Images/Primary";
 
     public async Task<ReleaseSource?> CoverAsync(ProtocolExecutionContext execution, string releaseId)
     {
@@ -41,7 +50,7 @@ public sealed class ReleaseReader(NewReleasesService releases, IProtocolProvider
         if (artist == null) return null;
         if (followed) await releases.FollowAsync(owner, artist, execution.CancellationToken);
         else await releases.UnfollowAsync(owner, artist.ProviderId, artist.ArtistId, execution.CancellationToken);
-        return new(followed, new(artistId, artist.DisplayName));
+        return new(followed, new(artistId, artist.DisplayName, ArtistImage(artistId)));
     }
 
     private async Task<FollowedReleaseArtist?> ResolveArtistAsync(HttpContext http, ProtocolExecutionContext execution, string artistId)

@@ -4,7 +4,8 @@ namespace allstarr.Core.ClientApi;
 
 public sealed record ClientReleaseArtist(
     [property: JsonPropertyName("artistId")] string? ArtistId,
-    [property: JsonPropertyName("name")] string Name);
+    [property: JsonPropertyName("name")] string Name,
+    [property: JsonPropertyName("imageUrl")] string? ImageUrl = null);
 
 public sealed record ClientRelease(
     [property: JsonPropertyName("releaseId")] string ReleaseId,

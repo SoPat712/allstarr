@@ -47,6 +47,8 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.Equal("Release artist", release.GetProperty("artist").GetProperty("name").GetString());
         var followed = Assert.Single(body.RootElement.GetProperty("followedArtists").EnumerateArray());
         Assert.Equal("ext-deezer-artist-release-artist", followed.GetProperty("artistId").GetString());
+        Assert.Equal("/Items/ext-deezer-artist-release-artist/Images/Primary?tag=ext-deezer-artist-release-artist-art-v3",
+            followed.GetProperty("imageUrl").GetString());
         var path = release.GetProperty("coverUrl").GetString();
         Assert.Equal($"/allstarr/v1/releases/{inbox.Id}/cover", path);
         using var cover = await client.GetAsync(path);
