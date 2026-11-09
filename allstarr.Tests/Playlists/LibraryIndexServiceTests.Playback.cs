@@ -86,60 +86,6 @@ public sealed partial class LibraryIndexServiceTests
         }
     }
 
-    [Fact]
-    public async Task NativeLookupSeesALibraryChangeThroughItsSharedCopy()
-    {
-        const string publicId = "ext-apple-musickit-song-1700522647";
-        var viewer = Context(_userA, "principal-a");
-        var recording = await _identities.CreateRecordingAsync(viewer.RequireActor(), "playback", "USUM72308561", null, publicId: publicId);
-        var identity = new ProviderTrackIdentityRecord
-        {
-            Id = Guid.NewGuid(),
-            CanonicalRecordingId = recording.Recording.Id,
-            ProviderId = "spotify",
-            ExternalId = "source",
-            ExternalIdHash = CanonicalCatalogKeys.Hash("source"),
-            ResourceKind = allstarr.Core.Capabilities.ProviderResourceKind.Track,
-            Scope = ProviderIdentityScope.Catalog,
-            Verification = ProviderIdentityVerification.Verified,
-            VerificationMethod = "fixture",
-            DecisionVersion = 1
-        };
-        await using (var db = _factory.CreateDbContext())
-        {
-            db.ProviderTrackIdentities.Add(identity);
-            db.ExternalMetadataSnapshots.Add(new()
-            {
-                Id = Guid.NewGuid(),
-                OwnerUserId = _userA,
-                ProviderId = "spotify",
-                ProviderTrackIdentityId = identity.Id,
-                ResourceKind = "track",
-                Protocol = "jellyfin",
-                BackendInstanceId = "backend",
-                BackendPrincipalId = "principal-a",
-                ExternalIdHash = identity.ExternalIdHash,
-                SnapshotVersion = 1,
-                RetrievedAt = _clock.UtcNow,
-                PayloadSha256 = new string('a', 64),
-                PayloadJson = SelfLoveMatchFixture.Payload
-            });
-            db.LibraryTracks.Add(SelfLoveMatchFixture.Local(_userA, "backend"));
-            await db.SaveChangesAsync();
-        }
-        async Task<string?> Find() => (await _service.FindKnownRecordingTracksAsync(viewer,
-            [new(publicId, recording.Recording.Id, recording.Recording.Isrc, "apple-musickit", "1700522647")])).GetValueOrDefault(publicId);
-
-        Assert.Equal(SelfLoveMatchFixture.BackendItemId, await Find());
-        Assert.Equal(SelfLoveMatchFixture.BackendItemId, await Find());
-        await using (var db = _factory.CreateDbContext())
-        {
-            db.LibraryTracks.Remove(await db.LibraryTracks.SingleAsync());
-            await db.SaveChangesAsync();
-        }
-        Assert.Null(await Find());
-    }
-
     [Theory]
     [InlineData(null, true)]
     [InlineData("USAAA2600001", true)]

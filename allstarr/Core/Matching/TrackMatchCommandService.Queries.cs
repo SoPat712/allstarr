@@ -280,8 +280,8 @@ public sealed partial class TrackMatchCommandService
     }
 
     // Reading and indexing the library takes up to a second, so batches of item details share one copy while the
-    // tracks table is unchanged; the copy is also dropped after a few minutes in case some write changed nothing the
-    // fingerprint reads.
+    // tracks table is unchanged. Library writes change its count, revisions or index and update times, which take a
+    // few milliseconds to read; the copy is also dropped after a few minutes in case some write changed none of them.
     private static readonly TimeSpan SharedLibraryLifetime = TimeSpan.FromMinutes(5);
     private readonly ConcurrentDictionary<string, SharedLibrary> _sharedLibraries = new(StringComparer.Ordinal);
     private sealed record SharedLibrary(string Fingerprint, DateTimeOffset LoadedAt, TrackMatchLibrarySnapshot Snapshot);
@@ -289,7 +289,10 @@ public sealed partial class TrackMatchCommandService
     private async Task<TrackMatchLibrarySnapshot> SharedLibraryAsync(AllstarrDbContext db, string key,
         Func<Task<TrackMatchLibrarySnapshot>> load, CancellationToken cancellationToken)
     {
-        var fingerprint = await LibraryTrackFingerprint.ReadAsync(db, cancellationToken);
+        var fingerprint = await db.Database.SqlQueryRaw<string>("""
+            SELECT COUNT(*) || ':' || COALESCE(SUM("Revision"), 0) || ':' || COALESCE(MAX("UpdatedAt"), 0) || ':' ||
+                COALESCE(MAX("IndexedAt"), 0) AS "Value" FROM library_tracks
+            """).SingleAsync(cancellationToken);
         var now = clock.UtcNow;
         if (_sharedLibraries.TryGetValue(key, out var shared) && shared.Fingerprint == fingerprint &&
             now - shared.LoadedAt < SharedLibraryLifetime) return shared.Snapshot;
