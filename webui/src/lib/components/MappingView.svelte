@@ -36,7 +36,7 @@
   import ErrorState from "$lib/components/patterns/ErrorState.svelte";
   import { Dialog } from "$lib/components/ui/dialog";
   import { ChevronRight, X } from "@lucide/svelte";
-  import { currentSong, defaultMatchFilter, differenceChips, filterCounts, filterStates, keyboardCommand, matchPill, sourceArtwork, type MatchFilter } from "$lib/matches-presentation";
+  import { currentSong, defaultMatchFilter, filterCounts, filterStates, keyboardCommand, matchPill, rowChips, sourceArtwork, type MatchFilter } from "$lib/matches-presentation";
   import { installMatchSearchShortcut, takeMatchSearchRequest } from "$lib/matches-search";
   import { reportHref } from "$lib/support";
   import BulkRematchDialog from "$lib/components/BulkRematchDialog.svelte";
@@ -665,11 +665,11 @@
         {#if visibleMatches.length}
           <table class="matches-table">{#if !phoneLayout}<thead><tr>{#if bulkMode}<th class="check-cell"><span class="sr-only">Select</span></th>{/if}<th>From your playlist</th><th>Plays as</th><th>Sure</th><th>What differs</th><th><span class="sr-only">Actions</span></th></tr></thead>{/if}
             <tbody>{#each visibleMatches as match (match.externalSnapshotId)}
-              {@const target = rowSong(match)}{@const differences = differenceChips(match, target)}{@const state = matchPill(match)}
+              {@const target = rowSong(match)}{@const row = rowChips(match, target)}{@const differences = row.chips}{@const state = matchPill(match)}
               <tr class="mapping-row" data-snapshot={match.externalSnapshotId} aria-label={`Open match for ${match.title || "song"}`} onfocusin={() => activeId = match.externalSnapshotId} class:needs-review={isAttention(match.state)} class:chosen={chosen.has(match.externalSnapshotId) || activeId === match.externalSnapshotId}>
                 {#if phoneLayout}
                   <td class="phone-cell" colspan={bulkMode ? 6 : 5}>
-                    <ItemRow title={match.title || "Song"} actionLabel={`Open match for ${match.title || "song"}`} subtitle={target ? `${providerName(target.providerId)}${differences[0] ? ` · ${differences[0]}` : target.title?.trim() && target.artist?.trim() ? " · Same song" : ""}` : "No match yet"} attention={isAttention(match.state)} selected={activeId === match.externalSnapshotId} selection={bulkMode} checked={chosen.has(match.externalSnapshotId)} oncheck={() => toggleChosen(match)} onclick={() => openMatch(match)}>
+                    <ItemRow title={match.title || "Song"} actionLabel={`Open match for ${match.title || "song"}`} subtitle={target ? `${providerName(target.providerId)}${differences[0] ? ` · ${differences[0]}` : row.sameSong ? " · Same song" : ""}` : differences[0] ? `No match yet · ${differences[0]}` : "No match yet"} attention={isAttention(match.state)} selected={activeId === match.externalSnapshotId} selection={bulkMode} checked={chosen.has(match.externalSnapshotId)} oncheck={() => toggleChosen(match)} onclick={() => openMatch(match)}>
                       {#snippet leading()}<MediaArtwork url={sourceArtwork(match)} />{/snippet}
                       {#snippet pill()}<StatePill tone={state.tone} text={state.text} />{/snippet}
                       {#snippet menu()}{@render rowMenu(match)}{/snippet}
@@ -683,7 +683,7 @@
                   </td>
                   <td class="desktop-cell"><div class="plays-as">{#if target}<span><ProviderMark id={target.providerId === "local" ? backend.toLowerCase() : target.providerId} definition={provider(target.providerId)} />{providerName(target.providerId)}</span>{#if target.title?.trim() && target.title !== match.title}<small>{target.title}</small>{/if}{:else}<span class="no-match">No match yet</span>{/if}</div></td>
                   <td class="desktop-cell"><StatePill tone={state.tone} text={state.text} /></td>
-                  <td class="desktop-cell"><div class="difference-chips" title={differences.join(" · ") || undefined}>{#if target}{#each differences as difference}<span>{difference}</span>{:else}{#if target.title?.trim() && target.artist?.trim()}<span class="same-song">✓ Same song</span>{/if}{/each}{/if}</div></td>
+                  <td class="desktop-cell"><div class="difference-chips" title={differences.join(" · ") || undefined}>{#each differences as difference}<span>{difference}</span>{:else}{#if row.sameSong}<span class="same-song">✓ Same song</span>{/if}{/each}</div></td>
                   <td class="desktop-cell actions-cell"><div class="row-actions">{@render rowMenu(match)}<Button variant="text" size="icon" class="row-chevron" aria-label={`Show match for ${match.title || "song"}`} onclick={() => openMatch(match)}><ChevronRight size={16} aria-hidden="true" /></Button></div></td>
                 {/if}
               </tr>

@@ -1,5 +1,5 @@
 import type { MatchCandidate, MatchReviewItem, MatchReviewResponse, MatchTarget } from "./api";
-import { currentTarget } from "./mappings";
+import { currentTarget, isAttention } from "./mappings";
 import { formatDuration } from "./playlists";
 
 export type MatchFilter = "needs" | "automatic" | "manual" | "rejected" | "all";
@@ -55,6 +55,36 @@ export function differenceChips(source: SongFacts, target: SongFacts | null): st
   if (source.title && target.title && normalized(source.title) !== normalized(target.title) && !chips.length) chips.push("Different title");
   if (source.artist && target.artist && normalized(source.artist) !== normalized(target.artist)) chips.push("Different artist");
   return chips;
+}
+
+type MatchEvidence = Pick<MatchReviewItem, "state" | "reasons" | "warnings" | "candidates">;
+const concernText: Record<string, string> = {
+  clean_edit_of_explicit: "Clean instead of explicit",
+  explicit_edit_of_clean: "Explicit instead of clean",
+  semantic_version_mismatch: "Different version",
+  semantic_version_mismatch_review: "Different version",
+  isrc_conflict: "Different ISRC",
+  duration_exceeds_tolerance: "Different length",
+  duration_mismatch: "Different length",
+  ambiguous_top_candidates: "Several close matches",
+  limited_recording_metadata: "Playlist gives few details",
+};
+
+// Why Allstarr isn't sure, in the matcher's own terms. Settled matches have nothing to explain.
+export function matchConcerns(match: MatchEvidence): string[] {
+  if (!isAttention(match.state)) return [];
+  const concerns = [...match.reasons ?? [], ...match.warnings ?? []].map(code => concernText[code]).filter((text): text is string => Boolean(text));
+  const closest = match.candidates?.[0];
+  if (match.state.toLowerCase() === "unresolved" && closest?.artist && (closest.artistOverlap ?? 1) < 0.5)
+    concerns.unshift(`Closest is by ${closest.artist}`);
+  return [...new Set(concerns)];
+}
+
+// The chips a row shows: what differs from the playlist's copy, then why the match is unsure. "Same song" only
+// when the match is settled and nothing differs; an unsure match with nothing to compare isn't the same song.
+export function rowChips(match: MatchEvidence & SongFacts, target: SongFacts | null) {
+  const chips = [...new Set([...differenceChips(match, target), ...matchConcerns(match)])];
+  return { chips, sameSong: Boolean(target?.title?.trim() && target.artist?.trim()) && !chips.length && !isAttention(match.state) };
 }
 
 export function comparisonRows(source: SongFacts, target: SongFacts | null) {

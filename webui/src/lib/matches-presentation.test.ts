@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { comparisonRows, currentSong, defaultMatchFilter, differenceChips, evidenceSentence, filterCounts, formatConfidence, hasOwnArtwork, keyboardCommand, matchPill, sourceArtwork, versionWords } from "./matches-presentation";
+import { comparisonRows, currentSong, defaultMatchFilter, differenceChips, evidenceSentence, filterCounts, formatConfidence, hasOwnArtwork, keyboardCommand, matchConcerns, matchPill, rowChips, sourceArtwork, versionWords } from "./matches-presentation";
 import type { MatchReviewItem } from "./api";
 
 const song = { title: "Song", artist: "Singer", album: "Album", durationMilliseconds: 180000, isrc: "AB123", isExplicit: true };
@@ -137,3 +137,20 @@ describe("Matches keyboard commands", () => {
     expect(keyboardCommand({ key })).toBe(action);
   });
 });
+
+describe("why a match is unsure", () => {
+  const evidence = (state: string, reasons: string[], warnings: string[], candidates: MatchReviewItem["candidates"] = []) =>
+    ({ state, reasons, warnings, candidates, title: "Both Ways", artist: "Juice WRLD" }) as unknown as MatchReviewItem;
+  it("never calls an unsure match the same song when the playlist gives nothing to compare", () => {
+    const target = { title: "Both Ways", artist: "Juice WRLD" };
+    const unsure = rowChips(evidence("ambiguous", ["title_exact", "artist_exact", "clean_edit_of_explicit"], ["semantic_version_mismatch", "limited_recording_metadata"]), target);
+    expect(unsure).toEqual({ chips: ["Clean instead of explicit", "Different version", "Playlist gives few details"], sameSong: false });
+    expect(rowChips(evidence("accepted", ["title_exact"], ["limited_recording_metadata"]), target)).toEqual({ chips: [], sameSong: true });
+  });
+  it("says who the closest song is by when no match is the right artist", () => {
+    const candidates = [{ title: "Cheerleader", artist: "Nickytine", artistOverlap: 0.08 }] as MatchReviewItem["candidates"];
+    expect(matchConcerns(evidence("unresolved", ["title_exact"], ["below_suggestion_threshold"], candidates))).toEqual(["Closest is by Nickytine"]);
+    expect(rowChips(evidence("unresolved", [], [], candidates), null)).toEqual({ chips: ["Closest is by Nickytine"], sameSong: false });
+  });
+});
+
