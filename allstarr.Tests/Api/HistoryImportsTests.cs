@@ -386,7 +386,7 @@ public sealed partial class ListeningHistoryImportIntegrationTests
     {
         var services = new ServiceCollection();
         services.AddListeningHistoryImport(new ConfigurationBuilder().Build());
-        Assert.Equal(5, services.Count(item => item.ServiceType == typeof(IListeningHistoryImporter)));
+        Assert.Equal(6, services.Count(item => item.ServiceType == typeof(IListeningHistoryImporter)));
         Assert.Equal(2, services.Count(item => item.ServiceType == typeof(IDurableJobHandler)));
         Assert.Contains(services, item => item.ImplementationType == typeof(ListeningHistoryImportCleanupService));
         Assert.Equal(500L * 1024 * 1024, new ListeningHistoryImportOptions().MaximumUploadBytes);

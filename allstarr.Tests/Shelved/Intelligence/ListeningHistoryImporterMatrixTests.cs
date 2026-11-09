@@ -30,6 +30,7 @@ public sealed class ListeningHistoryImporterMatrixTests
         Assert.Collection(
             services.Where(item => item.ServiceType == typeof(IListeningHistoryImporter)),
             item => Assert.Equal(typeof(SpotifyListeningHistoryImporter), item.ImplementationType),
+            item => Assert.Equal(typeof(AppleMusicListeningHistoryImporter), item.ImplementationType),
             item => Assert.Equal(typeof(LastFmListeningHistoryImporter), item.ImplementationType),
             item => Assert.Equal(typeof(ListenBrainzListeningHistoryImporter), item.ImplementationType),
             item => Assert.Equal(typeof(KoitoListeningHistoryImporter), item.ImplementationType),
