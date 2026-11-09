@@ -281,7 +281,7 @@ public sealed class PlaybackSignalJobHandler(IRecommendationSignalWriter signals
         PlaybackTrackSnapshot? track, bool added, bool enrichWithMusicBrainz)
     {
         var latest = added || payload.ObservedAt >= record.UpdatedAt;
-        var next = Classify(payload, track, !added && record.State == ListeningEventState.Playing &&
+        var next = Classify(Listened(record, payload, added), track, !added && record.State == ListeningEventState.Playing &&
             record.StartedAt != null && payload.ObservedAt >= record.UpdatedAt &&
             (record.ResumePositionTicks == null || payload.PositionTicks == null ||
                 payload.PositionTicks >= record.ResumePositionTicks &&
@@ -331,6 +331,16 @@ public sealed class PlaybackSignalJobHandler(IRecommendationSignalWriter signals
             record.ProviderTrackReference = $"{source.ProviderId}:{source.ExternalId}";
         }
         record.Revision++;
+    }
+
+    // A stop can't count more of the song than the time since it started: an app that jumps straight to the end
+    // (a broken local copy, a seek to the last second) would otherwise record a full listen in a fraction of a second.
+    private static PlaybackSignalPayload Listened(ListeningEventRecord record, PlaybackSignalPayload payload, bool added)
+    {
+        if (added || record.StartedAt is not { } startedAt || payload.PositionTicks is not { } reported ||
+            payload.Transition is not (PlaybackTransition.Stop or PlaybackTransition.InferredStop or PlaybackTransition.Progress)) return payload;
+        var possible = (record.ResumePositionTicks ?? 0) + Math.Max(0, (payload.ObservedAt - startedAt).Ticks) + TimeSpan.FromSeconds(10).Ticks;
+        return reported > possible ? payload with { PositionTicks = possible } : payload;
     }
 
     internal static ListeningEventState Classify(PlaybackSignalPayload payload, PlaybackTrackSnapshot? track, bool started = false) =>

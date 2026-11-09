@@ -212,6 +212,7 @@ public sealed partial class PlaybackSignalPipelineTests
         var target = new RecoveryTarget(await AddScrobbleAccountAsync());
         var pipeline = new PlaybackSignalPipeline(jobs, scrobbleAcceptance: new(factory, jobs, [target]));
         await pipeline.RecordAsync(Signal(PlaybackTransition.Start, "track-1", 0));
+        clock.UtcNow = clock.UtcNow.AddSeconds(100);
         await pipeline.RecordAsync(Signal(PlaybackTransition.Stop, "track-1", TimeSpan.FromSeconds(100).Ticks));
         var handler = new PlaybackSignalJobHandler(new Writer(), new Scrobbles(), new Lyrics(), factory, playbackTracks, recoveryJobs: jobs);
         while (await jobs.ClaimNextAsync("worker", [PlaybackSignalPipeline.JobType]) is { } claim)
