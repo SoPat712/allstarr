@@ -73,6 +73,28 @@ public sealed partial class ListeningHistoryResolutionTests
         finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
     }
 
+    [Fact]
+    public async Task PlayWithoutTitleOrArtist_IsSettledInsteadOfHoldingTheJob()
+    {
+        await Add("Song");
+        await Add("Untitled");
+        await using (var db = factory.CreateDbContext())
+        {
+            var blank = await db.ListeningEvents.SingleAsync(item => item.Title == "Untitled");
+            blank.Title = null;
+            blank.Artist = null;
+            await db.SaveChangesAsync();
+        }
+        await Handler().RecoverAsync(default);
+
+        Assert.Equal(DurableJobCompletionKind.Succeeded, (await Run()).Kind);
+        gateway.Verify(item => item.SearchAutomaticProviderSongsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", It.IsAny<string>(), 15),
+            Times.AtLeastOnce);
+        await using var read = factory.CreateDbContext();
+        using var payload = JsonDocument.Parse((await read.Jobs.SingleAsync()).PayloadJson);
+        Assert.Equal(2, payload.RootElement.GetProperty("Cursor").GetInt32());
+    }
+
     private sealed class HistoryFetchClientFactory(HttpMessageHandler handler) : IHttpClientFactory
     {
         public HttpClient CreateClient(string name) => new(handler, disposeHandler: false);

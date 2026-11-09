@@ -226,6 +226,9 @@ public sealed partial class ListeningHistoryResolution(
         async Task<Resolution> ResolveProviderAsync(IGrouping<string, ListeningEventRecord> group)
         {
             var play = group.First();
+            // A play saved without a title or artist can't be searched for, so it is settled instead of holding the job.
+            if (string.IsNullOrWhiteSpace(play.Title) || string.IsNullOrWhiteSpace(play.Artist))
+                return new(group, null, null, Reason: "missing-metadata");
             try
             {
                 if (unavailable != null) return new(group, null, null, Retry: true, Reason: "provider-failure:" + unavailable.Kind);
@@ -283,7 +286,8 @@ public sealed partial class ListeningHistoryResolution(
             catch (Exception exception) when (!token.IsCancellationRequested)
             {
                 logger?.LogWarning("History resolution failed at provider read ({ExceptionType})", exception.GetType().Name);
-                return new(group, null, null, Retry: true, Reason: "exception:" + exception.GetType().Name);
+                // Bad saved values fail the same way on every attempt, so only other failures wait for a retry.
+                return new(group, null, null, Retry: exception is not ArgumentException, Reason: "exception:" + exception.GetType().Name);
             }
         }
 
