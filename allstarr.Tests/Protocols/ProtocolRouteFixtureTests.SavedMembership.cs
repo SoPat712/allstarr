@@ -237,21 +237,46 @@ public sealed partial class ProtocolRouteFixtureTests
             db.CanonicalRecordings.Add(new() { Id = recording, CreatedByUserId = FavoriteViewer, PublicId = CanonicalRecordingRecord.DefaultPublicId(recording), CreatedAt = added, UpdatedAt = added });
             db.ProviderTrackIdentities.Add(new()
             {
-                Id = identity, CanonicalRecordingId = recording, ProviderId = "deezer", ResourceKind = ProviderResourceKind.Track,
-                Verification = ProviderIdentityVerification.Verified, Scope = ProviderIdentityScope.Catalog, DecisionVersion = 1,
-                ExternalId = "feed-song", ExternalIdHash = SavedMembershipHash("feed-song"), CreatedAt = added, UpdatedAt = added
+                Id = identity,
+                CanonicalRecordingId = recording,
+                ProviderId = "deezer",
+                ResourceKind = ProviderResourceKind.Track,
+                Verification = ProviderIdentityVerification.Verified,
+                Scope = ProviderIdentityScope.Catalog,
+                DecisionVersion = 1,
+                ExternalId = "feed-song",
+                ExternalIdHash = SavedMembershipHash("feed-song"),
+                CreatedAt = added,
+                UpdatedAt = added
             });
             db.PlaylistLinks.Add(new()
             {
-                Id = link, OwnerUserId = FavoriteViewer, SourceProviderId = "deezer", SourcePlaylistId = "feed",
-                SourcePlaylistIdHash = SavedMembershipHash("feed"), TargetProtocol = "jellyfin", TargetBackendInstanceId = "primary",
-                Mode = PlaylistLinkMode.Virtual, CountsTowardLibrary = choice, CreatedAt = added, UpdatedAt = added
+                Id = link,
+                OwnerUserId = FavoriteViewer,
+                SourceProviderId = "deezer",
+                SourcePlaylistId = "feed",
+                SourcePlaylistIdHash = SavedMembershipHash("feed"),
+                TargetProtocol = "jellyfin",
+                TargetBackendInstanceId = "primary",
+                Mode = PlaylistLinkMode.Virtual,
+                CountsTowardLibrary = choice,
+                CreatedAt = added,
+                UpdatedAt = added
             });
             db.ExternalMetadataSnapshots.Add(new()
             {
-                Id = metadata, OwnerUserId = FavoriteViewer, Protocol = "jellyfin", BackendInstanceId = "primary", BackendPrincipalId = "user-1",
-                ProviderId = "deezer", ResourceKind = "track", ProviderTrackIdentityId = identity, ExternalIdHash = SavedMembershipHash("feed-song"),
-                SnapshotVersion = 1, PayloadSha256 = SavedMembershipHash("feed-payload"), RetrievedAt = added,
+                Id = metadata,
+                OwnerUserId = FavoriteViewer,
+                Protocol = "jellyfin",
+                BackendInstanceId = "primary",
+                BackendPrincipalId = "user-1",
+                ProviderId = "deezer",
+                ResourceKind = "track",
+                ProviderTrackIdentityId = identity,
+                ExternalIdHash = SavedMembershipHash("feed-song"),
+                SnapshotVersion = 1,
+                PayloadSha256 = SavedMembershipHash("feed-payload"),
+                RetrievedAt = added,
                 PayloadJson = """{"Title":"Feed song","Artists":["Feed artist"],"Album":"Feed album","ArtistIds":["ext-deezer-artist-feed"],"AlbumId":"ext-deezer-album-feed"}"""
             });
             // The newest snapshot couldn't tell whose the playlist is; the earlier answer still holds.
@@ -260,13 +285,23 @@ public sealed partial class ProtocolRouteFixtureTests
                 var snapshot = Guid.CreateVersion7();
                 db.PlaylistSourceSnapshots.Add(new()
                 {
-                    Id = snapshot, OwnerUserId = FavoriteViewer, PlaylistLinkId = link, SnapshotVersion = version, RetrievedAt = added.AddDays(version),
-                    PublishedAt = added.AddDays(version), Name = "Feed", SourceKind = sourceKind, PayloadSha256 = SavedMembershipHash($"feed-snapshot-{version}")
+                    Id = snapshot,
+                    OwnerUserId = FavoriteViewer,
+                    PlaylistLinkId = link,
+                    SnapshotVersion = version,
+                    RetrievedAt = added.AddDays(version),
+                    PublishedAt = added.AddDays(version),
+                    Name = "Feed",
+                    SourceKind = sourceKind,
+                    PayloadSha256 = SavedMembershipHash($"feed-snapshot-{version}")
                 });
                 db.PlaylistSourceEntries.Add(new()
                 {
-                    Id = Guid.CreateVersion7(), PlaylistSourceSnapshotId = snapshot, ExternalMetadataSnapshotId = metadata,
-                    SourcePosition = 0, SourceEntryIdHash = SavedMembershipHash($"feed-row-{version}")
+                    Id = Guid.CreateVersion7(),
+                    PlaylistSourceSnapshotId = snapshot,
+                    ExternalMetadataSnapshotId = metadata,
+                    SourcePosition = 0,
+                    SourceEntryIdHash = SavedMembershipHash($"feed-row-{version}")
                 });
             }
             await db.SaveChangesAsync();

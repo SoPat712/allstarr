@@ -70,8 +70,15 @@ public sealed partial class PlaylistOrchestrationIntegrationTests
 
         controller.HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] = new AdminAuthSession
         {
-            SessionId = "other-session", AllstarrUserId = Guid.CreateVersion7(), UserId = "other", UserName = "Other",
-            BackendType = "Jellyfin", BackendInstanceId = "backend", IsAdministrator = false, JellyfinAccessToken = "fixture", ExpiresAtUtc = _now.AddHours(1).UtcDateTime
+            SessionId = "other-session",
+            AllstarrUserId = Guid.CreateVersion7(),
+            UserId = "other",
+            UserName = "Other",
+            BackendType = "Jellyfin",
+            BackendInstanceId = "backend",
+            IsAdministrator = false,
+            JellyfinAccessToken = "fixture",
+            ExpiresAtUtc = _now.AddHours(1).UtcDateTime
         };
         Assert.Equal(403, Assert.IsType<ObjectResult>(await controller.SetLibrary(_link, new(revision + 1, false), default)).StatusCode);
         await using var verify = await _factory.CreateDbContextAsync();
