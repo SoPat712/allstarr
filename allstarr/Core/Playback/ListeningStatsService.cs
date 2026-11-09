@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using allstarr.Core.Enrichment;
 using allstarr.Core.Intelligence;
 using allstarr.Core.Operations;
+using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
 using allstarr.Core.Settings;
 using allstarr.Services.Admin;
@@ -58,18 +59,29 @@ public sealed class ListeningStatsService(IDbContextFactory<AllstarrDbContext> f
     private readonly MemoryCache cache = new(new MemoryCacheOptions { SizeLimit = 256 });
     private readonly ConcurrentDictionary<OpenedRecap, DateTimeOffset> opened = new();
 
-    public async Task<ListeningStats> GetAsync(AdminAuthSession session, string? period, int? year, CancellationToken token, string? timeZoneId = null)
+    public Task<ListeningStats> GetAsync(AdminAuthSession session, string? period, int? year, CancellationToken token, string? timeZoneId = null)
     {
         if (session.AllstarrUserId is not { } owner || session.ExpiresAtUtc <= clock.UtcNow.UtcDateTime)
             throw new UnauthorizedAccessException();
-        var protocol = session.BackendType.ToLowerInvariant();
+        return GetAsync(owner, session.BackendType.ToLowerInvariant(), session.BackendInstanceId, session.UserId,
+            session.IsAdministrator, period, year, token, timeZoneId);
+    }
+
+    public Task<ListeningStats> GetAsync(ProtocolExecutionContext context, string? period, int? year, CancellationToken token, string? timeZoneId = null) =>
+        GetAsync(context.RequireActor().EffectiveUserId ?? throw new UnauthorizedAccessException(),
+            context.Protocol.ToString().ToLowerInvariant(), context.BackendInstanceId, context.VerifiedBackendPrincipalId,
+            null, period, year, token, timeZoneId);
+
+    private async Task<ListeningStats> GetAsync(Guid owner, string protocol, string backendInstanceId, string principalId,
+        bool? administrator, string? period, int? year, CancellationToken token, string? timeZoneId)
+    {
         if (protocol is not ("jellyfin" or "subsonic")) throw new UnauthorizedAccessException();
         await using var db = await factory.CreateDbContextAsync(token);
         var actor = await db.Users.AsNoTracking().SingleOrDefaultAsync(user => user.Id == owner && user.Enabled &&
-            user.BackendType == protocol && user.BackendInstanceId == session.BackendInstanceId &&
-            user.BackendPrincipalId == session.UserId && user.IsAdmin == session.IsAdministrator, token)
+            user.BackendType == protocol && user.BackendInstanceId == backendInstanceId &&
+            user.BackendPrincipalId == principalId && (administrator == null || user.IsAdmin == administrator), token)
             ?? throw new UnauthorizedAccessException();
-        var scope = new IntelligenceScope(owner, protocol, session.BackendInstanceId);
+        var scope = new IntelligenceScope(owner, protocol, backendInstanceId);
         var zone = TimeZoneInfo.Local;
         if (!string.IsNullOrWhiteSpace(timeZoneId))
         {

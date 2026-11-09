@@ -34,6 +34,8 @@ public sealed record ClientFeatures
     [JsonPropertyName("appearances")] public bool Appearances { get; init; } = true;
     [JsonPropertyName("similarAlbums")] public bool SimilarAlbums { get; init; } = true;
     [JsonPropertyName("playlistKinds")] public bool PlaylistKinds { get; init; } = true;
+    [JsonPropertyName("stats")] public bool Stats { get; init; }
+    [JsonPropertyName("taste")] public bool Taste { get; init; }
 }
 
 public sealed record ClientApiError(

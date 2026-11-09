@@ -24,7 +24,8 @@ when a Subsonic-compatible server identifies itself as Navidrome, or `subsonic` 
 before using optional routes.
 `titleMarkers`, `itemDetails`, `playback`, `lyricsRich`, `lyricsSources`, `lyricsVersions`,
 `fixesMatch`, `reports`, `mixes`, `releases`, `follow`, `events`, `appearances`,
-`similarAlbums`, and `playlistKinds` are available;
+`similarAlbums`, and `playlistKinds` are available. `stats` and `taste` are true
+when their respective services are registered;
 the other flags remain false until supported.
 The version in the path identifies the contract. Compatible additions stay
 within v1; incompatible changes use a new path version.
@@ -43,6 +44,43 @@ Send `X-Allstarr-Title-Markers: none` on any music request to omit both `[A]`
 and `[E]` title markers. This also works on normal Jellyfin routes. It changes
 only that request; saved listening preferences stay the same. Other header
 values preserve the normal behavior.
+
+`GET /allstarr/v1/me/stats?period=7d|30d|year|all&year=&timeZoneId=` returns
+the signed-in listener's dashboard stats: totals, coverage, top songs, artists,
+albums and genres, timeline, hourly counts, streaks and newly heard artists.
+Omit `period` for the last 30 days. Use either `period` or a calendar `year`
+from 1 through 9998; combining them or supplying an invalid time zone returns
+400 `invalid_request`, with the same validation message as the dashboard.
+`timeZoneId` uses a system time zone ID such as `America/New_York`; omitted
+values use the server's time zone. Calendar windows include their start and
+exclude their end.
+
+Song items have `{title,artist,album,playCount,artworkUrl}`; artist items have
+`{name,playCount,artworkUrl}`; album items have
+`{title,artist,playCount,artworkUrl}`. Artwork URLs point to the music listener's
+`GET /allstarr/v1/me/stats/art?artist=&title=|album=` route. Omit both `title`
+and `album` for an artist photo. Send the Jellyfin token on image requests too.
+The route uses the dashboard's artwork lookup and listener-scoped cache;
+missing artwork returns 204. Images use private seven-day caching, and missing
+images use private one-hour caching.
+
+`GET /allstarr/v1/me/taste` returns
+`{lately:{tags,artists},usually:{tags,artists},latelyWeight,paused,useImportedHistory,nudges}`.
+Each tag or artist is `{name,strength}`, with strength from 0 to 100. Nudges are
+`{kind,name,mode,expiresAt}`; `expiresAt` is null for an ongoing nudge. This route
+reads the listener's existing taste profile and settings.
+
+`GET /allstarr/v1/me/sound` returns
+`{songs,skippedSongs,librarySongs,traits,tempo,libraryTempo,at}`. Traits are
+`{name,difference,lean}`: difference compares finished songs with the library,
+and lean compares finished songs with skipped songs. Unknown lean or tempo
+values are null. The existing sound service requires at least 20 finished
+songs with analysis and 20 other analyzed library songs; insufficient history
+or unavailable analysis returns 404 `not_found`. Apps can show an empty state
+until a profile is available.
+
+Stats, taste and sound are always personal, including for administrator tokens,
+and use `Cache-Control: private, no-store` for JSON responses.
 
 Browser clients may send `X-Allstarr-*` headers. Responses expose
 `X-Allstarr-Playback-Request` through CORS.

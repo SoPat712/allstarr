@@ -117,9 +117,9 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.False(string.IsNullOrWhiteSpace(root.GetProperty("serverVersion").GetString()));
         AssertLibraryProvider(root.GetProperty("library"));
         var features = root.GetProperty("features");
-        Assert.Equal(["appearances", "events", "fixesMatch", "follow", "itemDetails", "lyricsRich", "lyricsSearch", "lyricsSources", "lyricsVersions", "mixes", "playback", "playlistKinds", "releases", "reports", "similarAlbums", "titleMarkers"],
+        Assert.Equal(["appearances", "events", "fixesMatch", "follow", "itemDetails", "lyricsRich", "lyricsSearch", "lyricsSources", "lyricsVersions", "mixes", "playback", "playlistKinds", "releases", "reports", "similarAlbums", "stats", "taste", "titleMarkers"],
             features.EnumerateObject().Select(item => item.Name).Order().ToArray());
-        Assert.All(features.EnumerateObject(), item => Assert.Equal(item.Name is "titleMarkers" or "itemDetails" or "playback" or "lyricsRich" or "lyricsSources" or "lyricsVersions" or "fixesMatch" or "reports" or "mixes" or "releases" or "follow" or "lyricsSearch" or "events" or "appearances" or "similarAlbums" or "playlistKinds", item.Value.GetBoolean()));
+        Assert.All(features.EnumerateObject(), item => Assert.Equal(item.Name is "titleMarkers" or "itemDetails" or "playback" or "lyricsRich" or "lyricsSources" or "lyricsVersions" or "fixesMatch" or "reports" or "mixes" or "releases" or "follow" or "lyricsSearch" or "events" or "appearances" or "similarAlbums" or "playlistKinds" or "stats" or "taste", item.Value.GetBoolean()));
         Assert.NotNull(observed?.Principal);
         Assert.False(observed.Principal.IsAdministrator);
         Assert.Equal(ProviderActorKind.User, observed.RequireActor().Kind);
@@ -346,6 +346,10 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.Equal("listMixes", paths.GetProperty("/allstarr/v1/mixes").GetProperty("get").GetProperty("operationId").GetString());
         Assert.Equal("listMixItems", paths.GetProperty("/allstarr/v1/mixes/{mixId}/items").GetProperty("get").GetProperty("operationId").GetString());
         Assert.Equal("getMixCover", paths.GetProperty("/allstarr/v1/mixes/{mixId}/cover").GetProperty("get").GetProperty("operationId").GetString());
+        Assert.Equal("getMyStats", paths.GetProperty("/allstarr/v1/me/stats").GetProperty("get").GetProperty("operationId").GetString());
+        Assert.Equal("getMyStatsArtwork", paths.GetProperty("/allstarr/v1/me/stats/art").GetProperty("get").GetProperty("operationId").GetString());
+        Assert.Equal("getMyTaste", paths.GetProperty("/allstarr/v1/me/taste").GetProperty("get").GetProperty("operationId").GetString());
+        Assert.Equal("getMySound", paths.GetProperty("/allstarr/v1/me/sound").GetProperty("get").GetProperty("operationId").GetString());
         Assert.Equal("listReleases", paths.GetProperty("/allstarr/v1/releases").GetProperty("get").GetProperty("operationId").GetString());
         Assert.Equal("getReleaseCover", paths.GetProperty("/allstarr/v1/releases/{releaseId}/cover").GetProperty("get").GetProperty("operationId").GetString());
         Assert.Equal("followArtist", paths.GetProperty("/allstarr/v1/artists/{artistId}/follow").GetProperty("put").GetProperty("operationId").GetString());

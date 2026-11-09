@@ -1453,6 +1453,405 @@
         }
       }
     },
+    "/allstarr/v1/me/stats": {
+      "get": {
+        "tags": [
+          "Me"
+        ],
+        "operationId": "getMyStats",
+        "parameters": [
+          {
+            "name": "period",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "year",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "timeZoneId",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientListeningStats"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/allstarr/v1/me/stats/art": {
+      "get": {
+        "tags": [
+          "Me"
+        ],
+        "operationId": "getMyStatsArtwork",
+        "parameters": [
+          {
+            "name": "artist",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "title",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "album",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "content": {
+              "image/png": {
+                "schema": {
+                  "type": "string",
+                  "format": "byte"
+                }
+              },
+              "image/jpeg": {
+                "schema": {
+                  "type": "string",
+                  "format": "byte"
+                }
+              },
+              "image/webp": {
+                "schema": {
+                  "type": "string",
+                  "format": "byte"
+                }
+              },
+              "image/gif": {
+                "schema": {
+                  "type": "string",
+                  "format": "byte"
+                }
+              },
+              "image/avif": {
+                "schema": {
+                  "type": "string",
+                  "format": "byte"
+                }
+              },
+              "application/json": {}
+            }
+          },
+          "204": {
+            "description": "No Content",
+            "content": {
+              "application/json": {}
+            }
+          }
+        }
+      }
+    },
+    "/allstarr/v1/me/taste": {
+      "get": {
+        "tags": [
+          "Me"
+        ],
+        "operationId": "getMyTaste",
+        "responses": {
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientTasteProfile"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/allstarr/v1/me/sound": {
+      "get": {
+        "tags": [
+          "Me"
+        ],
+        "operationId": "getMySound",
+        "responses": {
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SoundProfile"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/allstarr/v1/mixes": {
       "get": {
         "tags": [
@@ -2575,6 +2974,12 @@
           },
           "playlistKinds": {
             "type": "boolean"
+          },
+          "stats": {
+            "type": "boolean"
+          },
+          "taste": {
+            "type": "boolean"
           }
         }
       },
@@ -2689,6 +3094,140 @@
           },
           "revision": {
             "type": "string"
+          }
+        }
+      },
+      "ClientListeningStats": {
+        "type": "object",
+        "properties": {
+          "period": {
+            "$ref": "#/components/schemas/ListeningStatsPeriod"
+          },
+          "playCount": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "activeDays": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "importedCount": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "observedSince": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "date-time"
+          },
+          "estimatedTimeFromSongLengthsMilliseconds": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "coverage": {
+            "$ref": "#/components/schemas/ListeningStatsCoverage"
+          },
+          "topSongs": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/ListeningStatsSong"
+            }
+          },
+          "topArtists": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/ClientStatsArtist"
+            }
+          },
+          "topAlbums": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/ClientStatsAlbum"
+            }
+          },
+          "shortPlayCount": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "firstPlayAt": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "date-time"
+          },
+          "uniqueSongs": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "uniqueArtists": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "timelineUnit": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "timeline": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/ListeningStatsPoint"
+            }
+          },
+          "byHour": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          "biggestDay": {
+            "$ref": "#/components/schemas/ListeningStatsPoint"
+          },
+          "longestStreakDays": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "topGenres": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/ListeningStatsGenre"
+            }
+          },
+          "newArtistCount": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "newArtists": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/ClientStatsArtist"
+            }
           }
         }
       },
@@ -3447,6 +3986,128 @@
           }
         }
       },
+      "ClientStatsAlbum": {
+        "required": [
+          "title",
+          "artist",
+          "playCount",
+          "artworkUrl"
+        ],
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "artist": {
+            "type": "string"
+          },
+          "playCount": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "artworkUrl": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
+      "ClientStatsArtist": {
+        "required": [
+          "name",
+          "playCount",
+          "artworkUrl"
+        ],
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "playCount": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "artworkUrl": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
+      "ClientTasteLayer": {
+        "required": [
+          "tags",
+          "artists"
+        ],
+        "type": "object",
+        "properties": {
+          "tags": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ClientTasteStrength"
+            }
+          },
+          "artists": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ClientTasteStrength"
+            }
+          }
+        }
+      },
+      "ClientTasteProfile": {
+        "required": [
+          "lately",
+          "usually",
+          "latelyWeight",
+          "paused",
+          "useImportedHistory",
+          "nudges"
+        ],
+        "type": "object",
+        "properties": {
+          "lately": {
+            "$ref": "#/components/schemas/ClientTasteLayer"
+          },
+          "usually": {
+            "$ref": "#/components/schemas/ClientTasteLayer"
+          },
+          "latelyWeight": {
+            "type": "number",
+            "format": "double"
+          },
+          "paused": {
+            "type": "boolean"
+          },
+          "useImportedHistory": {
+            "type": "boolean"
+          },
+          "nudges": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TasteNudge"
+            }
+          }
+        }
+      },
+      "ClientTasteStrength": {
+        "required": [
+          "name",
+          "strength"
+        ],
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "strength": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
       "CreateClientReportRequest": {
         "required": [
           "kind",
@@ -3736,6 +4397,112 @@
             "items": {
               "type": "string"
             }
+          }
+        }
+      },
+      "ListeningStatsCoverage": {
+        "required": [
+          "unknownSongIdentityCount",
+          "unknownDurationCount"
+        ],
+        "type": "object",
+        "properties": {
+          "unknownSongIdentityCount": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "unknownDurationCount": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "ListeningStatsGenre": {
+        "required": [
+          "genre",
+          "plays"
+        ],
+        "type": "object",
+        "properties": {
+          "genre": {
+            "type": "string"
+          },
+          "plays": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "ListeningStatsPeriod": {
+        "required": [
+          "from",
+          "to",
+          "timeZoneId"
+        ],
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "date-time"
+          },
+          "to": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "timeZoneId": {
+            "type": "string"
+          }
+        }
+      },
+      "ListeningStatsPoint": {
+        "required": [
+          "key",
+          "plays"
+        ],
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "plays": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "ListeningStatsSong": {
+        "required": [
+          "title",
+          "artist",
+          "album",
+          "playCount"
+        ],
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "artist": {
+            "type": "string"
+          },
+          "album": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "playCount": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "artworkUrl": {
+            "type": [
+              "null",
+              "string"
+            ]
           }
         }
       },
@@ -4115,6 +4882,107 @@
             "type": "string"
           }
         }
+      },
+      "SoundProfile": {
+        "required": [
+          "songs",
+          "skippedSongs",
+          "librarySongs",
+          "traits",
+          "tempo",
+          "libraryTempo",
+          "at"
+        ],
+        "type": "object",
+        "properties": {
+          "songs": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "skippedSongs": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "librarySongs": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "traits": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SoundTrait"
+            }
+          },
+          "tempo": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int32"
+          },
+          "libraryTempo": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int32"
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "SoundTrait": {
+        "required": [
+          "name",
+          "difference",
+          "lean"
+        ],
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "difference": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "lean": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int32"
+          }
+        }
+      },
+      "TasteNudge": {
+        "required": [
+          "kind",
+          "name",
+          "mode",
+          "expiresAt"
+        ],
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string"
+          },
+          "expiresAt": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "date-time"
+          }
+        }
       }
     }
   },
@@ -4142,6 +5010,9 @@
     },
     {
       "name": "LyricsSearch"
+    },
+    {
+      "name": "Me"
     },
     {
       "name": "Mixes"
