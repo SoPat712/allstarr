@@ -404,6 +404,13 @@ and a change to clean-only or the metadata sources that listener allows is read
 again. The server keeps a bounded number of these answers. Songs and other item types return 400.
 Responses use `Cache-Control: no-store`.
 
+Jellyfin's own `Items/{albumId}/Similar` and `Albums/{albumId}/Similar` return
+the same albums, in the same order, as ordinary album items: library albums
+exactly as Jellyfin describes them and service albums with `ext-...` IDs. Each
+item also carries `AllstarrSource` (`library` or the service ID) and
+`AllstarrProvider` (`{id,name,iconUrl,glyphUrl}`), and the response carries
+`AllstarrBasedOn`. Songs and artists keep Jellyfin's usual Similar answer.
+
 Playlists Allstarr syncs from a service (`playlistKinds`) carry
 `AllstarrPlaylistKind` on their Jellyfin item, in playlist lists, `Items?Ids=`
 and `Items/{id}`: `Yours` for a playlist the listener made, `Feed` for one the

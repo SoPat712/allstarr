@@ -77,6 +77,81 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.Equal(HttpStatusCode.BadRequest, song.StatusCode);
     }
 
+    // Jellyfin's own Similar route gives albums the same picks as the client API, as ordinary album items.
+    [Theory]
+    [InlineData("/Items/ext-deezer-album-seed-album/Similar?Limit=11")]
+    [InlineData("/Albums/ext-deezer-album-seed-album/Similar?Limit=11")]
+    public async Task Jellyfin_SimilarForAnAlbumReturnsTheSameAlbumsAsJellyfinItems(string url)
+    {
+        var gateway = new Mock<IProtocolProviderGateway>();
+        gateway.Setup(service => service.GetAlbumAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "seed-album"))
+            .ReturnsAsync(new Album { Id = "ext-deezer-album-seed-album", Title = "Seed album", Artist = "Seed Artist", ArtistId = "ext-deezer-artist-seed" });
+        gateway.Setup(service => service.GetPlayableProviderOrderAsync(It.IsAny<ProviderActorContext>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(["deezer"]);
+        gateway.Setup(service => service.GetSimilarArtistsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "seed", It.IsAny<int>()))
+            .ReturnsAsync([
+                new Artist { Name = "Library Friend", ExternalProvider = "deezer", ExternalId = "friend" },
+                new Artist { Name = "Service Friend", ExternalProvider = "deezer", ExternalId = "other" }]);
+        gateway.Setup(service => service.GetArtistAlbumsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "other", It.IsAny<int>()))
+            .ReturnsAsync([new Album { Id = "ext-deezer-album-other-album", Title = "Other album", Artist = "Service Friend", ArtistId = "ext-deezer-artist-other", Year = 2020, SongCount = 10, ExternalProvider = "deezer", ExternalId = "other-album" }]);
+        using var factory = ClientDetailsFactory(request =>
+        {
+            var path = request.RequestUri!.AbsolutePath;
+            var query = Uri.UnescapeDataString(request.RequestUri.Query);
+            if (path == "/Users/Me") return Json(200, """{"Id":"listener"}""");
+            if (path == "/Artists/AlbumArtists" && query.Contains("searchTerm=Library Friend", StringComparison.Ordinal))
+                return Json(200, """{"Items":[{"Id":"lib-artist","Name":"Library Friend"}]}""");
+            if (path == "/Users/listener/Items" && (query.Contains("albumArtistIds=lib-artist", StringComparison.Ordinal) || query.Contains("Ids=lib-album", StringComparison.Ordinal)))
+                return Json(200, """{"Items":[{"Id":"lib-album","Type":"MusicAlbum","Name":"Owned album","AlbumArtist":"Library Friend","ProductionYear":2019,"ChildCount":9,"ImageTags":{"Primary":"owned-art"}}]}""");
+            return Json(200, """{"Items":[],"TotalRecordCount":0}""");
+        }, services =>
+        {
+            services.RemoveAll<IProtocolProviderGateway>();
+            services.AddSingleton(gateway.Object);
+        });
+        using var client = CreateClientApiClient(factory);
+        client.DefaultRequestHeaders.Add("X-Emby-Token", "listener-token");
+
+        using var response = await client.GetAsync(url);
+        var text = await response.Content.ReadAsStringAsync();
+        Assert.True(response.StatusCode == HttpStatusCode.OK, text);
+        using var body = JsonDocument.Parse(text);
+        Assert.Equal("deezer", body.RootElement.GetProperty("AllstarrBasedOn").GetString());
+        var items = body.RootElement.GetProperty("Items").EnumerateArray().ToArray();
+        Assert.Equal(["lib-album", "ext-deezer-album-other-album"], items.Select(item => item.GetProperty("Id").GetString()));
+        Assert.Equal(2, body.RootElement.GetProperty("TotalRecordCount").GetInt32());
+        Assert.Equal("owned-art", items[0].GetProperty("ImageTags").GetProperty("Primary").GetString());
+        Assert.Equal("library", items[0].GetProperty("AllstarrSource").GetString());
+        Assert.Equal("MusicAlbum", items[1].GetProperty("Type").GetString());
+        Assert.Equal("Other album", items[1].GetProperty("Name").GetString());
+        Assert.Equal("deezer", items[1].GetProperty("AllstarrSource").GetString());
+        Assert.Equal("deezer", items[1].GetProperty("AllstarrProvider").GetProperty("id").GetString());
+    }
+
+    [Fact]
+    public async Task Jellyfin_SimilarForALibrarySongStillAsksTheMediaServer()
+    {
+        var asked = new List<string>();
+        using var factory = ClientDetailsFactory(request =>
+        {
+            var path = request.RequestUri!.AbsolutePath;
+            asked.Add(path);
+            if (path == "/Users/Me") return Json(200, """{"Id":"listener"}""");
+            if (path == "/Users/listener/Items/lib-song") return Json(200, """{"Id":"lib-song","Type":"Audio","Name":"Library song"}""");
+            if (path == "/Items/lib-song/Similar") return Json(200, """{"Items":[{"Id":"native-similar","Type":"Audio","Name":"Native pick"}],"TotalRecordCount":1}""");
+            return Json(200, """{"Items":[],"TotalRecordCount":0}""");
+        }, _ => { });
+        using var client = CreateClientApiClient(factory);
+        client.DefaultRequestHeaders.Add("X-Emby-Token", "listener-token");
+
+        using var response = await client.GetAsync("/Items/lib-song/Similar?Limit=5");
+        var text = await response.Content.ReadAsStringAsync();
+        Assert.True(response.StatusCode == HttpStatusCode.OK, text);
+        Assert.Contains("native-similar", text);
+        Assert.DoesNotContain("AllstarrBasedOn", text);
+        Assert.Contains("/Items/lib-song/Similar", asked);
+    }
+
     [Fact]
     public async Task ClientApi_SimilarAlbumsForALibraryAlbumFindTheArtistOnDeezer()
     {

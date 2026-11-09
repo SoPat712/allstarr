@@ -988,6 +988,11 @@ public partial class JellyfinController : ControllerBase
         [FromQuery] string? userId = null)
     {
         var (externalAlbum, albumProvider, albumType, albumId) = _localLibraryService.ParseExternalId(itemId);
+        var songOrArtistRoute = Request.Path.Value is { } path &&
+            (path.Contains("/Songs/", StringComparison.OrdinalIgnoreCase) || path.Contains("/Artists/", StringComparison.OrdinalIgnoreCase));
+        if ((externalAlbum && albumType == "album" || !externalAlbum && !songOrArtistRoute) &&
+            await TrySimilarAlbumsAsync(itemId, limit) is { } similarAlbums)
+            return similarAlbums;
         if (externalAlbum && albumType == "album")
             return await GetRelatedProviderAlbumsAsync(itemId, albumProvider!, albumId!, limit);
 
