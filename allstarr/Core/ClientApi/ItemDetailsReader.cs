@@ -25,10 +25,13 @@ public sealed class ItemDetailsReader(
     IApplicationCache cache,
     IDurableRuntimeSettings settings,
     ItemMatchReader matches,
-    IProtocolProviderGateway? gateway = null, ILibraryIndexService? libraryIndex = null, LyricsRefreshStore? refreshStore = null)
+    IProtocolProviderGateway? gateway = null, ILibraryIndexService? libraryIndex = null, LyricsRefreshStore? refreshStore = null,
+    ILogger<ItemDetailsReader>? logger = null)
 {
     public async Task<ItemDetailsResponse> ReadAsync(HttpContext http, ProtocolExecutionContext execution, string[] ids)
     {
+        var started = System.Diagnostics.Stopwatch.GetTimestamp();
+        long matchTicks = 0, lyricsTicks = 0;
         var token = execution.CancellationToken;
         var owner = execution.RequireActor().EffectiveUserId!.Value;
         var protocol = execution.Protocol.ToString().ToLowerInvariant();
@@ -187,6 +190,7 @@ public sealed class ItemDetailsReader(
         // Each song's match and lyrics reads stand alone, so a batch reads a few songs at once instead of one after another.
         using var gate = new SemaphoreSlim(Math.Clamp(Environment.ProcessorCount / 2, 1, 4));
         var libraryMemo = new TrackMatchLibraryMemo();
+        var prepared = System.Diagnostics.Stopwatch.GetTimestamp();
         var built = await Task.WhenAll(requested.Select(async id =>
         {
             await gate.WaitAsync(token);
@@ -194,6 +198,11 @@ public sealed class ItemDetailsReader(
             finally { gate.Release(); }
         }));
         var items = built.Where(item => item.Details != null).ToDictionary(item => item.Id, item => item.Details!, StringComparer.Ordinal);
+        logger?.LogInformation("Item details timing: prepare {Prepare} ms, songs {Songs} ms, matches {Matches} ms and lyrics {Lyrics} ms summed over {Count} songs",
+            (int)System.Diagnostics.Stopwatch.GetElapsedTime(started, prepared).TotalMilliseconds,
+            (int)System.Diagnostics.Stopwatch.GetElapsedTime(prepared).TotalMilliseconds,
+            (int)TimeSpan.FromTicks(Interlocked.Read(ref matchTicks)).TotalMilliseconds,
+            (int)TimeSpan.FromTicks(Interlocked.Read(ref lyricsTicks)).TotalMilliseconds, requested.Length);
         return new(ids.Where(items.ContainsKey).Select(id => items[id]).ToArray(), ids.Where(id => !items.ContainsKey(id)).ToArray());
 
         async Task<ItemDetails?> ReadItemAsync(string id)
@@ -219,8 +228,10 @@ public sealed class ItemDetailsReader(
             if (snapshot != null)
             {
                 var matchId = local != null && recordingId.HasValue ? CanonicalRecordingRecord.DefaultPublicId(recordingId.Value) : id;
-                if (await matches.ReadSummaryAsync(http, execution, matchId, libraryMemo) is { } effectiveMatch)
-                    match = new(effectiveMatch.State, effectiveMatch.Confidence, effectiveMatch.Authority);
+                var matchStarted = System.Diagnostics.Stopwatch.GetTimestamp();
+                var effectiveMatch = await matches.ReadSummaryAsync(http, execution, matchId, libraryMemo);
+                Interlocked.Add(ref matchTicks, System.Diagnostics.Stopwatch.GetElapsedTime(matchStarted).Ticks);
+                if (effectiveMatch != null) match = new(effectiveMatch.State, effectiveMatch.Confidence, effectiveMatch.Authority);
             }
             var state = states.FirstOrDefault(item => item.ItemId == id && item.IsFavorite);
             var storedFile = retained.FirstOrDefault(item => item.RecordingId == recordingId && File.Exists(item.File.CanonicalPath));
@@ -243,11 +254,13 @@ public sealed class ItemDetailsReader(
                 IsLocal = true,
                 ExplicitContentLyrics = native[id].Rating
             });
+            var lyricsStarted = System.Diagnostics.Stopwatch.GetTimestamp();
             var lyrics = await StoredItemLyrics.ReadAsync(cache, lyricsSong, recordingId, choice?.SourceId, storedFile?.File.CanonicalPath,
                 policy, lyricsEndpoint, execution, accounts, links, token,
                 recordingDurationMs: recordingId.HasValue ? recordings.GetValueOrDefault(recordingId.Value)?.DurationMilliseconds : null,
                 automaticLyrics: choice == null && recordingId.HasValue && refreshStore != null
                     ? await refreshStore.RetainedAsync(execution, recordingId.Value) : null);
+            Interlocked.Add(ref lyricsTicks, System.Diagnostics.Stopwatch.GetElapsedTime(lyricsStarted).Ticks);
             var audio = song == null || song.Codec == null && song.BitDepth == null && song.SampleRate == null && song.Bitrate == null ? null :
                 new ItemDetailsAudio(song.Codec, song.BitDepth, song.SampleRate, song.Bitrate);
             if (audio == null && kept?.Artifact is { } artifact &&

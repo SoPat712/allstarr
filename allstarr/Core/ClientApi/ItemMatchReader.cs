@@ -98,17 +98,22 @@ public sealed class ItemMatchReader(
             : await items.ResolveRecordingIdAsync(http, execution, itemId);
         if (recording.HasValue)
         {
-            var recordingQuery = query.Where(item => db.TrackMatches.Any(decision => decision.ExternalSnapshotId == item.Id &&
-                    decision.OwnerUserId == actor.UserId && decision.CanonicalRecordingId == recording) ||
-                db.ProviderTrackIdentities.Any(identity => identity.CanonicalRecordingId == recording &&
-                    (identity.Id == item.ProviderTrackIdentityId || identity.ProviderId == item.ProviderId && identity.ExternalIdHash == item.ExternalIdHash)));
-            var recorded = await recordingQuery.OrderByDescending(item => db.TrackMatches.Any(decision =>
-                    decision.ExternalSnapshotId == item.Id && decision.OwnerUserId == actor.UserId && decision.CanonicalRecordingId == recording))
-                .ThenByDescending(item => item.RetrievedAt).ThenByDescending(item => item.SnapshotVersion)
-                .ThenByDescending(item => item.Id).FirstOrDefaultAsync(token);
-            if (recorded != null && (snapshot == null || await db.TrackMatches.AnyAsync(decision =>
-                    decision.ExternalSnapshotId == recorded.Id && decision.OwnerUserId == actor.UserId && decision.CanonicalRecordingId == recording, token)))
-                snapshot = recorded;
+            // The recording's decisions and identities are found first, so only their snapshots are read rather than
+            // every song the listener has.
+            var decided = (await db.TrackMatches.AsNoTracking().Where(decision => decision.OwnerUserId == actor.UserId &&
+                    decision.CanonicalRecordingId == recording).Select(decision => decision.ExternalSnapshotId).ToArrayAsync(token)).ToHashSet();
+            var linked = await db.ProviderTrackIdentities.AsNoTracking().Where(identity => identity.CanonicalRecordingId == recording)
+                .Select(identity => new { identity.Id, identity.ProviderId, identity.ExternalIdHash }).ToArrayAsync(token);
+            var decidedIds = decided.ToArray();
+            var identityIds = linked.Select(identity => (Guid?)identity.Id).ToArray();
+            var hashes = linked.Select(identity => identity.ExternalIdHash).Distinct(StringComparer.Ordinal).ToArray();
+            var recorded = (await query.Where(item => decidedIds.Contains(item.Id) || identityIds.Contains(item.ProviderTrackIdentityId) ||
+                    hashes.Contains(item.ExternalIdHash)).ToArrayAsync(token))
+                .Where(item => decided.Contains(item.Id) || linked.Any(identity => identity.Id == item.ProviderTrackIdentityId ||
+                    identity.ProviderId == item.ProviderId && identity.ExternalIdHash == item.ExternalIdHash))
+                .OrderByDescending(item => decided.Contains(item.Id)).ThenByDescending(item => item.RetrievedAt)
+                .ThenByDescending(item => item.SnapshotVersion).ThenByDescending(item => item.Id).FirstOrDefault();
+            if (recorded != null && (snapshot == null || decided.Contains(recorded.Id))) snapshot = recorded;
         }
         if (snapshot == null) return null;
         var revision = summary ? "" : await TrackMatchRevision.ReadAsync(db, snapshot, actor.UserId, token);
