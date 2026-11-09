@@ -328,7 +328,10 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.Equal(HttpStatusCode.OK, cover.StatusCode);
         var expected = MixCoverInput.From(dashboard) with { Source = "lastfm", SourcePlaylistId = "loved" };
         Assert.Equal('"' + MixCoverImageService.GetTag(expected) + '"', cover.Headers.ETag?.Tag);
-        Assert.Equal(MixCoverRenderer.Render(expected), await cover.Content.ReadAsByteArrayAsync());
+        // The linked playlist's song has a picture, so the cover is made from it.
+        Assert.Equal("image/jpeg", cover.Content.Headers.ContentType?.MediaType);
+        using var collage = SkiaSharp.SKBitmap.Decode(await cover.Content.ReadAsByteArrayAsync());
+        Assert.Equal((600, 600), (collage.Width, collage.Height));
     }
 
     [Theory]

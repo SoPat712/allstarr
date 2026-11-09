@@ -99,8 +99,9 @@ public sealed partial class ProtocolRouteFixtureTests
         await queue.CompleteAsync(claim, completion);
 
         var changed = await stream.EventAsync("mix.updated");
-        Assert.Equal(["mixId"], changed.EnumerateObject().Select(item => item.Name).ToArray());
+        Assert.Equal(["mixId", "playlistId"], changed.EnumerateObject().Select(item => item.Name).ToArray());
         Assert.Equal(mix.Id, changed.GetProperty("mixId").GetGuid());
+        Assert.Equal(allstarr.Core.Playlists.PlaylistVirtualizationService.CreateProtocolId(mix.Id), changed.GetProperty("playlistId").GetString());
         var committed = await mixes.GetAsync(principal.UserId, mix.Id);
         Assert.Equal(1, committed.Generation);
         Assert.Equal("mix-song", Assert.Single(committed.Songs).Song.Id);
