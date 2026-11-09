@@ -1,4 +1,5 @@
 using allstarr.Core.Capabilities;
+using allstarr.Core.Identity;
 using allstarr.Core.Music;
 using allstarr.Core.Protocols;
 using allstarr.Models.Domain;
@@ -20,7 +21,8 @@ public sealed class PublicArtworkWarmerTests
         var warmer = new PublicArtworkWarmer(gateway.Object);
         var context = new ProtocolExecutionContext(ProtocolKind.Jellyfin, "primary", "listener",
             new AllstarrPrincipal(Guid.NewGuid(), "jellyfin", "primary", "listener", "Listener", false), "mixes",
-            DateTimeOffset.UtcNow.AddMinutes(5), new CancellationTokenSource().Token) { IsReadOnly = true };
+            DateTimeOffset.UtcNow.AddMinutes(5), new CancellationTokenSource().Token)
+        { IsReadOnly = true };
         Song Service(string provider, string id) => new() { ExternalProvider = provider, ExternalId = id };
         var songs = new[]
         {

@@ -20,7 +20,8 @@ public partial class JellyfinController
         ClientSimilarAlbums similar;
         try { similar = await reader.ReadAsync(HttpContext, context, itemId, limit); }
         catch (Exception exception) when (exception is ArgumentException or KeyNotFoundException or UnauthorizedAccessException
-                                              or HttpRequestException) { return null; }
+                                              or HttpRequestException)
+        { return null; }
 
         var native = await NativeAlbumsAsync(similar.Albums.Where(album => !album.IsExternal).Select(album => album.Id).ToArray());
         var items = new JsonArray();

@@ -31,7 +31,8 @@ public sealed class PublicArtworkWarmer(IProtocolProviderGateway providers, ILog
                 _recent.TryRemove(stale, out _);
         // The job that built the mix may finish first, so the reads run with their own time limit and no cancellation.
         var context = new ProtocolExecutionContext(source.Protocol, source.BackendInstanceId, source.VerifiedBackendPrincipalId,
-            source.Principal, "artwork-warmup", now.AddMinutes(30), CancellationToken.None) { Policy = source.Policy };
+            source.Principal, "artwork-warmup", now.AddMinutes(30), CancellationToken.None)
+        { Policy = source.Policy };
         return Task.Run(() => WarmAsync(context, pending));
     }
 
