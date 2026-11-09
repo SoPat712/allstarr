@@ -84,6 +84,95 @@ public sealed partial class ProtocolRouteFixtureTests
     }
 
     [Fact]
+    public async Task SavedMembership_OffersASourceSongKnownOnlyByItsPrivateKeyAsItsRecording()
+    {
+        await using var database = await SqliteTestDatabase.CreateAsync();
+        var storage = new FavoriteViewFactory(database.Options);
+        await SeedFavoriteViewsAsync(storage, "jellyfin");
+        var added = new DateTimeOffset(2023, 7, 1, 0, 0, 0, TimeSpan.Zero);
+        var key = SavedMembershipHash("private-track");
+        var recording = Guid.CreateVersion7();
+        await using (var db = storage.CreateDbContext())
+        {
+            var identity = Guid.CreateVersion7();
+            var metadata = Guid.CreateVersion7();
+            var link = Guid.CreateVersion7();
+            var snapshot = Guid.CreateVersion7();
+            db.CanonicalRecordings.Add(new() { Id = recording, CreatedByUserId = FavoriteViewer, PublicId = CanonicalRecordingRecord.DefaultPublicId(recording), CreatedAt = added, UpdatedAt = added });
+            db.ProviderTrackIdentities.Add(new()
+            {
+                Id = identity,
+                CanonicalRecordingId = recording,
+                ProviderId = "spotify",
+                ResourceKind = ProviderResourceKind.Track,
+                Verification = ProviderIdentityVerification.Verified,
+                VerificationMethod = "source-snapshot-hash",
+                Scope = ProviderIdentityScope.Catalog,
+                DecisionVersion = 1,
+                ExternalId = key,
+                ExternalIdHash = key,
+                CreatedAt = added,
+                UpdatedAt = added
+            });
+            db.PlaylistLinks.Add(new()
+            {
+                Id = link,
+                OwnerUserId = FavoriteViewer,
+                SourceProviderId = "spotify",
+                SourcePlaylistId = "mine",
+                SourcePlaylistIdHash = SavedMembershipHash("mine"),
+                TargetProtocol = "jellyfin",
+                TargetBackendInstanceId = "primary",
+                Mode = PlaylistLinkMode.Virtual,
+                CreatedAt = added,
+                UpdatedAt = added
+            });
+            db.ExternalMetadataSnapshots.Add(new()
+            {
+                Id = metadata,
+                OwnerUserId = FavoriteViewer,
+                Protocol = "jellyfin",
+                BackendInstanceId = "primary",
+                BackendPrincipalId = "user-1",
+                ProviderId = "spotify",
+                ResourceKind = "track",
+                ProviderTrackIdentityId = identity,
+                ExternalIdHash = key,
+                SnapshotVersion = 1,
+                PayloadSha256 = SavedMembershipHash("private-payload"),
+                RetrievedAt = added,
+                PayloadJson = """{"Title":"Strangers","Artists":["Kenya Grace"],"Album":"Strangers","AlbumId":"ext-spotify-album-strangers"}"""
+            });
+            db.PlaylistSourceSnapshots.Add(new()
+            {
+                Id = snapshot,
+                OwnerUserId = FavoriteViewer,
+                PlaylistLinkId = link,
+                SnapshotVersion = 1,
+                RetrievedAt = added,
+                PublishedAt = added,
+                Name = "Mine",
+                PayloadSha256 = SavedMembershipHash("private-snapshot")
+            });
+            db.PlaylistSourceEntries.Add(new()
+            {
+                Id = Guid.CreateVersion7(),
+                PlaylistSourceSnapshotId = snapshot,
+                ExternalMetadataSnapshotId = metadata,
+                SourcePosition = 0,
+                SourceEntryIdHash = SavedMembershipHash("private-row")
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var rows = await new SavedLibraryReader(storage).ReadAsync(SavedMembershipContext());
+
+        Assert.Equal("Strangers", Assert.Single(rows, row => row.ItemId == CanonicalRecordingRecord.DefaultPublicId(recording)).Display.Title);
+        Assert.DoesNotContain(rows, row => row.ItemId == $"ext-spotify-song-{key}");
+        Assert.Contains(rows, row => row.ItemId == "ext-spotify-album-strangers");
+    }
+
+    [Fact]
     public async Task SavedMembership_ImportsPublishedSourceSongsWithoutWritesOrProviderLookups()
     {
         await using var database = await SqliteTestDatabase.CreateAsync();

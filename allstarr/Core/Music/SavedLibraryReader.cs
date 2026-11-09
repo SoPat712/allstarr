@@ -487,7 +487,11 @@ public sealed class SavedLibraryReader(IDbContextFactory<AllstarrDbContext> fact
                               identity.ResourceKind == ProviderResourceKind.Track && identity.ExternalIdHash == metadata.ExternalIdHash &&
                               (identity.ProviderAccountId == metadata.ProviderAccountId || identity.ProviderAccountId == null && identity.Scope == ProviderIdentityScope.Catalog) &&
                               (identity.Verification == ProviderIdentityVerification.Verified || identity.Verification == ProviderIdentityVerification.Pinned)
-                          select new { entry.PlaylistSourceSnapshotId, metadata.PayloadJson, identity.ProviderId, identity.ExternalId })
+                          select new
+                          {
+                              entry.PlaylistSourceSnapshotId, metadata.PayloadJson, identity.ProviderId, identity.ExternalId,
+                              identity.VerificationMethod, identity.CanonicalRecordingId
+                          })
             .ToArrayAsync(cancellationToken);
         foreach (var snapshot in snapshots)
         {
@@ -498,7 +502,11 @@ public sealed class SavedLibraryReader(IDbContextFactory<AllstarrDbContext> fact
                 {
                     var song = JsonSerializer.Deserialize<Song>(row.PayloadJson, JsonOptions);
                     if (song == null || string.IsNullOrWhiteSpace(song.Title)) continue;
-                    var id = $"ext-{row.ProviderId}-song-{row.ExternalId}";
+                    // A source that only gave a private track key keeps that key, not the provider's id, so the song is
+                    // offered as its recording, which plays through its matched source.
+                    var id = row.VerificationMethod == "source-snapshot-hash"
+                        ? CanonicalRecordingRecord.DefaultPublicId(row.CanonicalRecordingId)
+                        : $"ext-{row.ProviderId}-song-{row.ExternalId}";
                     var display = Display(id, song);
                     using var payload = JsonDocument.Parse(row.PayloadJson);
                     if (payload.RootElement.TryGetProperty("DurationMilliseconds", out var duration) && duration.TryGetInt64(out var milliseconds))
