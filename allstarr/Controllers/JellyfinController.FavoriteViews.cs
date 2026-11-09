@@ -57,7 +57,7 @@ public partial class JellyfinController
         var root = JellyfinFavoriteProtocolAdapter.Merge(native, favorites, start, size,
             Request.Query["SortBy"].ToString(), Request.Query["SortOrder"].ToString());
         if (root == null) return HandleProxyResponse(native, status);
-        Response.Headers.CacheControl = "no-store";
+        Response.Headers.CacheControl = "private, no-store";
         Response.Headers.Remove("ETag");
         Response.Headers.Remove("Last-Modified");
         return new ContentResult

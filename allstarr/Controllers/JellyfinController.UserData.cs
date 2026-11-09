@@ -38,7 +38,7 @@ public partial class JellyfinController
         var favorite = favoriteView.Select(item => item.ItemId).Contains(itemId, FavoriteViewReader.ItemComparer(favoriteView));
         var data = new JsonObject { ["ItemId"] = itemId, ["Key"] = itemId, ["IsFavorite"] = favorite };
         MusicUserDataProjection.Jellyfin(data, saved.GetValueOrDefault(itemId) ?? new());
-        Response.Headers.CacheControl = "no-store";
+        Response.Headers.CacheControl = "private, no-store";
         return new JsonResult(data);
     }
 }

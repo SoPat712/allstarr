@@ -26,7 +26,7 @@ public sealed partial class JellyfinItemResponseFilter
             !data.ContainsKey("PlaybackPositionTicks") || !data.ContainsKey("IsFavorite")) return false;
         var saved = await userData.ReadForRequestAsync(http, [id]);
         MusicUserDataProjection.Jellyfin(data, saved.GetValueOrDefault(id) ?? new());
-        http.Response.Headers.CacheControl = "no-store";
+        http.Response.Headers.CacheControl = "private, no-store";
         http.Response.Headers.Remove("ETag");
         http.Response.Headers.Remove("Last-Modified");
         if (result is JsonResult json) json.Value = root;
