@@ -258,7 +258,8 @@ public sealed partial class AppleMusicKitPlaylistCapabilityAdapter : IProviderPl
         var relationships = Object(item, "relationships");
         var tracks = Object(relationships, "tracks");
         if (tracks.ValueKind == JsonValueKind.Object && tracks.TryGetProperty("meta", out var meta) && meta.TryGetProperty("total", out var total) && total.TryGetInt32(out var parsed)) count = parsed;
-        return new(resource, Required(attributes, "name"), new ProviderPlaylistOwner("selected-user"), revision,
+        var curator = String(attributes, "curatorName");
+        return new(resource, Required(attributes, "name"), new ProviderPlaylistOwner(curator != null && Core.Playlists.PlaylistSourceKinds.IsService(StableProviderId, curator) ? curator : "selected-user"), revision,
             Description(attributes),
             AppleMusicKitMetadataCapabilityAdapter.Artwork(resource, attributes, revision) ?? new ProviderArtworkReference(resource, revision: revision), count, etag);
     }

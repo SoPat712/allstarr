@@ -12,7 +12,7 @@ public sealed record MixCoverInput(string Id, int Generation, string Kind, strin
             mix.CoverTag ?? (daily && parts.Length > 1 ? parts[1] : daily && mix.Name.EndsWith(" Blend", StringComparison.Ordinal) ? mix.Name[..^6] : ""),
             !daily ? "" : parts.Length > 2 ? parts[2] : string.Join(", ", mix.Songs.GroupBy(item => item.Song.Artist)
                 .OrderByDescending(group => group.Count()).ThenBy(group => group.Key, StringComparer.Ordinal).Take(3).Select(group => group.Key)),
-            mix.SeedName ?? mix.Name, Name: mix.Name, Count: mix.Songs.Count,
-            Art: MixCoverArt.Pick(mix.Songs.Select(item => item.Song)).Select(song => MixCoverArt.Reference(song)!).ToArray());
+            mix.SeedName ?? mix.Name, Source: mix.Source ?? "", SourcePlaylistId: mix.SourcePlaylistId ?? "", Name: mix.Name, Count: mix.SongCount ?? mix.Songs.Count,
+            Art: mix.ArtworkUrl is { } artwork ? [artwork] : MixCoverArt.Pick(mix.Songs.Select(item => item.Song)).Select(song => MixCoverArt.Reference(song)!).ToArray());
     }
 }

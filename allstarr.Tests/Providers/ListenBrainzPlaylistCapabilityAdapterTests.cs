@@ -101,6 +101,18 @@ public sealed class ListenBrainzPlaylistCapabilityAdapterTests
     }
 
     [Fact]
+    public async Task ServiceFeedsUseTheExistingFollowNewestSelections()
+    {
+        var handler = new Handler(request => request.RequestUri!.AbsolutePath.EndsWith("validate-token")
+            ? Json("{\"valid\":true,\"user_name\":\"listener\"}") : Json(Listing(Fixture())));
+        var adapter = new ListenBrainzPlaylistCapabilityAdapter(new HttpClient(handler), new Secrets());
+        var result = (await adapter.GetServiceFeedsAsync(Context(personal: true), new())).RequireValue();
+        Assert.Contains(result.Items, item => item.Id.Value == "createdfor:weekly-jams");
+        Assert.All(result.Items, item => Assert.Equal(allstarr.Core.Playlists.PlaylistSourceKinds.Feed,
+            allstarr.Core.Playlists.PlaylistSourceKinds.Classify("listenbrainz", item.Id.Value, item.Owner.ProviderUserId, null)));
+    }
+
+    [Fact]
     public async Task FollowNewestChangesResolvedSourceOnTheNextCollectionAndKeepsOneKind()
     {
         var newest = false;

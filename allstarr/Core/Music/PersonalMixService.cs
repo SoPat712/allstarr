@@ -27,6 +27,11 @@ public sealed record PersonalMix(Guid Id, string Kind, string Name, string Descr
     public string Section => Kind == "custom" ? "custom" : Kind == "external" ? "yourServices" : PersonalMixMoods.Kinds.Contains(Kind) ? "moods" : "madeForYou";
     public int SortOrder => Kind == "external" || Kind == "custom" ? 0 : Array.IndexOf(PersonalMixRules.Kinds, Kind);
     public string? SourceLabel { get; init; }
+    public string? Source { get; init; }
+    public string? SourcePlaylistId { get; init; }
+    public Guid? ProviderAccountId { get; init; }
+    public string? ArtworkUrl { get; init; }
+    public int? SongCount { get; init; }
     public string? RecipeVersion { get; init; }
     public string? SeedName { get; init; }
     public string? CoverTag { get; init; }
@@ -52,7 +57,8 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
     NewReleasesService releases, IDurableRuntimeSettings settings, IEffectiveProviderPolicyResolver policies,
     IBackendLibraryAccessResolver libraryAccess, AudioMuseDiscovery? audioMuse = null, SharedTagSources? tagSources = null, IProviderRegistry? registry = null, LastFmSimilarTracks? similarTracks = null,
     ILogger<PersonalMixService>? logger = null, IClientEventPublisher? events = null,
-    ILibraryIndexService? libraryIndex = null, ITrackIdentityService? identities = null, PublicArtworkWarmer? artwork = null)
+    ILibraryIndexService? libraryIndex = null, ITrackIdentityService? identities = null, PublicArtworkWarmer? artwork = null,
+    IPlaylistPersistenceService? playlistStore = null, DurableJobQueue? jobQueue = null, IPlaylistOrchestrationService? playlistSync = null)
 {
     public const string PublishKey = "Mixes:PublishToApps", JobType = "mixes.refresh";
     // Saved songs carry dozens of empty fields; leaving them out keeps a listener's mixes well under the 1 MB a stored
@@ -336,7 +342,7 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
         else
             document = await LoadAsync(db, user, token, saved: row, document: saved);
         return (await VisibleAsync(owner, document, token, preferLocalCopies: !cardsOnly))
-            .Concat(await ExternalMixesAsync(user, token, cardsOnly: cardsOnly)).ToArray();
+            .Concat(await ServiceMixesAsync(user, token, cardsOnly: cardsOnly)).ToArray();
     }
 
     public async Task<PersonalMix> GetAsync(Guid owner, Guid id, CancellationToken token = default)
@@ -350,7 +356,7 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
         var selected = document.Mixes.SingleOrDefault(item => item.Value.Id == id);
         if (selected.Key != null)
             return (await VisibleAsync(owner, new() { Mixes = new() { [selected.Key] = selected.Value } }, token)).Single();
-        return (await ExternalMixesAsync(user, token, id)).SingleOrDefault() ?? throw new KeyNotFoundException();
+        return (await ServiceMixesAsync(user, token, id)).SingleOrDefault() ?? throw new KeyNotFoundException();
     }
 
     public async Task<IReadOnlyList<PersonalMix>> GenerateAsync(Guid owner, Guid? mixId = null, bool dryRun = false,
@@ -608,7 +614,7 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
     }
 
     private string SourceName(string? source) => source != null && registry?.TryGet(source, out var descriptor) == true
-        ? descriptor!.DisplayName : source switch { "Last.fm" or "lastfm" => "Last.fm", "deezer" => "Deezer", "qobuz" => "Qobuz", "apple-download" or "apple-musickit" => "Apple Music", _ => "your music service" };
+        ? descriptor!.DisplayName : source switch { "Last.fm" or "lastfm" => "Last.fm", "deezer" => "Deezer", "spotify" => "Spotify", "listenbrainz" => "ListenBrainz", "qobuz" => "Qobuz", "apple-download" or "apple-musickit" => "Apple Music", _ => "your music service" };
 
     private static Song SafeSong(Song song) => new()
     {
@@ -660,7 +666,8 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
             await using var db = await factory.CreateDbContextAsync(token);
             var user = await UserAsync(db, owner, token);
             var document = await LoadAsync(db, user, token);
-            if (await SetExternalInAppsAsync(user, id, enabled, token, document.TimeZoneId))
+            if (await AddServiceFeedAsync(user, id, enabled, token, document.TimeZoneId) ||
+                await SetExternalInAppsAsync(user, id, enabled, token, document.TimeZoneId))
             {
                 return;
             }

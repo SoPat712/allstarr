@@ -30,12 +30,12 @@ public sealed class MixReader(PersonalMixService mixes, IDbContextFactory<Allsta
         return new(stored.Select(mix =>
         {
             var songs = Playable(mix, allowed);
-            var inApps = publish && mix.Added && mix.Generation > 0;
-            return new ClientMix(mix.Id, mix.Kind, mix.Name, mix.Description, State(mix), songs.Count,
+            var inApps = mix.Added && (mix.Source is "spotify" or "apple-musickit" || publish && mix.Generation > 0);
+            return new ClientMix(mix.Id, mix.Kind, mix.Name, mix.Description, State(mix), mix.SongCount ?? songs.Count,
                 songs.Sum(item => item.Song.Duration * 1000L ?? 0), mix.UpdatedAt,
                 $"/allstarr/v1/mixes/{mix.Id}/cover?v={MixCoverImageService.Version(covers[mix.Id])}", inApps,
                 inApps ? PlaylistVirtualizationService.CreateProtocolId(mix.Id) : null,
-                songs.Select(item => ArtworkUrl(item.Song, native)).OfType<string>().Distinct(StringComparer.Ordinal).Take(4).ToArray());
+                songs.Select(item => ArtworkUrl(item.Song, native)).OfType<string>().Distinct(StringComparer.Ordinal).Take(4).ToArray(), mix.Section, mix.Source, mix.SourcePlaylistId);
         }).ToArray());
     }
 

@@ -1,5 +1,5 @@
 import { countLabel } from "./count-label";
-import type { TasteNudge } from "./api";
+import type { MixCard, TasteNudge } from "./api";
 
 export function greeting(hour: number, name = "") {
   const first = name.trim().split(/\s+/)[0];
@@ -114,4 +114,10 @@ export function soundSummary(profile: { traits: { name: string; difference: numb
 
 export function soundDifference(value: number) {
   return value > 0 ? `+${value}` : value < 0 ? `−${Math.abs(value)}` : "0";
+}
+
+export function serviceCards(cards: MixCard[], suggestions: MixCard[] = []): MixCard[] {
+  const feeds = cards.filter(card => card.section === "yourServices");
+  return [...feeds.map(card => ({ ...card, description: card.sourceLabel ? `From ${card.sourceLabel}${card.inApps ? " · kept in sync" : ""}` : "From your connected service" })),
+    ...suggestions.filter(suggestion => !feeds.some(card => card.source && card.source === suggestion.source && card.sourcePlaylistId === suggestion.sourcePlaylistId))];
 }

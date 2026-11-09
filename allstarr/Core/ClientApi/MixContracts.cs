@@ -26,7 +26,10 @@ public sealed record ClientMix(
     [property: JsonPropertyName("coverUrl")] string CoverUrl,
     [property: JsonPropertyName("inApps")] bool InApps,
     [property: JsonPropertyName("playlistId")] string? PlaylistId,
-    [property: JsonPropertyName("artworkUrls")] IReadOnlyList<string>? ArtworkUrls = null);
+    [property: JsonPropertyName("artworkUrls")] IReadOnlyList<string>? ArtworkUrls = null,
+    [property: JsonPropertyName("section")] string Section = "madeForYou",
+    [property: JsonPropertyName("source")] string? Source = null,
+    [property: JsonPropertyName("sourcePlaylistId")] string? SourcePlaylistId = null);
 
 public sealed record ClientMixItems(
     [property: JsonPropertyName("mixId")] Guid MixId,

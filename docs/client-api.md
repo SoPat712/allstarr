@@ -372,23 +372,39 @@ unchanged.
 
 `GET /allstarr/v1/mixes` returns `{"mixes":[...]}` in the same order as the
 listener's For you page. An optional `timeZoneId` uses the dashboard's time zone
-validation and saved preference. Reads use stored mixes and never generate or
-refresh them. Synthetic listeners cannot read mixes.
+validation and saved preference. Reads do not generate listening-based mixes.
+Connected personal accounts also contribute service playlists automatically,
+without adding them to Jellyfin. Discovery is cached per account for six hours;
+a failed refresh retains the previous list. Spotify discovery covers saved
+service playlists through the existing web-player client. Apple Music reads
+personal recommendations and library playlists; Last.fm and ListenBrainz use
+their existing selections. Synthetic listeners cannot read mixes.
 
 Each mix has `mixId`, `kind`, `name`, `description`, `state`, `itemCount`,
-`durationMs`, `updatedAt`, `coverUrl`, `inApps`, and `playlistId`. `kind` preserves
+`durationMs`, `updatedAt`, `coverUrl`, `inApps`, `playlistId`, `section`, `source`,
+and `sourcePlaylistId`. Service feeds have `kind: "external"`,
+`section: "yourServices"`, and `source` equal to the provider id. A synced
+playlist and its discovered feed share one card. Other mixes have a null
+`source` and `sourcePlaylistId`. `kind` preserves
 the dashboard's stable IDs, including `on-repeat`, `rewind`, `release-radar`,
 `discover-weekly`, `daily-1` through `daily-4`, mood IDs, `custom`, and `external`.
 The typed state maps dashboard readiness to `ready`; pending linked-playlist
 matching to `building`; requests for more plays, listening, or history to
 `needs-listening`; and other unready cards to `empty`. Uninitialized cards and
-cards without playable songs are `empty`.
+cards without playable songs are `empty`. For a discovered service feed,
+`ready` means the playlist is available to open; its playable songs are checked
+when its items are read.
 
 `itemCount` and `durationMs` describe the stored songs visible through the
 listener's library access and listening policy. Unknown song durations add
-zero to the total. `updatedAt` is null before a mix has been built. `inApps`
+zero to the total. For an unopened service feed, `itemCount` is the service's
+song count when supplied (otherwise zero), and duration is unknown (zero).
+Opening its items loads songs through the selected account, applies listening
+policy, prefers matching local copies, and checks streaming availability.
+`updatedAt` is null when the source supplies no update time. `inApps`
 requires a published generation, the listener's publication choice, and the
-server's mix publication setting; `playlistId` is its Jellyfin playlist ID,
+server's mix publication setting. Spotify and Apple Music feeds follow the
+existing playlist link's enabled state. `playlistId` is its Jellyfin playlist ID,
 or null when unpublished.
 
 `GET /allstarr/v1/mixes/{mixId}/items` returns `{mixId,updatedAt,items}`. Items

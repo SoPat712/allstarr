@@ -15,6 +15,7 @@
   import RowsSkeleton from "$lib/components/patterns/RowsSkeleton.svelte";
   import ErrorState from "$lib/components/patterns/ErrorState.svelte";
   import EmptyState from "$lib/components/patterns/EmptyState.svelte";
+  import { serviceCards } from "$lib/for-you";
   import MixShelf from "$lib/components/MixShelf.svelte";
   import IntelligenceHistoryImports from "$lib/components/IntelligenceHistoryImports.svelte";
   let { administrator = false, listenerId = "", listenerName = "", initialImport = false }: { initialImport?: boolean; administrator?: boolean; listenerId?: string; listenerName?: string } = $props();
@@ -49,8 +50,8 @@
     { source: "lastfm", kind: "top", name: "Your top tracks", label: "Last.fm" },
     { source: "lastfm", kind: "similar", name: "Similar to your top tracks", label: "Last.fm" },
   ];
-  const suggestions = $derived(recipes.filter(recipe => !addedSuggestions.includes(`add:${recipe.source}:${recipe.kind}`) && accounts.some(account => account.scope === "personal" && account.providerId === recipe.source) && !links.some(link => link.enabled && link.sourceProviderId === recipe.source && link.sourcePlaylistId === (recipe.source === "listenbrainz" ? `createdfor:${recipe.kind}` : recipe.kind === "top" ? "top:1month:50" : recipe.kind))).map(recipe => ({ id: `add:${recipe.source}:${recipe.kind}`, kind: "external", name: recipe.name, description: `From ${recipe.label} · kept in sync`, section: "yourServices", sortOrder: 0, sourceLabel: recipe.label, recipeVersion: null, updatedAt: null, readiness: { ready: true, message: "Ready" }, inApps: false, appsAllowed: cards.some(card => card.appsAllowed), coverArtwork: [] }) satisfies MixCard));
-  const services = $derived([...cards.filter(item => item.section === "yourServices" && item.inApps).map(card => ({ ...card, description: card.sourceLabel ? `From ${card.sourceLabel} · kept in sync` : "From your connected service" })), ...suggestions]);
+  const suggestions = $derived(recipes.filter(recipe => !addedSuggestions.includes(`add:${recipe.source}:${recipe.kind}`) && accounts.some(account => account.scope === "personal" && account.providerId === recipe.source) && !links.some(link => link.enabled && link.sourceProviderId === recipe.source && link.sourcePlaylistId === (recipe.source === "listenbrainz" ? `createdfor:${recipe.kind}` : recipe.kind === "top" ? "top:1month:50" : recipe.kind))).map(recipe => ({ id: `add:${recipe.source}:${recipe.kind}`, kind: "external", name: recipe.name, description: `From ${recipe.label} · kept in sync`, section: "yourServices", source: recipe.source, sourcePlaylistId: recipe.source === "listenbrainz" ? `createdfor:${recipe.kind}` : recipe.kind === "top" ? "top:1month:50" : recipe.kind, sortOrder: 0, sourceLabel: recipe.label, recipeVersion: null, updatedAt: null, readiness: { ready: true, message: "Ready" }, inApps: false, appsAllowed: cards.some(card => card.appsAllowed), coverArtwork: [] }) satisfies MixCard));
+  const services = $derived(serviceCards(cards, suggestions));
   async function load() {
     if (pending) return pending;
     pending = (async () => {

@@ -113,8 +113,11 @@ public sealed class ListenBrainzPlaylistCapabilityAdapter(HttpClient http, IProv
     public Task<ProviderOutcome<ProviderPage<ProviderPlaylistSummary>>> SearchPlaylistsAsync(
         ProviderExecutionContext context, ProviderPlaylistSearchRequest request) => DiscoverAsync(context, request.Page, request.Query, null);
 
+    public Task<ProviderOutcome<ProviderPage<ProviderPlaylistSummary>>> GetServiceFeedsAsync(
+        ProviderExecutionContext context, ProviderPageRequest page) => DiscoverAsync(context, page, null, null, serviceFeeds: true);
+
     private Task<ProviderOutcome<ProviderPage<ProviderPlaylistSummary>>> DiscoverAsync(
-        ProviderExecutionContext context, ProviderPageRequest page, string? search, string? sourceUserId) => ExecuteAsync(context, false,
+        ProviderExecutionContext context, ProviderPageRequest page, string? search, string? sourceUserId, bool serviceFeeds = false) => ExecuteAsync(context, false,
         async (baseUri, token, ct) =>
         {
             if (sourceUserId != null) throw new ProviderFailure(new(ProviderErrorKind.Forbidden));
@@ -122,8 +125,12 @@ public sealed class ListenBrainzPlaylistCapabilityAdapter(HttpClient http, IProv
             var username = await UsernameAsync(baseUri, token!, ct);
             var own = await ListAsync(baseUri, username, token!, false, ct);
             var created = await ListAsync(baseUri, username, token!, true, ct);
-            var summaries = own.Concat(created.Where(item => Text(Extension(item), "created_for") == username))
-                .DistinctBy(PlaylistId).Select(item => Summary(item, Resource(PlaylistId(item))))
+            var personal = created.Where(item => Text(Extension(item), "created_for") == username).ToArray();
+            var summaries = (serviceFeeds
+                ? personal.Where(item => SourcePatch(item) is { } patch && TryNormalize("createdfor:" + patch, out _))
+                    .Select(item => Summary(item, Resource("createdfor:" + SourcePatch(item))))
+                : own.Concat(personal).DistinctBy(PlaylistId).Select(item => Summary(item, Resource(PlaylistId(item)))))
+                .DistinctBy(item => item.Id.Value)
                 .Prepend(new ProviderPlaylistSummary(Resource(FreshReleases), FreshReleasesName, new("ListenBrainz"), Hash(FreshReleases + ":" + username),
                     "New songs from artists you listen to, newest first."))
                 .Prepend(new ProviderPlaylistSummary(Resource(Recommended), RecommendedName, new("ListenBrainz"), Hash(Recommended + ":" + username),

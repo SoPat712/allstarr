@@ -1,0 +1,258 @@
+using System.Globalization;
+using System.Text.Json;
+using allstarr.Core.Capabilities;
+using allstarr.Core.ClientEvents;
+using allstarr.Core.Jobs;
+using allstarr.Core.Matching;
+using allstarr.Core.Playlists;
+using allstarr.Core.Providers.AppleMusicKit;
+using allstarr.Core.Providers.ListenBrainz;
+using allstarr.Core.Protocols;
+using allstarr.Core.Storage;
+using allstarr.Models.Domain;
+using Microsoft.EntityFrameworkCore;
+
+namespace allstarr.Core.Music;
+
+public sealed partial class PersonalMixService
+{
+    private readonly SemaphoreSlim feedReads = new(1, 1);
+    private static readonly TimeSpan FeedWindow = TimeSpan.FromHours(6);
+
+    private ProviderExecutionContext FeedContext(ProtocolExecutionContext execution, ProviderAccountRecord account, CancellationToken token) =>
+        new(execution.RequireActor(), account.ProviderId,
+            new(account.Id, account.ProviderId, account.Scope, account.Revision, account.Enabled, account.OwnerUserId, "service-feeds", account.SecretReferenceId),
+            new(new(ProviderAudioQuality.Any, ProviderAudioQuality.HighResolution, true), ProviderExplicitContentPolicy.Allow,
+                false, false, false, [account.ProviderId]), "service-feeds", execution.CorrelationId, clock.UtcNow.AddMinutes(5), token);
+
+    private async Task<PersonalMix[]> ServiceFeedCardsAsync(UserRecord user, CancellationToken token)
+    {
+        if (registry == null) return [];
+        await feedReads.WaitAsync(token);
+        try
+        {
+            await using var db = await factory.CreateDbContextAsync(token);
+            var context = await ContextAsync(user, token);
+            var accounts = await db.ProviderAccounts.AsNoTracking().Where(account => account.OwnerUserId == user.Id &&
+                account.Enabled &&
+                (account.ProviderId == "spotify" || account.ProviderId == "apple-musickit" || account.ProviderId == "lastfm" || account.ProviderId == "listenbrainz"))
+                .OrderBy(account => account.CreatedAt).ThenBy(account => account.Id).ToArrayAsync(token);
+            var result = new List<PersonalMix>();
+            foreach (var account in accounts)
+            {
+                if (context.Policy?.IsEnabled(account.ProviderId) == false ||
+                    !registry.TryGetCapability<IProviderPlaylistCapability>(account.ProviderId, ProviderCapabilityKind.Playlist, out var capability)) continue;
+                var key = Hash(Scope(user) + ":" + account.Revision);
+                var rows = db.ExternalMetadataSnapshots.Where(item => item.OwnerUserId == user.Id && item.ProviderAccountId == account.Id &&
+                    item.ResourceKind == "service-feeds" && item.ExternalIdHash == key);
+                var saved = await rows.OrderByDescending(item => item.SnapshotVersion).FirstOrDefaultAsync(token);
+                var cards = saved == null ? [] : JsonSerializer.Deserialize<PersonalMix[]>(saved.PayloadJson)!;
+                if (saved == null || clock.UtcNow - saved.RetrievedAt >= FeedWindow)
+                {
+                    var fetched = new List<PersonalMix>();
+                    var seen = new HashSet<string>(StringComparer.Ordinal);
+                    var execution = FeedContext(context, account, token);
+                    string? cursor = null;
+                    var complete = false;
+                    try
+                    {
+                        for (var pageNumber = 0; pageNumber < 100; pageNumber++)
+                        {
+                            var page = new ProviderPageRequest(100, cursor);
+                            var outcome = capability is AppleMusicKitPlaylistCapabilityAdapter apple
+                                ? await apple.GetServiceFeedsAsync(execution, page)
+                                : capability is ListenBrainzPlaylistCapabilityAdapter listenBrainz
+                                    ? await listenBrainz.GetServiceFeedsAsync(execution, page)
+                                    : await capability!.GetUserPlaylistsAsync(execution, new(page));
+                            if (!outcome.IsSuccess) break;
+                            var value = outcome.RequireValue();
+                            foreach (var item in value.Items.Where(item => item.Id.ProviderId == account.ProviderId &&
+                                         PlaylistSourceKinds.Classify(account.ProviderId, item.Id.Value, item.Owner.ProviderUserId, null) == PlaylistSourceKinds.Feed))
+                            {
+                                var id = Id(user, $"service-feed:{account.Id}:{item.Id.Value}");
+                                fetched.Add(new(id, "external", PlaylistVirtualizationService.DisplayName(account.ProviderId, item.Name), "From " + SourceName(account.ProviderId), 1,
+                                    item.SourceRevision.Contains('T') && DateTimeOffset.TryParse(item.SourceRevision, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var updated) ? updated : null,
+                                    new(item.TrackCount != 0, "Open to see songs from your service."), false, [])
+                                {
+                                    Source = account.ProviderId,
+                                    SourceLabel = SourceName(account.ProviderId),
+                                    SourcePlaylistId = item.Id.Value,
+                                    ProviderAccountId = account.Id,
+                                    ArtworkUrl = item.Artwork?.PublicUri?.ToString(),
+                                    SongCount = item.TrackCount
+                                });
+                            }
+                            if (value.NextCursor == null) { complete = !value.IsPartial; break; }
+                            if (!seen.Add(value.NextCursor)) break;
+                            cursor = value.NextCursor;
+                        }
+                    }
+                    catch (Exception exception) when (exception is not OperationCanceledException)
+                    { logger?.LogDebug("Service feeds could not refresh for {Provider}", account.ProviderId); }
+                    if (complete) cards = fetched.DistinctBy(item => item.SourcePlaylistId).ToArray();
+                    var json = JsonSerializer.Serialize(cards, DocumentJson);
+                    var version = (saved?.SnapshotVersion ?? 0) + 1;
+                    saved = new()
+                    {
+                        Id = Guid.CreateVersion7(),
+                        OwnerUserId = user.Id,
+                        ProviderAccountId = account.Id,
+                        ProviderId = account.ProviderId,
+                        ResourceKind = "service-feeds",
+                        ExternalIdHash = key,
+                        SnapshotVersion = version,
+                        Protocol = user.BackendType,
+                        BackendInstanceId = user.BackendInstanceId,
+                        BackendPrincipalId = user.BackendPrincipalId,
+                        ProviderRevision = account.Revision.ToString(CultureInfo.InvariantCulture),
+                        CorrelationId = "service-feeds"
+                    };
+                    db.ExternalMetadataSnapshots.Add(saved);
+                    saved.PayloadJson = json;
+                    saved.PayloadSha256 = Hash(json);
+                    saved.RetrievedAt = clock.UtcNow;
+                    await db.SaveChangesAsync(token);
+                    await rows.Where(item => item.SnapshotVersion <= version - KeptDocuments).ExecuteDeleteAsync(token);
+                }
+                result.AddRange(cards);
+            }
+            return result.ToArray();
+        }
+        finally { feedReads.Release(); }
+    }
+
+    private async Task<IReadOnlyList<PersonalMix>> ServiceMixesAsync(UserRecord user, CancellationToken token, Guid? id = null, bool cardsOnly = false)
+    {
+        var cards = await ServiceFeedCardsAsync(user, token);
+        var linked = await ExternalMixesAsync(user, token, id, cardsOnly, cards);
+        await using var db = await factory.CreateDbContextAsync(token);
+        var links = await ExternalLinks(db, user).AsNoTracking().OrderByDescending(link => link.Enabled).ThenBy(link => link.CreatedAt).ToArrayAsync(token);
+        var result = linked.ToList();
+        foreach (var card in cards)
+        {
+            var link = links.FirstOrDefault(link => (link.ProviderAccountId == card.ProviderAccountId || link.ProviderAccountId == null) && link.SourceProviderId == card.Source && link.SourcePlaylistId == card.SourcePlaylistId);
+            if (link != null)
+            {
+                if (id == card.Id && !result.Any(mix => mix.Id == link.Id))
+                    result.AddRange(await ExternalMixesAsync(user, token, link.Id, cardsOnly, cards));
+                var match = result.FindIndex(mix => mix.Id == link.Id);
+                if (match >= 0)
+                {
+                    var mix = result[match];
+                    if (mix.Generation == 0)
+                        mix = id.HasValue ? await ServiceFeedSongsAsync(user, card with { Id = link.Id, Added = link.Enabled }, token)
+                            : card with { Id = link.Id, Added = link.Enabled };
+                    result[match] = mix with
+                    {
+                        Source = card.Source,
+                        SourcePlaylistId = card.SourcePlaylistId,
+                        ProviderAccountId = card.ProviderAccountId,
+                        ArtworkUrl = card.ArtworkUrl,
+                        SongCount = card.SongCount
+                    };
+                }
+                continue;
+            }
+            if (id != null && card.Id != id) continue;
+            result.Add(id.HasValue ? await ServiceFeedSongsAsync(user, card, token) : card);
+        }
+        return result.DistinctBy(mix => (mix.Source is "spotify" or "apple-musickit" ? (Guid?)null : mix.ProviderAccountId,
+            mix.Source, mix.SourcePlaylistId ?? mix.Id.ToString())).ToArray();
+    }
+
+    private async Task<PersonalMix> ServiceFeedSongsAsync(UserRecord user, PersonalMix card, CancellationToken token)
+    {
+        await using var db = await factory.CreateDbContextAsync(token);
+        var account = await db.ProviderAccounts.AsNoTracking().SingleAsync(item => item.Id == card.ProviderAccountId && item.OwnerUserId == user.Id && item.Enabled, token);
+        var context = await ContextAsync(user, token);
+        var execution = FeedContext(context, account, token);
+        var capability = registry!.GetRequiredCapability<IProviderPlaylistCapability>(account.ProviderId, ProviderCapabilityKind.Playlist);
+        var key = Hash(Scope(user) + ":" + account.Revision + ":" + card.SourcePlaylistId);
+        await feedReads.WaitAsync(token);
+        Song[] songs;
+        try
+        {
+            var rows = db.ExternalMetadataSnapshots.Where(item => item.OwnerUserId == user.Id && item.ProviderAccountId == account.Id &&
+                item.ResourceKind == "service-feed-songs" && item.ExternalIdHash == key);
+            var saved = await rows.AsNoTracking().OrderByDescending(item => item.SnapshotVersion).FirstOrDefaultAsync(token);
+            songs = saved == null ? [] : JsonSerializer.Deserialize<Song[]>(saved.PayloadJson)!;
+            if (saved == null || clock.UtcNow - saved.RetrievedAt >= FeedWindow)
+            {
+                var tracks = new List<Song>();
+                var seen = new HashSet<string>(StringComparer.Ordinal);
+                string? cursor = null;
+                do
+                {
+                    var outcome = await capability.GetPlaylistTracksAsync(execution, new(new(account.ProviderId, ProviderResourceKind.Playlist, card.SourcePlaylistId!), new(100, cursor)));
+                    if (!outcome.IsSuccess) throw new InvalidOperationException("Your service playlist is unavailable. Try again later.");
+                    var page = outcome.RequireValue().Tracks;
+                    tracks.AddRange(page.Items.Where(item => item.Metadata != null).Select(item => ProtocolProviderGateway.Map(item.Metadata!)));
+                    cursor = page.NextCursor;
+                    if (cursor != null && (!seen.Add(cursor) || seen.Count >= 1000)) throw new InvalidOperationException("Your service playlist could not finish loading.");
+                } while (cursor != null);
+                songs = tracks.Select(SafeSong).ToArray();
+                var json = JsonSerializer.Serialize(songs, DocumentJson);
+                var version = (saved?.SnapshotVersion ?? 0) + 1;
+                saved = new()
+                {
+                    Id = Guid.CreateVersion7(),
+                    OwnerUserId = user.Id,
+                    ProviderAccountId = account.Id,
+                    ProviderId = account.ProviderId,
+                    ResourceKind = "service-feed-songs",
+                    ExternalIdHash = key,
+                    SnapshotVersion = version,
+                    Protocol = user.BackendType,
+                    BackendInstanceId = user.BackendInstanceId,
+                    BackendPrincipalId = user.BackendPrincipalId,
+                    ProviderRevision = account.Revision.ToString(CultureInfo.InvariantCulture),
+                    CorrelationId = "service-feeds"
+                };
+                db.ExternalMetadataSnapshots.Add(saved);
+                saved.PayloadJson = json;
+                saved.PayloadSha256 = Hash(json);
+                saved.RetrievedAt = clock.UtcNow;
+                await db.SaveChangesAsync(token);
+                await rows.Where(item => item.SnapshotVersion <= version - KeptDocuments).ExecuteDeleteAsync(token);
+            }
+        }
+        finally { feedReads.Release(); }
+        foreach (var song in songs)
+            if (identities != null && song.ExternalId is { } externalId)
+            {
+                var source = new ProviderExternalResourceId(account.ProviderId, ProviderResourceKind.Track, externalId);
+                try
+                {
+                    song.CanonicalRecordingId = await identities.RememberSourceAsync(execution, source, song.Id, ProviderIdentityScope.Account, song.Isrc, token);
+                    await identities.RememberPlaybackMetadataAsync(execution, source, song, token);
+                }
+                catch (RecordingMergeConflictException) { }
+            }
+        var projected = (await PreferLocalCopiesAsync(user.Id, [card with { Songs = songs.Select(song => new PersonalMixItem(card.Id, 1, song, account.ProviderId, "From your service playlist", 0)).ToArray() }], token)).Single();
+        var blocked = await taste.BlockedSongsAsync(user.Id, projected.Songs.Select(item => item.Song).ToArray(), token);
+        var playable = new List<PersonalMixItem>();
+        foreach (var item in projected.Songs)
+            if (!blocked.Contains(item.Song) && context.Policy!.Includes(item.Song) && (item.Song.IsLocal || await providers.CanPlaySongAsync(context, item.Song))) playable.Add(item);
+        return projected with { Songs = playable, Readiness = new(playable.Count > 0, playable.Count > 0 ? "Ready" : "No playable songs right now.") };
+    }
+
+    private async Task<bool> AddServiceFeedAsync(UserRecord user, Guid id, bool enabled, CancellationToken token, string timeZone)
+    {
+        var card = (await ServiceFeedCardsAsync(user, token)).SingleOrDefault(item => item.Id == id);
+        if (card == null) return false;
+        await using var db = await factory.CreateDbContextAsync(token);
+        var existing = await ExternalLinks(db, user).AsNoTracking().FirstOrDefaultAsync(link => (link.ProviderAccountId == card.ProviderAccountId || link.ProviderAccountId == null) &&
+            link.SourceProviderId == card.Source && link.SourcePlaylistId == card.SourcePlaylistId, token);
+        if (existing != null) return await SetExternalInAppsAsync(user, existing.Id, enabled, token, timeZone);
+        if (!enabled) return true;
+        if (playlistStore == null || jobQueue == null) throw new InvalidOperationException("Playlist syncing is unavailable.");
+        var context = (await ContextAsync(user, token)) with { IsReadOnly = false };
+        var link = await playlistStore.CreateLinkAsync(context, new(card.ProviderAccountId, card.Source!, card.SourcePlaylistId!, Hash(card.SourcePlaylistId!),
+            user.BackendType, user.BackendInstanceId, PlaylistLinkMode.Virtual, PlaylistMaterializationMode.Reconcile, "playlist-rules-v1", "playlist-policy-v1"), token);
+        await SetExternalInAppsAsync(user, link.Id, true, token, timeZone);
+        await jobQueue.EnqueueAsync(new DurableJobEnqueueRequest<PlaylistMaterializationJobPayload>("playlist.materialize", $"initial-import:{link.Id:N}",
+            new(link.Id, Math.Max(1, link.CreatedAt.UtcTicks)), user.Id, ProviderAccountId: link.ProviderAccountId, Capability: "playlist"), token);
+        clientEvents?.Publish(user.Id, ClientEvent.Mix(id));
+        return true;
+    }
+}

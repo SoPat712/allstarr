@@ -3594,6 +3594,22 @@
             "items": {
               "type": "string"
             }
+          },
+          "section": {
+            "type": "string",
+            "default": "madeForYou"
+          },
+          "source": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "sourcePlaylistId": {
+            "type": [
+              "null",
+              "string"
+            ]
           }
         }
       },

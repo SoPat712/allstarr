@@ -19,16 +19,20 @@ public sealed partial class PersonalMixService
              link.SourcePlaylistId.StartsWith("top:", StringComparison.Ordinal)));
 
     private static IQueryable<PlaylistLinkRecord> ExternalLinks(AllstarrDbContext db, UserRecord user) =>
-        db.PlaylistLinks.Where(link => link.OwnerUserId == user.Id && link.TargetProtocol == user.BackendType &&
+        db.PlaylistLinks.Where(link => link.ImportMode == PlaylistImportMode.Linked && link.OwnerUserId == user.Id && link.TargetProtocol == user.BackendType &&
             link.TargetBackendInstanceId == user.BackendInstanceId && db.ProviderAccounts.Any(account =>
-                account.Id == link.ProviderAccountId && account.OwnerUserId == user.Id && account.Enabled &&
-                account.ProviderId == link.SourceProviderId));
+                account.OwnerUserId == user.Id && account.Enabled && account.ProviderId == link.SourceProviderId &&
+                (account.Id == link.ProviderAccountId || link.ProviderAccountId == null &&
+                    (link.SourceProviderId == "spotify" || link.SourceProviderId == "apple-musickit"))));
 
-    private async Task<IReadOnlyList<PersonalMix>> ExternalMixesAsync(UserRecord user, CancellationToken token, Guid? id = null, bool cardsOnly = false)
+    private async Task<IReadOnlyList<PersonalMix>> ExternalMixesAsync(UserRecord user, CancellationToken token, Guid? id = null, bool cardsOnly = false, IReadOnlyList<PersonalMix>? feeds = null)
     {
         await using var db = await factory.CreateDbContextAsync(token);
-        var links = (await ExternalLinks(db, user).Where(link => id == null || link.Id == id).AsNoTracking().OrderBy(link => link.CreatedAt).ToArrayAsync(token))
-            .Where(IsExternalLink).ToArray();
+        var available = await ExternalLinks(db, user).Where(link => id == null || link.Id == id).AsNoTracking()
+            .OrderByDescending(link => link.Enabled).ThenBy(link => link.CreatedAt).ToArrayAsync(token);
+        var kinds = await PlaylistSourceKinds.LatestAsync(db, available.Select(link => link.Id).ToArray(), token);
+        var links = available.Where(link => IsExternalLink(link) || (link.SourceProviderId is "spotify" or "apple-musickit") && kinds.GetValueOrDefault(link.Id) == PlaylistSourceKinds.Feed ||
+            feeds?.Any(feed => (feed.ProviderAccountId == link.ProviderAccountId || link.ProviderAccountId == null) && feed.Source == link.SourceProviderId && feed.SourcePlaylistId == link.SourcePlaylistId) == true).ToArray();
         var reader = new DurablePlaylistProjectionReader(factory, libraryAccess, providers, policies);
         var policy = await policies.ResolveForUserAsync(user.Id, token);
         var projections = id.HasValue
@@ -84,6 +88,9 @@ public sealed partial class PersonalMixService
                 projection?.RetrievedAt, new(items.Length > 0, items.Length > 0 ? "Your linked playlist is ready." : "Waiting for playable songs from your linked playlist."),
                 link.Enabled, items)
             {
+                Source = link.SourceProviderId,
+                SourcePlaylistId = link.SourcePlaylistId,
+                ProviderAccountId = link.ProviderAccountId,
                 SourceLabel = ExternalSourceLabel(link),
                 Evidence = new(MixRecipes.For("external"), 0, 0, null, null, null, 0, 0,
                     projection?.SourceEntries.Count ?? items.Length, items.Length, items.Length, 0, items.Length,
@@ -97,9 +104,10 @@ public sealed partial class PersonalMixService
         "From " + ExternalSourceLabel(link), 0, null, new(false, "Matching songs…"), true, [])
     { SourceLabel = ExternalSourceLabel(link) };
 
-    private static string ExternalSourceLabel(PlaylistLinkRecord link) => link.SourceProviderId == "lastfm" ? "Last.fm" : "ListenBrainz";
+    private static string ExternalSourceLabel(PlaylistLinkRecord link) => link.SourceProviderId switch
+    { "lastfm" => "Last.fm", "listenbrainz" => "ListenBrainz", "spotify" => "Spotify", "apple-musickit" => "Apple Music", _ => "your music service" };
 
-    private static string ExternalName(PlaylistLinkRecord link) => link.SourceProviderId == "listenbrainz"
+    private static string ExternalName(PlaylistLinkRecord link) => link.SourceProviderId is not ("lastfm" or "listenbrainz") ? "Service playlist" : link.SourceProviderId == "listenbrainz"
         ? link.SourcePlaylistId == Providers.ListenBrainz.ListenBrainzPlaylistCapabilityAdapter.Recommended ? "Recommended for you"
             : link.SourcePlaylistId == Providers.ListenBrainz.ListenBrainzPlaylistCapabilityAdapter.FreshReleases ? "Fresh releases"
             : CultureInfo.InvariantCulture.TextInfo.ToTitleCase(link.SourcePlaylistId[11..].Replace('-', ' '))
@@ -114,7 +122,14 @@ public sealed partial class PersonalMixService
     {
         await using var db = await factory.CreateDbContextAsync(token);
         var link = await ExternalLinks(db, user).SingleOrDefaultAsync(item => item.Id == id, token);
-        if (link == null || !IsExternalLink(link)) return false;
+        if (link == null || !IsExternalLink(link) && link.SourceProviderId is not ("spotify" or "apple-musickit")) return false;
+        if (!IsExternalLink(link) && (await PlaylistSourceKinds.LatestAsync(db, [link.Id], token)).GetValueOrDefault(link.Id) != PlaylistSourceKinds.Feed &&
+            !(await ServiceFeedCardsAsync(user, token)).Any(feed => (feed.ProviderAccountId == link.ProviderAccountId || link.ProviderAccountId == null) && feed.Source == link.SourceProviderId && feed.SourcePlaylistId == link.SourcePlaylistId)) return false;
+        if (enabled && playlistSync != null && await PlaylistAppRemoval.FindAsync(db, link, token) != null)
+        {
+            await playlistSync.RestoreToAppsAsync((await ContextAsync(user, token)) with { IsReadOnly = false }, link.Id, link.Revision, token);
+            await db.Entry(link).ReloadAsync(token);
+        }
         if (link.Enabled == enabled && (!enabled || link.ScheduleId != null)) return true;
         JobScheduleRecord? schedule = null;
         if (link.ScheduleId is { } scheduleId)

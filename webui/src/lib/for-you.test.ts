@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { artworkUrl, soundDifference, soundSummary, steeringNames, greeting, mixDescription, mosaicArtwork, reasonLabel, shortReadiness, tasteSummary, nudgeMarker, mixName, mixNextStep } from "./for-you";
+import type { MixCard } from "./api";
+import { artworkUrl, soundDifference, soundSummary, steeringNames, greeting, mixDescription, mosaicArtwork, reasonLabel, shortReadiness, tasteSummary, nudgeMarker, mixName, mixNextStep, serviceCards } from "./for-you";
 
 describe("personal mix presentation", () => {
   it("describes each mix without repeating its name", () => {
@@ -103,5 +104,17 @@ describe("soundSummary", () => {
   });
   it("signs differences", () => {
     expect([soundDifference(32), soundDifference(-18), soundDifference(0)]).toEqual(["+32", "−18", "0"]);
+  });
+});
+
+describe("Service feed cards", () => {
+  const feed: MixCard = { description: "From Spotify", sortOrder: 0, recipeVersion: null, updatedAt: null, id: "weekly", kind: "external", section: "yourServices", name: "Discover Weekly", source: "spotify", sourcePlaylistId: "weekly", sourceLabel: "Spotify", inApps: false, appsAllowed: true, readiness: { ready: true, message: "Ready" }, coverArtwork: [] };
+  it("keeps unsynced feeds and explains the synced state", () => {
+    expect(serviceCards([feed])[0]).toMatchObject({ inApps: false, description: "From Spotify" });
+    expect(serviceCards([{ ...feed, inApps: true }])[0]).toMatchObject({ inApps: true, description: "From Spotify · kept in sync" });
+  });
+  it("omits a recipe already supplied by an automatic feed", () => {
+    expect(serviceCards([feed], [{ ...feed, id: "add:spotify:weekly" }])).toHaveLength(1);
+    expect(serviceCards([feed], [{ ...feed, id: "add:lastfm:loved", source: "lastfm", sourcePlaylistId: "loved" }])).toHaveLength(2);
   });
 });
