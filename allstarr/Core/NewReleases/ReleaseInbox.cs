@@ -7,7 +7,8 @@ using allstarr.Core.Providers.AppleMusicKit;
 namespace allstarr.Core.Releases;
 
 public sealed record FollowedReleaseArtist(string ProviderId, string ArtistId, string DisplayName,
-    string? MusicBrainzArtistId = null);
+    string? MusicBrainzArtistId = null, string? LibraryArtistId = null, string? LibraryImageTag = null,
+    bool? IsDirectFollow = null);
 public sealed record ReleaseSource(string ProviderId, string AlbumId, string Title, string Artist,
     string? ReleaseDate, string DatePrecision, string Type, bool? IsExplicit, string Edition,
     string? Upc, string[] Isrcs, string[] Aliases, string? ExclusionReason)

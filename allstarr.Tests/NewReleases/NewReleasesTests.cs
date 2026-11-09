@@ -31,7 +31,7 @@ using SkiaSharp;
 
 namespace allstarr.Tests;
 
-public sealed class NewReleasesTests : IAsyncLifetime
+public sealed partial class NewReleasesTests : IAsyncLifetime
 {
     private SqliteTestDatabase _database = null!;
     private Factory _factory = null!;

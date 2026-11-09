@@ -1,3 +1,4 @@
+using System.Text.Json;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Protocols;
 using allstarr.Core.Releases;
@@ -20,21 +21,24 @@ public sealed class ReleaseReader(NewReleasesService releases, IProtocolProvider
             var source = ReleaseInboxProjection.PrimarySource(entry.Sources);
             var artistId = source.ArtistId ?? follows.FirstOrDefault(artist => artist.ProviderId == source.ProviderId &&
                 artist.DisplayName.Equals(source.Artist, StringComparison.OrdinalIgnoreCase))?.ArtistId;
+            var library = follows.FirstOrDefault(artist => artist.LibraryArtistId != null &&
+                artist.ProviderId == (source.ArtistProviderId ?? source.ProviderId) && artist.ArtistId == artistId);
             return new ClientRelease(entry.Id, entry.Title, entry.Type, entry.ReleaseDate,
-                new(artistId == null ? null : ClientCatalogIds.Resource(source.ArtistProviderId ?? source.ProviderId, ProviderResourceKind.Artist, artistId), entry.Artist),
+                new(library?.LibraryArtistId ?? (artistId == null ? null : ClientCatalogIds.Resource(source.ArtistProviderId ?? source.ProviderId, ProviderResourceKind.Artist, artistId)),
+                    library?.DisplayName ?? entry.Artist, library == null ? null : ArtistImage(library.LibraryArtistId, library.LibraryImageTag)),
                 ClientCatalogIds.Resource(source.ProviderId, ProviderResourceKind.Album, source.AlbumId), $"/allstarr/v1/releases/{entry.Id}/cover");
         }).ToArray(), follows.Select(artist =>
         {
-            var id = ClientCatalogIds.Resource(artist.ProviderId, ProviderResourceKind.Artist, artist.ArtistId);
-            return new ClientReleaseArtist(id, artist.DisplayName, ArtistImage(id));
+            var id = artist.LibraryArtistId ?? ClientCatalogIds.Resource(artist.ProviderId, ProviderResourceKind.Artist, artist.ArtistId);
+            return new ClientReleaseArtist(id, artist.DisplayName, ArtistImage(id, artist.LibraryImageTag));
         }).ToArray());
     }
 
     // The picture the artist's own item shows, by the same image path, so apps load it through their usual artwork cache
     // instead of reading each artist first.
-    private static string? ArtistImage(string? id) => id == null ? null : id.StartsWith("ext-", StringComparison.Ordinal)
+    private static string? ArtistImage(string? id, string? tag = null) => id == null ? null : id.StartsWith("ext-", StringComparison.Ordinal)
         ? $"/Items/{Uri.EscapeDataString(id)}/Images/Primary?tag={Uri.EscapeDataString(JellyfinItemArtwork.PrimaryImageTag(id, false))}"
-        : $"/Items/{Uri.EscapeDataString(id)}/Images/Primary";
+        : $"/Items/{Uri.EscapeDataString(id)}/Images/Primary" + (string.IsNullOrWhiteSpace(tag) ? "" : $"?tag={Uri.EscapeDataString(tag)}");
 
     public async Task<ReleaseSource?> CoverAsync(ProtocolExecutionContext execution, string releaseId)
     {
@@ -46,14 +50,15 @@ public sealed class ReleaseReader(NewReleasesService releases, IProtocolProvider
     public async Task<ClientArtistFollow?> FollowAsync(HttpContext http, ProtocolExecutionContext execution, string artistId, bool followed)
     {
         var owner = execution.RequireActor().EffectiveUserId!.Value;
-        var artist = await ResolveArtistAsync(http, execution, artistId);
+        var artist = await ResolveArtistAsync(http, execution, artistId, followed);
         if (artist == null) return null;
         if (followed) await releases.FollowAsync(owner, artist, execution.CancellationToken);
-        else await releases.UnfollowAsync(owner, artist.ProviderId, artist.ArtistId, execution.CancellationToken);
-        return new(followed, new(artistId, artist.DisplayName, ArtistImage(artistId)));
+        else await releases.UnfollowAsync(owner, artist.ProviderId, artist.ArtistId, execution.CancellationToken, artist.LibraryArtistId);
+        var visibleId = artist.LibraryArtistId ?? artistId;
+        return new(followed, new(visibleId, artist.DisplayName, ArtistImage(visibleId, artist.LibraryImageTag)));
     }
 
-    private async Task<FollowedReleaseArtist?> ResolveArtistAsync(HttpContext http, ProtocolExecutionContext execution, string artistId)
+    private async Task<FollowedReleaseArtist?> ResolveArtistAsync(HttpContext http, ProtocolExecutionContext execution, string artistId, bool followed)
     {
         if (artistId.Length > 500 || artistId.Any(char.IsControl)) return null;
         var owner = execution.RequireActor().EffectiveUserId!.Value;
@@ -63,7 +68,7 @@ public sealed class ReleaseReader(NewReleasesService releases, IProtocolProvider
         {
             if (parsed.type != "artist" || !registry.TryGet(parsed.provider!, out var descriptor)) return null;
             var provider = descriptor!.Id;
-            if (follows.FirstOrDefault(item => registry.ResolveProviderId(item.ProviderId) == provider && item.ArtistId == parsed.externalId) is { } existing) return existing;
+            if (follows.FirstOrDefault(item => item.LibraryArtistId == null && registry.ResolveProviderId(item.ProviderId) == provider && item.ArtistId == parsed.externalId) is { } existing) return existing;
             var artist = await providers.GetArtistAsync(execution, provider, parsed.externalId!);
             return string.IsNullOrWhiteSpace(artist?.Name) ? null : new(provider, parsed.externalId!, artist.Name);
         }
@@ -78,8 +83,39 @@ public sealed class ReleaseReader(NewReleasesService releases, IProtocolProvider
         if (!root.TryGetProperty("Id", out var id) || !SameNativeId(id.GetString(), artistId) ||
             !root.TryGetProperty("Type", out var type) || type.GetString() != "MusicArtist" ||
             !root.TryGetProperty("Name", out var name) || string.IsNullOrWhiteSpace(name.GetString())) return null;
-        return follows.FirstOrDefault(item => item.DisplayName.Equals(name.GetString(), StringComparison.OrdinalIgnoreCase)) ??
-            await releases.ResolveArtistByNameAsync(owner, name.GetString()!, execution.CancellationToken);
+        var nativeId = id.GetString()!;
+        var nativeName = name.GetString()!;
+        var tag = root.TryGetProperty("ImageTags", out var tags) && tags.TryGetProperty("Primary", out var primary) ? primary.GetString() : null;
+        if (follows.FirstOrDefault(item => SameNativeId(item.LibraryArtistId, nativeId)) is { } libraryFollow)
+            return libraryFollow with { LibraryArtistId = nativeId, DisplayName = nativeName, LibraryImageTag = tag };
+        var unresolved = new FollowedReleaseArtist("jellyfin", nativeId, nativeName, LibraryArtistId: nativeId, LibraryImageTag: tag);
+        if (!followed) return unresolved;
+        try
+        {
+            var mbid = root.TryGetProperty("ProviderIds", out var ids) ? ids.EnumerateObject()
+                .FirstOrDefault(item => item.Name.Equals("MusicBrainzArtist", StringComparison.OrdinalIgnoreCase)).Value : default;
+            var (catalog, catalogStatus) = await jellyfin.GetJsonAsync(
+                $"Users/{Uri.EscapeDataString(execution.VerifiedBackendPrincipalId)}/Items",
+                new() { ["ArtistIds"] = nativeId, ["IncludeItemTypes"] = "MusicAlbum,Audio", ["Recursive"] = "true", ["Limit"] = "200" },
+                http.Request.Headers, execution.CancellationToken);
+            using (catalog)
+            {
+                var albums = new List<string>();
+                var songs = new List<string>();
+                if (catalogStatus == 200 && catalog?.RootElement.TryGetProperty("Items", out var items) == true)
+                    foreach (var item in items.EnumerateArray().Take(200))
+                    {
+                        if (!item.TryGetProperty("Name", out var title) || string.IsNullOrWhiteSpace(title.GetString()) ||
+                            !item.TryGetProperty("Type", out var kind)) continue;
+                        if (kind.GetString() == "MusicAlbum") albums.Add(title.GetString()!);
+                        else if (kind.GetString() == "Audio") songs.Add(title.GetString()!);
+                    }
+                var service = await releases.ResolveLibraryArtistAsync(owner, nativeName,
+                    mbid.ValueKind == JsonValueKind.String ? mbid.GetString() : null, albums, songs, execution.CancellationToken);
+                return service == null ? unresolved : service with { DisplayName = nativeName, LibraryArtistId = nativeId, LibraryImageTag = tag };
+            }
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException) { return unresolved; }
     }
 
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, DateTimeOffset> FavoritesChecked = new();
@@ -109,8 +145,8 @@ public sealed class ReleaseReader(NewReleasesService releases, IProtocolProvider
                     if (added == 10) break;
                     if (!item.TryGetProperty("Id", out var id) || id.GetString() is not { } artistId ||
                         !item.TryGetProperty("Name", out var name) || string.IsNullOrWhiteSpace(name.GetString()) ||
-                        follows.Any(follow => follow.DisplayName.Equals(name.GetString(), StringComparison.OrdinalIgnoreCase) ||
-                            $"ext-{follow.ProviderId}-artist-{follow.ArtistId}" == artistId)) continue;
+                        follows.Any(follow => SameNativeId(follow.LibraryArtistId, artistId) ||
+                            follow.LibraryArtistId == null && $"ext-{follow.ProviderId}-artist-{follow.ArtistId}" == artistId)) continue;
                     if (await FollowAsync(http, execution, artistId, true) != null) added++;
                 }
             }

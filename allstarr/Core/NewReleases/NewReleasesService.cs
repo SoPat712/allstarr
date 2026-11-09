@@ -7,6 +7,7 @@ using allstarr.Core.Favorites;
 using allstarr.Core.Intelligence;
 using allstarr.Core.Jobs;
 using allstarr.Core.Operations;
+using allstarr.Core.Providers.AppleMusicKit;
 using allstarr.Core.Routing;
 using allstarr.Core.Settings;
 using allstarr.Core.Storage;
@@ -46,9 +47,26 @@ public sealed class NewReleasesService(IDbContextFactory<AllstarrDbContext> fact
             var user = await UserAsync(db, owner, token);
             var before = await ReadForEventAsync(owner, token);
             var artists = (await FollowsAsync(db, user, token)).ToList();
-            var followed = new FollowedReleaseArtist(id.ProviderId, id.Value, artist.DisplayName.Trim(),
-                await KnownArtistMbidAsync(db, user, id, token));
-            artists.RemoveAll(item => item.ProviderId == id.ProviderId && item.ArtistId == id.Value);
+            var followed = artist with
+            {
+                DisplayName = artist.DisplayName.Trim(),
+                MusicBrainzArtistId = artist.LibraryArtistId == null ? await KnownArtistMbidAsync(db, user, id, token) : artist.MusicBrainzArtistId,
+                IsDirectFollow = artist.LibraryArtistId == null
+            };
+            if (artist.LibraryArtistId != null && await HasLibraryHeartAsync(db, user, artist.LibraryArtistId, token))
+            {
+                var serviceHearts = await db.FavoriteStates.AsNoTracking().Where(item => item.OwnerUserId == owner && item.IsFavorite &&
+                    item.Protocol == user.BackendType && item.BackendInstanceId == user.BackendInstanceId)
+                    .Select(item => item.ItemId).ToArrayAsync(token);
+                var serviceIds = serviceHearts.Select(FavoriteDisplaySnapshot.Resource).OfType<ProviderExternalResourceId>()
+                    .Where(item => item.ResourceKind == ProviderResourceKind.Artist)
+                    .Select(item => (Provider: AppleMusicClient.NormalizeProviderId(item.ProviderId), Id: item.Value)).ToHashSet();
+                artists.RemoveAll(item => item.LibraryArtistId == null && item.IsDirectFollow == null &&
+                    item.DisplayName.Equals(artist.DisplayName, StringComparison.OrdinalIgnoreCase) &&
+                    !serviceIds.Contains((AppleMusicClient.NormalizeProviderId(item.ProviderId), item.ArtistId)));
+            }
+            artists.RemoveAll(item => artist.LibraryArtistId != null ? SameLibraryId(item.LibraryArtistId, artist.LibraryArtistId) :
+                item.LibraryArtistId == null && item.ProviderId == id.ProviderId && item.ArtistId == id.Value);
             artists.Add(followed);
             await SaveAsync(db, user, FollowsKind, Scope(user), artists.ToArray(), token);
             await EnsureScheduleAsync(db, user, token);
@@ -58,7 +76,8 @@ public sealed class NewReleasesService(IDbContextFactory<AllstarrDbContext> fact
         finally { Gate.Release(); }
     }
 
-    public async Task UnfollowAsync(Guid owner, string provider, string artistId, CancellationToken token = default)
+    public async Task UnfollowAsync(Guid owner, string provider, string artistId, CancellationToken token = default,
+        string? libraryArtistId = null)
     {
         await Gate.WaitAsync(token);
         try
@@ -66,7 +85,9 @@ public sealed class NewReleasesService(IDbContextFactory<AllstarrDbContext> fact
             await using var db = await factory.CreateDbContextAsync(token);
             var user = await UserAsync(db, owner, token);
             var before = await ReadForEventAsync(owner, token);
-            var artists = (await FollowsAsync(db, user, token)).Where(item => item.ProviderId != provider || item.ArtistId != artistId).ToArray();
+            var artists = (await FollowsAsync(db, user, token)).Where(item => libraryArtistId != null
+                ? !SameLibraryId(item.LibraryArtistId, libraryArtistId)
+                : item.LibraryArtistId != null || item.ProviderId != provider || item.ArtistId != artistId).ToArray();
             await SaveAsync(db, user, FollowsKind, Scope(user), artists, token);
             if (artists.Length == 0)
             {
@@ -99,8 +120,8 @@ public sealed class NewReleasesService(IDbContextFactory<AllstarrDbContext> fact
             var added = 0;
             foreach (var (id, name) in artists)
             {
-                if (follows.Any(item => item.ProviderId == id!.ProviderId && item.ArtistId == id.Value)) continue;
-                follows.Add(new(id!.ProviderId, id.Value, name, await KnownArtistMbidAsync(db, user, id, token)));
+                if (follows.Any(item => item.LibraryArtistId == null && item.ProviderId == id!.ProviderId && item.ArtistId == id.Value)) continue;
+                follows.Add(new(id!.ProviderId, id.Value, name, await KnownArtistMbidAsync(db, user, id, token), IsDirectFollow: true));
                 added++;
             }
             if (added == 0) return 0;
@@ -211,12 +232,50 @@ public sealed class NewReleasesService(IDbContextFactory<AllstarrDbContext> fact
         finally { Gate.Release(); }
     }
 
-    public async Task<FollowedReleaseArtist?> ResolveArtistByNameAsync(Guid owner, string name, CancellationToken token = default)
+    public async Task<FollowedReleaseArtist?> ResolveLibraryArtistAsync(Guid owner, string name, string? musicBrainzArtistId,
+        IReadOnlyCollection<string> albums, IReadOnlyCollection<string> songs, CancellationToken token = default)
     {
         if (string.IsNullOrWhiteSpace(name) || name.Length > 300 || name.Any(char.IsControl)) return null;
+        var mbid = Guid.TryParse(musicBrainzArtistId, out var parsed) && parsed != Guid.Empty ? parsed.ToString() : null;
+        var albumTitles = albums.Select(title => FuzzyMatcher.NormalizeTitleForMatching(title, name)).Where(title => title.Length > 0).ToHashSet();
+        var songTitles = songs.Select(title => FuzzyMatcher.NormalizeTitleForMatching(title, name)).Where(title => title.Length > 0).ToHashSet();
+        if (mbid == null && albumTitles.Count == 0 && songTitles.Count == 0) return null;
         await using var db = await factory.CreateDbContextAsync(token);
         var user = await UserAsync(db, owner, token);
-        return await FindArtistByNameAsync(await FollowSourcesAsync(user, token), name.Trim());
+        var matches = new List<(FollowedReleaseArtist Artist, bool Mbid, int Titles)>();
+        foreach (var source in await FollowSourcesAsync(user, token))
+        {
+            var outcome = await source.Implementation.SearchArtistsAsync(source.Context, new(name.Trim(), new(8)));
+            if (!outcome.IsSuccess) continue;
+            foreach (var candidate in outcome.RequireValue().Items.DistinctBy(item => item.Id).Take(8))
+            {
+                var candidateMbid = ArtistMbid(candidate.ProviderIds) ?? await KnownArtistMbidAsync(db, user, candidate.Id, token);
+                if (mbid != null && candidateMbid == null)
+                {
+                    var detail = await source.Implementation.GetArtistAsync(source.Context, new(candidate.Id));
+                    if (detail.IsSuccess && detail.RequireValue().Id == candidate.Id) candidateMbid = ArtistMbid(detail.RequireValue().ProviderIds);
+                }
+                if (mbid != null && candidateMbid != null && mbid != candidateMbid) continue;
+                var evidence = 0;
+                if (albumTitles.Count > 0)
+                {
+                    var catalog = await source.Implementation.GetArtistAlbumsAsync(source.Context, new(candidate.Id, new(100)));
+                    if (catalog.IsSuccess) evidence += catalog.RequireValue().Items.Select(item => FuzzyMatcher.NormalizeTitleForMatching(item.Title, name))
+                        .Distinct().Count(albumTitles.Contains);
+                }
+                if (songTitles.Count > 0)
+                {
+                    var tracks = await source.Implementation.GetArtistTracksAsync(source.Context, new(candidate.Id, new(50)));
+                    if (tracks.IsSuccess) evidence += tracks.RequireValue().Items.Select(item => FuzzyMatcher.NormalizeTitleForMatching(item.Title, name))
+                        .Distinct().Count(songTitles.Contains);
+                }
+                var matchedMbid = mbid != null && mbid == candidateMbid;
+                if (matchedMbid || evidence > 0) matches.Add((new(candidate.Id.ProviderId, candidate.Id.Value, candidate.Name, candidateMbid), matchedMbid, evidence));
+            }
+        }
+        var best = matches.OrderByDescending(item => item.Mbid).ThenByDescending(item => item.Titles)
+            .DistinctBy(item => (item.Artist.ProviderId, item.Artist.ArtistId)).ToArray();
+        return best.Length == 0 || best.Length > 1 && best[0].Mbid == best[1].Mbid && best[0].Titles == best[1].Titles ? null : best[0].Artist;
     }
 
     private static async Task<FollowedReleaseArtist?> FindArtistByNameAsync(
@@ -415,7 +474,7 @@ public sealed class NewReleasesService(IDbContextFactory<AllstarrDbContext> fact
         var users = await db.Users.AsNoTracking().Where(item => item.Enabled && owners.Contains(item.Id)).ToArrayAsync(token);
         foreach (var user in users)
         {
-            var followed = (await FollowsAsync(db, user, token)).SingleOrDefault(item =>
+            var followed = (await FollowsAsync(db, user, token)).FirstOrDefault(item =>
                 item.ProviderId == artist.ProviderId && item.ArtistId == artist.ArtistId);
             if (followed == null) continue;
             var route = await RouteAsync(user, followed, token);
@@ -428,6 +487,7 @@ public sealed class NewReleasesService(IDbContextFactory<AllstarrDbContext> fact
     private async Task<ProviderRouteCandidate<IProviderMetadataCapability>?> RouteAsync(UserRecord user,
         FollowedReleaseArtist artist, CancellationToken token, Guid? jobId = null)
     {
+        if (artist.LibraryArtistId != null && artist.ProviderId == "jellyfin") return null;
         var principal = new ProviderBackendPrincipal(user.BackendType, user.BackendInstanceId, user.BackendPrincipalId);
         var actor = jobId.HasValue ? new ProviderActorContext(ProviderActorKind.SystemJob, user.Id, principal, jobId) :
             new ProviderActorContext(ProviderActorKind.User, user.Id, principal);
@@ -512,9 +572,28 @@ public sealed class NewReleasesService(IDbContextFactory<AllstarrDbContext> fact
         if (row == null) return null;
         using var payload = JsonDocument.Parse(row.PayloadJson);
         if (!payload.RootElement.TryGetProperty("ProviderIds", out var ids)) return null;
-        foreach (var key in new[] { "musicbrainzartist", "musicbrainz" })
-            if (ids.TryGetProperty(key, out var value) && value.ValueKind == JsonValueKind.String && Guid.TryParse(value.GetString(), out var mbid)) return mbid.ToString();
-        return null;
+        return ArtistMbid(ids.EnumerateObject().Where(item => item.Value.ValueKind == JsonValueKind.String)
+            .ToDictionary(item => item.Name, item => item.Value.GetString()!));
+    }
+
+    private static string? ArtistMbid(IReadOnlyDictionary<string, string> ids) => ids
+        .Where(item => item.Key.Equals("musicbrainzartist", StringComparison.OrdinalIgnoreCase) || item.Key.Equals("musicbrainz", StringComparison.OrdinalIgnoreCase))
+        .Select(item => Guid.TryParse(item.Value, out var mbid) && mbid != Guid.Empty ? mbid.ToString() : null).FirstOrDefault(item => item != null);
+
+    private static bool SameLibraryId(string? first, string second) => first == second ||
+        Guid.TryParse(first, out var firstId) && Guid.TryParse(second, out var secondId) && firstId == secondId;
+
+    private static async Task<bool> HasLibraryHeartAsync(AllstarrDbContext db, UserRecord user, string nativeId, CancellationToken token)
+    {
+        var ids = Guid.TryParse(nativeId, out var guid) ? new[] { nativeId, guid.ToString("N"), guid.ToString("D") } : [nativeId];
+        return await (from state in db.FavoriteStates.AsNoTracking()
+                      join accepted in db.FavoriteEvents on state.LastEventId equals accepted.Id
+                      where state.OwnerUserId == user.Id && state.IsFavorite && ids.Contains(state.ItemId) &&
+                          state.Protocol == user.BackendType && state.BackendInstanceId == user.BackendInstanceId &&
+                          accepted.OwnerUserId == user.Id && accepted.BackendPrincipalId == user.BackendPrincipalId &&
+                          accepted.Protocol == user.BackendType && accepted.BackendInstanceId == user.BackendInstanceId &&
+                          accepted.ItemId == state.ItemId && accepted.Operation == FavoriteOperation.Favorite
+                      select state.Id).AnyAsync(token);
     }
 }
 

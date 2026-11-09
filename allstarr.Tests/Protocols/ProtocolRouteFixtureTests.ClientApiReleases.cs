@@ -102,13 +102,10 @@ public sealed partial class ProtocolRouteFixtureTests
             Assert.Equal(artistId, body.RootElement.GetProperty("artist").GetProperty("artistId").GetString());
             Assert.Equal("Release artist", body.RootElement.GetProperty("artist").GetProperty("name").GetString());
             Assert.Equal(followed ? 1 : 0, (await releases.ListAsync(owner)).Count);
+            if (followed && library) Assert.Equal(artistId, Assert.Single(await releases.ListAsync(owner)).LibraryArtistId);
             Assert.Single(await releases.ListAsync(other));
         }
-        if (library)
-            metadata.Verify(service => service.SearchArtistsAsync(It.IsAny<ProviderExecutionContext>(),
-                It.Is<ProviderMetadataSearchRequest>(request => request.Query == "Release artist")), Times.AtLeastOnce);
-        else
-            metadata.Verify(service => service.SearchArtistsAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderMetadataSearchRequest>()), Times.Never);
+        metadata.Verify(service => service.SearchArtistsAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderMetadataSearchRequest>()), Times.Never);
     }
 
     // A heart on an artist in any Jellyfin app follows it for new releases; removing the heart unfollows it.
@@ -138,7 +135,6 @@ public sealed partial class ProtocolRouteFixtureTests
 
     [Theory]
     [InlineData("unknown-artist")]
-    [InlineData("unmatched-artist")]
     [InlineData("ext-deezer-artist-missing")]
     [InlineData("ext-deezer-album-release-album")]
     public async Task ClientApi_FollowReturnsClearNotFoundForUnresolvableArtists(string artistId)
@@ -178,6 +174,171 @@ public sealed partial class ProtocolRouteFixtureTests
         gateway.VerifyNoOtherCalls();
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ClientApi_LibraryFollowKeepsNativeIdentityAndPictureEvenWithoutAServiceMatch(bool overlap)
+    {
+        var metadata = ClientReleaseMetadata();
+        using var factory = ClientReleaseFactory(metadata, new(), library: request => request.RequestUri!.AbsolutePath switch
+        {
+            "/Users/listener/Items/native-release-artist" => Json(200,
+                """{"Id":"native-release-artist","Name":"Release artist","Type":"MusicArtist","ImageTags":{"Primary":"native-picture"}}"""),
+            "/Users/listener/Items" => Json(200, overlap
+                ? """{"Items":[{"Name":"New record","Type":"MusicAlbum"}]}"""
+                : """{"Items":[{"Name":"Other record","Type":"MusicAlbum"}]}"""),
+            _ => null
+        });
+        using var client = CreateClientApiClient(factory);
+        client.DefaultRequestHeaders.Add("X-Emby-Token", "listener-token");
+        var owner = (await factory.Services.GetRequiredService<BackendIdentityResolver>().ResolveAsync(new("Jellyfin", "listener")))!.UserId;
+        var releases = factory.Services.GetRequiredService<NewReleasesService>();
+        const string path = "/allstarr/v1/artists/native-release-artist/follow";
+        using (var response = await client.PutAsync(path, null))
+        {
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            AssertNativeReleaseArtist(body.RootElement.GetProperty("artist"));
+        }
+        await releases.PollAsync(owner, Guid.NewGuid(), default);
+        using (var response = await client.GetAsync("/allstarr/v1/releases"))
+        {
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            AssertNativeReleaseArtist(Assert.Single(body.RootElement.GetProperty("followedArtists").EnumerateArray()));
+            Assert.Equal(overlap ? 1 : 0, body.RootElement.GetProperty("releases").GetArrayLength());
+            if (overlap) AssertNativeReleaseArtist(Assert.Single(body.RootElement.GetProperty("releases").EnumerateArray()).GetProperty("artist"));
+        }
+        using (var response = await client.DeleteAsync(path))
+        {
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            AssertNativeReleaseArtist(body.RootElement.GetProperty("artist"));
+        }
+        Assert.Empty(await releases.ListAsync(owner));
+        if (!overlap)
+            metadata.Verify(service => service.GetArtistAlbumsAsync(It.Is<ProviderExecutionContext>(context => context.OperationId == "releases-artist-albums"),
+                It.IsAny<ProviderArtistItemsRequest>()), Times.Never);
+    }
+
+    private static void AssertNativeReleaseArtist(JsonElement artist)
+    {
+        Assert.Equal("native-release-artist", artist.GetProperty("artistId").GetString());
+        Assert.Equal("Release artist", artist.GetProperty("name").GetString());
+        Assert.Equal("/Items/native-release-artist/Images/Primary?tag=native-picture", artist.GetProperty("imageUrl").GetString());
+    }
+
+    [Fact]
+    public async Task ClientApi_LibraryFollowUsesItsMusicBrainzIdentifierWithoutTitleEvidence()
+    {
+        var mbid = Guid.NewGuid().ToString();
+        var metadata = ClientReleaseMetadata();
+        metadata.Setup(service => service.SearchArtistsAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderMetadataSearchRequest>()))
+            .ReturnsAsync(ProviderOutcome<ProviderPage<ProviderArtistMetadata>>.Success(new("deezer",
+                [new(new("deezer", ProviderResourceKind.Artist, "release-artist"), "Release artist",
+                    providerIds: new Dictionary<string, string> { ["MusicBrainzArtist"] = mbid })])));
+        using var factory = ClientReleaseFactory(metadata, new(), library: request => request.RequestUri!.AbsolutePath switch
+        {
+            "/Users/listener/Items/native-release-artist" => Json(200, JsonSerializer.Serialize(new
+            {
+                Id = "native-release-artist",
+                Name = "Release artist",
+                Type = "MusicArtist",
+                ProviderIds = new { MusicBrainzArtist = mbid },
+                ImageTags = new { Primary = "native-picture" }
+            })),
+            _ => null
+        });
+        using var client = CreateClientApiClient(factory);
+        client.DefaultRequestHeaders.Add("X-Emby-Token", "listener-token");
+        using var response = await client.PutAsync("/allstarr/v1/artists/native-release-artist/follow", null);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        AssertNativeReleaseArtist(body.RootElement.GetProperty("artist"));
+        var owner = (await factory.Services.GetRequiredService<BackendIdentityResolver>().ResolveAsync(new("Jellyfin", "listener")))!.UserId;
+        var stored = Assert.Single(await factory.Services.GetRequiredService<NewReleasesService>().ListAsync(owner));
+        Assert.Equal("release-artist", stored.ArtistId);
+        Assert.Equal("native-release-artist", stored.LibraryArtistId);
+    }
+
+    [Fact]
+    public async Task ClientApi_LibraryFollowDoesNotRemoveADirectFollowOfTheSameServiceArtist()
+    {
+        var gateway = new Mock<IProtocolProviderGateway>();
+        gateway.Setup(service => service.GetArtistAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "release-artist"))
+            .ReturnsAsync(new Artist { Id = "ext-deezer-artist-release-artist", Name = "Release artist" });
+        using var factory = ClientReleaseFactory(ClientReleaseMetadata(), gateway, library: request => request.RequestUri!.AbsolutePath == "/Users/listener/Items"
+            ? Json(200, """{"Items":[{"Name":"New record","Type":"MusicAlbum"}]}""") : null);
+        using var client = CreateClientApiClient(factory);
+        client.DefaultRequestHeaders.Add("X-Emby-Token", "listener-token");
+        var owner = (await factory.Services.GetRequiredService<BackendIdentityResolver>().ResolveAsync(new("Jellyfin", "listener")))!.UserId;
+        var releases = factory.Services.GetRequiredService<NewReleasesService>();
+        using (var response = await client.PutAsync("/allstarr/v1/artists/ext-deezer-artist-release-artist/follow", null))
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using (var response = await client.PutAsync("/allstarr/v1/artists/native-release-artist/follow", null))
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(2, (await releases.ListAsync(owner)).Count);
+        await releases.PollAsync(owner, Guid.NewGuid(), default);
+        Assert.Single((await releases.ReadAsync(owner)).Entries);
+        using (var response = await client.DeleteAsync("/allstarr/v1/artists/native-release-artist/follow"))
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var direct = Assert.Single(await releases.ListAsync(owner));
+        Assert.Equal("release-artist", direct.ArtistId);
+        Assert.Null(direct.LibraryArtistId);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ClientApi_ReleasesRepairLegacyLibraryFollowsBackedByNativeHearts(bool overlap)
+    {
+        using var factory = ClientReleaseFactory(ClientReleaseMetadata(), new(), library: request => request.RequestUri!.AbsolutePath switch
+        {
+            "/Items" => Json(200, """{"Items":[{"Id":"native-release-artist","Name":"Release artist","Type":"MusicArtist"}]}"""),
+            "/UserFavoriteItems/native-release-artist" => Json(200, "{}"),
+            "/Users/listener/Items/native-release-artist" => Json(200,
+                """{"Id":"native-release-artist","Name":"Release artist","Type":"MusicArtist","ImageTags":{"Primary":"native-picture"}}"""),
+            "/Users/listener/Items" => Json(200, request.RequestUri.Query.Contains("IsFavorite", StringComparison.Ordinal)
+                ? """{"Items":[{"Id":"native-release-artist","Name":"Release artist","Type":"MusicArtist"}]}"""
+                : overlap ? """{"Items":[{"Name":"New record","Type":"MusicAlbum"}]}""" : """{"Items":[]}"""),
+            _ => null
+        });
+        using var client = CreateClientApiClient(factory);
+        client.DefaultRequestHeaders.Add("X-Emby-Token", "listener-token");
+        var owner = (await factory.Services.GetRequiredService<BackendIdentityResolver>().ResolveAsync(new("Jellyfin", "listener")))!.UserId;
+        using (var heart = await client.PostAsync("/UserFavoriteItems/native-release-artist", null))
+            Assert.True(heart.StatusCode == HttpStatusCode.OK, await heart.Content.ReadAsStringAsync());
+        var releases = factory.Services.GetRequiredService<NewReleasesService>();
+        await using (var db = await factory.Services.GetRequiredService<IDbContextFactory<AllstarrDbContext>>().CreateDbContextAsync())
+        {
+            var snapshot = await db.ExternalMetadataSnapshots.AsNoTracking().Where(item => item.OwnerUserId == owner && item.ResourceKind == "release-follows")
+                .OrderByDescending(item => item.SnapshotVersion).FirstAsync();
+            snapshot.Id = Guid.CreateVersion7();
+            snapshot.SnapshotVersion++;
+            snapshot.PayloadJson = """[{"ProviderId":"deezer","ArtistId":"wrong-artist","DisplayName":"Release artist"},{"ProviderId":"deezer","ArtistId":"direct-artist","DisplayName":"Direct artist"}]""";
+            snapshot.PayloadSha256 = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(snapshot.PayloadJson))).ToLowerInvariant();
+            db.ExternalMetadataSnapshots.Add(snapshot);
+            await db.SaveChangesAsync();
+        }
+        using (var response = await client.GetAsync("/allstarr/v1/releases"))
+        {
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            var follows = body.RootElement.GetProperty("followedArtists").EnumerateArray().ToArray();
+            Assert.Equal(2, follows.Length);
+            AssertNativeReleaseArtist(follows.Single(item => item.GetProperty("name").GetString() == "Release artist"));
+            Assert.Contains(follows, item => item.GetProperty("artistId").GetString() == "ext-deezer-artist-direct-artist");
+        }
+        var stored = await releases.ListAsync(owner);
+        Assert.DoesNotContain(stored, item => item.ArtistId == "wrong-artist");
+        Assert.Contains(stored, item => item.ArtistId == (overlap ? "release-artist" : "native-release-artist"));
+        await releases.PollAsync(owner, Guid.NewGuid(), default);
+        Assert.DoesNotContain((await releases.ReadAsync(owner)).Coverage, item => item.Artist.ArtistId == "wrong-artist");
+        using var second = await client.GetAsync("/allstarr/v1/releases");
+        Assert.Equal(HttpStatusCode.OK, second.StatusCode);
+        Assert.Equal(2, (await releases.ListAsync(owner)).Count);
+    }
+
     private static Mock<IProviderMetadataCapability> ClientReleaseMetadata()
     {
         var metadata = new Mock<IProviderMetadataCapability>(MockBehavior.Strict);
@@ -186,16 +347,21 @@ public sealed partial class ProtocolRouteFixtureTests
                 [new(new("deezer", ProviderResourceKind.Artist, "near-match"), "Release artist tribute"),
                     new(new("deezer", ProviderResourceKind.Artist, "release-artist"), request.Query == "Release artist" ? "Release artist" : "Other artist")])));
         metadata.Setup(service => service.GetArtistAlbumsAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderArtistItemsRequest>()))
-            .ReturnsAsync(ProviderOutcome<ProviderPage<ProviderAlbumMetadata>>.Success(new("deezer",
+            .ReturnsAsync((ProviderExecutionContext _, ProviderArtistItemsRequest request) => ProviderOutcome<ProviderPage<ProviderAlbumMetadata>>.Success(new("deezer",
+                request.Id.Value == "near-match" ? [] :
                 [new(new("deezer", ProviderResourceKind.Album, "release-album"), "New record", [new("Release artist", new("deezer", ProviderResourceKind.Artist, "release-artist"))],
                     releaseDate: DateTimeOffset.UtcNow.ToString("yyyy-MM-dd"), releaseType: "album", isExplicit: false)])));
+        metadata.Setup(service => service.GetArtistTracksAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderArtistItemsRequest>()))
+            .ReturnsAsync(ProviderOutcome<ProviderPage<ProviderTrackMetadata>>.Success(new("deezer", [])));
         return metadata;
     }
 
     private static ProtocolFactory ClientReleaseFactory(Mock<IProviderMetadataCapability> metadata, Mock<IProtocolProviderGateway> gateway,
-        Func<HttpRequestMessage, HttpResponseMessage>? artwork = null) => ClientDetailsFactory(request =>
+        Func<HttpRequestMessage, HttpResponseMessage>? artwork = null,
+        Func<HttpRequestMessage, HttpResponseMessage?>? library = null) => ClientDetailsFactory(request =>
     {
         if (request.RequestUri!.Host == "covers.example.test") return artwork!(request);
+        if (library?.Invoke(request) is { } response) return response;
         return request.RequestUri.AbsolutePath switch
         {
             "/Users/Me" => Json(200, request.Headers.ToString().Contains("other-token", StringComparison.Ordinal) ? """{"Id":"other"}""" : """{"Id":"listener","Policy":{"IsAdministrator":true}}"""),
