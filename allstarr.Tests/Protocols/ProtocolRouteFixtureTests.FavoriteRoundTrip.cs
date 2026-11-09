@@ -232,9 +232,6 @@ public sealed partial class ProtocolRouteFixtureTests
     [InlineData("xml", "Tempo", "song", "getAlbum", "id=ext-deezer-album-heart")]
     [InlineData("json", "Feishin", "song", "getAlbum", "id=ext-deezer-playlist-heart")]
     [InlineData("xml", "Tempo", "song", "getAlbum", "id=ext-deezer-playlist-heart")]
-    [InlineData("json", "Feishin", "artist", "getArtists", "")]
-    [InlineData("json", "Tempo", "artist", "getArtists", "")]
-    [InlineData("xml", "Tempo", "artist", "getArtists", "")]
     public async Task FavoriteRoundTrip_SubsonicRefreshAndStarredAgree(string format, string clientName,
         string kind, string endpoint, string query)
     {
@@ -363,8 +360,6 @@ public sealed partial class ProtocolRouteFixtureTests
     [InlineData("Jellyfin", "json", "Items")]
     [InlineData("Subsonic", "json", "getStarred2")]
     [InlineData("Subsonic", "xml", "getStarred2")]
-    [InlineData("Subsonic", "json", "getArtists")]
-    [InlineData("Subsonic", "xml", "getArtists")]
     public async Task FavoriteRoundTrip_MixedFavoriteNativeItemsStayByteExact(string backend, string format, string endpoint)
     {
         await using var database = await SqliteTestDatabase.CreateAsync();

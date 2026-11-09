@@ -84,9 +84,6 @@ public partial class JellyfinController
             var nativeLibraryRoot = await TryReadNativeMusicLibraryRootAsync(
                 searchTerm, includeItemTypes, parentId, effectiveArtistIds, albumIds, startIndex, limit);
             if (nativeLibraryRoot != null) return nativeLibraryRoot;
-
-            var savedBrowse = await TryReadSavedBrowseAsync(includeItemTypes);
-            if (savedBrowse != null) return savedBrowse;
         }
 
         var externalQuery = await TryReadExternalQueryAsync(includeItemTypes, userId);

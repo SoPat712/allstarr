@@ -14,13 +14,8 @@ public partial class JellyfinController
     [HttpGet("Genres", Order = 1)]
     [HttpGet("Items/Latest", Order = 1)]
     [HttpGet("Users/{userId}/Items/Latest", Order = 1)]
-    public async Task<IActionResult> GetConstrainedMusicBrowse()
-    {
-        // Recently added lists what joined the library; saved service music stays in the browse lists.
-        var latest = Request.Path.Value!.EndsWith("Latest", StringComparison.OrdinalIgnoreCase);
-        var savedBrowse = latest ? null : await TryReadSavedBrowseAsync(facets: true);
-        return savedBrowse ?? await ProxyConstrainedMusicQueryAsync("IncludeItemTypes", JellyfinMusicEndpointPolicy.DefaultMusicItemTypes);
-    }
+    public Task<IActionResult> GetConstrainedMusicBrowse() =>
+        ProxyConstrainedMusicQueryAsync("IncludeItemTypes", JellyfinMusicEndpointPolicy.DefaultMusicItemTypes);
 
     [HttpGet("Items/Suggestions", Order = 1)]
     public Task<IActionResult> GetConstrainedMusicSuggestions() =>

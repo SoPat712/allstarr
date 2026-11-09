@@ -40,7 +40,9 @@ public partial class SubsonicController
         var format = parameters.GetValueOrDefault("f", "xml");
         IReadOnlyList<FavoriteViewItem> saved = [];
         IReadOnlyDictionary<string, DateTimeOffset> starred = new Dictionary<string, DateTimeOffset>();
-        if (!parameters.HasNonEmptyValue("musicFolderId") && CurrentProtocolContext.CanRunUserScopedWork &&
+        // Library lists are the media server's own; only the starred album list, a favourites view, adds hearted service music.
+        var starredAlbums = container == "albumList2" && parameters.GetValueOrDefault("type") == "starred";
+        if (starredAlbums && !parameters.HasNonEmptyValue("musicFolderId") && CurrentProtocolContext.CanRunUserScopedWork &&
             HttpContext.RequestServices.GetService<SavedLibraryReader>() is { } library)
         {
             try
@@ -48,8 +50,7 @@ public partial class SubsonicController
                 saved = await library.ReadForRequestAsync(HttpContext);
                 IReadOnlyList<FavoriteViewItem> favorites = _favoriteViews == null ? [] : await _favoriteViews.ReadForRequestAsync(HttpContext);
                 starred = favorites.ToDictionary(item => item.ItemId, item => item.FavoritedAt, FavoriteViewReader.ItemComparer(favorites));
-                if (container == "albumList2" && parameters.GetValueOrDefault("type") == "starred")
-                    saved = saved.Where(item => starred.ContainsKey(item.ItemId)).ToArray();
+                saved = saved.Where(item => starred.ContainsKey(item.ItemId)).ToArray();
                 saved = SubsonicSavedBrowseAdapter.Select(saved, container, parameters);
             }
             catch (Exception exception) when (exception is not OperationCanceledException)
