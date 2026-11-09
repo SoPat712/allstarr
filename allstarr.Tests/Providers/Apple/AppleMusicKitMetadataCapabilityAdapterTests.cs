@@ -215,6 +215,24 @@ public sealed class AppleMusicKitMetadataCapabilityAdapterTests
     }
 
     [Fact]
+    public async Task An_artist_named_without_an_id_opens_as_the_catalog_artist_of_that_name()
+    {
+        var handler = new AppleMetadataHandler();
+        var adapter = AppleProviderTestFactory.Metadata(new HttpClient(handler), new SecretAccessor(new("music-user-token", "us")));
+        var tracks = await adapter.SearchTracksAsync(Context(), new ProviderMetadataSearchRequest("road mix", new(2, "4")));
+        var credit = tracks.RequireValue().Items[0].Artists[0].ArtistId!;
+        Assert.StartsWith("credit:n.", credit.Value, StringComparison.Ordinal);
+
+        var artist = await adapter.GetArtistAsync(Context(), new(credit));
+
+        Assert.True(artist.IsSuccess, artist.Error?.ToString());
+        Assert.Equal(credit, artist.RequireValue().Id);
+        Assert.Equal("Library Artist", artist.RequireValue().Name);
+        Assert.Contains(handler.Paths, path => path.Contains("term=Library%20Artist&types=artists", StringComparison.Ordinal));
+        Assert.Contains(handler.Paths, path => path == "/v1/catalog/us/artists/1");
+    }
+
+    [Fact]
     public async Task Combined_registration_advertises_one_account_scoped_provider_with_both_capabilities()
     {
         var secrets = new SecretAccessor(new("user", "us"));

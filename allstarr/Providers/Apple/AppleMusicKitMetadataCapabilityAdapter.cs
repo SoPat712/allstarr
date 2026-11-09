@@ -1,6 +1,5 @@
 using System.Net;
 using System.Net.Http.Headers;
-using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using allstarr.Core.Capabilities;
@@ -111,10 +110,21 @@ public sealed class AppleMusicKitMetadataCapabilityAdapter : IProviderMetadataCa
     }, IsLibrary(request.Id.Value));
 
     public Task<ProviderOutcome<ProviderPage<ProviderAlbumMetadata>>> GetArtistAlbumsAsync(
-        ProviderExecutionContext context, ProviderArtistItemsRequest request) => ArtistItemsAsync(context, request, "albums", MapAlbum);
+        ProviderExecutionContext context, ProviderArtistItemsRequest request) =>
+        CreditArtistItemsAsync(context, request, resolved => ArtistItemsAsync(context, resolved, "albums", MapAlbum));
 
     public Task<ProviderOutcome<ProviderPage<ProviderTrackMetadata>>> GetArtistTracksAsync(
-        ProviderExecutionContext context, ProviderArtistItemsRequest request) => ArtistItemsAsync(context, request, "view/top-songs", MapTrack);
+        ProviderExecutionContext context, ProviderArtistItemsRequest request) =>
+        CreditArtistItemsAsync(context, request, resolved => ArtistItemsAsync(context, resolved, "view/top-songs", MapTrack));
+
+    private async Task<ProviderOutcome<ProviderPage<T>>> CreditArtistItemsAsync<T>(ProviderExecutionContext context,
+        ProviderArtistItemsRequest request, Func<ProviderArtistItemsRequest, Task<ProviderOutcome<ProviderPage<T>>>> read)
+    {
+        if (CreditName(request.Id.Value) is not { } name) return await read(request);
+        var resolved = await CreditArtistAsync(context, name);
+        return resolved.IsSuccess ? await read(new(resolved.RequireValue(), request.Page))
+            : ProviderOutcome<ProviderPage<T>>.Failure(resolved.Error!);
+    }
 
     private Task<ProviderOutcome<ProviderPage<T>>> ArtistItemsAsync<T>(ProviderExecutionContext context,
         ProviderArtistItemsRequest request, string relationship, Func<JsonElement, string?, T> map) where T : class =>
@@ -155,9 +165,60 @@ public sealed class AppleMusicKitMetadataCapabilityAdapter : IProviderMetadataCa
         ProviderExecutionContext context, ProviderMetadataSearchRequest request) => SearchAsync(
             context, request, "artists", MapArtist);
 
-    public Task<ProviderOutcome<ProviderArtistMetadata>> GetArtistAsync(
-        ProviderExecutionContext context, ProviderArtistLookupRequest request) => LookupAsync(
-            context, request.Id, ProviderResourceKind.Artist, "artists", request.ExpectedSnapshotVersion, MapArtist);
+    public async Task<ProviderOutcome<ProviderArtistMetadata>> GetArtistAsync(
+        ProviderExecutionContext context, ProviderArtistLookupRequest request)
+    {
+        if (CreditName(request.Id.Value) is not { } name)
+            return await LookupAsync(context, request.Id, ProviderResourceKind.Artist, "artists", request.ExpectedSnapshotVersion, MapArtist);
+        var resolved = await CreditArtistAsync(context, name);
+        if (!resolved.IsSuccess) return ProviderOutcome<ProviderArtistMetadata>.Failure(resolved.Error!);
+        var found = await LookupAsync(context, resolved.RequireValue(), ProviderResourceKind.Artist, "artists", null, MapArtist);
+        if (!found.IsSuccess) return found;
+        var artist = found.RequireValue();
+        // The artist keeps the id it was opened with, so its albums and songs are asked for by the same id.
+        return ProviderOutcome<ProviderArtistMetadata>.Success(new(request.Id, artist.Name, artist.Artwork, artist.SnapshotVersion,
+            artist.Biography, artist.ProviderIds, artist.LastFmUrl, artist.Genres));
+    }
+
+    // Apple names some song artists without giving their artist id. Their stand-in id carries the name, so opening one
+    // finds the catalog artist of exactly that name. Older stand-ins held only a hash of the name and can't be opened.
+    private const string CreditNamePrefix = "credit:n.";
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, (string Id, DateTimeOffset At)> _creditArtists =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    private static string? CreditName(string id)
+    {
+        if (!id.StartsWith(CreditNamePrefix, StringComparison.Ordinal)) return null;
+        try { return Encoding.UTF8.GetString(System.Buffers.Text.Base64Url.DecodeFromChars(id.AsSpan(CreditNamePrefix.Length))); }
+        catch (FormatException) { return null; }
+    }
+
+    private async Task<ProviderOutcome<ProviderExternalResourceId>> CreditArtistAsync(ProviderExecutionContext context, string name)
+    {
+        if (_creditArtists.TryGetValue(name, out var known) && DateTimeOffset.UtcNow - known.At < TimeSpan.FromHours(6))
+            return ProviderOutcome<ProviderExternalResourceId>.Success(new(ProviderId, ProviderResourceKind.Artist, known.Id));
+        return await ExecuteAsync(context, async (credential, storefront, ct) =>
+        {
+            var result = await SendAsync(credential,
+                $"v1/catalog/{storefront}/search?term={Uri.EscapeDataString(name)}&types=artists&limit=10", ct);
+            if (!result.Outcome.IsSuccess) return ProviderOutcome<ProviderExternalResourceId>.Failure(result.Outcome.Error!);
+            try
+            {
+                using var document = JsonDocument.Parse(result.Body!);
+                var match = Data(SearchContainer(document.RootElement, "artists")).FirstOrDefault(item =>
+                    item.TryGetProperty("attributes", out var attributes) &&
+                    string.Equals(String(attributes, "name")?.Trim(), name.Trim(), StringComparison.OrdinalIgnoreCase));
+                if (match.ValueKind != JsonValueKind.Object || String(match, "id") is not { } id)
+                    return ProviderOutcome<ProviderExternalResourceId>.Failure(new(ProviderErrorKind.NotFound));
+                _creditArtists[name] = (id, DateTimeOffset.UtcNow);
+                return ProviderOutcome<ProviderExternalResourceId>.Success(new(ProviderId, ProviderResourceKind.Artist, id));
+            }
+            catch (JsonException)
+            {
+                return ProviderOutcome<ProviderExternalResourceId>.Failure(new(ProviderErrorKind.PermanentFailure));
+            }
+        });
+    }
 
     private async Task<ProviderOutcome<ProviderPage<T>>> SearchAsync<T>(
         ProviderExecutionContext context,
@@ -330,13 +391,9 @@ public sealed class AppleMusicKitMetadataCapabilityAdapter : IProviderMetadataCa
     private static ProviderExternalResourceId Resource(JsonElement item, ProviderResourceKind kind) =>
         new(AppleMusicKitPlaylistCapabilityAdapter.StableProviderId, kind, Required(item, "id"));
 
-    private static ProviderArtistCredit ArtistCredit(string name, string? id = null)
-    {
-        var syntheticId = "credit:" + Convert.ToHexString(
-            SHA256.HashData(Encoding.UTF8.GetBytes(name))).ToLowerInvariant();
-        return new(name, new(AppleMusicKitPlaylistCapabilityAdapter.StableProviderId,
-            ProviderResourceKind.Artist, id ?? syntheticId));
-    }
+    private static ProviderArtistCredit ArtistCredit(string name, string? id = null) =>
+        new(name, new(AppleMusicKitPlaylistCapabilityAdapter.StableProviderId, ProviderResourceKind.Artist,
+            id ?? CreditNamePrefix + System.Buffers.Text.Base64Url.EncodeToString(Encoding.UTF8.GetBytes(name))));
 
     private static bool IsAppleArtworkHost(string host) =>
         host.Equals("mzstatic.com", StringComparison.OrdinalIgnoreCase) ||
