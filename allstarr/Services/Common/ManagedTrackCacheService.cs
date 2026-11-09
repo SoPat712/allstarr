@@ -6,6 +6,7 @@ using allstarr.Core.ManagedFiles;
 using Microsoft.Extensions.Caching.Memory;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Downloads;
+using allstarr.Core.Enrichment;
 using allstarr.Core.Music;
 using allstarr.Core.Protocols;
 using allstarr.Models.Domain;
@@ -23,6 +24,7 @@ public sealed partial class ManagedTrackCacheService : IAsyncDisposable
     private readonly ILogger<ManagedTrackCacheService> logger;
     private readonly TimeProvider clock;
     private readonly IProviderAudioVerifier mediaVerifier;
+    private readonly PromotionReplayGain? loudness;
     private readonly Func<string, string, ProviderMediaFormat, CancellationToken, Task> audioFinalizer;
     private readonly ConcurrentDictionary<string, Transfer> active = new(StringComparer.Ordinal);
     private readonly MemoryCache completedMedia = new(new MemoryCacheOptions { SizeLimit = 1024 });
@@ -38,8 +40,9 @@ public sealed partial class ManagedTrackCacheService : IAsyncDisposable
         IHostApplicationLifetime? lifetime = null, TimeProvider? timeProvider = null,
         IDownloadedSongMappingStore? mappings = null, IManagedFileOperations? files = null,
         MediaCapacityLimits? capacity = null, Func<long>? audioMaximumBytes = null, IProviderAudioVerifier? audioVerifier = null,
-        Func<string, string, ProviderMediaFormat, CancellationToken, Task>? audioFinalizer = null)
+        Func<string, string, ProviderMediaFormat, CancellationToken, Task>? audioFinalizer = null, PromotionReplayGain? loudness = null)
     {
+        this.loudness = loudness;
         this.configuration = configuration;
         this.settings = settings;
         this.localLibrary = localLibrary;
@@ -787,6 +790,17 @@ public sealed partial class ManagedTrackCacheService : IAsyncDisposable
                 catch (Exception) when (!cancel.IsCancellationRequested) { }
                 var expectedSeconds = FileFacts.ExpectedDurationSeconds ?? FileFacts.Measured?.DurationSeconds ?? song?.PreciseDuration?.TotalSeconds ?? song?.Duration;
                 var measured = await owner.mediaVerifier.VerifyFileAsync(path, Media, expectedSeconds, cancel.Token, FileFacts.DurationIsDerived);
+                // Service copies rarely carry ReplayGain tags, and apps level songs by it, so a complete copy is measured once.
+                if (measured.ReplayGain == null && owner.loudness != null && !originalDownload)
+                {
+                    try
+                    {
+                        var level = (await owner.loudness.AnalyzeAsync([path], cancel.Token)).Tracks[0];
+                        measured = measured with { ReplayGain = new() { TrackGain = level.GainDb, TrackPeak = level.Peak } };
+                    }
+                    catch (Exception error) when (error is not OperationCanceledException || !cancel.IsCancellationRequested)
+                    { owner.logger.LogDebug("Could not measure the cached copy's loudness ({ErrorType})", error.GetType().Name); }
+                }
                 if (upgradeFrom != null && PlaybackStartPolicy.CompareQuality(measured.Media, upgradeFrom) <= 0)
                     throw new IOException("The completed media does not improve the cached recording.");
                 verified = true;
@@ -943,7 +957,8 @@ public sealed partial class ManagedTrackCacheService : IAsyncDisposable
                 try
                 {
                     await owner.audioFinalizer(path, candidate, Media, cancel.Token);
-                    cacheFacts = await owner.mediaVerifier.VerifyFileAsync(candidate, Media, cacheFacts.DurationSeconds, cancel.Token);
+                    var finalized = await owner.mediaVerifier.VerifyFileAsync(candidate, Media, cacheFacts.DurationSeconds, cancel.Token);
+                    cacheFacts = finalized.ReplayGain == null ? finalized with { ReplayGain = cacheFacts.ReplayGain } : finalized;
                     await owner.GrowAudioAsync(allocation, checked(available + new FileInfo(candidate).Length), cancel.Token);
                     finalizedAnchor = new(candidate, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
                     finalizedHash = Convert.ToHexStringLower(await SHA256.HashDataAsync(finalizedAnchor, cancel.Token));
