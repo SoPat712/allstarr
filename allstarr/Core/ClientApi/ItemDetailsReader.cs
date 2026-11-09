@@ -32,6 +32,14 @@ public sealed class ItemDetailsReader(
     {
         var started = System.Diagnostics.Stopwatch.GetTimestamp();
         long matchTicks = 0, lyricsTicks = 0;
+        var steps = new List<string>();
+        var mark = started;
+        void Step(string name)
+        {
+            var now = System.Diagnostics.Stopwatch.GetTimestamp();
+            steps.Add($"{name} {(int)System.Diagnostics.Stopwatch.GetElapsedTime(mark, now).TotalMilliseconds}");
+            mark = now;
+        }
         var token = execution.CancellationToken;
         var owner = execution.RequireActor().EffectiveUserId!.Value;
         var protocol = execution.Protocol.ToString().ToLowerInvariant();
@@ -47,12 +55,14 @@ public sealed class ItemDetailsReader(
                 source.Id, known[source.Id]!.Id, known[source.Id]!.Isrc, source.Provider, source.ExternalId)).ToArray();
             if (lookups.Length > 0) localIds = await libraryIndex.FindKnownRecordingTracksAsync(execution, lookups, token);
         }
+        Step("library copies");
         var nativeIds = requested.Where(id => !id.StartsWith("ext-", StringComparison.Ordinal) &&
             id.Length is > 0 and <= 500 && !id.Contains(',')).Concat(localIds.Values).Distinct(StringComparer.Ordinal).ToArray();
         var policy = execution.Policy ?? await policies.ResolveForUserAsync(owner, token);
         var native = await ReadNativeAsync(http, execution, nativeIds, policy);
         foreach (var pair in localIds)
             if (native.TryGetValue(pair.Value, out var nativeSaved)) native[pair.Key] = nativeSaved;
+        Step("media server");
         var nativeLookupIds = nativeIds.SelectMany(id => Guid.TryParse(id, out var parsed)
             ? new[] { id, parsed.ToString("N"), parsed.ToString("D") } : [id]).Distinct(StringComparer.Ordinal).ToArray();
         await using var db = await factory.CreateDbContextAsync(token);
@@ -91,7 +101,9 @@ public sealed class ItemDetailsReader(
         var recordings = await db.CanonicalRecordings.AsNoTracking().Where(item => recordingIds.Contains(item.Id)).ToDictionaryAsync(item => item.Id, token);
         var identifiers = await db.RecordingIdentifiers.AsNoTracking().Where(item => recordingIds.Contains(item.RecordingId) && item.Kind == RecordingIdentifierKinds.Isrc)
             .ToArrayAsync(token);
+        Step("stored records");
         var view = await favorites.ReadForRequestAsync(http);
+        Step("favourites");
         var saved = view.Select(item => item.ItemId).ToHashSet(FavoriteViewReader.ItemComparer(view));
         var states = await (from state in db.FavoriteStates.AsNoTracking()
                             join accepted in db.FavoriteEvents on state.LastEventId equals accepted.Id
@@ -192,6 +204,7 @@ public sealed class ItemDetailsReader(
         var libraryMemo = new TrackMatchLibraryMemo();
         var matchTiming = new ItemMatchTiming();
         http.Items[typeof(ItemMatchTiming)] = matchTiming;
+        Step("states and choices");
         var prepared = System.Diagnostics.Stopwatch.GetTimestamp();
         var built = await Task.WhenAll(requested.Select(async id =>
         {
@@ -200,8 +213,8 @@ public sealed class ItemDetailsReader(
             finally { gate.Release(); }
         }));
         var items = built.Where(item => item.Details != null).ToDictionary(item => item.Id, item => item.Details!, StringComparer.Ordinal);
-        logger?.LogInformation("Item details timing: prepare {Prepare} ms, songs {Songs} ms, matches {Matches} ms ({MatchSteps} ms) and lyrics {Lyrics} ms summed over {Count} songs",
-            (int)System.Diagnostics.Stopwatch.GetElapsedTime(started, prepared).TotalMilliseconds,
+        logger?.LogInformation("Item details timing: prepare {Prepare} ms ({PrepareSteps} ms), songs {Songs} ms, matches {Matches} ms ({MatchSteps} ms) and lyrics {Lyrics} ms summed over {Count} songs",
+            (int)System.Diagnostics.Stopwatch.GetElapsedTime(started, prepared).TotalMilliseconds, string.Join(", ", steps),
             (int)System.Diagnostics.Stopwatch.GetElapsedTime(prepared).TotalMilliseconds,
             (int)TimeSpan.FromTicks(Interlocked.Read(ref matchTicks)).TotalMilliseconds, matchTiming,
             (int)TimeSpan.FromTicks(Interlocked.Read(ref lyricsTicks)).TotalMilliseconds, requested.Length);

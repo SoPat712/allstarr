@@ -14,7 +14,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Core.ClientApi;
 
-public sealed class ItemMatchReader(
+public sealed partial class ItemMatchReader(
     IDbContextFactory<AllstarrDbContext> factory,
     ItemLyricsReader items,
     ILocalLibraryService localLibrary,
@@ -131,8 +131,9 @@ public sealed class ItemMatchReader(
         var layers = ManualTrackOverrides.Select(review.ActiveOverrides.DistinctBy(item => item.Id), actor.UserId);
         var sourceIdentity = review.ProviderIdentities.FirstOrDefault(identity => identity.Id == snapshot.ProviderTrackIdentityId) ??
             review.ProviderIdentities.FirstOrDefault(identity => identity.ProviderId == snapshot.ProviderId && identity.ExternalIdHash == snapshot.ExternalIdHash);
-        var order = await providers.GetPlayableProviderOrderAsync(execution.RequireActor(), token);
-        var policy = await policies.ResolveForUserAsync(actor.UserId, token);
+        // The order and policy are the same for every song a request reads, so they are read once per request.
+        var order = await PerRequest(http, "match-provider-order", () => providers.GetPlayableProviderOrderAsync(execution.RequireActor(), token));
+        var policy = await PerRequest(http, "match-policy", () => policies.ResolveForUserAsync(actor.UserId, token));
         timing?.Add(ref timing.Policy, ref mark);
         var sourceSong = TrackIdentityService.ReadDisplaySong(snapshot.PayloadJson, snapshot.ProviderId, externalId ?? "stored");
         if (policy.Preferences.ExplicitFilter == "CleanOnly" && (sourceSong == null || !policy.Includes(sourceSong))) return null;
@@ -271,6 +272,18 @@ public sealed class ItemMatchReader(
     private static string[] Strings(JsonElement item, string name) => item.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.Array ? value.EnumerateArray().Where(part => part.ValueKind == JsonValueKind.String).Select(part => part.GetString()!).ToArray() : [];
     private sealed record Candidate(ClientMatchCandidate Value, Guid? LibraryTrackId, string? ProviderId, string? ExternalId);
     private sealed record Match(ClientItemMatch Value, ExternalMetadataSnapshotRecord Snapshot, ManualTrackOverrideRecord? Personal, IReadOnlyList<Candidate> Candidates);
+}
+
+public sealed partial class ItemMatchReader
+{
+    private static Task<T> PerRequest<T>(HttpContext http, string key, Func<Task<T>> load)
+    {
+        lock (http.Items)
+        {
+            if (http.Items[key] is not Task<T> task) http.Items[key] = task = load();
+            return task;
+        }
+    }
 }
 
 // Where a batch of match summaries spends its time, summed across songs.
