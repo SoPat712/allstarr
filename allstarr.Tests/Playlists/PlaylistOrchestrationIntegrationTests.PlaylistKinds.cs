@@ -85,6 +85,20 @@ public sealed partial class PlaylistOrchestrationIntegrationTests
         Assert.True((await verify.PlaylistLinks.AsNoTracking().SingleAsync(item => item.Id == _link)).CountsTowardLibrary);
     }
 
+    [Fact]
+    public async Task A_link_no_sync_has_classified_uses_what_its_source_says()
+    {
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var link = await db.PlaylistLinks.SingleAsync(item => item.Id == _link);
+            link.SourceProviderId = "spotify";
+            link.SourcePlaylistId = "37i9dQZF1DWXRqgorJj26U";
+            await db.SaveChangesAsync();
+        }
+        await using var read = await _factory.CreateDbContextAsync();
+        Assert.Equal(PlaylistSourceKinds.Feed, (await PlaylistSourceKinds.LatestAsync(read, [_link], default))[_link]);
+    }
+
     [Theory]
     [InlineData("spotify", "37i9dQZF1DXcBWIGoYBM5M", "spotify", "josh", PlaylistSourceKinds.Feed)]
     [InlineData("spotify", "37i9dQZF1DX0XUsuxWHRQd", "spotify:user:spotify", null, PlaylistSourceKinds.Feed)]
@@ -93,6 +107,9 @@ public sealed partial class PlaylistOrchestrationIntegrationTests
     [InlineData("spotify", "theirs", "a-friend", "josh", PlaylistSourceKinds.Followed)]
     [InlineData("spotify", "theirs", "a-friend", null, null)]
     [InlineData("spotify", "liked", "selected-account", null, PlaylistSourceKinds.Own)]
+    [InlineData("spotify", "37i9dQZEVXcJZyENOWUFo7", null, null, PlaylistSourceKinds.Feed)]
+    [InlineData("spotify", "4Dmine0wnPlaylist12345", null, null, null)]
+    [InlineData("spotify", "37i9dQZF1E39vTG3GurFPW", null, null, PlaylistSourceKinds.Feed)]
     [InlineData("spotify", "unknown", "unknown-owner", "josh", null)]
     [InlineData("apple-musickit", "p.library", "selected-user", null, PlaylistSourceKinds.Own)]
     [InlineData("deezer", "editorial", "Deezer", null, PlaylistSourceKinds.Feed)]

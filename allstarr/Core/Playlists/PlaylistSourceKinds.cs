@@ -22,6 +22,9 @@ public static class PlaylistSourceKinds
                        or Providers.ListenBrainz.ListenBrainzPlaylistCapabilityAdapter.FreshReleases ? Feed : null;
         if (providerId == "lastfm")
             return playlistId == "loved" ? Own : playlistId == "similar" || playlistId.StartsWith("top:", StringComparison.Ordinal) ? Feed : null;
+        // Spotify's own playlists (Discover Weekly, Daily Mix, Release Radar, Top 50, Today's Top Hits) share this prefix,
+        // so they are known as feeds before any sync says who owns them.
+        if (providerId == "spotify" && playlistId.StartsWith("37i9dQZ", StringComparison.Ordinal)) return Feed;
         var owner = ownerId?.Trim();
         if (string.IsNullOrEmpty(owner) || owner == "unknown-owner" || owner.EndsWith(":unknown", StringComparison.Ordinal)) return null;
         if (owner is "selected-user" or "selected-account") return Own;
@@ -50,7 +53,8 @@ public static class PlaylistSourceKinds
         _ => "Yours"
     };
 
-    // The newest known kind for each link. A sync that couldn't tell keeps the last answer.
+    // The newest known kind for each link. A sync that couldn't tell keeps the last answer, and a link no sync has
+    // classified yet uses what its source alone says (Spotify's own playlists, ListenBrainz and Last.fm mixes).
     public static async Task<Dictionary<Guid, string>> LatestAsync(AllstarrDbContext db, IReadOnlyCollection<Guid> linkIds,
         CancellationToken cancellationToken)
     {
@@ -61,6 +65,12 @@ public static class PlaylistSourceKinds
         var rows = await known.AsNoTracking()
             .Join(newest, item => new { item.PlaylistLinkId, item.SnapshotVersion }, latest => latest, (item, _) => new { item.PlaylistLinkId, item.SourceKind })
             .ToArrayAsync(cancellationToken);
-        return rows.ToDictionary(item => item.PlaylistLinkId, item => item.SourceKind!);
+        var kinds = rows.ToDictionary(item => item.PlaylistLinkId, item => item.SourceKind!);
+        var unknown = linkIds.Where(id => !kinds.ContainsKey(id)).ToArray();
+        if (unknown.Length == 0) return kinds;
+        foreach (var link in await db.PlaylistLinks.AsNoTracking().Where(item => unknown.Contains(item.Id))
+                     .Select(item => new { item.Id, item.SourceProviderId, item.SourcePlaylistId }).ToArrayAsync(cancellationToken))
+            if (Classify(link.SourceProviderId, link.SourcePlaylistId, null, null) is { } kind) kinds[link.Id] = kind;
+        return kinds;
     }
 }
