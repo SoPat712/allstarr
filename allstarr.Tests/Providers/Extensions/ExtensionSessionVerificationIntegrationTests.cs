@@ -41,6 +41,7 @@ public sealed partial class ExtensionControlPlaneServiceTests
         Assert.Equal(DurableJobCompletionKind.Deferred, (await handler.ExecuteAsync(execution, default)).Kind);
         Assert.Equal(0, fixture.Handler.BrowserCalls);
         await restarted.StartAsync(default);
+        await restarted.Restored;
 
         Assert.Equal(DurableJobCompletionKind.Succeeded, (await handler.ExecuteAsync(execution, default)).Kind);
         Assert.Equal(1, fixture.Handler.BrowserCalls);

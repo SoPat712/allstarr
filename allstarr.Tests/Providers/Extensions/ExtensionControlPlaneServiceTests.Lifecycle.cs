@@ -28,7 +28,11 @@ public sealed partial class ExtensionControlPlaneServiceTests
         var coordinator = Coordinator(new SignedSessionHandler());
         package = await coordinator.ActivateAsync(package.Id, package.Revision);
         if (operation == "disable") await coordinator.DisableAsync(package.Id, package.Revision);
-        else if (operation == "replace") await coordinator.StartAsync(default);
+        else if (operation == "replace")
+        {
+            await coordinator.StartAsync(default);
+            await coordinator.Restored;
+        }
         else await coordinator.StopAsync(default);
 
         var storage = Path.Combine(_root, "extensions", ".runtime", "spotiflac-fixture", "storage.json");

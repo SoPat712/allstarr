@@ -79,39 +79,83 @@ public sealed partial class ExtensionRuntimeCoordinator : IHostedService, IAsync
         _runtimeRoot = Path.Combine(_packageRoot, ".runtime");
     }
 
-    public async Task StartAsync(CancellationToken cancellationToken)
+    // Restoring every extension can take minutes when a source is slow or the database is busy at boot, so it runs beside
+    // startup and the server answers meanwhile. An extension that fails is tried again a few times before it is left off.
+    private static readonly TimeSpan[] RestoreRetries = [TimeSpan.FromSeconds(30), TimeSpan.FromMinutes(2), TimeSpan.FromMinutes(5)];
+    private readonly CancellationTokenSource _stopping = new();
+
+    internal Task Restored { get; private set; } = Task.CompletedTask;
+
+    public Task StartAsync(CancellationToken cancellationToken)
     {
-        await WithRuntimeGateAsync(async () =>
+        Restored = Task.Run(() => RestoreAsync(_stopping.Token), CancellationToken.None);
+        return Task.CompletedTask;
+    }
+
+    private async Task RestoreAsync(CancellationToken cancellationToken)
+    {
+        try
         {
-            await _controlPlane.ReconcileSupersededPackagesAsync(cancellationToken);
-            return true;
-        }, cancellationToken);
-        await using var db = await _factory.CreateDbContextAsync(cancellationToken);
-        var active = await db.ExtensionPackages.AsNoTracking()
-            .Where(item => item.State == ExtensionPackageState.Active)
-            .OrderBy(item => item.ExtensionId)
-            .ToListAsync(cancellationToken);
-        foreach (var package in active)
-        {
-            try
+            await WithRuntimeGateAsync(async () =>
             {
-                var build = await BuildRegistrationAsync(package, cancellationToken);
-                await WithRuntimeGateAsync(async () =>
+                await _controlPlane.ReconcileSupersededPackagesAsync(cancellationToken);
+                return true;
+            }, cancellationToken);
+            HashSet<Guid>? retrying = null;
+            for (var attempt = 0; ; attempt++)
+            {
+                await using var db = await _factory.CreateDbContextAsync(cancellationToken);
+                var active = (await db.ExtensionPackages.AsNoTracking()
+                    .Where(item => item.State == ExtensionPackageState.Active)
+                    .OrderBy(item => item.ExtensionId)
+                    .ToListAsync(cancellationToken))
+                    .Where(item => retrying == null || retrying.Contains(item.Id) && !_sandboxes.ContainsKey(item.Id)).ToList();
+                var failed = new HashSet<Guid>();
+                foreach (var package in active)
                 {
-                    await RegisterRuntimeAsync(package, build);
-                    return true;
-                }, cancellationToken);
+                    try
+                    {
+                        var build = await BuildRegistrationAsync(package, cancellationToken);
+                        await WithRuntimeGateAsync(async () =>
+                        {
+                            await RegisterRuntimeAsync(package, build);
+                            return true;
+                        }, cancellationToken);
+                    }
+                    catch (Exception exception) when (!cancellationToken.IsCancellationRequested)
+                    {
+                        if (attempt < RestoreRetries.Length)
+                        {
+                            _logger.LogWarning("Active extension {ExtensionId} could not be restored yet ({ExceptionType}); trying again in {Delay}",
+                                package.ExtensionId, exception.GetType().Name, RestoreRetries[attempt]);
+                            failed.Add(package.Id);
+                            continue;
+                        }
+                        _logger.LogError(exception, "Active extension {ExtensionId} could not be restored", package.ExtensionId);
+                        await _controlPlane.WriteLogAsync(package.Id, "error", "runtime.restore-failed",
+                            "The active package could not be restored into the provider runtime.", "extension-startup", cancellationToken);
+                    }
+                }
+                if (failed.Count == 0 || attempt >= RestoreRetries.Length) return;
+                await Task.Delay(RestoreRetries[attempt], _timeProvider, cancellationToken);
+                retrying = failed;
             }
-            catch (Exception exception)
-            {
-                _logger.LogError(exception, "Active extension {ExtensionId} could not be restored", package.ExtensionId);
-                await _controlPlane.WriteLogAsync(package.Id, "error", "runtime.restore-failed",
-                    "The active package could not be restored into the provider runtime.", "extension-startup", cancellationToken);
-            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
+        catch (Exception exception)
+        {
+            _logger.LogError(exception, "Extension restore stopped before every active extension was back");
         }
     }
 
-    public Task StopAsync(CancellationToken cancellationToken) => WithRuntimeGateAsync(async () =>
+    public async Task StopAsync(CancellationToken cancellationToken)
+    {
+        await _stopping.CancelAsync();
+        await Restored.WaitAsync(cancellationToken).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+        await StopRuntimesAsync(cancellationToken);
+    }
+
+    private Task StopRuntimesAsync(CancellationToken cancellationToken) => WithRuntimeGateAsync(async () =>
     {
         foreach (var sandbox in _sandboxes.Values)
         {

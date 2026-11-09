@@ -527,6 +527,7 @@ public sealed partial class ExtensionControlPlaneServiceTests : IAsyncLifetime
         {
             package = await _service.ActivateAsync(package.Id, package.Revision);
             await coordinator.StartAsync(default);
+            await coordinator.Restored;
         }
         else
         {
@@ -623,6 +624,7 @@ public sealed partial class ExtensionControlPlaneServiceTests : IAsyncLifetime
             new ProviderDownloadArtifactResolver(Mock.Of<IProviderDownloadArtifactStore>(), options, audioVerifier: FixtureAudioVerifier.Instance), options,
             _configuration, NullLogger<ExtensionRuntimeCoordinator>.Instance, protection);
         await restored.StartAsync(default);
+        await restored.Restored;
         var restoredView = await restored.SignedSessionStatusAsync(package.Id);
         Assert.Equal(id, restoredView.AccountId);
         Assert.Equal(ExtensionSessionStates.SignedIn, restoredView.State);
@@ -648,6 +650,7 @@ public sealed partial class ExtensionControlPlaneServiceTests : IAsyncLifetime
         var before = await File.ReadAllBytesAsync(statePath);
         var restarted = Coordinator(new SignedSessionHandler());
         await restarted.StartAsync(default);
+        await restarted.Restored;
 
         await Assert.ThrowsAsync<InvalidOperationException>(() => restarted.SignedSessionStatusAsync(package.Id));
 
@@ -877,6 +880,8 @@ public sealed partial class ExtensionControlPlaneServiceTests : IAsyncLifetime
         }
 
         await coordinator.StartAsync(default);
+
+        await coordinator.Restored;
         var retired = (await _service.ListPackagesAsync()).Single(item => item.Id == first.Id);
         Assert.Equal(ExtensionPackageState.Uninstalled, retired.State);
         Assert.False(Directory.Exists(first.PackagePath));
@@ -890,6 +895,7 @@ public sealed partial class ExtensionControlPlaneServiceTests : IAsyncLifetime
         Assert.All(await _service.ListPermissionReviewsAsync(first.Id),
             item => Assert.Equal(ExtensionPermissionDecision.Approved, item.Decision));
         await coordinator.StartAsync(default);
+        await coordinator.Restored;
         Assert.Equal(retired.Revision, (await _service.ListPackagesAsync()).Single(item => item.Id == first.Id).Revision);
         Assert.Equal(logs.Count, (await _service.ListLogsAsync(first.Id)).Count);
         await using var check = await _factory.CreateDbContextAsync();
