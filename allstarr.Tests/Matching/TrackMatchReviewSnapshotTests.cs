@@ -207,6 +207,49 @@ public sealed class TrackMatchReviewSnapshotTests
         Assert.Equal(JsonValueKind.Null, row.GetProperty("durationMilliseconds").ValueKind);
     }
 
+    [Fact]
+    [Trait("Category", "Sqlite")]
+    public async Task ItemDetailsShareTheLibraryUntilASongOrTheListenersAccessChanges()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var access = new TestBackendLibraryAccess(fixture.Factory, "music");
+        var service = new TrackMatchCommandService(fixture.Factory, new TrackMatchDecisionEngine(),
+            new ProviderAccountResolver(fixture.Factory), new SystemPlatformClock(), access);
+        LibraryTrackRecord Local(string item) => new()
+        {
+            Id = Guid.CreateVersion7(),
+            OwnerUserId = fixture.Owner,
+            Protocol = "jellyfin",
+            BackendInstanceId = "fixture",
+            BackendLibraryId = "music",
+            BackendItemId = item,
+            FilePath = $"/music/{item}.flac",
+            Title = "Retained title",
+            Artist = "Retained artist",
+            IndexedAt = DateTimeOffset.UtcNow,
+            SourceModifiedAt = DateTimeOffset.UtcNow,
+            UpdatedAt = DateTimeOffset.UtcNow
+        };
+        async Task Add(string item)
+        {
+            await using var db = fixture.Factory.CreateDbContext();
+            db.LibraryTracks.Add(Local(item));
+            await db.SaveChangesAsync();
+        }
+        async Task<IReadOnlyList<LibraryTrackRecord>> Read() => (await service.GetClientReviewDataAsync(
+            new(fixture.Owner, false), fixture.TrackId, default, new TrackMatchLibraryMemo())).LibraryTracks;
+
+        await Add("local-1");
+        var first = Assert.Single(await Read());
+        Assert.Same(first, Assert.Single(await Read()));
+
+        await Add("local-2");
+        Assert.Equal(2, (await Read()).Count);
+
+        access.Permissions[fixture.Owner] = new(true, ["other"]);
+        Assert.Empty(await Read());
+    }
+
     private static JsonElement Json(IActionResult result) => JsonSerializer.SerializeToElement(Assert.IsType<OkObjectResult>(result).Value, new JsonSerializerOptions(JsonSerializerDefaults.Web));
 
     private sealed class Fixture(SqliteTestDatabase database) : IAsyncDisposable

@@ -208,19 +208,29 @@ public sealed partial class TrackMatchCommandService
             .Distinct()
             .ToArray();
         var backendInstances = snapshots.Select(item => item.BackendInstanceId).Distinct().ToArray();
-        async Task<TrackMatchLibrarySnapshot> LoadLibraryAsync()
+        async Task<TrackMatchLibrarySnapshot> LoadLibraryAsync(BackendLibraryAccessContext access)
         {
-            var libraryQuery = (await AccessibleTracksAsync(db, actor, cancellationToken))
+            var libraryQuery = LibraryTrackAccess.Query(db, access)
                 .Where(item => EF.Parameter(backendInstances).Contains(item.BackendInstanceId));
             if (!string.IsNullOrWhiteSpace(backendLibraryId))
                 libraryQuery = libraryQuery.Where(item => item.BackendLibraryId == backendLibraryId.Trim());
             var tracks = await libraryQuery.ToListAsync(cancellationToken);
+            timings.Add(("library read", Stopwatch.GetTimestamp()));
             return new(tracks, tracks.GroupBy(item => item.BackendInstanceId).ToDictionary(group => group.Key,
                 group => new TrackMatchCandidateIndex(group.Select(LocalCopyPreference.ToCandidate))));
         }
-        var loadedLibrary = libraryMemo == null ? await LoadLibraryAsync() : await libraryMemo.GetAsync(
-            $"{actor.UserId:N}|{actor.IsAdministrator}|{string.Join(',', backendInstances.Order(StringComparer.Ordinal))}|{backendLibraryId?.Trim()}",
-            LoadLibraryAsync);
+        var libraryKey = $"{actor.UserId:N}|{actor.IsAdministrator}|{string.Join(',', backendInstances.Order(StringComparer.Ordinal))}|{backendLibraryId?.Trim()}";
+        async Task<TrackMatchLibrarySnapshot> LoadSharedLibraryAsync()
+        {
+            var access = await libraryAccess.ResolveUserAsync(actor.UserId, cancellationToken);
+            timings.Add(("library access", Stopwatch.GetTimestamp()));
+            if (!access.Access.Succeeded || access.Context == null) return await LoadLibraryAsync(access);
+            return await SharedLibraryAsync(db, $"{libraryKey}|{access.Context.Protocol}|{access.Context.BackendInstanceId}|" +
+                string.Join(',', access.Access.LibraryIds.Order(StringComparer.Ordinal)), () => LoadLibraryAsync(access), cancellationToken);
+        }
+        var loadedLibrary = libraryMemo == null
+            ? await LoadLibraryAsync(await libraryAccess.ResolveUserAsync(actor.UserId, cancellationToken))
+            : await libraryMemo.GetAsync(libraryKey, LoadSharedLibraryAsync);
         var library = loadedLibrary.Tracks.ToList();
         var indexes = loadedLibrary.Indexes;
         foreach (var snapshot in snapshots)
@@ -267,6 +277,29 @@ public sealed partial class TrackMatchCommandService
         logger?.LogInformation("Match review records: {Steps}", string.Join(", ", timings.Skip(1).Select((item, index) =>
             $"{item.Step} {(int)Stopwatch.GetElapsedTime(timings[index].At, item.At).TotalMilliseconds} ms")));
         return new(snapshots, decisions, overrides, library, identities) { MediaSnapshots = mediaBySnapshot };
+    }
+
+    // Reading and indexing the library takes up to a second, so batches of item details share one copy while the
+    // tracks table is unchanged. Library writes change its count, revisions or index and update times, which take a
+    // few milliseconds to read; the copy is also dropped after a few minutes in case some write changed none of them.
+    private static readonly TimeSpan SharedLibraryLifetime = TimeSpan.FromMinutes(5);
+    private readonly ConcurrentDictionary<string, SharedLibrary> _sharedLibraries = new(StringComparer.Ordinal);
+    private sealed record SharedLibrary(string Fingerprint, DateTimeOffset LoadedAt, TrackMatchLibrarySnapshot Snapshot);
+
+    private async Task<TrackMatchLibrarySnapshot> SharedLibraryAsync(AllstarrDbContext db, string key,
+        Func<Task<TrackMatchLibrarySnapshot>> load, CancellationToken cancellationToken)
+    {
+        var fingerprint = await db.Database.SqlQueryRaw<string>("""
+            SELECT COUNT(*) || ':' || COALESCE(SUM("Revision"), 0) || ':' || COALESCE(MAX("UpdatedAt"), 0) || ':' ||
+                COALESCE(MAX("IndexedAt"), 0) AS "Value" FROM library_tracks
+            """).SingleAsync(cancellationToken);
+        var now = clock.UtcNow;
+        if (_sharedLibraries.TryGetValue(key, out var shared) && shared.Fingerprint == fingerprint &&
+            now - shared.LoadedAt < SharedLibraryLifetime) return shared.Snapshot;
+        var snapshot = await load();
+        if (_sharedLibraries.Count >= 16) _sharedLibraries.Clear();
+        _sharedLibraries[key] = new(fingerprint, now, snapshot);
+        return snapshot;
     }
 
     private async Task<IReadOnlyList<ProviderTrackIdentityRecord>> VisibleProviderIdentitiesAsync(
