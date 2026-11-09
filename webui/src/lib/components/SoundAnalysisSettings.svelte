@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { adminUrl } from "$lib/admin-url";
   import { countLabel } from "$lib/count-label";
   import { onMount } from "svelte";
   import { audioMuse, mixes, ApiError, type AudioMuseConnection, type AudioMuseStatus } from "$lib/api";
@@ -99,7 +100,7 @@
   {#if error}<ErrorState title="Some sound analysis settings are unavailable" detail={error} onretry={refresh} />{/if}
   {#if !status && refreshing}<RowsSkeleton count={2} />{:else}
     <section class="sound-hero" aria-label="AudioMuse">
-      <span class="sound-logo" aria-hidden="true">AM</span>
+      <img class="sound-logo" src={adminUrl("/images/providers/brands/audiomuse/color.png")} alt="" />
       <div class="sound-copy">
         <h3>AudioMuse</h3>
         <p class="sound-state" data-tone={tone}><span class="sound-dot" aria-hidden="true"></span>{statusLabel}</p>
@@ -136,7 +137,7 @@
   .sound-hero { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: var(--space-5); align-items: center; padding: var(--space-5);
     border: 1px solid var(--color-edge); border-radius: var(--radius-xl, 18px);
     background: linear-gradient(135deg, color-mix(in srgb, var(--color-signal) 13%, var(--color-panel)), var(--color-panel) 62%); }
-  .sound-logo { display: grid; width: 56px; height: 56px; place-items: center; border-radius: 14px; background: linear-gradient(135deg, #7c4dff, #00bfa5); color: #fff; font-weight: 700; font-size: 1.05rem; }
+  .sound-logo { display: block; width: 56px; height: 56px; object-fit: contain; }
   .sound-copy { display: grid; gap: var(--space-1); min-width: 0; }
   .sound-copy h3 { margin: 0; font-size: 1.1rem; font-weight: 600; }
   .sound-copy p { margin: 0; color: var(--color-ink-muted); font-size: var(--text-sm); }

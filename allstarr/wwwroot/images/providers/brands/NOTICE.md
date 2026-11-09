@@ -28,6 +28,7 @@ These files show which service or source a song comes from. Every mark is a trad
 | ArtistGrid | artistgrid.cx, supplied by the server owner | ArtistGrid |
 | Koito | gabehf/Koito | MIT |
 | multi-scrobbler | FoxxMD/multi-scrobbler | MIT |
+| AudioMuse | NeptuneHub/AudioMuse-AI app icon (static/images/favicon-128x128.ico) | AGPL-3.0 |
 | LyricsPlus | Vector redrawing of the YouLyPlus icon (ibratabian17/YouLyPlus) | MIT |
 | AMLL TTML DB | amll-dev GitHub organisation avatar | AMLL contributors |
 | NetEase Cloud Music | Glyph from Simple Icons (CC0) on NetEase red | NetEase trademark |

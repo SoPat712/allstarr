@@ -126,3 +126,17 @@ test("A saved key never reads as not set up when AudioMuse says why it can't be 
     await expect(page.getByText("Not set up", { exact: true })).toHaveCount(0);
   }
 });
+
+for (const [width, theme] of [[1280, "dark"], [390, "light"]] as const) test(`AudioMuse shows its own logo at ${width}px ${theme}`, async ({ page }, testInfo) => {
+  await page.setViewportSize({ width, height: 900 });
+  await page.emulateMedia({ colorScheme: theme });
+  await page.addInitScript(value => localStorage.setItem("allstarr.theme", value), theme);
+  await mockSoundSettings(page);
+  await page.route("**/images/providers/brands/audiomuse/color.png", route =>
+    route.fulfill({ path: new URL("../../allstarr/wwwroot/images/providers/brands/audiomuse/color.png", import.meta.url).pathname }));
+  await openSoundSettings(page);
+  const logo = page.locator(".sound-hero .sound-logo");
+  await expect(logo).toBeVisible();
+  await expect.poll(() => logo.evaluate(image => (image as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
+  await page.locator(".sound-hero").screenshot({ path: testInfo.outputPath(`audiomuse-logo-${width}-${theme}.png`) });
+});

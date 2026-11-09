@@ -8,13 +8,14 @@ const aliases: Record<string, string> = {
   melonmusic: "melon", geniemusic: "genie", bugsmusic: "bugs",
   neteaselyrics: "netease", qqlyrics: "qqmusic", kugoulyrics: "kugou",
   opensubsonic: "subsonic", local: "jellyfin", native: "jellyfin", musicbrainzenrichment: "musicbrainz",
+  audiomuseai: "audiomuse",
 };
 const colorFiles: Record<string, string> = Object.fromEntries([
   "allstarr", "amazonmusic", "applemusic", "artistgrid", "deezer", "genius", "jellyfin", "navidrome", "subsonic", "listenbrainz",
   "lrcmux", "lrcred", "netease", "lyricsplus", "monochrome", "multiscrobbler", "musicbrainz", "musixmatch", "paxsenix",
   "qobuz", "soundcloud", "spicylyrics", "spotify", "tidal", "unison", "youtubemusic",
 ].map(brand => [brand, "color.svg"]));
-for (const brand of ["amll", "bugs", "genie", "jiosaavn", "koito", "kugou", "lastfm", "lrclib", "melon", "qqmusic"])
+for (const brand of ["amll", "audiomuse", "bugs", "genie", "jiosaavn", "koito", "kugou", "lastfm", "lrclib", "melon", "qqmusic"])
   colorFiles[brand] = "color.png";
 const generic = new Set(["extension", "lyrics"]);
 const markless = new Set(["mediaserverlyrics", "keptlrc"]);

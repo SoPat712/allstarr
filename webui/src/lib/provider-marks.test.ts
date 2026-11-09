@@ -30,6 +30,7 @@ describe("provider mark sources", () => {
     expect(providerMarkSources("multi-scrobbler")).toEqual([
       "/images/providers/brands/multiscrobbler/color.svg", "/images/providers/multi-scrobbler.svg",
     ]);
+    expect(providerMarkSources("audiomuse-ai")[0]).toBe("/images/providers/brands/audiomuse/color.png");
     for (const brand of ["melon", "genie", "bugs"]) {
       expect(providerMarkSources(`spotiflac-${brand}-music`)).toEqual([
         `/images/providers/brands/${brand}/color.png`,
@@ -82,7 +83,7 @@ describe("provider mark sources", () => {
     const root = new URL("../../../allstarr/wwwroot/", import.meta.url);
     const brands = readdirSync(new URL("./images/providers/brands", root), { withFileTypes: true })
       .filter(entry => entry.isDirectory()).map(entry => entry.name);
-    expect(brands).toHaveLength(36);
+    expect(brands).toHaveLength(37);
     for (const brand of brands) {
       const id = ["melon", "genie", "bugs"].includes(brand) ? `spotiflac-${brand}-music`
         : brand === "jiosaavn" ? "spotiflac-jiosaavn" : brand;
