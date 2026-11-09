@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { ProviderDefinition } from "$lib/api";
   import { humanize } from "$lib/sources";
+  import { musicAppName } from "$lib/home";
   import { reportSourceName, supportDate, type ProblemContext } from "$lib/support";
   import { Button } from "$lib/components/ui/button";
   let { context, providers = [], review = false, onReviewLyrics, onReviewMatch, matchLoading = false, matchReviewNote = "" }: {
@@ -22,7 +23,7 @@
     <div class="settings-row"><div><strong>{context.playback?.sourceConfirmed ? "Playing from" : "Catalog source"}</strong><small>{context.playback?.sourceConfirmed ? "Confirmed by the observed stream." : "The playing source has not been confirmed."}</small></div>
       <output>{provider(context.playback?.sourceConfirmed ? context.playback.providerId : context.song.catalogProviderId)}</output></div>
   {:else}<p class="settings-impact">No song is attached. Describe the app, action and problem in your note.</p>{/if}
-  <div class="settings-row"><div><strong>Music app</strong><small>{context.subjectName ? `Observed listener: ${context.subjectName}` : "Only an observed music client is included."}</small></div><output>{context.playback?.clientName ?? "Not captured"}</output></div>
+  <div class="settings-row"><div><strong>Music app</strong><small>{context.subjectName ? `Observed listener: ${context.subjectName}` : "Only an observed music client is included."}</small></div><output>{musicAppName(context.playback?.clientName) ?? "Not captured"}</output></div>
   {#if context.match}<div class="settings-row"><div><strong>Saved match</strong><small>{humanize(context.match.authorityScope)} choice{context.match.authorityScope === "automatic" && context.match.decisionVersion != null ? ` · version ${context.match.decisionVersion}` : ""}</small></div>
     <output>{context.match.state ? humanize(context.match.state) : "Not captured"}{context.match.authorityScope === "automatic" && context.match.confidence != null && Number.isFinite(context.match.confidence) ? ` · ${Math.round(context.match.confidence * 100)}%` : ""}</output></div>{/if}
   <details class="settings-disclosure">

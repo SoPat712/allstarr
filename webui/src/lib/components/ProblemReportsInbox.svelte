@@ -1,5 +1,6 @@
 <script lang="ts">
   import { countLabel } from "$lib/count-label";
+  import { musicAppName } from "$lib/home";
   import { onMount, tick } from "svelte";
   import { home, matchReview, type MatchReviewItem, type ProviderDefinition } from "$lib/api";
   import { Button } from "$lib/components/ui/button";
@@ -171,7 +172,7 @@
     {:else if rows.length}
       <article class="report-list" aria-label="Report list">
         {#each rows as row (row.id)}
-          <ItemRow title={reportKindLabel(row.kind) + (row.songTitle ? " · " + row.songTitle : "")} subtitle={[row.artist, row.reporterName, provider(row.providerId), row.clientName, supportDate(row.createdAt), row.notePreview].filter(Boolean).join(" · ")} actionLabel={"Open report for " + (row.songTitle ?? "general problem")} selected={selectedId === row.id && panelOpen} onclick={() => void open(row.id)}>
+          <ItemRow title={reportKindLabel(row.kind) + (row.songTitle ? " · " + row.songTitle : "")} subtitle={[row.artist, row.reporterName, provider(row.providerId), musicAppName(row.clientName), supportDate(row.createdAt), row.notePreview].filter(Boolean).join(" · ")} actionLabel={"Open report for " + (row.songTitle ?? "general problem")} selected={selectedId === row.id && panelOpen} onclick={() => void open(row.id)}>
             {#snippet leading()}<MessageSquareWarning size={20} aria-hidden="true" />{/snippet}
             {#snippet pill()}<Badge tone={row.status === "fixed" ? "success" : row.status === "new" ? "accent" : "neutral"}>{reportStatusLabel(row.status)}</Badge>{/snippet}
           </ItemRow>

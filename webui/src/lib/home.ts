@@ -38,13 +38,21 @@ export function listenTrend(current: number, previous: number) {
   return change ? `${change > 0 ? "+" : "−"}${Math.abs(change).toLocaleString()} on last week` : "same as last week";
 }
 
+// Apps that kept their old client name when they were renamed, so pins and settings saved under it survive.
+const renamedApps: Record<string, string> = { Aloud: "Songbird" };
+export function musicAppName(client: string): string;
+export function musicAppName(client: string | null | undefined): string | null | undefined;
+export function musicAppName(client: string | null | undefined) {
+  return client ? renamedApps[client] ?? client : client;
+}
+
 export function playbackMeta(
   item: Pick<NowPlayingItem, "userName" | "client" | "device" | "sourceConfirmed" | "providerId" | "catalogProviderId" | "cached">,
   providers: Pick<ProviderDefinition, "id" | "name">[],
 ) {
   const source = formatPlaybackSource(providers, item.providerId,
     { confirmed: item.sourceConfirmed === true }).text;
-  return [`${item.userName} on ${item.client}${item.device ? `, ${item.device}` : ""}`, source].filter(Boolean).join(" · ");
+  return [`${item.userName} on ${musicAppName(item.client)}${item.device ? `, ${item.device}` : ""}`, source].filter(Boolean).join(" · ");
 }
 
 export function nextScheduledWork(tasks: ActivityTask[]) {

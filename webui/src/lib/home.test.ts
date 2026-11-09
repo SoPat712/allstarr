@@ -48,14 +48,14 @@ describe("Home wording", () => {
   it("keeps the playback route honest when its source is unconfirmed", () => {
     const item = { userName: "Listener", client: "Aloud", device: "iPhone", providerId: "applemusic", sourceConfirmed: true };
     const providers = [{ id: "apple-musickit", name: "Apple Music" }];
-    expect(playbackMeta(item, providers)).toBe("Listener on Aloud, iPhone · from Apple Music");
-    expect(playbackMeta({ ...item, cached: true }, providers)).toBe("Listener on Aloud, iPhone · from Apple Music");
-    expect(playbackMeta({ ...item, sourceConfirmed: false }, providers)).toBe("Listener on Aloud, iPhone · catalog: Apple Music (playback unconfirmed)");
-    expect(playbackMeta({ ...item, device: null }, providers)).toBe("Listener on Aloud · from Apple Music");
+    expect(playbackMeta(item, providers)).toBe("Listener on Songbird, iPhone · from Apple Music");
+    expect(playbackMeta({ ...item, cached: true }, providers)).toBe("Listener on Songbird, iPhone · from Apple Music");
+    expect(playbackMeta({ ...item, sourceConfirmed: false }, providers)).toBe("Listener on Songbird, iPhone · catalog: Apple Music (playback unconfirmed)");
+    expect(playbackMeta({ ...item, device: null }, providers)).toBe("Listener on Songbird · from Apple Music");
     expect(playbackMeta({ ...item, sourceConfirmed: false, catalogProviderId: "deezer" }, providers))
-      .toBe("Listener on Aloud, iPhone · catalog: Apple Music (playback unconfirmed)");
+      .toBe("Listener on Songbird, iPhone · catalog: Apple Music (playback unconfirmed)");
     expect(playbackMeta({ ...item, sourceConfirmed: false, providerId: "unrecognized-source", catalogProviderId: "applemusic" }, providers))
-      .toBe("Listener on Aloud, iPhone");
+      .toBe("Listener on Songbird, iPhone");
   });
 
   it("names local playback and omits unavailable sources without a trailing separator", () => {
