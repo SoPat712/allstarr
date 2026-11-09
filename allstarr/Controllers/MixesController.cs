@@ -133,7 +133,9 @@ public sealed partial class MixesController(PersonalMixService mixes, IDurableRu
         mix.Readiness,
         inApps = mix.Added,
         appsAllowed = enabled,
-        coverArtwork = MixCoverArt.Pick(mix.Songs.Select(item => item.Song)).Select(song => song.Id).ToArray(),
+        coverArtwork = mix.Kind != "external" && mix.Songs.Count > 0
+            ? new[] { $"/api/admin/mixes/{mix.Id}/cover?v={MixCoverImageService.Version(MixCoverInput.From(mix))}" }
+            : MixCoverArt.Pick(mix.Songs.Select(item => item.Song)).Select(song => song.Id).ToArray(),
         initialJobId
     };
 

@@ -1,6 +1,9 @@
 using allstarr.Models.Domain;
+using allstarr.Core.Capabilities;
+using allstarr.Core.Protocols;
 using allstarr.Services.Common;
 using allstarr.Services.Jellyfin;
+using allstarr.Services.Local;
 
 namespace allstarr.Core.Music;
 
@@ -28,12 +31,15 @@ public static class MixCoverArt
     {
         if (song.IsLocal) return string.IsNullOrWhiteSpace(song.AlbumId ?? song.Id) ? null : "library:" + (song.AlbumId ?? song.Id);
         var url = song.CoverArtUrl ?? song.CoverArtUrlLarge;
-        return string.IsNullOrWhiteSpace(url) || ProviderArtworkFallback.IsFallback(song.ExternalProvider ?? "", url, "album") ||
-               !OutboundRequestGuard.TryCreateSafeHttpUri(url, out _, out _) ? null : url;
+        if (!string.IsNullOrWhiteSpace(url) && !ProviderArtworkFallback.IsFallback(song.ExternalProvider ?? "", url, "album") &&
+            OutboundRequestGuard.TryCreateSafeHttpUri(url, out _, out _)) return url;
+        var external = LocalLibraryService.ParseExternalResource(song.Id);
+        return external.isExternal && external.type == "song" ? "service:" + song.Id : null;
     }
 }
 
-public sealed class MixCoverArtLoader(JellyfinProxyService jellyfin, IHttpClientFactory clients, ILogger<MixCoverArtLoader> logger)
+public sealed class MixCoverArtLoader(JellyfinProxyService jellyfin, IHttpClientFactory clients, IProtocolProviderGateway providers,
+    ILogger<MixCoverArtLoader> logger)
 {
     private const int MaximumBytes = 8 * 1024 * 1024;
 
@@ -41,6 +47,8 @@ public sealed class MixCoverArtLoader(JellyfinProxyService jellyfin, IHttpClient
     {
         try
         {
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token);
+            timeout.CancelAfter(TimeSpan.FromSeconds(8));
             if (reference.StartsWith("library:", StringComparison.Ordinal))
             {
                 // The media server shares pictures without a sign-in, so a cover works for apps that load images without one.
@@ -48,9 +56,15 @@ public sealed class MixCoverArtLoader(JellyfinProxyService jellyfin, IHttpClient
                     $"Items/{Uri.EscapeDataString(reference[8..])}/Images/Primary", new() { ["maxWidth"] = "400", ["quality"] = "90" });
                 return success && body is { Length: > 0 and <= MaximumBytes } ? body : null;
             }
+            if (reference.StartsWith("service:", StringComparison.Ordinal))
+            {
+                var external = LocalLibraryService.ParseExternalResource(reference[8..]);
+                if (!external.isExternal || external.type != "song") return null;
+                reference = (await providers.GetPublicArtworkUriAsync(external.provider!, ProviderResourceKind.Track,
+                    external.externalId!, timeout.Token, storedRecordingOnly: external.provider == "allstarr"))?.AbsoluteUri ?? "";
+                if (ProviderArtworkFallback.IsFallback(external.provider!, reference, "song")) return null;
+            }
             if (!OutboundRequestGuard.TryCreateSafeHttpUri(reference, out var uri, out _) || uri == null) return null;
-            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token);
-            timeout.CancelAfter(TimeSpan.FromSeconds(8));
             using var response = await clients.CreateClient().GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
             var contentType = response.Content.Headers.ContentType?.MediaType;
             if (!response.IsSuccessStatusCode || contentType?.StartsWith("image/", StringComparison.OrdinalIgnoreCase) != true ||

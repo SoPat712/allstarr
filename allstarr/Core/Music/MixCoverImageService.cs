@@ -32,20 +32,26 @@ public sealed class MixCoverImageService
     }
 
     public static string GetTag(MixCoverInput input) =>
-        Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(input))) +
-        "-collage-v3";
+        Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(new { Input = input, Renderer = "collage-v4" }))) +
+        "-collage-v4";
 
     // A short form of the tag that apps can put in the cover URL.
     public static string Version(MixCoverInput input) => GetTag(input)[..16].ToLowerInvariant();
 
-    // The mix's song covers when it has some, otherwise its gradient. A collage missing a picture is sent without a version,
+    // The mix's song covers when it has some, otherwise its gradient. A collage missing a picture has no validator,
     // so apps ask again later instead of keeping it.
     public async Task<IActionResult> CreateResponseAsync(MixCoverInput input, HttpContext context, string? version = null)
     {
         var tag = GetTag(input);
         var etag = $"\"{tag}\"";
         var versioned = version == Version(input);
-        if (ImageConditionalRequestHelper.MatchesIfNoneMatch(context.Request.Headers, etag))
+        var noArtwork = input.Art is not { Count: > 0 } || _loadArt == null;
+        if (noArtwork && input.Count > 0)
+        {
+            context.Response.Headers.CacheControl = "private, max-age=60";
+            return new FileContentResult(_render(input), "image/png");
+        }
+        if (noArtwork && ImageConditionalRequestHelper.MatchesIfNoneMatch(context.Request.Headers, etag))
         {
             SetCaching(context, etag, versioned);
             return new StatusCodeResult(StatusCodes.Status304NotModified);
@@ -53,11 +59,13 @@ public sealed class MixCoverImageService
         Task<(byte[] Bytes, string ContentType, bool Complete)> work;
         lock (_gate)
         {
-            if (!_images.TryGetValue(tag, out var cached) && (input.Art is not { Count: > 0 } || _loadArt == null))
+            if (!_images.TryGetValue(tag, out var cached) && noArtwork)
                 cached = Remember(tag, (_render(input), "image/png"));
             if (cached.Bytes != null)
             {
                 SetCaching(context, etag, versioned);
+                if (ImageConditionalRequestHelper.MatchesIfNoneMatch(context.Request.Headers, etag))
+                    return new StatusCodeResult(StatusCodes.Status304NotModified);
                 return new FileContentResult(cached.Bytes, cached.ContentType);
             }
             // Requests for one collage share its picture downloads.
@@ -76,6 +84,8 @@ public sealed class MixCoverImageService
             return new FileContentResult(bytes, contentType);
         }
         SetCaching(context, etag, versioned);
+        if (ImageConditionalRequestHelper.MatchesIfNoneMatch(context.Request.Headers, etag))
+            return new StatusCodeResult(StatusCodes.Status304NotModified);
         return new FileContentResult(bytes, contentType);
     }
 

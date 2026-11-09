@@ -1,7 +1,11 @@
-import type { MixCard } from "../api";
+import type { MixCard, MixSong } from "../api";
 import { hash } from "./palettes";
 
 const compact = (value: string) => value.toLowerCase().replace(/[^a-z0-9]/g, "");
+
+export function artworkFor(mix: MixCard, songs?: MixSong[]) {
+  return mix.coverArtwork.length || !songs ? mix.coverArtwork : songs.slice(0, 1).map(item => item.song.id);
+}
 
 // The same colours the server's cover uses (MixCoverRenderer.Hsv), so a mix without song art looks alike everywhere.
 export function hsv(hue: number, saturation: number, value: number) {

@@ -152,14 +152,17 @@ public sealed partial class ProtocolRouteFixtureTests
     [Fact]
     public async Task ClientApi_MixCoversMatchDashboardAndRevalidateAfterAuthorization()
     {
-        using var factory = ClientMixFactory(new());
+        var gateway = new Mock<IProtocolProviderGateway>();
+        gateway.Setup(service => service.GetPublicArtworkUriAsync("deezer", ProviderResourceKind.Track, "mix-song",
+            It.IsAny<CancellationToken>(), false, false)).ReturnsAsync(new Uri("https://covers.example.test/Items/mix-song/Images/Primary"));
+        using var factory = ClientMixFactory(gateway);
         using var client = CreateClientApiClient(factory);
         client.DefaultRequestHeaders.Add("X-Emby-Token", "listener-token");
         var mix = await SeedClientMixAsync(factory);
         var path = $"/allstarr/v1/mixes/{mix.Id}/cover";
         using var first = await client.GetAsync(path);
         Assert.Equal(HttpStatusCode.OK, first.StatusCode);
-        Assert.Equal(["library:native-mix-song"], MixCoverInput.From(mix).Art!);
+        Assert.Equal(["service:ext-deezer-song-mix-song"], MixCoverInput.From(mix).Art!);
         Assert.Equal("image/jpeg", first.Content.Headers.ContentType?.MediaType);
         Assert.True(first.Headers.CacheControl?.Private);
         Assert.Equal(TimeSpan.Zero, first.Headers.CacheControl?.MaxAge);

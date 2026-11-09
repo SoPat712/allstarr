@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { MixCard } from "../api";
-import { bold, coverFor, hsv } from "./cover-for";
+import type { MixCard, MixSong } from "../api";
+import { artworkFor, bold, coverFor, hsv } from "./cover-for";
 
 function mix(kind: string, overrides: Partial<MixCard> = {}): MixCard {
   return { id: kind, kind, name: kind, description: "", section: "madeForYou", sourceLabel: null, recipeVersion: null, updatedAt: null, readiness: { ready: true, message: "" }, inApps: true, appsAllowed: true, coverArtwork: [], sortOrder: 0, ...overrides };
@@ -26,5 +26,19 @@ describe("mix gradients", () => {
   });
   it("keeps ListenBrainz colours", () => {
     expect(coverFor(mix("external", { sourceLabel: "ListenBrainz" }))).toBe("linear-gradient(135deg, #353070, #eb743b, #9a93e6)");
+  });
+});
+
+describe("mix card artwork", () => {
+  it.each(["workout", "discover-weekly"])("uses the server collage for %s before detail song artwork", kind => {
+    const cover = `/api/admin/mixes/${kind}/cover?v=updated`;
+    const songs: MixSong[] = [{ mixId: kind, generation: 1, source: "library", reason: "", score: 1,
+      song: { id: "other-song", canonicalRecordingId: null, title: "Song", artist: "Artist", album: "Album" } }];
+    expect(artworkFor(mix(kind, { coverArtwork: [cover] }), songs)).toEqual([cover]);
+  });
+  it("keeps empty cards on their gradient and preserves item artwork", () => {
+    expect(artworkFor(mix("release-radar"))).toEqual([]);
+    expect(artworkFor(mix("external", { coverArtwork: ["song-1", "song-2", "song-3", "song-4"] })))
+      .toEqual(["song-1", "song-2", "song-3", "song-4"]);
   });
 });

@@ -36,7 +36,7 @@ namespace allstarr.Tests;
 public sealed partial class PersonalMixServiceTests
 {
     [Fact]
-    public async Task ListenerHttp_MixCoverReturnsPngAndRevalidatesOnlyOwnMix()
+    public async Task ListenerHttp_MixCoverWithoutArtworkRetriesAndOnlyReadsOwnMix()
     {
         await Seed(user: other);
         var own = (await service.GenerateAsync(other)).Single(mix => mix.Kind == "on-repeat");
@@ -48,14 +48,14 @@ public sealed partial class PersonalMixServiceTests
         Assert.Equal(HttpStatusCode.OK, first.StatusCode);
         Assert.Equal("image/png", first.Content.Headers.ContentType?.MediaType);
         Assert.Equal(new byte[] { 137, 80, 78, 71, 13, 10, 26, 10 }, (await first.Content.ReadAsByteArrayAsync())[..8]);
-        Assert.NotNull(first.Headers.ETag);
+        Assert.Null(first.Headers.ETag);
         Assert.True(first.Headers.CacheControl?.Private);
-        Assert.True(first.Headers.CacheControl?.MustRevalidate);
-        Assert.Equal(TimeSpan.Zero, first.Headers.CacheControl?.MaxAge);
+        Assert.Equal(TimeSpan.FromSeconds(60), first.Headers.CacheControl?.MaxAge);
         using var request = new HttpRequestMessage(HttpMethod.Get, path);
-        request.Headers.IfNoneMatch.Add(first.Headers.ETag!);
+        request.Headers.IfNoneMatch.ParseAdd($"\"{MixCoverImageService.GetTag(MixCoverInput.From(own))}\"");
         using var unchanged = await client.SendAsync(request);
-        Assert.Equal(HttpStatusCode.NotModified, unchanged.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, unchanged.StatusCode);
+        Assert.Null(unchanged.Headers.ETag);
 
         clock.UtcNow += TimeSpan.FromMinutes(16);
         await ReadSuccess(await client.PostAsync($"/api/admin/mixes/{own.Id}/refresh", null));
@@ -66,7 +66,9 @@ public sealed partial class PersonalMixServiceTests
         await queue.CompleteAsync(claim, await new PersonalMixJobHandler(service).ExecuteAsync(new(claim, host.Services), default));
         using var refreshed = await client.GetAsync(path);
         Assert.Equal(HttpStatusCode.OK, refreshed.StatusCode);
-        Assert.NotEqual(first.Headers.ETag, refreshed.Headers.ETag);
+        Assert.Null(refreshed.Headers.ETag);
+        Assert.NotEqual(MixCoverImageService.Version(MixCoverInput.From(own)),
+            MixCoverImageService.Version(MixCoverInput.From(await service.GetAsync(other, own.Id))));
         Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync($"/api/admin/mixes/{foreign.Id}/cover")).StatusCode);
     }
 

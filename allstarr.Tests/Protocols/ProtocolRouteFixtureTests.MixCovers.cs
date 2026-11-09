@@ -6,7 +6,6 @@ using allstarr.Core.Playlists;
 using allstarr.Core.Protocols;
 using allstarr.Core.Settings;
 using allstarr.Core.Storage;
-using allstarr.Models.Domain;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -56,7 +55,7 @@ public sealed partial class ProtocolRouteFixtureTests
                 RuntimeSettingValueType.Boolean, publish, publish.ToString(), RuntimeSettingOrigin.Durable, 1, null, null, null)));
         var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
         var mix = new PersonalMix(id, "on-repeat", "Heavy Rotation", "Made for you", 2, null,
-            new(true, "Ready"), true, [new(id, 2, new Song { Id = "ext-deezer-song-42", Artist = "Artist" }, "deezer", "", 1)]);
+            new(true, "Ready"), true, []);
         using var factory = new ProtocolFactory("Jellyfin",
             _ => throw new InvalidOperationException("Anonymous stored covers must not call upstream services."), services =>
             {
@@ -177,7 +176,7 @@ public sealed partial class ProtocolRouteFixtureTests
     [InlineData("Subsonic")]
     public async Task PersonalMixCoverRoutesReturnPngAndRevalidateEachGeneration(string backend)
     {
-        var model = CoverPlaylist() with { MixCover = new("mix-1", 1, "daily-1", Name: "Daily Mix", Count: 4) };
+        var model = CoverPlaylist() with { MixCover = new("mix-1", 1, "daily-1", Name: "Daily Mix", Count: 0) };
         var readable = true;
         var playlists = new Mock<IPlaylistVirtualizationService>(MockBehavior.Strict);
         playlists.Setup(service => service.ReadAsync(It.IsAny<ProtocolExecutionContext>(), model.ProtocolId,
