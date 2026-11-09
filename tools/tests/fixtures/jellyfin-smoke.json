@@ -1,0 +1,75 @@
+{
+  "externalListItem": {
+    "Id": "ext-qobuz-song-1", "Name": "Fixture [A]", "Type": "Audio", "MediaType": "Audio",
+    "Album": "Album [Qobuz]", "AlbumId": "album", "Artists": ["Artist [Qobuz]"],
+    "ArtistItems": [], "AlbumArtists": [], "RunTimeTicks": 10000000,
+    "ImageTags": {"Primary": "image"},
+    "UserData": {"Key": "key", "ItemId": "ext-qobuz-song-1"}
+  },
+  "externalDetailFields": {
+    "ProviderIds": {"qobuz": "1"}, "CanDownload": true,
+    "MediaSources": [{
+      "Id": "ext-qobuz-song-1", "DirectStreamUrl": "/Audio/ext-qobuz-song-1/stream",
+      "RunTimeTicks": 10000000, "Bitrate": null, "Size": null,
+      "SupportsDirectPlay": true, "SupportsDirectStream": true,
+      "MediaStreams": [
+        {"Type": "Audio", "Index": 0, "BitRate": null},
+        {"Type": "EmbeddedImage", "Index": 1},
+        {"Type": "Lyric", "Index": 2}
+      ]
+    }]
+  },
+  "directPlaylists": {
+    "Items": [
+      {"Id": "native", "Name": "Native", "Type": "Playlist", "ChildCount": 2,
+       "RunTimeTicks": 20000000, "ImageTags": {"Primary": "native-image"},
+       "ProviderIds": {}, "Nested": {"Value": "preserved"}},
+      {"Id": "synced", "Name": "Synced", "Type": "Playlist", "ChildCount": 1,
+       "RunTimeTicks": 10000000, "Overview": "Native overview", "ProviderIds": {},
+       "ImageTags": {"Primary": "synced-image"}, "Nested": {"Value": "preserved"}}
+    ],
+    "StartIndex": 0, "TotalRecordCount": 2
+  },
+  "allstarrPlaylists": {
+    "Items": [
+      {"Id": "native", "Name": "Native", "Type": "Playlist", "ChildCount": 2,
+       "RunTimeTicks": 20000000, "ImageTags": {"Primary": "native-image"},
+       "ProviderIds": {}, "Nested": {"Value": "preserved"}},
+      {"Id": "synced", "Name": "Synced", "Type": "Playlist", "ChildCount": 3,
+       "RunTimeTicks": 30000000, "Overview": "Includes streaming songs", "ProviderIds": {},
+       "ImageTags": {"Primary": "synced-image"}, "Nested": {"Value": "preserved"},
+       "AllstarrPlaylistKind": "synced", "AllstarrMixKind": "daily",
+       "AllstarrMixSection": "mixes", "AllstarrMixState": "ready", "AllstarrMixSource": "library"},
+      {"Id": "allstarr-vpl-feed", "Name": "Feed", "Type": "Playlist", "ChildCount": 3,
+       "AllstarrPlaylistKind": "feed"}
+    ],
+    "StartIndex": 0, "TotalRecordCount": 3
+  },
+  "lineLyrics": {
+    "Lyrics": [
+      {"Text": "First line", "Start": 10000000, "Cues": []},
+      {"Text": "Second line", "Start": 30000000, "Cues": []}
+    ],
+    "Metadata": {"IsSynced": true}
+  },
+  "wordLyrics": {
+    "Lyrics": [
+      {"Text": "First line", "Start": 10000000, "Cues": [
+        {"Position": 0, "EndPosition": 5, "Start": 10000000, "End": 20000000},
+        {"Position": 6, "EndPosition": 10, "Start": 20000000, "End": 30000000}
+      ]},
+      {"Text": "Second line", "Start": 30000000, "Cues": [
+        {"Position": 0, "EndPosition": 6, "Start": 30000000, "End": 40000000},
+        {"Position": 7, "EndPosition": 11, "Start": 40000000, "End": null}
+      ]}
+    ],
+    "Metadata": {"Artist": "Artist", "Album": "Album", "Title": "Fixture",
+                 "Length": 50000000, "IsSynced": true}
+  },
+  "artwork": {
+    "jpeg": {"status": 200, "contentType": "image/jpeg", "prefixHex": "ffd8ff", "size": 512},
+    "wrong-signature": {"status": 200, "contentType": "image/jpeg", "prefixHex": "89504e470d0a1a0a", "size": 512},
+    "html": {"status": 200, "contentType": "text/html", "prefixHex": "3c68746d6c3e", "size": 512},
+    "denied": {"status": 404, "contentType": "application/json", "prefixHex": "7b7d", "size": 2}
+  }
+}

@@ -830,6 +830,64 @@ compare_projection() {
     fi
 }
 
+check_native_lyrics_parity() {
+    local direct_url="$1" allstarr_url="$2" direct_code allstarr_code result
+    direct_code="$(curl -sS --max-time "$TIMEOUT_SECONDS" "${auth[@]}" \
+        -o "$direct_shape_file" -w '%{http_code}' "$direct_url" || true)"
+    allstarr_code="$(curl -sS --max-time "$TIMEOUT_SECONDS" "${auth[@]}" \
+        -o "$allstarr_shape_file" -w '%{http_code}' "$allstarr_url" || true)"
+    if [[ "$direct_code" == 404 && "$allstarr_code" == 404 ]]; then
+        echo "lyrics structure skipped=direct:404 allstarr:404"
+        return
+    fi
+    checks=$((checks + 1))
+    result="invalid"
+    if [[ ( "$direct_code" == 200 || "$direct_code" == 404 ) && "$allstarr_code" == 200 ]]; then
+        result="$(jq -nr --arg direct_code "$direct_code" \
+            --slurpfile direct "$direct_shape_file" --slurpfile proxy "$allstarr_shape_file" '
+            def valid:
+                type == "object" and
+                ((has("Metadata") | not) or (.Metadata | type == "object" and
+                    ((has("IsSynced") | not) or (.IsSynced | type == "boolean")) and
+                    ((has("Length") | not) or (.Length | type == "number" and . >= 0)))) and
+                (.Lyrics | type == "array" and length > 0 and
+                    any(.[]; .Text | type == "string" and length > 0) and
+                    all(.[]; . as $line |
+                        (.Text | type == "string") and
+                        ((has("Start") | not) or (.Start | type == "number" and . >= 0)) and
+                        ((has("Cues") | not) or
+                            (.Cues | type == "array" and all(.[];
+                                (.Position | type == "number" and . >= 0 and floor == .) and
+                                (.EndPosition | type == "number" and floor == .) and
+                                .EndPosition >= .Position and
+                                ($line.Start | type == "number") and
+                                (.Start | type == "number" and . >= $line.Start) and
+                                (.End == null or (.End | type == "number" and . >= $line.Start)) and
+                                (.End == null or .End >= .Start))))));
+            $direct[0] as $expected | $proxy[0] as $actual |
+            if ($actual | valid) | not then "invalid"
+            elif $direct_code == "404" then "fallback"
+            elif ($expected | valid) | not then "invalid"
+            elif $actual == $expected then "exact"
+            elif ([$actual.Lyrics[] | del(.Cues)] == [$expected.Lyrics[] | del(.Cues)]) and
+                 (($actual | del(.Lyrics, .Metadata)) == ($expected | del(.Lyrics, .Metadata))) and
+                 any($actual.Lyrics[]; (.Cues // []) | length > 0) and
+                 all($expected.Lyrics[]; (.Cues // []) | length == 0)
+            then "richer" else "changed" end
+            ' 2>/dev/null || echo invalid)"
+    fi
+    case "$result" in
+        exact) echo 'PASS native lyrics exact data' ;;
+        fallback) echo 'lyrics structure skipped=direct:404 allstarr:200 (valid fallback lyrics)' ;;
+        richer) echo 'DIFFERENCE native lyrics richer word timing (Cues/Metadata); line text and start times match' ;;
+        *)
+            printf 'FAIL native lyrics parity direct=%s allstarr=%s result=%s\n' \
+                "${direct_code:-000}" "${allstarr_code:-000}" "$result"
+            failures=$((failures + 1))
+            ;;
+    esac
+}
+
 compare_binary() {
     local label="$1" direct_url="$2" allstarr_url="$3"
     local direct_result allstarr_result direct_code direct_type direct_bytes
@@ -960,18 +1018,6 @@ check_public_image() {
         printf 'PASS %-34s type=%s bytes=%s\n' "$label" "$content_type" "$bytes"
     else
         printf 'FAIL %-34s status=%s type=%s bytes=%s\n' "$label" "$code" "$content_type" "$bytes"
-        failures=$((failures + 1))
-    fi
-}
-
-check_private_image() {
-    local label="$1" url="$2" code
-    code="$(curl -sS --max-time "$TIMEOUT_SECONDS" -o /dev/null -w '%{http_code}' "$url" || true)"
-    checks=$((checks + 1))
-    if [[ "$code" == 404 ]]; then
-        printf 'PASS %-34s anonymous-access-denied\n' "$label"
-    else
-        printf 'FAIL %-34s anonymous-status=%s\n' "$label" "${code:-000}"
         failures=$((failures + 1))
     fi
 }
@@ -1269,7 +1315,9 @@ item_contract='
                 (.SupportsDirectPlay | type == "boolean") and
                 (.SupportsDirectStream | type == "boolean") and
                 (.MediaStreams | type == "array" and length > 0 and
-                    all(.[]; .Type == "Audio" and .BitRate == null))));
+                    all(.[]; .Type == "Audio" or .Type == "EmbeddedImage" or .Type == "Lyric") and
+                    ([.[] | select(.Type == "Audio")] |
+                        length == 1 and all(.[]; .BitRate == null)))));
 '
 
 playback_identity_contract='
@@ -1626,7 +1674,7 @@ compare_projection "native search hint full objects" \
 external_song_id="$EXTERNAL_SONG_ID"
 if [[ -z "$external_song_id" ]]; then
     if curl -fsS --max-time "$TIMEOUT_SECONDS" "${auth[@]}" \
-        "$ALLSTARR_BASE/Items?UserId=$best_user_id&SearchTerm=$search_term_encoded&IncludeItemTypes=Audio&StartIndex=0&Limit=50" \
+        "$ALLSTARR_BASE/Items?UserId=$best_user_id&SearchTerm=$search_term_encoded&IncludeItemTypes=Audio&Fields=MediaSources,ProviderIds,CanDownload&StartIndex=0&Limit=50" \
         -o "$response_file"; then
         checks=$((checks + 1))
         if jq -e "$item_contract
@@ -1711,7 +1759,7 @@ if [[ -n "$external_song_id" ]]; then
     measure "external metadata" "$external_detail_url"
     timing_budget "external metadata latency" "external metadata" "$MAX_EXTERNAL_METADATA_TTFB_MS"
 
-    external_search_url="$ALLSTARR_BASE/Items?UserId=$best_user_id&SearchTerm=$external_search_term_encoded&IncludeItemTypes=Audio&Fields=ProviderIds&StartIndex=0&Limit=20"
+    external_search_url="$ALLSTARR_BASE/Items?UserId=$best_user_id&SearchTerm=$external_search_term_encoded&IncludeItemTypes=Audio&Fields=MediaSources,ProviderIds,CanDownload&StartIndex=0&Limit=20"
     check_json "external exact search flow" "$external_search_url" \
         "$item_contract
          (.Items | type == \"array\" and length > 0) and
@@ -1723,7 +1771,7 @@ if [[ -n "$external_song_id" ]]; then
     cp "$response_file" "$external_search_file"
     check_search_contract "$external_search_term" "$external_search_file" "$search_contract_directory"
     check_json "external search second page" \
-        "$ALLSTARR_BASE/Items?UserId=$best_user_id&SearchTerm=$external_search_term_encoded&IncludeItemTypes=Audio&Fields=ProviderIds&StartIndex=5&Limit=5" \
+        "$ALLSTARR_BASE/Items?UserId=$best_user_id&SearchTerm=$external_search_term_encoded&IncludeItemTypes=Audio&Fields=MediaSources,ProviderIds,CanDownload&StartIndex=5&Limit=5" \
         '.StartIndex == 5 and
          .TotalRecordCount == $first[0].TotalRecordCount and
          [.Items[].Id] == [$first[0].Items[5:10][].Id]' \
@@ -1997,12 +2045,16 @@ elif [[ -n "$INJECTED_PLAYLIST_ID" ]]; then
         --slurpfile full "$external_search_file"
     [[ -n "$virtual_playlist_id" ]] || virtual_playlist_id="$INJECTED_PLAYLIST_ID"
 fi
-alias_ids_json="$(jq -c '[.Items[] | select(.ProviderIds.AllstarrSource != null) | .Id]' \
+synced_playlist_ids_json="$(jq -c '[.Items[] | select(.AllstarrPlaylistKind != null) | .Id]' \
     "$allstarr_playlists_file" 2>/dev/null || printf '[]')"
-native_direct_filter="$alias_ids_json as \$aliases | [.Items[] | select(.Id as \$id | \$aliases | index(\$id) | not)]"
-native_allstarr_filter="$alias_ids_json as \$aliases | [.Items[] | select(
-    (.Id as \$id | \$aliases | index(\$id) | not) and
-    (((.Id // \"\") | startswith(\"allstarr-vpl-\")) | not) and
+native_playlist_filter="$synced_playlist_ids_json as \$synced | [.Items[] |
+    if (.Id as \$id | \$synced | index(\$id)) != null then
+        del(.AllstarrPlaylistKind, .AllstarrMixKind, .AllstarrMixSection, .AllstarrMixState,
+            .AllstarrMixSource, .Overview, .ChildCount, .RunTimeTicks)
+    else . end]"
+native_direct_filter="$native_playlist_filter"
+native_allstarr_filter="$native_playlist_filter | [.[] | select(
+    (((.Id // \"\") | startswith(\"allstarr-vpl\")) | not) and
     (((.Id // \"\") | test(\"^ext-.+-playlist-\"; \"i\")) | not))]"
 compare_structure "native playlist structure parity" \
     "$DIRECT_BASE/Users/$best_user_id/Items?$playlist_query" \
@@ -2059,7 +2111,7 @@ if [[ -n "$playlist_id" ]]; then
 fi
 if [[ -n "$external_playlist_id" ]]; then
     check_json "external playlist DTO IDs" \
-        "$ALLSTARR_BASE/Playlists/$external_playlist_id/Items?UserId=$best_user_id&Limit=100" \
+        "$ALLSTARR_BASE/Playlists/$external_playlist_id/Items?UserId=$best_user_id&Limit=100&Fields=MediaSources,ProviderIds,CanDownload" \
         "$item_contract
          (.Items | type == \"array\") and
          (.TotalRecordCount | type == \"number\") and
@@ -2251,7 +2303,7 @@ if [[ -n "$virtual_playlist_id" ]]; then
     if [[ -n "$virtual_art_tag" ]]; then
         check_image "virtual playlist artwork" \
             "$ALLSTARR_BASE/Items/$virtual_playlist_id/Images/Primary?UserId=$best_user_id"
-        check_private_image "virtual artwork without token" \
+        check_public_image "virtual artwork without token" \
             "$ALLSTARR_BASE/Items/$virtual_playlist_id/Images/Primary?UserId=$best_user_id"
         check_image "virtual long artwork" \
             "$ALLSTARR_BASE/Items/$virtual_playlist_id/Images/Primary/0/$virtual_art_tag/jpg/300/300/0/0?UserId=$best_user_id" \
@@ -2305,23 +2357,9 @@ fi
 
 lyrics_id="${lyrics_id:-$media_id}"
 check_code "lyrics response" "200,404" GET "$ALLSTARR_BASE/Audio/$lyrics_id/Lyrics?UserId=$best_user_id"
-direct_lyrics_code="$(curl -sS --max-time "$TIMEOUT_SECONDS" "${auth[@]}" -o /dev/null -w '%{http_code}' \
-    "$DIRECT_BASE/Audio/$lyrics_id/Lyrics?UserId=$best_user_id" || true)"
-allstarr_lyrics_code="$(curl -sS --max-time "$TIMEOUT_SECONDS" "${auth[@]}" -o /dev/null -w '%{http_code}' \
-    "$ALLSTARR_BASE/Audio/$lyrics_id/Lyrics?UserId=$best_user_id" || true)"
-direct_lyrics_code="${direct_lyrics_code:-000}"
-allstarr_lyrics_code="${allstarr_lyrics_code:-000}"
-if [[ "$direct_lyrics_code" == 200 && "$allstarr_lyrics_code" == 200 ]]; then
-    compare_structure "lyrics structure parity" \
-        "$DIRECT_BASE/Audio/$lyrics_id/Lyrics?UserId=$best_user_id" \
-        "$ALLSTARR_BASE/Audio/$lyrics_id/Lyrics?UserId=$best_user_id"
-    compare_projection "lyrics exact data" \
-        "$DIRECT_BASE/Audio/$lyrics_id/Lyrics?UserId=$best_user_id" \
-        "$ALLSTARR_BASE/Audio/$lyrics_id/Lyrics?UserId=$best_user_id" \
-        '.'
-else
-    echo "lyrics structure skipped=direct:$direct_lyrics_code allstarr:$allstarr_lyrics_code"
-fi
+check_native_lyrics_parity \
+    "$DIRECT_BASE/Audio/$lyrics_id/Lyrics?UserId=$best_user_id" \
+    "$ALLSTARR_BASE/Audio/$lyrics_id/Lyrics?UserId=$best_user_id"
 measure "direct lyrics" "$DIRECT_BASE/Audio/$lyrics_id/Lyrics?UserId=$best_user_id"
 measure "allstarr lyrics" "$ALLSTARR_BASE/Audio/$lyrics_id/Lyrics?UserId=$best_user_id"
 timing_delta "lyrics proxy delta" "direct lyrics" "allstarr lyrics"

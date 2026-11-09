@@ -16,6 +16,7 @@ from urllib.parse import parse_qs, urlsplit
 
 
 SCRIPT = Path(__file__).with_name("live_jellyfin_smoke.sh").read_text()
+RECORDED = json.loads(Path(__file__).with_name("fixtures").joinpath("jellyfin-smoke.json").read_text())
 SEARCH_PROJECT = Path(__file__).with_name("SearchContract").joinpath("SearchContract.csproj").resolve()
 
 
@@ -36,6 +37,132 @@ def audio(identifier, title="Fixture", artist="Artist", isrc=None):
 
 def envelope(items, total=None):
     return {"Items": items, "StartIndex": 0, "TotalRecordCount": len(items) if total is None else total}
+
+
+class RecordedContractTests(unittest.TestCase):
+    def external(self, item, predicate="external_audio"):
+        contract = re.search(r"^item_contract='\n(.*?)^'", SCRIPT, re.M | re.S)[1]
+        result = subprocess.run(["jq", "-e", contract + predicate], input=json.dumps(item),
+                                text=True, capture_output=True)
+        return result.returncode == 0
+
+    def detail(self):
+        return json.loads(json.dumps({**RECORDED["externalListItem"], **RECORDED["externalDetailFields"]}))
+
+    def test_list_fields_are_optional_until_requested(self):
+        self.assertTrue(self.external(RECORDED["externalListItem"], "client_item"))
+        self.assertTrue(self.external(self.detail()))
+        for field in ("MediaSources", "ProviderIds", "CanDownload"):
+            with self.subTest(field=field):
+                item = self.detail()
+                item.pop(field)
+                self.assertFalse(self.external(item))
+
+    def test_lists_using_external_audio_request_its_optional_fields(self):
+        for marker in ('external_song_id="$EXTERNAL_SONG_ID"', 'external_search_url=',
+                       'check_json "external search second page"', 'check_json "external playlist DTO IDs"'):
+            with self.subTest(marker=marker):
+                url = re.search(r'"(\$ALLSTARR_BASE/[^"\n]+)"', SCRIPT[SCRIPT.index(marker):])[1]
+                fields = parse_qs(urlsplit(url).query).get("Fields", [""])[0].split(",")
+                self.assertTrue({"MediaSources", "ProviderIds", "CanDownload"}.issubset(fields), url)
+
+    def test_detail_allows_lyric_and_image_streams_beside_one_audio(self):
+        self.assertTrue(self.external(self.detail()))
+        for streams in ([], [{"Type": "Lyric", "Index": 0}],
+                        [{"Type": "Audio", "Index": 0, "BitRate": 320000}],
+                        [{"Type": "Audio", "Index": 0}, {"Type": "Audio", "Index": 1}],
+                        [{"Type": "Audio", "Index": 0}, {"Type": "Video", "Index": 1}]):
+            with self.subTest(streams=streams):
+                item = self.detail()
+                item["MediaSources"][0]["MediaStreams"] = streams
+                self.assertFalse(self.external(item))
+
+    def playlists(self, actual):
+        start = SCRIPT.index("synced_playlist_ids_json=")
+        end = SCRIPT.index('if [[ -n "$playlist_id" ]]; then\n    check_json "playlist entries music only"', start)
+        with tempfile.TemporaryDirectory() as directory:
+            Path(directory, "direct.json").write_text(json.dumps(RECORDED["directPlaylists"]))
+            Path(directory, "proxy.json").write_text(json.dumps(actual))
+            code = "\n".join([
+                "set -euo pipefail", "checks=0; failures=0; auth=(); TIMEOUT_SECONDS=2",
+                "DIRECT_BASE=direct; ALLSTARR_BASE=proxy; best_user_id=fixture; playlist_query=fixture",
+                "allstarr_playlists_file=proxy.json; direct_shape_file=expected; allstarr_shape_file=actual",
+                'curl() { local url="${!#}"; cat "${url%%/*}.json"; }',
+                function("compare_structure"), function("compare_projection"), SCRIPT[start:end],
+                'printf "RESULT %s %s\\n" "$checks" "$failures"',
+            ])
+            result = subprocess.run(["bash", "-c", code], cwd=directory, text=True, capture_output=True)
+            self.assertEqual(0, result.returncode, result.stderr)
+            return result.stdout
+
+    def test_native_playlists_allow_only_documented_synced_changes_and_virtual_extras(self):
+        self.assertIn("RESULT 3 0", self.playlists(RECORDED["allstarrPlaylists"]))
+        for index, field, value in ((0, "ChildCount", 9), (0, "Unexpected", True),
+                                    (1, "Name", "Changed"), (1, "Type", "Audio"), (1, "Id", "other"),
+                                    (1, "Nested", {"Value": "changed"}), (1, "Unexpected", True)):
+            with self.subTest(index=index, field=field):
+                actual = json.loads(json.dumps(RECORDED["allstarrPlaylists"]))
+                actual["Items"][index][field] = value
+                self.assertNotIn("RESULT 3 0", self.playlists(actual))
+        actual = json.loads(json.dumps(RECORDED["allstarrPlaylists"]))
+        actual["Items"].pop(1)
+        self.assertNotIn("RESULT 3 0", self.playlists(actual))
+
+    def lyrics(self, actual, status=200, direct_status=200):
+        with tempfile.TemporaryDirectory() as directory:
+            for name, body, code in (("direct", RECORDED["lineLyrics"], direct_status),
+                                     ("proxy", actual, status)):
+                Path(directory, name + ".json").write_text(body if isinstance(body, str) else json.dumps(body))
+                Path(directory, name + ".status").write_text(str(code))
+            code = "\n".join([
+                "set -euo pipefail", "checks=0; failures=0; auth=(); TIMEOUT_SECONDS=2",
+                "direct_shape_file=expected; allstarr_shape_file=actual",
+                'curl() { local output; while (( $# )); do case "$1" in',
+                '  -o) output="$2"; shift 2 ;;',
+                '  direct|proxy) cp "$1.json" "$output"; cat "$1.status"; return ;;',
+                '  *) shift ;; esac; done; }',
+                function("check_native_lyrics_parity"), 'check_native_lyrics_parity direct proxy',
+                'printf "RESULT %s %s\\n" "$checks" "$failures"',
+            ])
+            result = subprocess.run(["bash", "-c", code], cwd=directory, text=True, capture_output=True)
+            self.assertEqual(0, result.returncode, result.stderr)
+            return result.stdout
+
+    def test_richer_lyrics_report_difference_while_exact_lyrics_pass(self):
+        output = self.lyrics(RECORDED["wordLyrics"])
+        self.assertIn("DIFFERENCE native lyrics", output)
+        self.assertIn("RESULT 1 0", output)
+        self.assertNotIn("FAIL", output)
+        output = self.lyrics(RECORDED["lineLyrics"])
+        self.assertIn("PASS native lyrics", output)
+        self.assertNotIn("DIFFERENCE", output)
+        self.assertIn("RESULT 1 0", output)
+        output = self.lyrics(RECORDED["wordLyrics"], direct_status=404)
+        self.assertNotIn("FAIL", output)
+        self.assertNotIn("DIFFERENCE", output)
+
+    def test_missing_malformed_or_changed_lyrics_still_fail(self):
+        cases = [{}, {"Lyrics": []}, {"Lyrics": [{"Text": 5}]}, "not json"]
+        for field, value in (("Text", "Changed"), ("Start", 11000000), ("Cues", "broken"),
+                             ("Cues", [{"Position": 0, "EndPosition": 5, "Start": "bad"}]),
+                             ("Cues", [{"Position": 0, "EndPosition": 5, "Start": 20000000, "End": 10000000}])):
+            actual = json.loads(json.dumps(RECORDED["wordLyrics"]))
+            actual["Lyrics"][0][field] = value
+            cases.append(actual)
+        actual = json.loads(json.dumps(RECORDED["wordLyrics"]))
+        for line in actual["Lyrics"]:
+            line.pop("Start")
+        cases.append(actual)
+        actual = json.loads(json.dumps(RECORDED["wordLyrics"]))
+        actual["Metadata"]["IsSynced"] = "broken"
+        cases.append(actual)
+        for actual in cases:
+            with self.subTest(actual=actual):
+                self.assertIn("RESULT 1 1", self.lyrics(actual))
+        self.assertIn("RESULT 1 1", self.lyrics({}, status=404))
+        self.assertIn("RESULT 1 1", self.lyrics({}, status=500))
+        self.assertIn("RESULT 1 1", self.lyrics({}, direct_status=404))
+        self.assertIn("RESULT 0 0", self.lyrics({}, status=404, direct_status=404))
 
 
 class PlaybackIdentityTests(unittest.TestCase):
@@ -76,6 +203,17 @@ class StreamFixture(BaseHTTPRequestHandler):
         pass
 
     def do_GET(self):
+        if self.path.startswith("/artwork/"):
+            response = RECORDED["artwork"][self.path.split("/")[2]]
+            self.server.artwork_requests.append(self.headers.get("X-Emby-Token"))
+            prefix = bytes.fromhex(response["prefixHex"])
+            body = prefix + b"x" * (response["size"] - len(prefix))
+            self.send_response(response["status"])
+            self.send_header("Content-Type", response["contentType"])
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         if self.path.startswith("/native/"):
             url = urlsplit(self.path)
             query = parse_qs(url.query)
@@ -176,6 +314,26 @@ class JellyfinSmokeTests(unittest.TestCase):
         cls.server.shutdown()
         cls.server.server_close()
         cls.thread.join()
+
+    def test_virtual_artwork_is_public_and_long_route_requires_jpeg(self):
+        start = SCRIPT.index('        check_image "virtual playlist artwork"')
+        end = SCRIPT.index("    else", start)
+        for mode, expected in (("jpeg", "RESULT 3 0"), ("wrong-signature", "RESULT 3 1"),
+                               ("html", "RESULT 3 3"), ("denied", "RESULT 3 3")):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
+                self.server.artwork_requests = []
+                code = "\n".join([
+                    "set -euo pipefail", "checks=0; failures=0; TIMEOUT_SECONDS=2; response_file=body",
+                    'auth=(-H "X-Emby-Token: fixture"); best_user_id=fixture; virtual_playlist_id=allstarr-vpl-feed; virtual_art_tag=image',
+                    function("image_signature_matches"), function("check_image"), function("check_public_image"),
+                    SCRIPT[start:end], 'printf "RESULT %s %s\\n" "$checks" "$failures"',
+                ])
+                result = subprocess.run(["bash", "-c", code], cwd=directory, text=True, capture_output=True,
+                                        env={**os.environ, "ALLSTARR_BASE":
+                                             f"http://127.0.0.1:{self.server.server_port}/artwork/{mode}"})
+                self.assertEqual(0, result.returncode, result.stderr)
+                self.assertIn(expected, result.stdout)
+                self.assertEqual(["fixture", None, "fixture"], self.server.artwork_requests)
 
     def test_external_search_keeps_artist_to_disambiguate_shared_titles(self):
         for item, expected in (

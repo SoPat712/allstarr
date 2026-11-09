@@ -125,7 +125,9 @@ also verify dashboard login, session cookies, private Home data, and now-playing
 permissions (listeners must receive 403 for the operator's live-session list). Its
 temporary dashboard session is logged out independently on exit.
 
-Run `python3 tools/tests/test_live_jellyfin_smoke.py` for offline harness checks.
+Run `nice -n 19 python3 tools/tests/test_live_jellyfin_smoke.py` for offline harness checks.
+Sanitized JSON fixtures cover optional list fields, lyric media streams, synced
+playlist additions, public JPEG covers, and richer native lyrics.
 Both these checks and the live external-search check require the .NET 10 SDK,
 `bash`, `curl`, and `jq`. The package-free `SearchContract` helper builds into a
 temporary directory with NuGet sources disabled and executes the production
@@ -144,8 +146,12 @@ similar titles are not treated as evidence. The report gives the number of local
 identity checks performed. Captures and build output are deleted on exit.
 
 External audio must use `[A]` or `[A]/[E]`, while artist and album labels remain
-catalog-specific. The opt-in stream checks require audio content and the actual
-`X-Allstarr-Provider`, then verify private song-info provenance and that HEAD
+catalog-specific. Lists checked against the complete external-audio contract
+explicitly request `MediaSources`, `ProviderIds`, and `CanDownload` through
+`Fields`; ordinary list requests may omit them, as Jellyfin does. External detail
+requires exactly one Audio stream with null `BitRate`; EmbeddedImage and Lyric
+streams may accompany it. The opt-in stream checks require audio content and the
+actual `X-Allstarr-Provider`, then verify private song-info provenance and that HEAD
 does not overwrite it. They do not disable providers or change routing to force
 a live failure; deterministic gateway tests cover forced failover and isolation.
 
@@ -231,7 +237,18 @@ prints native-versus-synthesized differences that are expected and reviewed.
 The `full objects` checks compare every native field and nested/unknown value after only the
 documented identity normalization required by that route. Native collection checks request the
 same complete field set from Jellyfin and fail when Allstarr drops a field, adds a field, changes
-a value or type, or changes any nested value.
+a value or type, or changes any nested value. Native playlist lists allow virtual
+`allstarr-vpl` extras. Playlists carrying `AllstarrPlaylistKind` retain exact native
+identity, name, type, and other fields, while allowing `AllstarrPlaylistKind`,
+`AllstarrMixKind`, `AllstarrMixSection`, `AllstarrMixState`, `AllstarrMixSource`,
+`Overview`, `ChildCount`, and `RunTimeTicks` to differ for streaming songs.
+Playlists without that marker still require exact full-object parity.
+Virtual cover warm-up is public: anonymous artwork must return 200 with an image
+body, and the long JPEG route must return JPEG content and signature.
+Native lyrics still require valid, present data. Richer word cues and metadata
+produce a labelled `DIFFERENCE` when ordered line text and start times match
+Jellyfin; this records the pending behavior choice without incrementing failures.
+Missing lyrics, malformed cues, or changed lines and timing still fail.
 `BLOCKED` lines name qualification that was not performed rather than silently
 counting it as passed.
 
