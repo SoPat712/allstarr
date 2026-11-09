@@ -1,4 +1,5 @@
 <script lang="ts">
+  import AdvancedFold from "$lib/components/patterns/AdvancedFold.svelte";
   import { countLabel, countNoun } from "$lib/count-label";
   import { onMount } from "svelte";
   import { goto } from "$app/navigation";
@@ -197,7 +198,7 @@
       {#if stats.shortPlayCount}<p>{countLabel(stats.shortPlayCount, "skip or play under 30 seconds isn't counted", "skips and plays under 30 seconds aren't counted")}.</p>{/if}
     </footer>
   {/if}
-  <details class="recap-imports" aria-label="Your data"><summary><span>Bring in your history</span><span aria-hidden="true">▾</span></summary><IntelligenceHistoryImports onchanged={importsChanged} /></details>
+  <AdvancedFold placement="standalone" class="recap-imports" label="Bring in your history"><IntelligenceHistoryImports onchanged={importsChanged} /></AdvancedFold>
 </div>
 
 <style>
@@ -206,9 +207,6 @@
   .stats-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); }
   .stats-toolbar { justify-content: flex-start; }
   :global(.year-picker) { min-height: 44px; padding-inline: var(--space-3); color: var(--color-signal-text); font-size: var(--text-sm); }
-  .recap-imports { border: 1px solid var(--color-edge); border-radius: var(--radius-lg); overflow: hidden; }
-  .recap-imports > summary { display: flex; align-items: center; justify-content: space-between; min-height: 48px; padding: var(--space-3) var(--space-4); color: var(--color-signal-text); cursor: pointer; list-style: none; font-size: var(--text-sm); }
-  .recap-imports > summary::-webkit-details-marker { display: none; }
   /* A tonal top-artist tile beside six boxed numbers. */
   .recap-hero { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 2fr); gap: var(--space-3); padding: 0; border: 0; background: none; box-shadow: none; }
   .hero-artist { display: flex; align-items: center; gap: var(--space-4); min-width: 0; border-radius: var(--radius-lg); padding: var(--space-5); background: var(--color-signal-muted); color: var(--color-signal-text); }

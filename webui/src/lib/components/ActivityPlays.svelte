@@ -371,8 +371,7 @@
   .activity-plays { container-type: inline-size; display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--section-gap); min-width: 0; }
   .plays-toolbar { display: flex; flex-wrap: wrap; gap: var(--space-3); justify-content: space-between; align-items: center; }
   .plays-list { overflow: hidden; border: 1px solid var(--color-edge); border-radius: var(--radius-lg); }
-  .play-row + .play-row, .event-log-day + .event-log-day { border-top: 1px solid var(--color-edge); }
-  .event-log-day h2 { margin: 0; padding: var(--space-2) var(--space-4); color: var(--color-ink-muted); font-size: var(--text-xs); background: var(--color-panel-raised); }
+  .play-row + .play-row { border-top: 1px solid var(--color-edge); }
   .play-row :global(.item-row), .play-headings { display: grid; grid-template-columns: 36px minmax(0, 1fr) minmax(0, 1.7fr) 18px; gap: var(--space-3); }
   .play-row :global(.row-controls) { min-width: 0; width: 100%; pointer-events: none; }
   .play-columns { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, .9fr) minmax(0, 1.2fr) auto; gap: var(--space-3); align-items: center; width: 100%; color: var(--color-ink-muted); font-size: var(--text-xs); }

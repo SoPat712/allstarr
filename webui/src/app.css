@@ -1179,7 +1179,7 @@
   border: 1px solid color-mix(in srgb, var(--color-signal) 70%, white 10%);
   border-radius: var(--radius-xl);
   background: linear-gradient(145deg, color-mix(in srgb, var(--color-signal) 88%, white), var(--color-signal));
-  color: white;
+  color: var(--color-on-signal);
   box-shadow: 0 1rem 2.5rem color-mix(in srgb, var(--color-signal) 30%, transparent);
   font-family: var(--font-display);
   font-size: 2rem;
@@ -2716,11 +2716,15 @@
     gap: var(--space-3);
     border: 1px solid var(--color-edge);
     border-radius: var(--radius-md);
-    background: var(--color-panel-raised);
+    background: transparent;
     color: var(--color-ink);
     padding: 0 var(--space-3);
     font-size: var(--text-sm);
     text-align: left;
+  }
+
+  :is(.settings-row, .field) .select-trigger {
+    background: var(--color-panel-raised);
   }
 
   .select-root {
@@ -5873,23 +5877,23 @@
     color: var(--color-ink);
   }
 
-  .event-log-day {
-    display: grid;
-    gap: var(--space-2);
+  .event-log-day + .event-log-day {
+    border-top: 1px solid var(--color-edge);
   }
 
   .event-log-day > h2 {
     margin: 0;
-    padding-inline: var(--space-1);
+    border-bottom: 1px solid var(--color-edge);
+    padding: var(--space-3) var(--space-4) var(--space-2);
+    background: var(--color-panel-raised);
     color: var(--color-ink-muted);
-    font-size: var(--text-sm);
-    line-height: 1.25rem;
-    font-weight: 600;
+    font-size: .7rem;
+    font-weight: 400;
+    letter-spacing: .06em;
+    text-transform: uppercase;
   }
 
   .event-log-list {
-    overflow: hidden;
-    border-radius: var(--radius-lg);
     background: var(--color-panel);
   }
 
@@ -6029,19 +6033,6 @@
     transform: rotate(180deg);
   }
 
-  .event-children {
-    display: grid;
-    padding: 0 var(--space-5) var(--space-2) calc(var(--space-5) + 2.5rem + var(--space-4));
-  }
-
-  .event-child {
-    display: grid;
-    grid-template-columns: 2.5rem minmax(0, 1fr);
-    gap: var(--space-3);
-    border-top: 1px solid var(--color-edge);
-    padding: var(--space-3) 0;
-  }
-
   .event-art {
     width: 2.5rem;
     height: 2.5rem;
@@ -6107,16 +6098,6 @@
   .event-technical {
     min-width: 0;
     flex: 1 1 16rem;
-  }
-
-  .event-technical > summary {
-    display: inline-flex;
-    min-height: 2.25rem;
-    align-items: center;
-    color: var(--color-signal-text);
-    font-size: var(--text-sm);
-    font-weight: 500;
-    cursor: pointer;
   }
 
   .event-technical dl {
@@ -6226,10 +6207,6 @@
 
   .event-route small {
     display: none;
-  }
-
-  .event-children {
-    padding: 0 var(--space-4) var(--space-4);
   }
 
   .event-child-copy > header {
@@ -8831,7 +8808,6 @@
   .apple-checklist li > div { min-width: 0; }
   .apple-checklist li p { margin: var(--space-2) 0; color: var(--color-ink-muted); font-size: var(--text-sm); }
   .apple-checklist li > [data-slot=button] { flex: none; }
-  .source-advanced-settings > summary { padding: var(--space-5) var(--space-6); cursor: pointer; min-height: 44px; font-weight: 600; }
   .apple-advanced > summary { cursor: pointer; min-height: 44px; display: flex; align-items: center; font-weight: 600; }
   .apple-advanced { border-top: 1px solid var(--color-edge); padding-top: var(--space-2); }
   @media (max-width: 649px) { .apple-checklist li { align-items: stretch; flex-direction: column; } }

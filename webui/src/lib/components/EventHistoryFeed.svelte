@@ -347,7 +347,7 @@
       </div>
       <RefreshButton class="event-log-refresh" disabled={loadingEarlier} onrefresh={() => load("refresh")} />
     </div>
-    <AdvancedFold class="event-more-filters" label={`More filters${providerFilter || showBackground || ["sources", "system"].includes(category) ? " · active" : ""}`}>
+    <AdvancedFold placement="standalone" class="event-more-filters" label={`More filters${providerFilter || showBackground || ["sources", "system"].includes(category) ? " · active" : ""}`}>
       <div class="more-filter-fields">
         {#if administrator}<label class="background-option"><span>Background work</span><Switch checked={showBackground} aria-label="Background work" onchange={(event) => showBackground = event.currentTarget.checked} /></label>{/if}
         <SelectField bind:value={providerFilter} label="Source" options={[
@@ -433,14 +433,13 @@
                         <div class="event-child-actions">
                           {#if action}<Button variant="secondary" size="sm" href={action.href}>{action.label}</Button>{/if}
                           {#if details.length}
-                            <details class="event-technical">
-                              <summary>Technical details</summary>
+                            <AdvancedFold placement="flush" class="event-technical" label="Technical details">
                               <dl>
                                 {#each details as [name, value]}
                                   <div><dt>{humanize(name)}</dt><dd>{value}</dd></div>
                                 {/each}
                               </dl>
-                            </details>
+                            </AdvancedFold>
                           {/if}
                         </div>
                       {/if}
@@ -457,36 +456,33 @@
   .event-log-panel { min-width: 0; grid-template-columns: minmax(0, 1fr); gap: 0; container-type: inline-size; }
   .event-log-toolbar { display: grid; grid-template-columns: minmax(0, 1fr) minmax(160px, 220px) auto; align-items: center; gap: var(--space-2); margin-block: var(--space-4) var(--space-1); }
   .event-log-search { min-width: 0; order: 2; }
-  .event-log-chip-row { min-width: 0; overflow-x: auto; order: 1; }
-  .event-log-chip-row :global(.filter-segments) { width: max-content; min-width: 100%; max-width: none; flex-wrap: nowrap; }
+  .event-log-chip-row { min-width: 0; order: 1; }
+  .event-log-chip-row :global(.filter-segments) { width: 100%; flex-wrap: nowrap; overflow-x: auto; }
   .event-log-toolbar :global(.event-log-refresh) { order: 3; }
   :global(.event-more-filters) { margin-bottom: var(--space-2); }
   .more-filter-fields { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-4); padding: var(--space-3) var(--space-4); }
   .background-option { display: flex; align-items: center; gap: var(--space-3); min-height: 44px; }
   .history-days { overflow: hidden; border: 1px solid var(--color-edge); border-radius: var(--radius-lg); }
   .history-days:has(> :global(.empty-state)) { border-style: dashed; }
-  .event-log-day + .event-log-day { border-top: 1px solid var(--color-edge); }
-  .event-log-day { display: block; }
-  .event-log-day h2 { padding: var(--space-3) var(--space-4) var(--space-2); margin: 0; background: var(--color-panel-raised); color: var(--color-ink-muted); font-size: .7rem; font-weight: 400; letter-spacing: .06em; text-transform: uppercase; border-bottom: 1px solid var(--color-edge); }
-  .event-log-list { overflow: hidden; border-radius: 0; }
   .event-log-group { border: 0; border-bottom: 1px solid var(--color-edge); }
   .event-log-group + .event-log-group { border-top: 0; }
   .event-log-group:last-child { border-bottom: 0; }
   .event-log-group.streaming :global(.item-row) { animation: event-stream-arrive 600ms ease-out; }
   @media (prefers-reduced-motion: reduce) { .event-log-group.streaming :global(.item-row) { animation: none; } }
   .event-log-group time { white-space: nowrap; color: var(--color-ink-muted); font-size: var(--text-xs); font-variant-numeric: tabular-nums; }
-  .event-children { display: grid; gap: var(--space-3); }
-  .event-child { display: flex; gap: var(--space-3); padding: var(--space-3) 0; border-bottom: 1px solid var(--color-edge); }
+  .event-children { display: grid; }
+  .event-child { display: flex; gap: var(--space-3); padding: var(--space-3) 0; }
+  .event-child:first-child { padding-top: 0; }
+  .event-child + .event-child { border-top: 1px solid var(--color-edge); }
   .event-child-copy { min-width: 0; flex: 1; overflow-wrap: anywhere; }
   .event-child-copy header { display: grid; gap: var(--space-1); }
   .event-child-copy strong { font-size: var(--text-sm); }
   .event-child-copy p, .event-child-copy time, .event-child-meta { color: var(--color-ink-muted); font-size: var(--text-xs); line-height: 1.5; }
   .event-child-meta, .event-child-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; margin-top: var(--space-2); }
-  .event-technical { width: 100%; } .event-technical dd { margin: 0; overflow-wrap: anywhere; font-size: var(--text-xs); }
+  :global(.event-technical) { width: 100%; } :global(.event-technical) dd { margin: 0; overflow-wrap: anywhere; font-size: var(--text-xs); }
   .event-child :global(.event-art) { width: 36px; height: 36px; flex: none; }
   .event-log-pagination { display: flex; justify-content: center; padding-block: var(--space-4); }
 
-  .event-technical > summary { min-height: var(--control-md); display: flex; align-items: center; }
   @container (max-width: 800px) {
     .event-log-toolbar { grid-template-columns: minmax(0, 1fr) auto; }
     .event-log-search { grid-column: 1; order: 1; }

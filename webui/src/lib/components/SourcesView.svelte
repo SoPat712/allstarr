@@ -1,4 +1,5 @@
 <script lang="ts">
+  import AdvancedFold from "$lib/components/patterns/AdvancedFold.svelte";
   import { countLabel } from "$lib/count-label";
   import PageStatus from "$lib/components/patterns/PageStatus.svelte";
   import FilterSegments from "$lib/components/patterns/FilterSegments.svelte";
@@ -897,11 +898,11 @@
           <form class="settings-card source-configuration-form" aria-label={`${source.name} settings`} onsubmit={event => { event.preventDefault(); if (document.activeElement instanceof HTMLInputElement) document.activeElement.blur(); }}>
             <header><div><h3>Server settings</h3><small>Shared by everyone. Changes save as you make them.</small></div></header>
             {#if source.id === "apple-musickit"}
-              <details class="source-advanced-settings"><summary>Advanced server settings</summary>{@render serverFields(source, source.configSchema ?? [])}</details>
+              <AdvancedFold label="Advanced server settings">{@render serverFields(source, source.configSchema ?? [])}</AdvancedFold>
             {:else}
               {@const fields = sourceServerFields(source)}
               {@render serverFields(source, fields.standard)}
-              {#if fields.advanced.length}<details class="source-advanced-settings"><summary>Advanced</summary>{@render serverFields(source, fields.advanced)}</details>{/if}
+              {#if fields.advanced.length}<AdvancedFold>{@render serverFields(source, fields.advanced)}</AdvancedFold>{/if}
             {/if}
 
           </form>
@@ -982,14 +983,14 @@
             {/if}
             {#if panelAccount.canChangeAudience}<Button variant="text" onclick={() => manageAccess(panelAccount)}>Edit access</Button>{/if}
             {#if panelAccount.providerId === "spotify" && panelAccount.scope === "Personal" && panelAccount.enabled && panelAccount.ownerUserId === currentUserId}<Button variant="outline" href={`#/library/import?account=${encodeURIComponent(panelAccount.id)}`}>Move your Spotify collection</Button>{/if}
-            {#if pageSource}<details class="source-more" open><summary>Settings and tests</summary>{@render servicePage(pageSource)}</details>{/if}
+            {#if pageSource}<AdvancedFold placement="flush" class="source-more" label="Settings and tests" open>{@render servicePage(pageSource)}</AdvancedFold>{/if}
           {:else if pageSource}
             <div class="source-summary" data-tone={sourceTone(pageSource)} role="status"><StatePill tone={sourceTone(pageSource)} text={sourceLabel(pageSource)} /><p>{sourceFact(pageSource)}</p>{#if needsSetup.includes(pageSource)}<p>{providerHealth(pageSource.id).some(check => !check.canAttempt && check.enabled && check.supported) ? "Playback skips this source while it is paused. Other sources can still play." : "Playback can use other available sources. Open the latest checks for the next step."}</p>{/if}</div>
             {#if administrator}
               {#key pageSource.id}{#await import("$lib/components/SourceHealthHistory.svelte") then { default: SourceHealthHistory }}<SourceHealthHistory checksSupported={sourceHasChecks(pageSource, providerHealth(pageSource.id))} providerId={pageSource.id} statuses={providerHealth(pageSource.id)} automatic={pageSource.useMode !== "manualOnly" && pageSource.useMode !== "off"} refreshKey={JSON.stringify(providerHealth(pageSource.id))} onRetryWindow={refresh}>{#snippet afterStrip()}{@render sourceUseAndFacts(pageSource!)}{/snippet}</SourceHealthHistory>{/await}{/key}
             {:else}{@render sourceUseAndFacts(pageSource)}{/if}
 
-            <details class="source-more" bind:open={moreOpen}><summary>Settings, accounts and tests</summary>{@render servicePage(pageSource)}</details>
+            <AdvancedFold placement="flush" class="source-more" label="Settings, accounts and tests" bind:open={moreOpen}>{@render servicePage(pageSource)}</AdvancedFold>
           {:else}<EmptyState title="This source isn't available" description="It may have been removed or turned off." />{#if administrator}{#await import("$lib/components/ExtensionsView.svelte") then { default: ExtensionsView }}<ExtensionsView view="package" extensionId={pageId} onchanged={refreshAndFollow} />{/await}{/if}{/if}
         </div>
         {#snippet footer()}
@@ -1067,14 +1068,15 @@
   .source-summary p { margin: 0; font-size: var(--text-sm); color: var(--color-ink-muted); }
   .source-facts { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr); gap: var(--space-3); margin: 0; font-size: var(--text-sm); }
   .source-facts dt { color: var(--color-ink-muted); }.source-facts dd { margin: 0; overflow-wrap: anywhere; }
-  .source-more summary { min-height: 44px; padding-block: var(--space-3); cursor: pointer; font-size: var(--text-sm); }
   .source-setting-undo { display: flex; width: 100%; min-width: 0; align-items: center; justify-content: space-between; gap: var(--space-2); font-size: var(--text-sm); }
   .source-setting-undo span { overflow-wrap: anywhere; }
   .source-panel-footer { display: flex; width: 100%; gap: var(--space-2); justify-content: flex-end; flex-wrap: wrap; }
   .source-panel-footer :global(.source-remove) { margin-right: auto; color: var(--danger); }
   .account-send-setting { display: flex; gap: var(--space-3); align-items: center; justify-content: space-between; }
   .account-send-setting strong, .account-send-setting small { display: block; font-size: var(--text-sm); }.account-send-setting small { color: var(--color-ink-muted); }
-  .service-advanced { padding: 0; min-width: 0; display: grid; gap: var(--space-3); }
+  .service-advanced { padding: var(--space-3) 0 0; min-width: 0; display: grid; gap: var(--space-3); }
+  /* Each card in a service's settings is outlined like its server settings, so card padding never reads as a stray indent. */
+  .service-advanced > :global(.settings-card) { border: 1px solid var(--color-edge); border-radius: var(--radius-md); }
   .service-description { margin: 0; font-size: var(--text-sm); color: var(--color-ink-muted); }
   .source-panel-content :global(.settings-row), .source-panel-content :global(.service-check) { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); }
   .source-panel-content :global(.settings-card) { min-width: 0; }
@@ -1090,7 +1092,7 @@
     .source-toolbar :global(.search-field input) { width: 100%; min-width: 0; }
   }
   @media (max-width: 650px) {
-    .sources-heading-actions { display: grid; width: 100%; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .sources-heading-actions { display: grid; width: 100%; grid-template-columns: auto minmax(0, 1fr); }
     .sources-heading-actions :global([data-slot="button"]) { width: 100%; white-space: normal; }
     .sources-heading-actions :global(button), .service-advanced :global(button), .service-advanced :global([data-slot="button"]) { min-height: 44px; }
   }

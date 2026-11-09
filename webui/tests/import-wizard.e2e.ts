@@ -239,6 +239,11 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     await page.addInitScript(value => localStorage.setItem("allstarr.theme", value), theme);
     const fixture = await mockImport(page);
     await discover(page);
+    const collections = page.locator(".import-collection-details");
+    await expect(collections).toHaveAttribute("data-placement", "standalone");
+    expect(await collections.evaluate(element => { const style = getComputedStyle(element); return [style.borderLeftWidth, style.borderRadius]; })).toEqual(["1px", "14px"]);
+    await page.waitForTimeout(350);
+    await collections.screenshot({ path: test.info().outputPath(`01-import-fold-${width}-${theme}.png`) });
     await expect(page.getByRole("checkbox", { name: /^Select / }).first()).toHaveAccessibleName("Select Liked Songs");
     await page.getByRole("button", { name: "Show more playlists", exact: true }).click();
     await expect(page.getByRole("checkbox", { name: "Select Weekend", exact: true })).toBeVisible();

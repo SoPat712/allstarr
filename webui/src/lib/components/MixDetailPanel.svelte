@@ -142,11 +142,11 @@
     <div class="mix-summary">
       <PageStatus items={detail.mix.evidence ? [{ label: `${detail.mix.evidence.fromMusic} from your library` }, { label: `${detail.mix.evidence.fromServices} from services when made` }] : [{ label: `${countLabel(detail.songs.length, "song")} picked for you` }]} />
       {#if detail.mix.evidence}<p>{detail.mix.evidence.recipe.sentence}</p>{/if}
-      <div class="apps-row"><label for="mix-show-apps"><strong>Show in my apps</strong><small id="mix-apps-description">Appears as a playlist in your music apps</small></label><Switch id="mix-show-apps" aria-label="Show in my apps" aria-describedby="mix-apps-description" bind:checked={appsChecked} disabled={busy || !detail.mix.inApps && !detail.mix.appsAllowed} onchange={event => void showInApps(event.currentTarget.checked)} /></div><div class="added-state">{#if detail.mix.inApps}<span>✓ In your apps</span><a href="#/library/playlists">Manage in Playlists</a>{/if}</div>
+      <div class="apps-row"><label for="mix-show-apps"><strong>Show in my apps</strong>{#if detail.mix.inApps}<small id="mix-apps-description" class="added-state"><span>✓ In your apps</span><a class="touch-target" href="#/library/playlists">Manage in Playlists</a></small>{:else}<small id="mix-apps-description">Appears as a playlist in your music apps</small>{/if}</label><Switch id="mix-show-apps" aria-label="Show in my apps" aria-describedby="mix-apps-description" bind:checked={appsChecked} disabled={busy || !detail.mix.inApps && !detail.mix.appsAllowed} onchange={event => void showInApps(event.currentTarget.checked)} /></div>
       {#if !detail.mix.appsAllowed}<p class="muted">Your admin hasn't allowed adding mixes.</p>{/if}
     </div>
         {#if detail.mix.evidence}
-          <AdvancedFold class="recipe" label="How this mix is made">
+          <AdvancedFold placement="flush" class="recipe" label="How this mix is made">
             {@const evidence = detail.mix.evidence}
             <div class="recipe-copy">
               <p>{evidence.recipe.sentence}</p>
@@ -182,14 +182,15 @@
   .apps-row label { cursor: pointer; }
   .apps-row strong, .apps-row small { display: block; font-size: var(--text-sm); }
   .apps-row small { color: var(--color-ink-muted); }
-  .added-state { display: flex; min-height: 44px; flex-wrap: wrap; align-items: center; gap: var(--space-3); font-size: var(--text-xs); }
+  /* Being in your apps replaces the description on the same line, so switching never moves the songs below. */
+  .apps-row .added-state { display: flex; flex-wrap: wrap; gap: var(--space-3); }
   .added-state > span { color: var(--success); }
-  .added-state a { display: inline-flex; min-height: 44px; align-items: center; }
   .mix-footer { display: flex; width: 100%; justify-content: space-between; align-items: center; gap: var(--space-3); }
   .songs-heading { display: flex; justify-content: space-between; align-items: center; margin-top: var(--space-5); margin-bottom: var(--space-2); font-size: var(--text-xs); color: var(--color-ink-muted); }
   h3 { font-weight: 600; text-transform: uppercase; letter-spacing: .05em; }
-  :global(.recipe) { margin-top: var(--space-3); }
-  .recipe-copy { font-variant-numeric: tabular-nums; overflow-wrap: anywhere; padding: 0 var(--space-4) var(--space-3); }
+  /* The fold shares the divider under the apps switch. */
+  :global(.recipe) { margin-top: -1px; }
+  .recipe-copy { font-variant-numeric: tabular-nums; overflow-wrap: anywhere; padding-bottom: var(--space-3); }
   .recipe-copy p { margin-block: var(--space-2); }
   .explanation { display: grid; justify-items: start; gap: var(--space-3); margin-top: var(--space-3); }
   @media (max-width: 360px) { .mix-footer { gap: var(--space-2); } .mix-footer :global([data-slot="button"]) { padding-inline: var(--space-2); } }

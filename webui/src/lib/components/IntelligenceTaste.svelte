@@ -104,7 +104,7 @@
       {/key}
       <footer><Button variant="text" class="reset-taste" disabled={action} onclick={() => { clearNudges = false; resetError = ""; resetOpen = true; }}>Reset taste</Button></footer>
     </section>
-    <AdvancedFold label="See the details" class="taste-details"><div class="taste-layers">{#each layers as layer}<section><h3>{layer.title}</h3>{#each [{ title: "Styles", rows: layer.data.tags }, { title: "Artists", rows: layer.data.artists }] as group}<h4>{group.title}</h4>{#each group.rows.slice(0, 5) as row}<div class="taste-strength"><strong>{row.name}</strong><Progress value={Math.max(0, Math.min(100, row.strength))} aria-label={`${row.name} strength`} /></div>{/each}{#if !group.rows.length}<p>No {group.title.toLowerCase()} yet.</p>{/if}{/each}</section>{/each}</div></AdvancedFold>
+    <AdvancedFold placement="standalone" label="See the details" class="taste-details"><div class="taste-layers">{#each layers as layer}<section><h3>{layer.title}</h3>{#each [{ title: "Styles", rows: layer.data.tags }, { title: "Artists", rows: layer.data.artists }] as group}<h4>{group.title}</h4>{#each group.rows.slice(0, 5) as row}<div class="taste-strength"><strong>{row.name}</strong><Progress value={Math.max(0, Math.min(100, row.strength))} aria-label={`${row.name} strength`} /></div>{/each}{#if !group.rows.length}<p>No {group.title.toLowerCase()} yet.</p>{/if}{/each}</section>{/each}</div></AdvancedFold>
   {/if}
 </div>
 <ConfirmDialog bind:open={resetOpen} title="Reset taste" description="Start learning your taste again from new plays and skips?" confirmLabel="Reset taste" disabled={action} closeOnConfirm={false} error={resetError} onConfirm={() => update(() => taste.reset(clearNudges), true)}><label class="reset-nudges"><span class="settings-toggle"><Checkbox bind:checked={clearNudges} disabled={action} aria-label="Also remove my nudges" /></span><span>Also remove my nudges</span></label></ConfirmDialog>
@@ -122,7 +122,7 @@
   ul { list-style: none; padding: 0; margin: var(--space-3) 0 0; } li { display: flex; justify-content: space-between; align-items: center; gap: var(--space-3); min-height: 44px; } li + li { border-top: 1px solid var(--color-edge); } li span { overflow-wrap: anywhere; min-width: 0; }
   .taste-settings :global(.settings-row) { grid-template-columns: minmax(0, 1fr) auto; }
   .taste-settings :global(.reset-taste) { color: var(--danger); }
-  .taste-layers { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-6); }
+  .taste-layers { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-6); padding: 0 var(--space-4) var(--space-4); }
   .taste-strength { display: grid; gap: var(--space-2); margin-block: var(--space-3); } .taste-strength strong { font-size: var(--text-sm); }
   .reset-nudges { display: flex; align-items: center; gap: var(--space-2); min-height: 44px; margin-top: var(--space-4); }
   .settings-toggle :global([data-slot="checkbox"]) { box-sizing: border-box; width: 44px; height: 44px; padding: 0; margin: 0; border: 0; background: transparent; outline: 0; }

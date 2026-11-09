@@ -7,6 +7,6 @@ export function storageSegments(cached: number | null, kept: number | null, maxi
     { label: "Cached songs (MB)", value: mib(cached), tone: "info" },
     { label: "Kept songs (MB)", value: mib(kept), tone: "good" },
     ...(database === null ? [] : [{ label: "Database (MB)", value: mib(database), tone: "warn" as const }]),
-    { label: "Cache room left (MB)", value: mib(Math.max(0, maximum - cached)), tone: "neutral" },
+    { label: "Cache room left (MB)", value: mib(Math.max(0, maximum - cached)), tone: "empty" },
   ];
 }

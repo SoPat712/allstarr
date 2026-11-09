@@ -365,7 +365,7 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
   const search = page.getByRole("searchbox", { name: "Search", exact: true });
   await expect(search).toBeVisible();
   if (width === 390) {
-    const bar = page.locator(".event-log-chip-row");
+    const bar = page.locator(".event-log-chip-row .filter-segments");
     const geometry = await bar.evaluate(element => {
       const rect = element.getBoundingClientRect();
       return { width: element.clientWidth, content: element.scrollWidth, top: rect.top,

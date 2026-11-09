@@ -336,7 +336,7 @@
   .downloads-search-sort { display: flex; flex: 1 1 360px; min-width: 0; align-items: center; gap: var(--space-2); }
   .downloads-search-sort :global(.search-field) { flex: 1 1 0; min-width: 0; }
   .downloads-search-sort :global(.select-root) { flex: 0 0 auto; }
-  .downloads-search-sort :global(.select-trigger) { width: auto; gap: var(--space-2); padding-inline: var(--space-2); background: var(--color-panel); color: var(--color-ink); font-size: .8125rem; white-space: nowrap; }
+  .downloads-search-sort :global(.select-trigger) { width: auto; gap: var(--space-2); padding-inline: var(--space-2); font-size: .8125rem; white-space: nowrap; }
   .downloads-table-scroll { container: downloads / inline-size; min-width: 0; }
   .copies-row[hidden] { display: none; }
   .copies-row > td { border-bottom: 1px solid var(--color-edge); padding: var(--space-3); background: var(--color-panel-raised); }

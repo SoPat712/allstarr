@@ -391,7 +391,7 @@
                 <div class="import-setting"><div><label for="import-local-only"><strong>Only songs I can play from my library</strong></label><small id="import-local-only-detail">Local-only collection imports are not available yet.</small></div><Switch id="import-local-only" aria-label="Only songs I can play from my library" aria-describedby="import-local-only-detail" checked={false} disabled /></div>
                 <div class="import-setting"><div><label for="import-make-playlists"><strong>Make playlists in {backend}</strong></label><small id="import-playlists-detail">{makePlaylists ? "Each imported playlist appears in your apps" : "Imported playlists stay in Allstarr"}</small></div><Switch id="import-make-playlists" aria-label={`Make playlists in ${backend}`} aria-describedby="import-playlists-detail" bind:checked={makePlaylists} disabled={busy} /></div>
               </div>
-              <AdvancedFold class="import-collection-details" label="Choose individual collections">
+              <AdvancedFold placement="standalone" class="import-collection-details" label="Choose individual collections">
                 <div class="import-actions"><Button variant="text" disabled={busy} onclick={() => selected = Object.fromEntries(choices.map(item => [item.sourceId, true]))}>Select all</Button><Button variant="text" disabled={busy} onclick={() => selected = {}}>Clear</Button></div>
                 {#each choices as item (item.sourceId)}
                   <div class="import-choice">
@@ -522,6 +522,7 @@
 
 <style>
   :global(.import-collection-details) > :not(summary) { margin-inline: var(--space-4); }
+  :global(.import-collection-details) > :last-child:not(summary) { margin-bottom: var(--space-2); }
   .import-heading, .import-section > header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--space-3); }
   .import-heading h2 { margin: 0; font-size: 1.5rem; font-weight: 600; }
   .import-section { min-width: 0; }

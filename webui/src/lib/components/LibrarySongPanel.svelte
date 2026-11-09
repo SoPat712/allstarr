@@ -56,7 +56,7 @@
       {#if file.lastPlayedAt}<dt>Last played</dt><dd><time datetime={file.lastPlayedAt}>{formatLocalDateTime(file.lastPlayedAt)}</time></dd>{/if}
     </dl>
     <SongPlaylistMembership {file} {open} />
-    <AdvancedFold><dl>
+    <AdvancedFold placement="flush"><dl class="fold-facts">
       <dt>Artist</dt><dd>{file.artist || "Unknown artist"}</dd><dt>Album</dt><dd>{file.album || "Unknown album"}</dd>
       <dt>Duration</dt><dd>{formatDuration(file.durationMilliseconds)}</dd>
       {#if file.externalId}<dt>Source ID</dt><dd class="file-value">{file.externalId}</dd>{/if}
@@ -90,4 +90,5 @@
   .source-name { display: inline-flex; align-items: center; gap: var(--space-2); }
   .source-name :global(.provider-mark) { width: var(--space-4); height: var(--space-4); }
   .file-value { font-size: var(--text-xs); }
+  .fold-facts { margin-top: var(--space-3); }
 </style>

@@ -250,7 +250,7 @@
     {#if !detail && detailBusy}<p role="status">Loading attempts…</p>{/if}
     {@render attemptTimeline(groups.slice(0, 4))}
     {#if groups.length > 4}
-      <details><summary>{countLabel(groups.slice(4).reduce((count, group) => count + group.length, 0), "earlier attempt")}</summary>{@render attemptTimeline(groups.slice(4))}</details>
+      <AdvancedFold placement="flush" label={countLabel(groups.slice(4).reduce((count, group) => count + group.length, 0), "earlier attempt")}>{@render attemptTimeline(groups.slice(4))}</AdvancedFold>
     {/if}
     {#if detail && !groups.length}<p>No retained attempts. {countLabel(job.attemptCount ?? 0, "attempt is", "attempts are")} recorded on this job.</p>{/if}
     {#if detail?.hasMore}<Button variant="secondary" disabled={detailBusy} onclick={() => void attempts(job, true)}>Load earlier attempts</Button>{/if}
@@ -293,13 +293,13 @@
     <SelectField label="Job type" bind:value={typeFilter} options={[{ value: "", label: "All work" }, ...Object.entries(jobNames).map(([value, label]) => ({ value, label }))]} />
     <RefreshButton bind:ref={refreshButton} onrefresh={() => load()} label="Refresh jobs" />
   </div>
-  <AdvancedFold class="extra-filters" label={`More filters${stateFilter ? " · " + jobState(stateFilter) : ""}`}><SelectField label="Job state" bind:value={stateFilter} options={[{ value: "", label: "All states" }, ...stateOptions]} /></AdvancedFold>
+  <AdvancedFold placement="standalone" label={`More filters${stateFilter ? " · " + jobState(stateFilter) : ""}`}><div class="more-filter-fields"><SelectField label="Job state" bind:value={stateFilter} options={[{ value: "", label: "All states" }, ...stateOptions]} /></div></AdvancedFold>
   {#if linkedLoading}<p role="status">Opening related work…</p>{/if}
   {#if linkedError}<ErrorState title={linkedError} onretry={() => openLinkedJob(initialJobId)} />{/if}
   {#if linkedJob}
-    <section class="event-log-day" aria-label="Selected operation">
+    <div class="job-days"><section class="event-log-day" aria-label="Selected operation">
       <h2>Selected operation</h2><div class="event-log-list">{@render jobRow([linkedJob])}</div>
-    </section>
+    </section></div>
   {/if}
   {#if loading}
     <RowsSkeleton label="Loading jobs" />
@@ -308,6 +308,7 @@
   {:else}
     {#if error}<p class="notice-error" role="alert">{error} <Button variant="secondary" onclick={() => void load()}>Retry jobs</Button></p>{/if}
     <p class="sr-only" role="status" aria-live="polite">{queue.length} queued and {countLabel(finished.length, "finished job")} loaded.</p>
+    {#if visibleQueue.length || days.length}<div class="job-days">
     {#if visibleQueue.length}
       <section class="event-log-day" aria-label="Running and waiting">
         <h2>Running and waiting</h2>
@@ -320,6 +321,7 @@
         <div class="event-log-list">{#each day.rows as runs (runs[0].id)}{@render jobRow(runs)}{/each}</div>
       </section>
     {/each}
+    </div>{/if}
     {#if !visibleQueue.length && !days.length && !linkedJob && !linkedLoading && !linkedError}
       <EmptyState title={stateFilter || typeFilter || filter !== "all" ? "No jobs match these filters" : "No background work yet"} description="Running, waiting and finished work appears here automatically.">{#snippet icon()}<ActivityIcon kind="job" />{/snippet}</EmptyState>
     {/if}
@@ -357,7 +359,7 @@
         </GroupedRow>
       {/if}
       {@render attemptHistory(selectedJob)}
-      <details class="event-technical"><summary>Technical details</summary><dl><div><dt>Job reference</dt><dd>{selectedJob.id}</dd></div><div><dt>Operation</dt><dd>{selectedJob.type}</dd></div>{#if selectedJob.lastErrorCode}<div><dt>Reason code</dt><dd>{selectedJob.lastErrorCode}</dd></div>{/if}{#each Object.entries(selectedJob.technicalDetails ?? {}) as [name, value]}<div><dt>{name}</dt><dd>{value}</dd></div>{/each}</dl></details>
+      <AdvancedFold placement="flush" class="event-technical" label="Technical details"><dl><div><dt>Job reference</dt><dd>{selectedJob.id}</dd></div><div><dt>Operation</dt><dd>{selectedJob.type}</dd></div>{#if selectedJob.lastErrorCode}<div><dt>Reason code</dt><dd>{selectedJob.lastErrorCode}</dd></div>{/if}{#each Object.entries(selectedJob.technicalDetails ?? {}) as [name, value]}<div><dt>{name}</dt><dd>{value}</dd></div>{/each}</dl></AdvancedFold>
     </div>
     {#snippet footer()}<div class="job-panel-footer">{#if selectedJob.canCancel && !selectedJob.cancellationRequestedAt && queueStates.includes(selectedJob.state)}<Button variant="text" size="sm" class="cancel-job" onclick={() => { cancelJob = selectedJob; cancelError = ""; cancelOpen = true; }}>Cancel job…</Button>{/if}<Button variant="text" href="#/activity?view=history">Open in History</Button>{#if internalActivityLink(selectedJob.actionHref)}<Button href={selectedJob.actionHref!}>{selectedJob.actionLabel || "Open related work"}</Button>{/if}</div>{/snippet}
   </SidePanel>
@@ -369,6 +371,7 @@
   .activity-work { container-type: inline-size; display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--section-gap); margin-bottom: var(--section-gap); min-width: 0; }
   p { margin: 0; color: var(--md-sys-color-on-surface-variant); font-size: .8125rem; line-height: 1.5; overflow-wrap: anywhere; }
   .job-toolbar { display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: center; }
+  .job-days { overflow: hidden; border: 1px solid var(--color-edge); border-radius: var(--radius-lg); }
   .job-row + .job-row { border-top: 1px solid var(--color-edge); }
   .job-row time { color: var(--color-ink-muted); font-size: var(--text-xs); white-space: nowrap; font-variant-numeric: tabular-nums; }
   .job-panel { display: grid; gap: var(--space-4); }
@@ -378,8 +381,7 @@
   .job-panel-footer { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: var(--space-3); }
   :global(.cancel-job) { color: var(--danger); }
   .waiting-note { border-radius: var(--radius-md); padding: var(--space-3); background: var(--md-sys-color-primary-container); color: var(--md-sys-color-on-primary-container); }
-  .event-technical summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; }
-  :global(.extra-filters) :global(.field) { max-width: 20rem; margin: var(--space-3) var(--space-4); }
+  .more-filter-fields { display: flex; padding: var(--space-3) var(--space-4); }
   .job-row-progress { display: grid; gap: var(--space-1); padding: var(--space-2) var(--space-4); }
   .job-row-progress small { color: var(--color-ink-muted); font-size: var(--text-xs); }
   .job-attempts { display: grid; gap: var(--space-3); }
@@ -398,7 +400,6 @@
   .attempt-timeline li + li { border-top: 1px solid var(--color-edge); }
   .attempt-timeline li > div { min-width: 0; }
   .job-attempts h3 { font-size: var(--text-sm); margin: 0; }
-  .job-attempts summary { display: flex; min-height: 44px; align-items: center; color: var(--color-signal); cursor: pointer; }
   .job-attempts strong { font-size: var(--text-sm); }
   .activity-pagination { display: flex; justify-content: center; }
   @container (max-width: 650px) { .job-toolbar { display: flex; flex-wrap: wrap; } .job-row :global(.row-controls time) { display: none; } }

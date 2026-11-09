@@ -21,7 +21,7 @@
   {#if status}<p class="settings-impact" role="status">{status.pending ? "Verifying saved files. Follow progress in Activity." : status.needsReview ? "Some saved files need review. Restore the original bytes at their existing paths, then verify again." : status.verifiedAt ? "Saved files verified." : "No copied-folder verification is pending."} {status.files} owned files.</p>{/if}
   {#if message}<p class="settings-impact" role="status">{message}</p>{/if}
   {#if error}<p role="alert" class="notice-error">{error}</p>{/if}
-  <footer><Button variant="secondary" disabled={busy || status?.pending || !status?.available} onclick={() => void verify()}>{busy ? "Queuing…" : "Verify saved files"}</Button><a class="button secondary" href="#/activity">Open Activity</a>{#if error}<Button variant="secondary" onclick={() => void load()}>Try again</Button>{/if}</footer>
+  <footer><Button variant="secondary" disabled={busy || status?.pending || !status?.available} onclick={() => void verify()}>{busy ? "Queuing…" : "Verify saved files"}</Button><Button variant="secondary" href="#/activity">Open Activity</Button>{#if error}<Button variant="secondary" onclick={() => void load()}>Try again</Button>{/if}</footer>
 </article>
 
 <style>

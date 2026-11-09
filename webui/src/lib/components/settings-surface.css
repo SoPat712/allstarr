@@ -1,14 +1,12 @@
 .settings-surface .settings-content { max-width: none; gap: var(--space-4); }
 .settings-surface .settings-card { border: 1px solid var(--color-edge); border-radius: var(--radius-list); }
 .settings-surface .settings-card > header { padding: var(--space-3) var(--space-4); }
-.settings-surface .settings-card > header + .settings-fields > .settings-row:first-child { border-top: 1px solid var(--color-edge); }
+.settings-surface .settings-card > header + :is(.settings-row, .settings-fields, form) { border-top: 1px solid var(--color-edge); }
 .settings-surface .settings-card .settings-fields { gap: 0; }
 .settings-surface .settings-card > header h3 { font-size: var(--text-sm); }
 .settings-surface .settings-card .settings-row { padding: var(--space-3) var(--space-4); grid-template-columns: minmax(0, 1fr) minmax(10rem, 17rem); gap: var(--space-3); }
 .settings-surface .settings-toggle { display: flex; min-height: 44px; justify-content: end; align-items: center; }
 .settings-surface .settings-row output { text-align: right; }
-/* An Advanced fold on its own is a card, with the same edge and corners; inside a card it is the card's last row. */
-.settings-surface .settings-fold:not(.settings-card .settings-fold, .settings-fold .settings-fold) { border: 1px solid var(--color-edge); border-radius: var(--radius-list); }
 .settings-card .settings-fold, .settings-card .settings-fields > .settings-fold { border: 0; border-top: 1px solid var(--color-edge); border-radius: 0; }
 .settings-fold .settings-fold { border-inline: 0; border-bottom: 0; border-radius: 0; }
 .settings-fold :is(.settings-card, .settings-fields) { border-inline: 0; border-bottom: 0; border-radius: 0; }

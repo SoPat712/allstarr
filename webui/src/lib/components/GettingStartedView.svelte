@@ -172,7 +172,7 @@
   .connection-field { display: grid; gap: var(--space-2); }
   .connection-field label { font-size: var(--text-sm); font-weight: 600; }
   .connection-value { display: flex; min-width: 0; gap: var(--space-2); align-items: center; }
-  .connection-value input { flex: 1; min-width: 0; min-height: var(--control-md); padding-inline: var(--space-3); border: 1px solid var(--color-edge); border-radius: var(--radius-md); background: var(--md-sys-color-surface-container-lowest); color: var(--color-ink); }
+  .connection-value input { flex: 1; min-width: 0; min-height: var(--control-md); padding-inline: var(--space-3); border: 1px solid var(--color-edge); border-radius: var(--radius-md); background: var(--color-panel-raised); color: var(--color-ink); }
   .connect-apps > :global(.panel-heading) { padding-inline: 0; border: 0; }
   .connect-section-title { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2); }
   .connect-section-title h3 { font-size: var(--text-md); font-weight: 600; }

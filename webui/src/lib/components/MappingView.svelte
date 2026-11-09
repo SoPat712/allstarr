@@ -652,7 +652,7 @@
             { value: "confidence_asc", label: "Least sure first" }, { value: "confidence_desc", label: "Most sure first" },
             { value: "newest", label: "Newest" }, { value: "title", label: "Title" }, { value: "playlist", label: "Playlist" },
           ]} onchange={() => { page = 1; void load(); }} />
-          <Button variant="outline" size="sm" aria-pressed={bulkMode} onclick={() => { bulkMode = !bulkMode; if (!bulkMode) chosen = new Map(); }}>{bulkMode ? "Done selecting" : "Select"}</Button>
+          <Button variant="outline" aria-pressed={bulkMode} onclick={() => { bulkMode = !bulkMode; if (!bulkMode) chosen = new Map(); }}>{bulkMode ? "Done selecting" : "Select"}</Button>
           <RefreshButton class="matches-refresh" disabled={Boolean(action)} onrefresh={reload} />
         </div>
       </div>
@@ -739,7 +739,7 @@
   .matches-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); min-width: 0; }
   .matches-toolbar :global(.matches-search) { min-width: 280px; flex: 1 1 280px; }
   .matches-toolbar :global(.select-root) { flex: 0 0 auto; }
-  .matches-toolbar :global(.select-trigger) { width: auto; gap: var(--space-2); padding-inline: var(--space-2); background: var(--color-panel); color: var(--color-ink); font-size: .8125rem; white-space: nowrap; }
+  .matches-toolbar :global(.select-trigger) { width: auto; gap: var(--space-2); padding-inline: var(--space-2); font-size: .8125rem; white-space: nowrap; }
   .mapping-rows { min-width: 0; }
   .matches-table { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: .8125rem; }
   .matches-table th { text-align: left; font-weight: 500; color: var(--color-ink-muted); padding: var(--space-2); font-size: .75rem; border-bottom: 1px solid var(--color-edge); }

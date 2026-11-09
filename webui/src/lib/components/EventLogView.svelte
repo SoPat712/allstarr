@@ -62,9 +62,9 @@
   <Portal to=".workspace-header > .flex"><div class="activity-header-controls">{@render scopeControls()}</div></Portal>
 {/if}
 {#if view !== "reports" && administrator && scope === "mine" && attention}
-  <div class="degraded-banner" role="status">
+  <div class="attention-banner" role="status">
     <p><strong>Household work needs attention.</strong> Open Everyone to review failed background work.</p>
-    <Button variant="secondary" onclick={() => void chooseScope("everyone")}>Review household work</Button>
+    <Button variant="outline" size="sm" onclick={() => void chooseScope("everyone")}>Review household work</Button>
   </div>
 {/if}
 {#if ready}
@@ -85,7 +85,8 @@
 
 <style>
   .activity-content { min-width: 0; }
-  .activity-content :global(:is(button, [data-slot="button"])), :global(body:has(.activity-content) [data-side-panel] :is(button, [data-slot="button"])) { min-width: 44px; min-height: 44px; }
+  /* Segmented filters and the attention banner keep the control heights they have on every other page. */
+  .activity-content :global(:is(button, [data-slot="button"]):not(.seg > *, .attention-banner > *)), :global(body:has(.activity-content) [data-side-panel] :is(button, [data-slot="button"])) { min-width: 44px; min-height: 44px; }
   .activity-content :global(.event-summary-copy > :is(strong, small)) { white-space: normal; overflow-wrap: anywhere; }
   .activity-content :global(:is(.event-kind-icon[data-tone], .activity-outcome)) {
     color: var(--activity-ink, var(--md-sys-color-on-surface-variant));
@@ -104,7 +105,13 @@
   :global(.workspace-header:has(.activity-header-controls) > .flex) { min-width: 0; flex-wrap: wrap; }
   .activity-header-controls :global(button) { min-height: 44px; }
   .activity-content > :global(.segmented-nav) { margin-bottom: var(--space-4); }
+  /* Matches the attention banner on Home. */
+  .attention-banner { display: flex; align-items: center; gap: 12px; margin-bottom: var(--space-4); padding: 10px 14px; border-radius: var(--radius-md); background: var(--warning-container); color: var(--color-ink); }
+  .attention-banner p { min-width: 0; flex: 1; margin: 0; font-size: .78rem; }
+  .attention-banner strong { color: var(--warning); }
+  .attention-banner > :global([data-slot="button"]) { flex: none; }
 
+  @media (max-width: 650px) { .attention-banner { display: grid; gap: 8px; } .attention-banner > :global([data-slot="button"]) { justify-self: start; } }
   @media (max-width: 760px) {
     :global(.workspace-header:has(.activity-header-controls)) { grid-template-columns: minmax(0, 1fr); row-gap: var(--space-2); }
     :global(.workspace-header:has(.activity-header-controls) > .flex) { grid-column: 1; grid-row: 2; justify-content: space-between; width: 100%; }

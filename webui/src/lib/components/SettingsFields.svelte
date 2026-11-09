@@ -176,7 +176,7 @@
             <AudioQualityField name={field.key} value={value(field)} showDetails={false} bind:requestedQualities onchange={() => void qualityChanged(field)} />
           </fieldset>
         {:else if field.key === "MATCHING_LOCAL_PREFERENCE_PERCENT"}
-          <div class="matching-preference"><span class="settings-toggle"><Switch aria-label={label(field)} checked={Number(value(field)) > 0} disabled={busy} onchange={event => change(field, event.currentTarget.checked ? "7" : "0")} /></span><details><summary>Preference window</summary><input type="number" aria-label="Preference window (points)" value={value(field)} min={field.min ?? 0} max={field.max ?? 20} disabled={busy} onchange={event => { if (event.currentTarget.reportValidity()) change(field, event.currentTarget.value); }} /></details></div>
+          <span class="settings-toggle"><Switch aria-label={label(field)} checked={Number(value(field)) > 0} disabled={busy} onchange={event => change(field, event.currentTarget.checked ? "7" : "0")} /></span>
         {:else if field.key === "PLAYBACK_START_PREFERENCE"}
           <ThreeDetentSwitch name={field.key} label={label(field)} value={(value(field) || "Balanced") as PlaybackStart} options={playbackStartOptions} disabled={busy} onchange={next => change(field, next)} />
         {:else if field.key === "STORAGE_MODE"}
@@ -198,6 +198,7 @@
           </div>
         {/if}
       </div>
+      {#if field.key === "MATCHING_LOCAL_PREFERENCE_PERCENT" && !locked(field)}<AdvancedFold label="Preference window"><label class="setting-field settings-row"><div><strong>Points</strong><small>Between {field.min ?? 0} and {field.max ?? 20}.</small></div><input type="number" aria-label="Preference window (points)" value={value(field)} min={field.min ?? 0} max={field.max ?? 20} disabled={busy} onchange={event => { if (event.currentTarget.reportValidity()) change(field, event.currentTarget.value); }} /></label></AdvancedFold>{/if}
     {/each}
   </div>
   {#if section.fields.some(field => field.type === "audio-quality")}<AdvancedFold label="Exact quality asked from each service"><ul class="requested-qualities">{#each requestedQualities as quality}<li>{quality}</li>{/each}</ul></AdvancedFold>{/if}
@@ -217,8 +218,6 @@
   .library-choices label { display: flex; align-items: center; gap: var(--space-2); min-height: 26px; }
   @media (max-width: 899px), (pointer: coarse) { .library-choices label { min-height: 44px; } }
   .library-choices span { overflow-wrap: anywhere; }
-  .matching-preference { min-width: 0; }
-  .matching-preference summary { min-height: 44px; padding-block: var(--space-3); cursor: pointer; font-size: var(--text-xs); color: var(--color-ink-muted); }
   .quality-control { min-width: 0; margin: 0; padding: 0; border: 0; }
   .setting-input { display: flex; min-width: 0; gap: var(--space-2); align-items: center; }
   .setting-input input { min-width: 0; flex: 1; }

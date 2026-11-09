@@ -41,7 +41,8 @@
 </section>
 
 <style>
-  .page-status { display: grid; min-width: 0; gap: var(--space-3); }
+  /* On the page background the gauge track needs a stronger surface than it has inside a card. */
+  .page-status { --gauge-track: var(--md-sys-color-surface-container-highest); display: grid; min-width: 0; gap: var(--space-3); }
   .status-items, .status-legend { display: flex; min-width: 0; flex-wrap: wrap; align-items: baseline; gap: var(--space-2) var(--space-4); margin: 0; padding: 0; list-style: none; }
   li { display: inline-flex; min-width: 0; max-width: 100%; align-items: center; gap: var(--space-2); color: var(--color-ink-muted); font-size: var(--text-sm); overflow-wrap: anywhere; }
   strong { color: var(--color-ink); font-weight: 600; }
@@ -57,7 +58,8 @@
   [data-tone="stop"] { --tone: var(--danger); }
   [data-tone="info"] { --tone: var(--info); }
   [data-tone="accent"] { --tone: var(--md-sys-color-tertiary); }
-  [data-tone="empty"] { --tone: transparent; }
+  /* Free space is the bare gauge track, so its key shows the track. */
+  [data-tone="empty"] { --tone: var(--gauge-track); }
   .legend-count { color: var(--color-ink); font-variant-numeric: tabular-nums; }
   @media (max-width: 650px) { .phone-hidden { display: none; } }
 </style>

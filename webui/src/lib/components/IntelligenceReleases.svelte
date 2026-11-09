@@ -1,4 +1,5 @@
 <script lang="ts">
+  import AdvancedFold from "$lib/components/patterns/AdvancedFold.svelte";
   import { countLabel } from "$lib/count-label";
   import { onMount, type Component } from "svelte";
   import { goto } from "$app/navigation";
@@ -179,7 +180,7 @@
         <DropdownMenu.Root><DropdownMenu.Trigger class="icon-button release-card-menu" aria-label={`Actions for ${entry.title}`}><UiIcon name="more" /></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content preventScroll={false} class="bits-menu release-menu" align="end"><DropdownMenu.Item class="bits-menu-item destructive" disabled={Boolean(pendingAction)} onSelect={() => askDismiss(entry)}>Dismiss {entry.title}</DropdownMenu.Item></DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root>
       </article>
     {/each}</div>{/if}
-    {#if unchecked.length}<div class="checking-note"><details><summary>Couldn't check {countLabel(unchecked.length, "artist")}.</summary><p>Some releases may be missing.</p><ul>{#each unchecked as item}<li>{item.artist.displayName}</li>{/each}</ul></details><Button variant="text" size="sm" disabled={Boolean(pendingAction)} onclick={() => void load()}>Check again</Button></div>{/if}
+    {#if unchecked.length}<div class="checking-note"><AdvancedFold placement="flush" label={`Couldn't check ${countLabel(unchecked.length, "artist")}.`}><p>Some releases may be missing.</p><ul>{#each unchecked as item}<li>{item.artist.displayName}</li>{/each}</ul></AdvancedFold><Button variant="text" size="sm" disabled={Boolean(pendingAction)} onclick={() => void load()}>Check again</Button></div>{/if}
     {#if hidden.length}<details class="release-disclosure"><summary class="disclosure-summary"><DisclosureLabel title={`Hidden: ${countLabel(hidden.length, "release")}`} /></summary><ul>{#each hidden as entry}<li><strong>{entry.title}</strong> · {entry.artist} · {hiddenReason(entry.exclusionReason)}</li>{/each}</ul></details>{/if}
   {/if}
 </div>
@@ -236,7 +237,8 @@
   .release-open p { margin-top: var(--space-1); color: var(--color-ink-muted); font-size: var(--text-xs); overflow-wrap: anywhere; }
   .release-card :global(.release-card-menu) { display: flex; margin-top: var(--space-1); margin-left: auto; color: var(--color-signal-text); }
   .checking-note { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2); font-size: var(--text-sm); color: var(--color-ink-muted); }
-  .checking-note summary { display: flex; align-items: center; min-height: 44px; cursor: pointer; }
+  /* The note sits in a line of text, so its fold has no divider above it. */
+  .checking-note > :global(.settings-fold) { border-top: 0; }
   .release-disclosure { padding: var(--space-3); border-top: 1px solid var(--color-edge); font-size: var(--text-sm); color: var(--color-ink-muted); }
   .release-disclosure summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; }
   .release-disclosure ul, .checking-note ul { display: grid; gap: var(--space-2); margin-top: var(--space-2); padding-left: var(--space-4); overflow-wrap: anywhere; }

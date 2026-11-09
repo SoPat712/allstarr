@@ -11,7 +11,7 @@
 </div>
 
 <style>
-  .status-gauge { display: flex; width: 100%; height: 10px; gap: 2px; overflow: hidden; border-radius: var(--radius-sm); background: var(--color-panel-raised); }
+  .status-gauge { display: flex; width: 100%; height: 10px; gap: 2px; overflow: hidden; border-radius: var(--radius-sm); background: var(--gauge-track, var(--color-panel-raised)); }
   .compact { height: 5px; gap: 1px; }
   span { height: 100%; min-width: 4px; flex-shrink: 1; background: var(--color-ink-muted); }
   .compact span { min-width: 1px; }

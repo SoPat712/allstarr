@@ -13,6 +13,7 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
       livePlays: 4, importedPlays: 62284, listeningFrom: "2024-02-01T00:00:00Z", listeningTo: "2026-10-29T00:00:00Z", historicalWindow: scenario === "historical" ? "01 Oct 2025–31 Oct 2025" : null, primaryPlays: 4, fallbackPlays: 214, candidates: 86, qualified: 62, shown: state.songs.length, fromMusic: 6, fromServices: 2, excluded: { "Three early skips": 3, Never: 1 }, providerReads: 22, providerFailures: scenario === "long-lost" ? 2 : 0, shortfall: scenario === "insufficient" ? "No more songs met this recipe's rules in the available music and services." : null,
     };
     if (scenario !== "legacy") card.evidence = evidence;
+    if (scenario === "historical") card.inApps = false;
     if (scenario === "insufficient") { card.readiness = { ready: false, message: evidence.shortfall! }; state.songs = []; evidence.shown = 0; }
     else state.songs[0].reason = scenario === "historical" ? "Played 31 times · imported 01 Oct 2025–31 Oct 2025" : "Played 31 times, last in Feb 2024";
     await page.goto(`/#/for-you?mix=${kind}`);
@@ -41,6 +42,15 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     if (scenario === "insufficient") await expect(page.getByText(evidence.shortfall!, { exact: true })).toHaveCount(1);
     await capture(page, `recipes-${scenario}-expanded`, width, theme);
     if (width === 1280 && theme === "dark") await page.screenshot({ path: test.info().outputPath("mix-recipe-expanded-1280-dark.png") });
+    if (scenario === "historical") {
+      // The fold lines up with the panel's content and sits right under the apps switch.
+      const fold = page.locator("details.recipe"), body = (await page.locator(".panel-body").boundingBox())!;
+      await expect(fold).toHaveAttribute("data-placement", "flush");
+      expect((await fold.locator("summary").boundingBox())!.x).toBeCloseTo(body.x + 16, 0);
+      expect((await fold.boundingBox())!.y - (await page.locator(".mix-summary > :last-child").boundingBox())!.y - (await page.locator(".mix-summary > :last-child").boundingBox())!.height).toBeLessThanOrEqual(0);
+      await page.locator(".panel-body").evaluate(element => { element.scrollTop = 0; });
+      await page.screenshot({ path: test.info().outputPath(`01-mix-panel-${width}-${theme}.png`) });
+    }
     if (scenario !== "insufficient") await expect(page.getByText(state.songs[0].reason, { exact: true })).toBeAttached();
     expect(state.calls.filter(call => call.path.endsWith("/refresh"))).toHaveLength(0); expect(await page.pageErrors()).toEqual([]);
   });

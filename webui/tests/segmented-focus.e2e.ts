@@ -97,7 +97,7 @@ for (const width of [1280, 390]) for (const theme of ["dark", "light"] as const)
     await page.keyboard.press("Space");
     await expect(last).toHaveAttribute("aria-checked", "true");
 
-    const scroller = page.locator(".event-log-chip-row");
+    const scroller = page.locator(".event-log-chip-row .filter-segments");
     for (const key of ["Home", "End"]) {
       await page.keyboard.press(key);
       const end = key === "Home" ? first : last;

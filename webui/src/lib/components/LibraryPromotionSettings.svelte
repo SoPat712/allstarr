@@ -1,4 +1,5 @@
 <script lang="ts">
+  import AdvancedFold from "$lib/components/patterns/AdvancedFold.svelte";
   import { onMount } from "svelte";
   import type { PromotionSetup } from "$lib/library-promotion-api";
   import EmptyState from "$lib/components/patterns/EmptyState.svelte";
@@ -165,12 +166,12 @@
           {:else if preview && !preview.errors.length && !preview.examples.length}<p class="muted">No library examples are available yet. Examples will appear when songs are in your library or kept.</p>
           {:else if preview}{#each preview.examples as example}<div class="naming-example"><span>{exampleLabel(example.kind)}</span><div><code class="example-path" title={example.title}>{example.relativePath ?? "Could not render this name"}</code>{#if example.errors.length}{@render errorList(example.errors)}{/if}</div></div>{/each}{/if}
         </div>
-        <details bind:open={scriptOpen} class="script-disclosure"><summary>Naming script</summary>
+      </div>
+      <AdvancedFold label="Naming script" bind:open={scriptOpen}><div class="script-body">
           <label class="sr-only" for="promotion-script">Naming script</label><textarea bind:this={scriptInput} id="promotion-script" rows="4" value={profile.namingScript} aria-invalid={errors.length > 0} aria-describedby={errors.length ? "naming-validation" : "script-help"} spellcheck="false" oninput={event => update({ namingScript: event.currentTarget.value })}></textarea>
           <p id="script-help" class="muted">Use / between folders and include .%_extension% for the file extension. Escape literal punctuation with a backslash.</p>
           {#if errors.length}<div id="naming-validation" role="alert">{@render errorList(errors)}</div>{/if}
-        </details>
-      </div>
+      </div></AdvancedFold>
     </section>
     <div class="promotion-columns">
       <section class="settings-card" aria-labelledby="promotion-quality"><header><h3 id="promotion-quality">Quality</h3></header>
@@ -252,9 +253,8 @@
   .naming-example > span { color: var(--color-ink-muted); }
   .example-path, textarea { display: block; width: 100%; min-width: 0; padding: var(--space-2) var(--space-3); border: 1px solid var(--color-edge); border-radius: var(--radius-md); background: var(--color-panel-raised); color: var(--color-ink); font: 0.76rem/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
   textarea { resize: vertical; }
-  .script-disclosure { min-width: 0; font-size: var(--text-sm); }
-  .script-disclosure summary { min-height: 44px; align-content: center; color: var(--color-ink-muted); cursor: pointer; }
-  .script-disclosure p { margin-top: var(--space-2); }
+  .script-body { padding: var(--space-3) var(--space-4) var(--space-4); font-size: var(--text-sm); }
+  .script-body p { margin-top: var(--space-2); }
   .naming-errors { margin: var(--space-2) 0; padding-left: var(--space-4); color: var(--danger); font-size: var(--text-xs); }
   .naming-errors button { border: 0; background: transparent; color: inherit; padding: var(--space-1) 0; text-align: left; text-decoration: underline; cursor: pointer; font: inherit; }
   .error-location { display: block; color: var(--color-ink-muted); white-space: pre-wrap; overflow-wrap: anywhere; }

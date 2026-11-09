@@ -13,6 +13,7 @@
   import RowsSkeleton from "$lib/components/patterns/RowsSkeleton.svelte";
   import ErrorState from "$lib/components/patterns/ErrorState.svelte";
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
+  import SelectField from "$lib/components/SelectField.svelte";
   import ActivityOutcome from "./ActivityOutcome.svelte";
   import { scheduleParts } from "./activity-rows";
 
@@ -109,10 +110,10 @@
       <section class="settings-group" aria-label="Schedule">
         <h3>Schedule</h3><p>Changes save as you make them.</p>
         <fieldset disabled={saving}>
-          <label>Repeat<select value={repeat} onchange={(event) => { repeat = event.currentTarget.value; void saveSchedule(); }}><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="manual">Only when I ask</option><option value="custom">Custom</option></select></label>
-          {#if repeat === "weekly"}<label>Day<select bind:value={day} onchange={() => void saveSchedule()}>{#each ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"] as label, index}<option value={String(index)}>{label}</option>{/each}</select></label>{/if}
-          {#if repeat === "custom"}<label>Schedule expression<input bind:value={custom} onblur={() => void saveSchedule()} /></label>{:else if repeat !== "manual"}<label>Time<input type="time" bind:value={at} onchange={() => void saveSchedule()} /></label>{/if}
-          <label>Time zone<input bind:value={zone} onblur={() => void saveSchedule()} /></label>
+          <div class="schedule-field"><span>Repeat</span><SelectField label="Repeat" value={repeat} disabled={saving} onchange={(next) => { repeat = next; void saveSchedule(); }} options={[{ value: "daily", label: "Daily" }, { value: "weekly", label: "Weekly" }, { value: "manual", label: "Only when I ask" }, { value: "custom", label: "Custom" }]} /></div>
+          {#if repeat === "weekly"}<div class="schedule-field"><span>Day</span><SelectField label="Day" value={day} disabled={saving} onchange={(next) => { day = next; void saveSchedule(); }} options={["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"].map((label, index) => ({ value: String(index), label }))} /></div>{/if}
+          {#if repeat === "custom"}<label class="schedule-field">Schedule expression<input bind:value={custom} onblur={() => void saveSchedule()} /></label>{:else if repeat !== "manual"}<label class="schedule-field">Time<input type="time" bind:value={at} onchange={() => void saveSchedule()} /></label>{/if}
+          <label class="schedule-field">Time zone<input bind:value={zone} onblur={() => void saveSchedule()} /></label>
         </fieldset>
       </section>
     {:else}<p>No editable schedule is attached. Open the playlist to add one.</p>{/if}
@@ -143,8 +144,10 @@
   h3 { margin: 0 0 var(--space-2); color: var(--color-ink); font-size: var(--text-sm); }
   p, small { color: var(--color-ink-muted); font-size: var(--text-xs); line-height: 1.5; overflow-wrap: anywhere; }
   fieldset { display: grid; gap: var(--space-3); min-width: 0; border: 0; padding: 0; margin: var(--space-4) 0 0; }
-  label { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); color: var(--color-ink); font-size: var(--text-sm); }
-  input, select { min-width: 0; max-width: 65%; min-height: 44px; padding: var(--space-2); border: 1px solid var(--color-edge); border-radius: var(--radius-sm); background: var(--color-panel); color: var(--color-ink); font: inherit; }
+  /* One label column keeps every schedule control the same width. */
+  .schedule-field { display: grid; grid-template-columns: 7.5rem minmax(0, 1fr); align-items: center; gap: var(--space-3); color: var(--color-ink); font-size: var(--text-sm); }
+  input, .schedule-field :global(.select-trigger) { min-width: 0; min-height: 44px; border: 1px solid var(--color-edge); border-radius: var(--radius-md); background: transparent; color: var(--color-ink); font: inherit; }
+  input { width: 100%; padding: 0 var(--space-3); }
   .rule { display: flex; justify-content: space-between; align-items: center; gap: var(--space-4); padding-block: var(--space-3); border-top: 1px solid var(--color-edge); }
   .rule div { min-width: 0; } strong { font-size: var(--text-sm); font-weight: 500; } small { display: block; margin-top: var(--space-1); }
   .saved { color: var(--success); } .task-footer { display: flex; width: 100%; justify-content: space-between; gap: var(--space-3); } :global(.stop-sync) { color: var(--danger); }

@@ -105,8 +105,8 @@
         <p class="sound-state" data-tone={tone}><span class="sound-dot" aria-hidden="true"></span>{statusLabel}</p>
         <p>Listens to how your songs sound, so mixes and Instant Mix can follow mood, tempo and energy.</p>
         <div class="sound-actions">
-          <Button type="button" variant="outline" size="sm" disabled={Boolean(action)} aria-expanded={connectionOpen} onclick={() => connectionOpen ? closeConnection() : void editConnection()}>{connectionOpen ? "Close" : "Edit connection"}</Button>
-          {#if connection?.baseUrl}<Button variant="text" size="sm" href={connection.baseUrl} target="_blank" rel="noreferrer">Open AudioMuse ↗</Button>{/if}
+          <Button type="button" variant="outline" disabled={Boolean(action)} aria-expanded={connectionOpen} onclick={() => connectionOpen ? closeConnection() : void editConnection()}>{connectionOpen ? "Close" : "Edit connection"}</Button>
+          {#if connection?.baseUrl}<Button variant="text" href={connection.baseUrl} target="_blank" rel="noreferrer">Open AudioMuse ↗</Button>{/if}
           <RefreshButton label="Refresh sound analysis" disabled={Boolean(action)} onrefresh={refresh} />
         </div>
       </div>

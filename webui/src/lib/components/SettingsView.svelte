@@ -217,7 +217,7 @@
         {#await import("./BackupsView.svelte")}<RowsSkeleton />{:then { default: Backups }}<Backups {administrator} />{:catch}<ErrorState title="This settings page could not be opened" onretry={() => window.location.reload()} />{/await}
       {:else if active === "health"}
         {#await import("./HealthView.svelte")}<RowsSkeleton />{:then { default: Health }}<Health {initialPanel} />{:catch}<ErrorState title="This settings page could not be opened" onretry={() => window.location.reload()} />{/await}
-        <AdvancedFold label="Advanced: diagnostics" description="media and playlist tests, request logging">{#if diagnosticsFields.length}<SettingsFields embedded section={group("diagnostics", "Request logging", diagnosticsFields)} {config} onChanged={refresh} />{/if}<section class="settings-card" aria-label="Diagnostics">
+        <AdvancedFold placement="standalone" label="Advanced: diagnostics" description="media and playlist tests, request logging">{#if diagnosticsFields.length}<SettingsFields embedded section={group("diagnostics", "Request logging", diagnosticsFields)} {config} onChanged={refresh} />{/if}<section class="settings-card" aria-label="Diagnostics">
           <div class="settings-row"><div><strong>Media pipeline</strong><small>Checks song details, artwork and playback.</small></div><Button variant="outline" disabled={Boolean(action)} onclick={() => run("media", settings.mediaProbe, "Media pipeline checked.")}>Test media pipeline</Button></div>
           <div class="settings-row"><div><strong>Playlist readiness</strong><small>Checks source access and which songs listeners can play.</small></div><Button variant="outline" disabled={Boolean(action)} onclick={() => run("playlists", settings.playlistProbe, "Playlist pipeline checked.")}>Test playlist readiness</Button></div>
         </section></AdvancedFold>
@@ -228,7 +228,7 @@
       {:else if active === "storage"}
         {#if fields.some(field => ["STORAGE_MODE", "CACHE_DURATION_HOURS", "CACHE_AUDIO_MAXIMUM_GIB"].includes(field.key))}<SettingsFields section={group("track-cache", "Track cache", fields.filter(field => ["STORAGE_MODE", "CACHE_DURATION_HOURS", "CACHE_AUDIO_MAXIMUM_GIB"].includes(field.key)))} {config} onChanged={refresh} />{/if}
         {#if sectionFor("audio-limits").some(field => field.key !== "CACHE_AUDIO_MAXIMUM_GIB")}<SettingsFields section={group("audio-limits", "Audio limits", sectionFor("audio-limits").filter(field => field.key !== "CACHE_AUDIO_MAXIMUM_GIB"))} {config} onChanged={refresh} />{/if}
-        <AdvancedFold label="Advanced: cache times, file checks and cleanup">
+        <AdvancedFold placement="standalone" label="Advanced: cache times, file checks and cleanup">
           {#if storageAdvanced.length}<SettingsFields section={group("storage-advanced", "Retention and cache", storageAdvanced)} {config} onChanged={refresh} />{/if}
           {#await import("./StorageVerificationCard.svelte")}<RowsSkeleton count={1} />{:then { default: Verification }}<Verification />{:catch}<ErrorState title="This settings page could not be opened" onretry={() => window.location.reload()} />{/await}
           <CacheDiagnosticsCard snapshot={cache} {preview} busy={Boolean(action)} onClean={() => run("clean", settings.cleanCache, "Cache cleanup complete.")} onPurge={target => { purgeTarget = target; purgeOpen = true; }} />

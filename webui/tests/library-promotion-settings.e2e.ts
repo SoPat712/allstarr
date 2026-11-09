@@ -185,3 +185,15 @@ for (const width of [390, 1440]) test(`Library profile fits ${width}px`, async (
   await expect(page.getByText("North/Blue morning.flac", { exact: true })).toBeVisible();
   await capture(page, "library-profile", width, "light");
 });
+
+for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const) test(`Naming script folds like other card rows ${width}px ${theme}`, async ({ page }) => {
+  await appearance(page, width, theme); await fixture(page);
+  const fold = page.locator(".settings-fold").filter({ has: page.locator("summary", { hasText: /^Naming script$/ }) });
+  await expect(fold).toHaveAttribute("data-placement", "card");
+  expect(await fold.locator("summary").evaluate(element => [getComputedStyle(element).listStyleType, getComputedStyle(element, "::after").borderRightStyle])).toEqual(["none", "solid"]);
+  await scriptField(page);
+  const card = page.getByRole("region", { name: "File names and folders", exact: true });
+  expect(Math.abs((await fold.boundingBox())!.x - (await card.boundingBox())!.x)).toBeLessThanOrEqual(1);
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  await card.screenshot({ path: test.info().outputPath(`05-naming-script-${width}-${theme}.png`) });
+});

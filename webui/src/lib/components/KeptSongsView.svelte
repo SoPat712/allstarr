@@ -243,7 +243,7 @@
 </section>
 {#if selectedFile}<LibraryPromotionAddPanel bind:open recordingId={request?.recordingId ?? ""} backendLibraryId={request?.backendLibraryId} rootId={request?.rootId} {providers} {administrator} {setupRequired} title={selectedFile.album || selectedFile.title} description={selectedFile.artist} cover={selectedFile.artworkUrl} onPrevious={selectedIndex > 0 ? () => openSong(navigationFiles[selectedIndex - 1]) : undefined} onNext={selectedIndex >= 0 && selectedIndex < navigationFiles.length - 1 ? () => openSong(navigationFiles[selectedIndex + 1]) : undefined}>
   {#snippet copyActions()}<section class="kept-copy" aria-label="Kept copy"><h3 class="sec-label">Kept copy</h3><p>{providerDisplayName(providers, selectedFile?.provider)} · {qualityDetails(selectedFile!).join(" · ")} · {selectedFile?.sizeFormatted}</p><p>{selectedFile?.publicationState === "Imported" ? "Imported original · read-only" : selectedFile?.explicitlyKept ? "Your Keep" : selectedFile?.referenceCount ? "Household" : "No active references"}{selectedFile?.referenceCount ? ` · ${countLabel(selectedFile.referenceCount, "reference")}` : ""}</p><p class="copy-path">{selectedFile?.path}</p>
-    <AdvancedFold class="copy-facts" label="Copy details"><p>Never removed by cache cleanup.</p><p>{selectedFile?.explicitlyKept ? "Your Keep protects this copy. Other household interests also stay protected when you stop keeping." : selectedFile?.publicationState === "Imported" ? "This imported original is read-only." : selectedFile?.referenceCount ? "Household interests protect this copy." : "This copy has no active household references."}</p>
+    <AdvancedFold placement="flush" class="copy-facts" label="Copy details"><p>Never removed by cache cleanup.</p><p>{selectedFile?.explicitlyKept ? "Your Keep protects this copy. Other household interests also stay protected when you stop keeping." : selectedFile?.publicationState === "Imported" ? "This imported original is read-only." : selectedFile?.referenceCount ? "Household interests protect this copy." : "This copy has no active household references."}</p>
       {#if qualityWarning(selectedFile!)}<p class="copy-warning">{qualityWarning(selectedFile!)?.label}: {qualityWarning(selectedFile!)?.detail}</p>{/if}
       {#if lowerDownloadQuality(selectedFile!)}<p class="copy-warning">This copy is below CD quality.</p>{/if}
       <dl><dt>Song</dt><dd>{selectedFile?.title || selectedFile?.fileName}</dd><dt>Artist</dt><dd>{selectedFile?.artist || "Unknown artist"}</dd><dt>Album</dt><dd>{selectedFile?.album || "Unknown album"}</dd><dt>Duration</dt><dd>{formatDuration(selectedFile?.durationMilliseconds)}</dd>
@@ -287,7 +287,7 @@
   :global(.copy-facts) dl { display: grid; grid-template-columns: minmax(0, .8fr) minmax(0, 1.8fr); gap: var(--space-2); margin: 0; }
   :global(.copy-facts) dt { color: var(--color-ink-muted); }
   :global(.copy-facts) dd { min-width: 0; margin: 0; overflow-wrap: anywhere; }
-  :global(.copy-facts > p), :global(.copy-facts > dl) { margin: var(--space-3) var(--space-4); }
+  :global(.copy-facts > p), :global(.copy-facts > dl) { margin-block: var(--space-3); }
   .kept-copy .copy-warning { color: var(--warning); }
   h2 { margin: 0; font-size: var(--text-section); font-weight: 600; }
   .promotion-list { overflow: hidden; border: 1px solid var(--color-edge); border-radius: 14px; }

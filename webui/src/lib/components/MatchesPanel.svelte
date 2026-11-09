@@ -1,4 +1,5 @@
 <script lang="ts">
+  import AdvancedFold from "$lib/components/patterns/AdvancedFold.svelte";
   import { tick, type Snippet } from "svelte";
   import { MoreHorizontal } from "@lucide/svelte";
   import { matchReview, type MatchAuthorityScope, type MatchCandidate, type MatchReviewItem, type MatchTarget, type ProviderDefinition } from "$lib/api";
@@ -219,7 +220,7 @@
                 </ItemRow>
                 {#if target.isBestVersion && target.externalProvider?.toLowerCase() === "artistgrid"}<span class="sr-only" role="img" aria-label="Best version on ArtistGrid" title="Best version on ArtistGrid">⭐</span>{/if}
                 <p class="candidate-reasons">{candidateReason(target)}</p>
-                <details class="target-evidence"><summary>Full scoring for {target.title}</summary><dl>
+                <AdvancedFold placement="flush" class="target-evidence" label={`Full scoring for ${target.title}`}><dl>
                   <div><dt>Result order</dt><dd>{results.indexOf(target) + 1}</dd></div>
                   <div><dt>Source ISRC</dt><dd>{match.isrc || "Not provided"}</dd></div><div><dt>ISRC</dt><dd>{target.isrc || "Not provided"}</dd></div>
                   <div><dt>Routing preference</dt><dd>{targetRoutingPreference(target) || "Not provided"}</dd></div>
@@ -227,7 +228,7 @@
                   <div><dt>Content</dt><dd>{target.isExplicit == null ? "Not provided" : target.isExplicit ? "Explicit" : "Not explicit"}</dd></div>
                   <div><dt>Reported audio</dt><dd>{reportedAudio(target.media)}; the delivered format can differ.</dd></div>
                   {#each scoreComponents(target) as [key, value]}<div><dt>{key}</dt><dd>{percent(value)}</dd></div>{/each}
-                </dl></details>
+                </dl></AdvancedFold>
               </div>
             {:else}{#if searched && !searching}<EmptyState title="No matching candidates found" description="Try a more exact artist and title." />{/if}{/each}
           </div>
@@ -237,7 +238,7 @@
       {#if preview}<section class="evidence"><h3 class="sec-label">What we compared</h3><div class="evidence-chips">
         {#each [...preview.reasons ?? [], ...preview.warnings ?? []] as reason}<span>{evidenceSentence(reason)}</span>{/each}
         {#each scoreComponents(preview) as [key, value]}<span>{evidenceSentence(key)} {value === 1 ? "matches exactly" : `is ${percent(value)} similar`}</span>{/each}
-      </div><details><summary>Full scoring</summary><dl>
+      </div><AdvancedFold placement="flush" label="Full scoring"><dl>
         <div><dt>Candidate ID</dt><dd>{preview.externalId || preview.backendItemId || preview.id}</dd></div>
         <div><dt>Match score</dt><dd>{formatConfidence(preview.confidence)}</dd></div>
         <div><dt>Routing preference</dt><dd>{routingPreference(preview.components) || targetRoutingPreference(preview) || "Not provided"}</dd></div>
@@ -252,14 +253,14 @@
           {#each Object.entries(previewCandidate.providerTrackIds ?? {}) as [id, trackId]}<div><dt>{name(id)} track ID</dt><dd>{trackId}</dd></div>{/each}
         {/if}{#each scoreComponents(preview) as [key, value]}<div><dt>{key}</dt><dd>{percent(value)}</dd></div>{/each}
         {#each [...preview.reasons ?? [], ...preview.warnings ?? []] as reason}<div><dt>Evidence</dt><dd>{reason}</dd></div>{/each}
-      </dl>{#if hasOwnArtwork(match) && preview.artworkUrl}<ArtworkSimilarity source={match.sourceArtworkUrl!} candidate={preview.artworkUrl} />{/if}</details></section>{/if}
+      </dl>{#if hasOwnArtwork(match) && preview.artworkUrl}<ArtworkSimilarity source={match.sourceArtworkUrl!} candidate={preview.artworkUrl} />{/if}</AdvancedFold></section>{/if}
       {@render authorities?.()}
-      <details class="identity-details"><summary>Database and identity details</summary><dl>
+      <AdvancedFold placement="flush" class="identity-details" label="Database and identity details"><dl>
         <div><dt>Source snapshot</dt><dd>{match.externalSnapshotId}</dd></div><div><dt>Source provider</dt><dd>{match.providerId}</dd></div>
         <div><dt>Canonical recording</dt><dd>{match.canonicalRecordingId || "Not provided"}</dd></div><div><dt>Library track</dt><dd>{match.libraryTrackId || "Not provided"}</dd></div>
         <div><dt>Algorithm</dt><dd>{match.algorithmVersion || "Not provided"}</dd></div>
         {#each reviewProviderIdentities(match) as identity}<div><dt>{name(identity.providerId)}</dt><dd>{identity.externalId} · {identity.verification}</dd></div>{/each}
-      </dl></details>
+      </dl></AdvancedFold>
     {/if}
   {/if}
   {#snippet footer()}
@@ -293,7 +294,7 @@
   .search-help { margin: var(--space-2) 0 0; color: var(--color-ink-muted); font-size: var(--text-xs); }
   .provider-filters, .evidence-chips { display: flex; flex-wrap: wrap; gap: var(--space-2); }
   .evidence-chips span { border-radius: var(--radius-sm); padding: var(--space-1) var(--space-2); background: var(--color-panel-raised); font-size: .75rem; }
-  details { margin-block: var(--space-3); font-size: .8125rem; } summary { cursor: pointer; min-height: 32px; align-content: center; color: var(--color-ink-muted); }
+  :global(.settings-fold) > dl { padding-block: var(--space-2); font-size: .8125rem; }
   dl { margin: 0; } dl > div { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr); gap: var(--space-2); padding-block: var(--space-1); }
   dt { color: var(--color-ink-muted); } dd { margin: 0; overflow-wrap: anywhere; }
   .decision-footer { width: 100%; min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }

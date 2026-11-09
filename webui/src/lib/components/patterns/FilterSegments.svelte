@@ -90,4 +90,12 @@
   .filter-segments.wrapped { border-radius: var(--radius-list); }
   /* On phones the row stays one line and scrolls sideways. */
   @media (max-width: 599px) { .filter-segments { flex-wrap: nowrap; max-width: 100%; overflow-x: auto; scrollbar-width: none; } }
+  /* Without a scrollbar, a faded edge shows there are more filters that way. It only runs while the row overflows,
+     and it follows the scroll position rather than moving on its own, so reduced motion keeps it. */
+  @supports (animation-timeline: scroll()) { .filter-segments { animation: segment-edges linear both; animation-duration: auto !important; animation-timeline: scroll(self inline); } }
+  @keyframes segment-edges {
+    from { mask-image: linear-gradient(to left, transparent, #000 1.5rem); }
+    1%, 99% { mask-image: linear-gradient(to right, transparent, #000 1.5rem calc(100% - 1.5rem), transparent); }
+    to { mask-image: linear-gradient(to right, transparent, #000 1.5rem); }
+  }
 </style>
