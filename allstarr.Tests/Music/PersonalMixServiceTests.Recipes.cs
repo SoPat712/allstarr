@@ -428,7 +428,11 @@ public sealed partial class PersonalMixServiceTests
         var mix = (await service.GenerateAsync(owner, id)).Single(x => x.Id == id);
         publish = true;
         await service.SetInAppsAsync(owner, id, true, default);
-        Assert.Single(await service.PublishedAsync(Context(owner), default));
+        var playlist = Assert.Single(await service.PublishedAsync(Context(owner), default));
+        Assert.Equal("Mix", playlist.PlaylistKind);
+        Assert.Equal(new allstarr.Core.Playlists.MixDetails("chill", "moods", null, mix.UpdatedAt), playlist.Mix);
+        Assert.NotEmpty(playlist.Tracks);
+        Assert.All(playlist.Tracks, track => Assert.Contains(track.Reason, mix.Songs.Select(item => item.Reason)));
         gateway.Setup(x => x.GetPlayableProviderOrderAsync(It.IsAny<ProviderActorContext>(), It.IsAny<CancellationToken>())).ReturnsAsync([]);
         clock.UtcNow += TimeSpan.FromMinutes(16);
         mix = (await service.GenerateAsync(owner, id)).Single(x => x.Id == id);

@@ -346,6 +346,15 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
             item["RecursiveItemCount"] = playlist.TrackCount;
         item["ProviderIds"] = new Dictionary<string, string> { [playlist.SourceProviderId] = playlist.SourcePlaylistId };
         if (playlist.PlaylistKind != null) item["AllstarrPlaylistKind"] = playlist.PlaylistKind;
+        if (playlist.Mix is { } mix)
+        {
+            item["AllstarrMixKind"] = mix.Kind;
+            item["AllstarrMixSection"] = mix.Section;
+            // Only mixes that are ready are published as playlists.
+            item["AllstarrMixState"] = "ready";
+            if (mix.Source != null) item["AllstarrMixSource"] = mix.Source;
+            if (mix.UpdatedAt is { } updated) item["DateLastContentAdded"] = updated.UtcDateTime.ToString("O");
+        }
         item["DateCreated"] = playlist.CreatedAt.UtcDateTime.ToString("O");
         item["Etag"] = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(
             System.Text.Encoding.UTF8.GetBytes($"{playlist.SnapshotId}:{playlist.SourceRevision}:{playlist.ArtworkReferenceKey}")));
@@ -565,6 +574,7 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
                 if (!fullExternal) new JellyfinItemFields(clientQuery).Apply(item);
             }
             if (track.OriginalItemId != null) item["OriginalItemId"] = track.OriginalItemId;
+            if (track.Reason != null) item["AllstarrReason"] = track.Reason;
             if (!native && track.RouteKind != TrackRouteKind.Local && ExternalTrackPresentation.Explicitness(track) is { } rating)
                 item["OfficialRating"] = rating ? "Explicit" : "Clean";
             item["PlaylistItemId"] = track.NativePlaylistEntryId ??

@@ -219,6 +219,31 @@ public sealed partial class VirtualPlaylistProtocolAdapterTests
         Assert.NotEqual(item["Etag"], adapter.ToItem(model with { SnapshotId = Guid.NewGuid() })["Etag"]);
     }
 
+    [Fact]
+    public async Task JellyfinMixPlaylists_CarryMixFieldsAndSongReasons()
+    {
+        var model = Model() with
+        {
+            PlaylistKind = "Mix",
+            Mix = new("daily-2", "madeForYou", null, DateTimeOffset.Parse("2026-11-08T12:00:00Z")),
+            Tracks = [Model().Tracks[0] with { Reason = "Played 12 times lately" }, Model().Tracks[1]]
+        };
+        var adapter = new JellyfinVirtualPlaylistProtocolAdapter(new StubVirtualizationService(model), new StubJellyfinMutationResolver(null));
+        var item = adapter.ToItem(model);
+        Assert.Equal("Mix", item["AllstarrPlaylistKind"]);
+        Assert.Equal("daily-2", item["AllstarrMixKind"]);
+        Assert.Equal("madeForYou", item["AllstarrMixSection"]);
+        Assert.Equal("ready", item["AllstarrMixState"]);
+        Assert.Equal("2026-11-08T12:00:00.0000000Z", item["DateLastContentAdded"]);
+        Assert.False(item.ContainsKey("AllstarrMixSource"));
+        Assert.Equal("listenbrainz", adapter.ToItem(model with { Mix = new("external", "yourServices", "listenbrainz", null) })["AllstarrMixSource"]);
+        using var json = JsonDocument.Parse(JsonSerializer.Serialize(Assert.IsType<JsonResult>(
+            await adapter.ReadItemsAsync(Context(ProtocolKind.Jellyfin), ProtocolId, default)).Value));
+        var rows = json.RootElement.GetProperty("Items").EnumerateArray().ToArray();
+        Assert.Contains(rows, row => row.TryGetProperty("AllstarrReason", out var reason) && reason.GetString() == "Played 12 times lately");
+        Assert.Single(rows, row => row.TryGetProperty("AllstarrReason", out _));
+    }
+
     [Theory]
     [InlineData(null)]
     [InlineData("Yours")]

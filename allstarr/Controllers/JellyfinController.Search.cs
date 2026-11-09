@@ -1011,6 +1011,14 @@ public partial class JellyfinController
             item["ChildCount"] = playlist.TrackCount;
             item["RunTimeTicks"] = playlist.DurationMilliseconds * TimeSpan.TicksPerMillisecond;
             if (playlist.PlaylistKind != null) item["AllstarrPlaylistKind"] = playlist.PlaylistKind;
+            if (playlist.Mix is { } mix)
+            {
+                item["AllstarrMixKind"] = mix.Kind;
+                item["AllstarrMixSection"] = mix.Section;
+                item["AllstarrMixState"] = "ready";
+                if (mix.Source != null) item["AllstarrMixSource"] = mix.Source;
+                if (mix.UpdatedAt is { } updated) item["DateLastContentAdded"] = updated.UtcDateTime.ToString("O");
+            }
             if (sourceAlias)
             {
                 var providerIds = item["ProviderIds"] as JsonObject ?? [];

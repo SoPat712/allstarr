@@ -723,10 +723,12 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
                     item.Song.Album, null, item.Song.Duration * 1000L, null, TrackMatchState.Accepted,
                     item.Song.ExternalProvider, item.Song.ExternalId, item.Song.IsLocal ? TrackRouteKind.Local : TrackRouteKind.External,
                     item.Song.ExternalProvider, item.Song.ExternalId)
-                { PlaybackExplicitContentLyrics = item.Song.ExplicitContentLyrics }).ToArray())
+                { PlaybackExplicitContentLyrics = item.Song.ExplicitContentLyrics, Reason = item.Reason }).ToArray())
             {
                 BackendPublic = false,
                 MixCover = MixCoverInput.From(mix),
+                PlaylistKind = "Mix",
+                Mix = new(mix.Kind, mix.Section, null, mix.UpdatedAt),
                 SummaryTrackCount = summariesOnly ? mix.Songs.Count : null,
                 SummaryDurationMilliseconds = summariesOnly ? mix.Songs.Sum(item => item.Song.Duration * 1000L) : null
             }).ToArray();

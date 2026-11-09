@@ -15,7 +15,9 @@ public sealed record ClientEvent(string Type, string Key, string Json)
             ? new { itemId, state, progress = Math.Clamp(value, 0, 1) } : (object)new { itemId, state });
     public static ClientEvent Match(string itemId, string state) => Create("match.updated", itemId, new { itemId, state });
     public static ClientEvent Lyrics(string itemId, object revision) => Create("lyrics.updated", itemId, new { itemId, revision });
-    public static ClientEvent Mix(Guid mixId) => Create("mix.updated", mixId.ToString("D"), new { mixId });
+    // The mix's Jellyfin playlist id comes along so apps that read mixes as playlists can refresh them.
+    public static ClientEvent Mix(Guid mixId) => Create("mix.updated", mixId.ToString("D"),
+        new { mixId, playlistId = Core.Playlists.PlaylistVirtualizationService.CreateProtocolId(mixId) });
     public static ClientEvent Releases(int count) => Create("releases.updated", "inbox", new { count });
     public static ClientEvent Playback(string itemId) => Create("playback.updated", itemId, new { itemId });
     private static ClientEvent Create(string type, string key, object data) => new(type, key,

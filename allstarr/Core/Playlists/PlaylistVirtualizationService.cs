@@ -29,6 +29,8 @@ public sealed record VirtualPlaylistTrack(
 {
     public string? OriginalItemId { get; init; }
     public int? PlaybackExplicitContentLyrics { get; init; }
+    // Why a mix picked this song ("Played 12 times lately").
+    public string? Reason { get; init; }
 }
 
 public sealed record VirtualPlaylistReadModel(
@@ -55,9 +57,14 @@ public sealed record VirtualPlaylistReadModel(
     public string? BackendOwner { get; init; }
     public bool? BackendPublic { get; init; }
     public allstarr.Core.Music.MixCoverInput? MixCover { get; init; }
-    // Yours, Feed or Followed for synced playlists; null for allstarr's own mixes.
+    // Yours, Feed or Followed for synced playlists, Mix for Allstarr's own mixes.
     public string? PlaylistKind { get; init; }
+    public MixDetails? Mix { get; init; }
 }
+
+// What apps show for a mix published as a playlist: its kind (daily-1, discover-weekly, external…), its section on
+// For you, the service a synced mix comes from, and when its songs last changed.
+public sealed record MixDetails(string Kind, string Section, string? Source, DateTimeOffset? UpdatedAt);
 
 public interface IPlaylistVirtualizationService
 {
@@ -403,7 +410,9 @@ public sealed class PlaylistVirtualizationService(
             BackendPublic = link.Mode == PlaylistLinkMode.Virtual ? null : authorizedTarget?.IsPublic,
             MixCover = allstarr.Core.Music.PersonalMixService.IsExternalLink(link)
                 ? new(link.Id.ToString(), snapshot.SnapshotVersion, "external", Source: link.SourceProviderId,
-                    SourcePlaylistId: link.SourcePlaylistId, Name: DisplayName(link.SourceProviderId, name), Count: tracks.Count) : null
+                    SourcePlaylistId: link.SourcePlaylistId, Name: DisplayName(link.SourceProviderId, name), Count: tracks.Count) : null,
+            Mix = allstarr.Core.Music.PersonalMixService.IsExternalLink(link)
+                ? new("external", "yourServices", link.SourceProviderId, snapshot.PublishedAt) : null
         };
         if (!allstarr.Core.Music.PersonalMixService.IsExternalLink(link) || personalMixes == null) return result;
         result = await personalMixes.FilterExternalTracksAsync(context, result, cancellationToken);

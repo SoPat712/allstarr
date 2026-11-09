@@ -415,6 +415,19 @@ songs from `Feed` and `Followed` playlists don't fill the Albums, Songs and
 Artists lists unless the listener turns on Show songs in my library for that
 playlist. Other Jellyfin apps ignore the field.
 
+Mixes in the listener's apps are Jellyfin playlists too (`AllstarrPlaylistKind`
+`Mix`, or the synced kind for a ListenBrainz or Last.fm mix), so apps can list
+them, read their songs with `Playlists/{id}/Items` and show
+`Items/{id}/Images/Primary` like any playlist. Their items also carry
+`AllstarrMixKind` (`daily-1` … `daily-4`, `discover-weekly`, mood IDs, `custom`,
+`external`), `AllstarrMixSection` (`madeForYou`, `moods`, `custom`,
+`yourServices`), `AllstarrMixState` (`ready`; mixes that aren't ready aren't
+playlists), `AllstarrMixSource` for a synced mix, and `DateLastContentAdded`
+when its songs last changed. The image tag changes whenever the cover does.
+Each song in a mix's `Playlists/{id}/Items` carries `AllstarrReason`, why the
+mix picked it. Mixes that aren't in the listener's apps yet, and the For you
+order, still come from `GET /allstarr/v1/mixes`.
+
 `GET /allstarr/v1/releases` returns `{releases,followedArtists}` from the
 listener's stored New releases inbox and follows, without polling providers.
 Each release includes `releaseId`, `title`, `kind`, `releaseDate`,
@@ -463,7 +476,7 @@ sources revision before a write.
 | `keep.updated` | `{itemId,state,progress?}`. State is `none`, `inProgress`, `kept`, or `failed`; progress is 0–1 when measured. |
 | `match.updated` | `{itemId,state}` with the effective match state used by the match route. Effective personal choices hide unrelated household and automatic changes. |
 | `lyrics.updated` | `{itemId,revision}` after a pin/clear or an effective lyrics change. |
-| `mix.updated` | `{mixId}` after regeneration, saving, deletion, or another saved mix change. |
+| `mix.updated` | `{mixId,playlistId}` after regeneration, saving, deletion, or another saved mix change; `playlistId` is the mix's Jellyfin playlist id. |
 | `releases.updated` | `{count}` with the current New releases inbox size. |
 | `playback.updated` | `{itemId}` when the serving route changes during the caller's active stream, only on connections with the same `DeviceId`. |
 
