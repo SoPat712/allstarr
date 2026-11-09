@@ -101,8 +101,9 @@ async function clickWhenStable(control: Locator) {
       const box = element.getBoundingClientRect();
       return {
         bounds: JSON.stringify([box.x, box.y, box.width, box.height]),
+        // Scroll-linked effects follow the scroll position and never finish on their own, so only time-based motion counts.
         animating: document.getAnimations().some(animation => animation.playState === "running" &&
-          animation.effect?.getTiming().iterations !== Infinity),
+          animation.timeline === document.timeline && animation.effect?.getTiming().iterations !== Infinity),
       };
     });
     const settled = !current.animating && current.bounds === previousBounds;
@@ -1256,7 +1257,8 @@ for (const viewport of viewports) {
       await expect(routes.nth(1)).toBeInViewport({ ratio: 1 });
       // Dragging while the view is still easing in can land on the wrong row.
       await page.evaluate(() => Promise.all(document.getAnimations()
-        .filter((animation) => animation.effect?.getTiming().iterations !== Infinity).map((animation) => animation.finished)));
+        .filter((animation) => animation.timeline === document.timeline && animation.effect?.getTiming().iterations !== Infinity)
+        .map((animation) => animation.finished)));
       await routes.nth(0).locator(".routing-index").dragTo(routes.nth(1).locator(".routing-index"));
       await expect(routes.nth(0)).toContainText("Future audio");
       await expect.poll(() => saved).toEqual({ StreamingOrder: "future-audio,lumen-audio" });
@@ -4566,7 +4568,7 @@ test("Compact dialogs share symmetric actions and readable progress", async ({ p
         return { contained: button.scrollWidth <= button.clientWidth, right: rect.right, height: rect.height };
       }),
     );
-    expect(serviceActions.every(({ contained, right }) => contained && right <= width)).toBe(true);
+    expect(serviceActions.every(({ contained, right }) => contained && right <= width), `${width}px ${JSON.stringify(serviceActions)}`).toBe(true);
     expect(serviceActions.every(({ height }) => height >= 44)).toBe(true);
   }
   await page.setViewportSize({ width: 320, height: 844 });

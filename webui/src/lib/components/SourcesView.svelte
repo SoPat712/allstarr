@@ -1092,7 +1092,7 @@
     .source-toolbar :global(.search-field input) { width: 100%; min-width: 0; }
   }
   @media (max-width: 650px) {
-    .sources-heading-actions { display: grid; width: 100%; grid-template-columns: auto minmax(0, 1fr); }
+    .sources-heading-actions { display: grid; width: 100%; grid-template-columns: 48px minmax(0, 1fr); }
     .sources-heading-actions :global([data-slot="button"]) { width: 100%; white-space: normal; }
     .sources-heading-actions :global(button), .service-advanced :global(button), .service-advanced :global([data-slot="button"]) { min-height: 44px; }
   }
