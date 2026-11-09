@@ -3448,6 +3448,9 @@ namespace allstarr.Core.Storage.Migrations
                     b.Property<Guid>("Id")
                         .HasColumnType("TEXT");
 
+                    b.Property<bool?>("CountsTowardLibrary")
+                        .HasColumnType("INTEGER");
+
                     b.Property<long>("CreatedAt")
                         .HasColumnType("INTEGER");
 
@@ -3690,6 +3693,12 @@ namespace allstarr.Core.Storage.Migrations
                         .HasColumnType("INTEGER");
 
                     b.Property<Guid?>("SourceJobId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SourceKind")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SourceOwnerId")
                         .HasColumnType("TEXT");
 
                     b.HasKey("Id");

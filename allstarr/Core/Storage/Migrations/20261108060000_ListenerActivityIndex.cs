@@ -7,7 +7,7 @@ namespace allstarr.Core.Storage.Migrations;
 // never finished. SQLite needs the same coalesce in the index for those lookups to skip older history.
 [DbContext(typeof(AllstarrDbContext))]
 [Migration("20261108060000_ListenerActivityIndex")]
-public sealed class ListenerActivityIndex : HomeNotableActivity
+public class ListenerActivityIndex : HomeNotableActivity
 {
     public const string IndexName = "IX_listening_event_scope_time";
 

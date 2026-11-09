@@ -245,14 +245,14 @@ public sealed class PublicPlaylistSourceMigrationTests
         var snapshots = new List<string>();
         foreach (var table in new[] { "users", "provider_accounts", "playlist_links", "playlist_source_snapshots", "external_metadata_snapshots" })
         {
-            foreach (var row in await ReadRowsAsync(db, $"SELECT * FROM {table}", omitListenerSettings: table == "users"))
+            foreach (var row in await ReadRowsAsync(db, $"SELECT * FROM {table}", omitAddedColumns: table is "users" or "playlist_links" or "playlist_source_snapshots"))
                 snapshots.Add($"{table}|{row}");
         }
 
         return snapshots.OrderBy(item => item, StringComparer.Ordinal).ToArray();
     }
 
-    private static async Task<string[]> ReadRowsAsync(AllstarrDbContext db, string sql, bool omitListenerSettings = false)
+    private static async Task<string[]> ReadRowsAsync(AllstarrDbContext db, string sql, bool omitAddedColumns = false)
     {
         var connection = db.Database.GetDbConnection();
         var closeWhenDone = connection.State != ConnectionState.Open;
@@ -268,7 +268,7 @@ public sealed class PublicPlaylistSourceMigrationTests
             while (await reader.ReadAsync())
             {
                 var values = Enumerable.Range(0, reader.FieldCount)
-                    .Where(index => !omitListenerSettings || reader.GetName(index) is not ("IsSynthetic" or "IsTrustedListener"))
+                    .Where(index => !omitAddedColumns || reader.GetName(index) is not ("IsSynthetic" or "IsTrustedListener" or "CountsTowardLibrary" or "SourceOwnerId" or "SourceKind"))
                     .Select(index => $"{reader.GetName(index)}={CanonicalValue(reader.GetValue(index))}")
                     .OrderBy(value => value, StringComparer.Ordinal);
                 rows.Add(string.Join(",", values));

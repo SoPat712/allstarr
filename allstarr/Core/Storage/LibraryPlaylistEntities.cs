@@ -154,6 +154,8 @@ public sealed class PlaylistLinkRecord
     public string PolicyVersion { get; set; } = string.Empty;
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
+    // The listener's choice to show this playlist's songs in their library; unset follows the playlist's kind.
+    public bool? CountsTowardLibrary { get; set; }
     public long Revision { get; set; }
 }
 
@@ -175,6 +177,9 @@ public sealed class PlaylistSourceSnapshotRecord
     public string CorrelationId { get; set; } = string.Empty;
     public DateTimeOffset RetrievedAt { get; set; }
     public DateTimeOffset? PublishedAt { get; set; }
+    // Who owns the playlist at the source, and whether that makes it the listener's own, a service feed or someone else's.
+    public string? SourceOwnerId { get; set; }
+    public string? SourceKind { get; set; }
 }
 
 public sealed class PlaylistSourceEntryRecord

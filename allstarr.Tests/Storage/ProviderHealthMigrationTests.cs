@@ -448,7 +448,8 @@ public sealed class ProviderHealthMigrationTests
                 {
                     var values = Enumerable.Range(0, reader.FieldCount)
                         .Where(index => !(name == "provider_accounts" && reader.GetName(index) == "SettingsJson") &&
-                                        !(name == "playlist_links" && reader.GetName(index) == "DestinationMode") &&
+                                        !(name == "playlist_links" && reader.GetName(index) is "DestinationMode" or "CountsTowardLibrary") &&
+                                        !(name == "playlist_source_snapshots" && reader.GetName(index) is "SourceOwnerId" or "SourceKind") &&
                                         !(name == "users" && reader.GetName(index) is "IsSynthetic" or "IsTrustedListener") &&
                                         !(name == "downloaded_song_mappings" && reader.GetName(index) == "CacheIdentityJson"))
                         .Select(index => $"{reader.GetName(index)}={CanonicalValue(reader.GetValue(index))}")
@@ -496,7 +497,8 @@ public sealed class ProviderHealthMigrationTests
         (table == "downloaded_song_mappings" && component == "\"CacheIdentityJson\" TEXT NULL") ||
         (table == "users" && component is "\"IsSynthetic\" INTEGER NOT NULL DEFAULT 0" or "\"IsTrustedListener\" INTEGER NOT NULL DEFAULT 0") ||
         (table == "provider_accounts" && component == "\"SettingsJson\" TEXT NOT NULL DEFAULT '{}'") ||
-        (table == "playlist_links" && component is "\"DestinationMode\" TEXT NOT NULL DEFAULT 'Existing'" or "\"DestinationMode\" TEXT NOT NULL") ||
+        (table == "playlist_links" && component is "\"DestinationMode\" TEXT NOT NULL DEFAULT 'Existing'" or "\"DestinationMode\" TEXT NOT NULL" or "\"CountsTowardLibrary\" INTEGER NULL") ||
+        (table == "playlist_source_snapshots" && component is "\"SourceOwnerId\" TEXT NULL" or "\"SourceKind\" TEXT NULL") ||
         (table == "playlist_target_memberships" && component == "\"RemovalConfirmedAt\" INTEGER NULL") ||
         (table == "durable_jobs" && component is "\"LeaseOwner\" TEXT NULL" or "\"LeaseExpiresAt\" INTEGER NULL" or
             "\"LastAttemptStartedAt\" INTEGER NULL" or "\"LastAttemptCompletedAt\" INTEGER NULL" or "\"LastAttemptOutcome\" TEXT NULL") ||
