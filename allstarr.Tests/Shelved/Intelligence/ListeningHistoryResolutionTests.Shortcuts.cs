@@ -175,10 +175,12 @@ public sealed partial class ListeningHistoryResolutionTests
             ReportProgressAsync = (update, _) => { updates.Add(update); return Task.FromResult(true); }
         }, default);
         Assert.Equal(DurableJobCompletionKind.Succeeded, result.Kind);
-        using var counts = JsonDocument.Parse(updates.Last().Message);
-        Assert.Equal(1, counts.RootElement.GetProperty("matched-stored-metadata").GetInt32());
-        Assert.Equal(1, counts.RootElement.GetProperty("no-candidates").GetInt32());
-        Assert.Equal(2, counts.RootElement.EnumerateObject().Sum(item => item.Value.GetInt32()));
+        using var report = JsonDocument.Parse(updates.Last().Message);
+        var counts = report.RootElement.GetProperty("reasons");
+        Assert.Equal(1, counts.GetProperty("matched-stored-metadata").GetInt32());
+        Assert.Equal(1, counts.GetProperty("no-candidates").GetInt32());
+        Assert.Equal(2, counts.EnumerateObject().Sum(item => item.Value.GetInt32()));
+        Assert.Equal(2, report.RootElement.GetProperty("recent").GetArrayLength());
     }
 
     [Fact]
@@ -387,7 +389,7 @@ public sealed partial class ListeningHistoryResolutionTests
             ReportProgressAsync = (update, _) => { updates.Add(update); return Task.FromResult(true); }
         }, default);
         using var summary = JsonDocument.Parse(updates.Last().Message);
-        var reason = Assert.Single(summary.RootElement.EnumerateObject());
+        var reason = Assert.Single(summary.RootElement.GetProperty("reasons").EnumerateObject());
         Assert.StartsWith(expected, reason.Name);
         Assert.Equal(1, reason.Value.GetInt32());
         Assert.Single(logger.Invocations, item => item.Method.Name == "Log" && (LogLevel)item.Arguments[0] == LogLevel.Information);

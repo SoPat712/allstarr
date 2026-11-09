@@ -306,8 +306,11 @@ public sealed partial class ListeningHistoryResolution(
                 var heard = item.Group.First();
                 recent.Insert(0, new
                 {
-                    title = Clip(heard.Title), artist = Clip(heard.Artist), plays = item.Group.Count(),
-                    found = Clip(item.Library?.Title ?? item.Song?.Title), foundArtist = Clip(item.Library?.Artist ?? item.Song?.Artist),
+                    title = Clip(heard.Title),
+                    artist = Clip(heard.Artist),
+                    plays = item.Group.Count(),
+                    found = Clip(item.Library?.Title ?? item.Song?.Title),
+                    foundArtist = Clip(item.Library?.Artist ?? item.Song?.Artist),
                     reason = item.Reason
                 });
                 if (recent.Count > 6) recent.RemoveAt(6);
