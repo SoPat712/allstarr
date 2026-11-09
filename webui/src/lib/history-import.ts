@@ -17,7 +17,7 @@ export function historyDateRange(first?: string | null, last?: string | null, ye
 }
 
 export function historySource(format: string) {
-  return ({ "spotify-extended-streaming-history": "Spotify", "lastfm-recent-tracks": "Last.fm", "listenbrainz-export": "ListenBrainz", "maloja-export": "Maloja", "koito-export-v1": "Koito" } as Record<string, string>)[format] ?? "Other service";
+  return ({ "spotify-extended-streaming-history": "Spotify", "apple-music-play-activity": "Apple Music", "lastfm-recent-tracks": "Last.fm", "listenbrainz-export": "ListenBrainz", "maloja-export": "Maloja", "koito-export-v1": "Koito" } as Record<string, string>)[format] ?? "Other service";
 }
 
 export function combineHistoryPreviews(items: HistoryImport[]) {

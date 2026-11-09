@@ -228,9 +228,9 @@
 {/snippet}
 
 <section class="settings-card history-imports" aria-labelledby="history-imports-heading">
-  <header><div><h3 id="history-imports-heading">Listening history from other services</h3><small>Bring in your history from Spotify, Last.fm, ListenBrainz, Maloja or Koito. Completed imported plays appear in Recap at their original dates and never scrobble.</small></div></header>
+  <header><div><h3 id="history-imports-heading">Listening history from other services</h3><small>Bring in your history from Spotify, Apple Music, Last.fm, ListenBrainz, Maloja or Koito. Completed imported plays appear in Recap at their original dates and never scrobble.</small></div></header>
   <div class="settings-row">
-    <div><a class="spotify-hint" href="https://www.spotify.com/account/privacy/" target="_blank" rel="noreferrer">From Spotify, request 'Extended streaming history' in your privacy settings.</a></div>
+    <div><a class="spotify-hint" href="https://www.spotify.com/account/privacy/" target="_blank" rel="noreferrer">From Spotify, request 'Extended streaming history' in your privacy settings.</a><a class="spotify-hint" href="https://privacy.apple.com/" target="_blank" rel="noreferrer">From Apple, request a copy of your 'Apple Media Services information' and import the zip as it arrives.</a></div>
     <Button disabled={uploading || action} onclick={() => picker.click()}>Import history</Button>
     <input bind:this={picker} hidden type="file" multiple accept=".zip,.json,.csv" aria-label="History file" onchange={() => { const files = Array.from(picker.files ?? []); picker.value = ""; void upload(files); }} />
   </div>

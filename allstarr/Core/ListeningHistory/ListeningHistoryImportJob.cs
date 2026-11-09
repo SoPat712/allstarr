@@ -375,7 +375,7 @@ public sealed class ListeningHistoryImportJobHandler(
             var identities = externalHashes.Length == 0
                 ? []
                 : await db.ProviderTrackIdentities.AsNoTracking().Where(item =>
-                        item.ProviderId == "spotify" &&
+                        ListeningHistoryImportService.IdentityProviders.Contains(item.ProviderId) &&
                         item.ResourceKind == ProviderResourceKind.Track && item.Scope == ProviderIdentityScope.Catalog &&
                         externalHashes.Contains(item.ExternalIdHash))
                     .OrderBy(item => item.CatalogNamespace).ThenBy(item => item.Id)

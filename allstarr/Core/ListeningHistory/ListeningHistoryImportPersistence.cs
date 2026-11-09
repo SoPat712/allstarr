@@ -624,9 +624,14 @@ public sealed class ListeningHistoryImportService(
     internal static string OccurrenceKey(IntelligenceScope scope, ListeningHistoryImportRow row) =>
         Hash($"{scope.OwnerUserId:N}\u001f{scope.Protocol}\u001f{scope.BackendInstanceId}\u001fimport\u001f{row.SourceService}\u001f{row.SourceUserKey}\u001f{row.ListenedAt.ToUnixTimeMilliseconds()}\u001f{row.SourceItemKey}");
 
+    // Services whose exported song ids are the ids Allstarr stores for that service's catalog.
+    internal static readonly string[] IdentityProviders = ["spotify", AppleMusicListeningHistoryImporter.ProviderId];
+
     internal static string? ProviderIdentityHash(ListeningHistoryImportRow row)
     {
         const string spotifyPrefix = "spotify:track:";
+        if (row.SourceService == AppleMusicListeningHistoryImporter.ProviderId && row.ProviderTrackReference is { Length: > 0 } appleId)
+            return Hash(appleId);
         return row.SourceService == "spotify" &&
                row.ProviderTrackReference?.StartsWith(spotifyPrefix, StringComparison.Ordinal) == true
             ? Hash(row.ProviderTrackReference[spotifyPrefix.Length..])
@@ -747,7 +752,7 @@ public sealed class ListeningHistoryImportService(
             var resolved = identityHashes.Length == 0
                 ? []
                 : await db.ProviderTrackIdentities.AsNoTracking().Where(item =>
-                        item.ProviderId == "spotify" &&
+                        IdentityProviders.Contains(item.ProviderId) &&
                         item.ResourceKind == ProviderResourceKind.Track &&
                         item.Scope == ProviderIdentityScope.Catalog && identityHashes.Contains(item.ExternalIdHash))
                     .Select(item => item.ExternalIdHash).ToHashSetAsync(cancellationToken);

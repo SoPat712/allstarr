@@ -110,6 +110,7 @@ public static class ListeningHistoryImportRegistration
         options.Validate();
         services.AddSingleton(options);
         services.AddSingleton<IListeningHistoryImporter, SpotifyListeningHistoryImporter>();
+        services.AddSingleton<IListeningHistoryImporter, AppleMusicListeningHistoryImporter>();
         services.AddSingleton<IListeningHistoryImporter, LastFmListeningHistoryImporter>();
         services.AddSingleton<IListeningHistoryImporter, ListenBrainzListeningHistoryImporter>();
         services.AddSingleton<IListeningHistoryImporter, KoitoListeningHistoryImporter>();
