@@ -84,13 +84,14 @@ public sealed partial class ProtocolRouteFixtureTests
     }
 
     [Fact]
-    public async Task SavedMembership_OffersASourceSongKnownOnlyByItsPrivateKeyAsItsRecording()
+    public async Task SavedMembership_LeavesLibrarySongsToTheMediaServerAndOffersOthersAsTheirRecording()
     {
         await using var database = await SqliteTestDatabase.CreateAsync();
         var storage = new FavoriteViewFactory(database.Options);
         await SeedFavoriteViewsAsync(storage, "jellyfin");
         var added = new DateTimeOffset(2023, 7, 1, 0, 0, 0, TimeSpan.Zero);
         var key = SavedMembershipHash("private-track");
+        var localKey = SavedMembershipHash("local-track");
         var recording = Guid.CreateVersion7();
         await using (var db = storage.CreateDbContext())
         {
@@ -162,14 +163,94 @@ public sealed partial class ProtocolRouteFixtureTests
                 SourcePosition = 0,
                 SourceEntryIdHash = SavedMembershipHash("private-row")
             });
+            // The album's other song is a copy in the media server library, matched and published as that copy.
+            var localRecording = Guid.CreateVersion7();
+            var localIdentity = Guid.CreateVersion7();
+            var localMetadata = Guid.CreateVersion7();
+            var libraryTrack = Guid.CreateVersion7();
+            var match = Guid.CreateVersion7();
+            db.CanonicalRecordings.Add(new() { Id = localRecording, CreatedByUserId = FavoriteViewer, PublicId = CanonicalRecordingRecord.DefaultPublicId(localRecording), CreatedAt = added, UpdatedAt = added });
+            db.ProviderTrackIdentities.Add(new()
+            {
+                Id = localIdentity,
+                CanonicalRecordingId = localRecording,
+                ProviderId = "spotify",
+                ResourceKind = ProviderResourceKind.Track,
+                Verification = ProviderIdentityVerification.Verified,
+                VerificationMethod = "source-snapshot-hash",
+                Scope = ProviderIdentityScope.Catalog,
+                DecisionVersion = 1,
+                ExternalId = localKey,
+                ExternalIdHash = localKey,
+                CreatedAt = added,
+                UpdatedAt = added
+            });
+            db.ExternalMetadataSnapshots.Add(new()
+            {
+                Id = localMetadata,
+                OwnerUserId = FavoriteViewer,
+                Protocol = "jellyfin",
+                BackendInstanceId = "primary",
+                BackendPrincipalId = "user-1",
+                ProviderId = "spotify",
+                ResourceKind = "track",
+                ProviderTrackIdentityId = localIdentity,
+                ExternalIdHash = localKey,
+                SnapshotVersion = 1,
+                PayloadSha256 = SavedMembershipHash("local-payload"),
+                RetrievedAt = added,
+                PayloadJson = """{"Title":"Library song","Artists":["Kenya Grace"],"Album":"Strangers","AlbumId":"ext-spotify-album-strangers"}"""
+            });
+            db.LibraryTracks.Add(new()
+            {
+                Id = libraryTrack,
+                OwnerUserId = FavoriteViewer,
+                CanonicalRecordingId = localRecording,
+                Protocol = "jellyfin",
+                BackendInstanceId = "primary",
+                BackendLibraryId = "music",
+                BackendItemId = "native-library-song",
+                FilePath = "/music/library-song.flac",
+                Title = "Library song",
+                Artist = "Kenya Grace",
+                Album = "Strangers",
+                IndexedAt = added,
+                SourceModifiedAt = added,
+                UpdatedAt = added
+            });
+            db.TrackMatches.Add(new()
+            {
+                Id = match,
+                OwnerUserId = FavoriteViewer,
+                ExternalSnapshotId = localMetadata,
+                LibraryTrackId = libraryTrack,
+                CanonicalRecordingId = localRecording,
+                State = TrackMatchState.Accepted,
+                DecisionVersion = 1,
+                SourceSnapshotVersion = 1,
+                Revision = 1,
+                DecidedAt = added
+            });
+            db.PlaylistSourceEntries.Add(new()
+            {
+                Id = Guid.CreateVersion7(),
+                PlaylistSourceSnapshotId = snapshot,
+                ExternalMetadataSnapshotId = localMetadata,
+                PublishedTrackMatchId = match,
+                SourcePosition = 1,
+                SourceEntryIdHash = SavedMembershipHash("local-row")
+            });
             await db.SaveChangesAsync();
         }
 
         var rows = await new SavedLibraryReader(storage).ReadAsync(SavedMembershipContext());
 
-        Assert.Equal("Strangers", Assert.Single(rows, row => row.ItemId == CanonicalRecordingRecord.DefaultPublicId(recording)).Display.Title);
-        Assert.DoesNotContain(rows, row => row.ItemId == $"ext-spotify-song-{key}");
-        Assert.Contains(rows, row => row.ItemId == "ext-spotify-album-strangers");
+        var strangers = Assert.Single(rows, row => row.ItemId == CanonicalRecordingRecord.DefaultPublicId(recording));
+        Assert.Equal("Strangers", strangers.Display.Title);
+        Assert.Null(strangers.Display.AlbumId);
+        Assert.DoesNotContain(rows, row => row.ItemId.StartsWith("ext-spotify-song-", StringComparison.Ordinal));
+        Assert.DoesNotContain(rows, row => row.Display.Title == "Library song");
+        Assert.DoesNotContain(rows, row => row.ItemId == "ext-spotify-album-strangers");
     }
 
     [Fact]

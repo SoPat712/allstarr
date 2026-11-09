@@ -487,33 +487,47 @@ public sealed class SavedLibraryReader(IDbContextFactory<AllstarrDbContext> fact
                               identity.ResourceKind == ProviderResourceKind.Track && identity.ExternalIdHash == metadata.ExternalIdHash &&
                               (identity.ProviderAccountId == metadata.ProviderAccountId || identity.ProviderAccountId == null && identity.Scope == ProviderIdentityScope.Catalog) &&
                               (identity.Verification == ProviderIdentityVerification.Verified || identity.Verification == ProviderIdentityVerification.Pinned)
-                          select new { entry.PlaylistSourceSnapshotId, metadata.PayloadJson, identity.ProviderId, identity.ExternalId, identity.VerificationMethod, identity.CanonicalRecordingId })
+                          select new { entry.PlaylistSourceSnapshotId, entry.ExternalMetadataSnapshotId, metadata.PayloadJson, identity.ProviderId, identity.ExternalId, identity.VerificationMethod, identity.CanonicalRecordingId })
             .ToArrayAsync(cancellationToken);
+        // A song whose published match is a copy in the listener's media server library is that library item, which the
+        // media server lists itself with its own album; listing it here too made a second, unplayable song and album.
+        var local = (await (from entry in db.PlaylistSourceEntries.AsNoTracking()
+                            join match in db.TrackMatches.AsNoTracking() on entry.PublishedTrackMatchId equals match.Id
+                            where snapshotIds.Contains(entry.PlaylistSourceSnapshotId) && match.LibraryTrackId != null &&
+                                (match.State == TrackMatchState.Accepted || match.State == TrackMatchState.Pinned)
+                            select new { entry.PlaylistSourceSnapshotId, entry.ExternalMetadataSnapshotId })
+                .ToArrayAsync(cancellationToken)).Select(item => (item.PlaylistSourceSnapshotId, item.ExternalMetadataSnapshotId)).ToHashSet();
+        var songs = new List<(Guid Snapshot, FavoriteDisplaySnapshot Display, bool Local)>();
+        foreach (var row in rows)
+        {
+            try
+            {
+                var song = JsonSerializer.Deserialize<Song>(row.PayloadJson, JsonOptions);
+                if (song == null || string.IsNullOrWhiteSpace(song.Title)) continue;
+                // A source that only gave a private track key keeps that key, not the provider's id, so the song is
+                // offered as its recording, which plays through its matched source.
+                var id = row.VerificationMethod == "source-snapshot-hash"
+                    ? CanonicalRecordingRecord.DefaultPublicId(row.CanonicalRecordingId)
+                    : $"ext-{row.ProviderId}-song-{row.ExternalId}";
+                var display = Display(id, song);
+                using var payload = JsonDocument.Parse(row.PayloadJson);
+                if (payload.RootElement.TryGetProperty("DurationMilliseconds", out var duration) && duration.TryGetInt64(out var milliseconds))
+                    display = display with { DurationMilliseconds = milliseconds };
+                if (payload.RootElement.TryGetProperty("IsExplicit", out var explicitValue) &&
+                    explicitValue.ValueKind is JsonValueKind.True or JsonValueKind.False)
+                    display = display with { IsExplicit = explicitValue.GetBoolean() };
+                songs.Add((row.PlaylistSourceSnapshotId, display, local.Contains((row.PlaylistSourceSnapshotId, row.ExternalMetadataSnapshotId))));
+            }
+            catch (JsonException) { }
+        }
+        // An album with any song in the library is the library's album, so its other songs don't build a second one.
+        var localAlbums = songs.Where(song => song.Local && song.Display.AlbumId != null).Select(song => song.Display.AlbumId!)
+            .ToHashSet(StringComparer.Ordinal);
         foreach (var snapshot in snapshots)
         {
-            var members = new List<FavoriteDisplaySnapshot>();
-            foreach (var row in rows.Where(row => row.PlaylistSourceSnapshotId == snapshot.Id))
-            {
-                try
-                {
-                    var song = JsonSerializer.Deserialize<Song>(row.PayloadJson, JsonOptions);
-                    if (song == null || string.IsNullOrWhiteSpace(song.Title)) continue;
-                    // A source that only gave a private track key keeps that key, not the provider's id, so the song is
-                    // offered as its recording, which plays through its matched source.
-                    var id = row.VerificationMethod == "source-snapshot-hash"
-                        ? CanonicalRecordingRecord.DefaultPublicId(row.CanonicalRecordingId)
-                        : $"ext-{row.ProviderId}-song-{row.ExternalId}";
-                    var display = Display(id, song);
-                    using var payload = JsonDocument.Parse(row.PayloadJson);
-                    if (payload.RootElement.TryGetProperty("DurationMilliseconds", out var duration) && duration.TryGetInt64(out var milliseconds))
-                        display = display with { DurationMilliseconds = milliseconds };
-                    if (payload.RootElement.TryGetProperty("IsExplicit", out var explicitValue) &&
-                        explicitValue.ValueKind is JsonValueKind.True or JsonValueKind.False)
-                        display = display with { IsExplicit = explicitValue.GetBoolean() };
-                    members.Add(display);
-                }
-                catch (JsonException) { }
-            }
+            var members = songs.Where(song => song.Snapshot == snapshot.Id && !song.Local)
+                .Select(song => song.Display.AlbumId is { } album && localAlbums.Contains(album) ? song.Display with { AlbumId = null } : song.Display)
+                .ToList();
             changes.Add(new(snapshot.PublishedAt!.Value, snapshot.SnapshotVersion.ToString("D10"), "source:" + snapshot.PlaylistLinkId, members));
         }
     }
