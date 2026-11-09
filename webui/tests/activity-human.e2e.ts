@@ -11,7 +11,7 @@ const rows = [
   { id: "cancel", kind: "job", label: "Update favorites", state: "cancelled", detail: "Cancelled before changes were applied." },
 ].map((row, index) => ({ ...row, source: row.source ?? "System", actorUserId: "viewer", actorDisplayName: "Josh", occurredAt: `2026-10-26T12:00:0${9 - index}Z` }));
 const job = { id: jobId, type: "recording.keep", displayName: "Keep a song", state: "Failed", source: "Apple Music", ownerName: "Josh", targetName: "Power Trip · J. Cole", summary: "Audio could not be downloaded from Apple Music.", recovery: "Review the source connection or choose another ready source.", lastErrorMessage: "The source did not return audio before the time limit.", updatedAt: "2026-10-26T12:00:08Z", completedAt: "2026-10-26T12:00:08Z", attemptCount: 1 };
-async function mockActivity(page: Page, events: unknown[] = rows, options: { tasks?: unknown[]; job?: Record<string, unknown>; jobs?: Record<string, unknown>[]; attempts?: unknown[] } = {}) {
+async function mockActivity(page: Page, events: unknown[] = rows, options: { tasks?: unknown[]; job?: Record<string, unknown>; jobs?: Record<string, unknown>[]; attempts?: unknown[]; progress?: unknown[] } = {}) {
   const reads: string[] = [], writes: string[] = [];
   await page.route("**/api/admin/**", async route => {
     const url = new URL(route.request().url()), path = url.pathname;
@@ -23,7 +23,7 @@ async function mockActivity(page: Page, events: unknown[] = rows, options: { tas
     if (path === "/api/admin/ui/schema") return reply({ configSections: [], providers: [{ id: "applemusic", name: "Apple Music" }, { id: "lastfm", name: "Last.fm" }], activeBackend: "Jellyfin" });
     if (path === "/api/admin/ui/activity") return reply({ items: events, hasMore: false });
     if (path === "/api/admin/activity/tasks") return reply({ items: options.tasks ?? [], hasMore: false });
-    if (path === "/api/admin/jobs") return reply({ jobs: (options.jobs ?? []).filter(item => url.searchParams.get("view") === "queue" ? item.state === "Running" : item.state !== "Running"), progress: [], hasMore: false });
+    if (path === "/api/admin/jobs") return reply({ jobs: (options.jobs ?? []).filter(item => url.searchParams.get("view") === "queue" ? item.state === "Running" : item.state !== "Running"), progress: options.progress ?? [], hasMore: false });
     if (path === `/api/admin/jobs/${jobId}`) { reads.push(path); return reply({ job: { ...job, ...options.job }, attempts: options.attempts ?? [{ attemptNumber: 1, startedAt: "2026-10-26T12:00:03Z", completedAt: "2026-10-26T12:00:08Z", outcome: "failed", errorMessage: "The source did not return audio before the time limit." }], hasMore: false }); }
     if (path === "/api/admin/updates/stream") return route.fulfill({ contentType: "text/event-stream", body: ": fixture\n\n" });
     return reply({});
@@ -174,6 +174,45 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
   await expect(page.locator(".activity-task .last-result")).toHaveText(["Completed", "Failed", "Result not recorded"]);
   if (width === 390) await expectContainedMobileGeometry(page);
   await page.screenshot({ path: testInfo.outputPath(`activity-tasks-${width}-${theme}.png`), fullPage: true });
+});
+for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const) test(`Imported song matching shows the song being checked and the latest outcomes at ${width}px ${theme}`, async ({ page }, testInfo) => {
+  await page.setViewportSize({ width, height: 900 });
+  await page.emulateMedia({ colorScheme: theme });
+  await page.addInitScript(value => localStorage.setItem("allstarr.theme", value), theme);
+  const matching = { type: "listening-history.resolve", displayName: "Find imported songs", state: "Running", source: "System", targetName: null, summary: "875 of 1284 songs checked; 409 remaining.", recovery: null, lastErrorMessage: null, completedAt: null, startedAt: job.updatedAt, canCancel: true };
+  const message = JSON.stringify({
+    reasons: { "matched-stored-metadata": 792, "matched-search": 81, "edition-mismatch": 1, "candidates-rejected:weak_artist_evidence_review": 1 },
+    recent: [
+      { title: "Espresso", artist: "Sabrina Carpenter", plays: 14, found: "Espresso", foundArtist: "Sabrina Carpenter", reason: "matched-search" },
+      { title: "Good Luck, Babe! (Live from the Grammys)", artist: "Chappell Roan", plays: 1, found: null, foundArtist: null, reason: "edition-mismatch" },
+      { title: "Die With A Smile", artist: "Lady Gaga", plays: 9, found: "Die With A Smile", foundArtist: "Lady Gaga & Bruno Mars", reason: "matched-stored-metadata" },
+    ],
+  });
+  await mockActivity(page, rows, {
+    jobs: [{ ...job, ...matching, id: jobId }], job: matching, attempts: [],
+    progress: [{ id: "progress", jobId, action: "history-resolution-current", outcome: "running", createdAt: job.updatedAt,
+      detailsJson: JSON.stringify({ jobId, stage: "history-resolution", message, completed: 875, total: 1284, track: "Too Sweet · Hozier" }) }],
+  });
+  await page.goto("/#/activity");
+  await page.getByRole("tab", { name: "Jobs", exact: true }).click();
+  const row = page.locator(`[data-job-id="${jobId}"]`);
+  await expect(row).toContainText("Find imported songs");
+  await expect(row).toContainText("Checking Too Sweet · Hozier");
+  await expect(row).not.toContainText("matched-");
+  await row.locator(".row-action").click();
+  const panel = page.locator("[data-side-panel]");
+  await expect(panel.locator(".history-checking")).toHaveText("Checking Too Sweet · Hozier");
+  await expect(panel).toContainText("873 songs found · 2 not found");
+  const latest = panel.getByRole("region", { name: "Latest songs" }).locator("li");
+  await expect(latest).toHaveCount(3);
+  await expect(latest.nth(0)).toContainText("14 plays");
+  await expect(latest.nth(1)).toContainText("Other version");
+  await expect(latest.nth(2)).toContainText("Matched to Die With A Smile · Lady Gaga & Bruno Mars");
+  await expect(latest.nth(0)).not.toContainText("Matched to");
+  await expect(panel).not.toContainText("songs checked;");
+  await expect(panel).not.toContainText("{");
+  if (width === 390) await expectContainedMobileGeometry(page);
+  await page.screenshot({ path: testInfo.outputPath(`activity-history-matching-${width}-${theme}.png`) });
 });
 test("Activity keeps an older reference out of the headline and makes it traceable", async ({ page }) => {
   await mockActivity(page, [{ id: "legacy", kind: "job", source: "system", label: "recording.keep", state: "failed", detail: jobId, jobId, actorUserId: "viewer", occurredAt: "2026-10-26T12:00:00Z" }]);

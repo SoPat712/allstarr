@@ -210,7 +210,7 @@ public sealed partial class AdminUiActivityTests
         var page = Assert.IsType<AdminUiActivityPage>(Assert.IsType<OkObjectResult>(await controller.GetDashboardActivity()).Value);
         Assert.Equal(2, page.Items.Length);
         var row = Assert.Single(page.Items, item => item.Id == jobId.ToString("N"));
-        Assert.Equal("History resolution", row.Label);
+        Assert.Equal("Find imported songs", row.Label);
         Assert.Equal("20 of 100 songs checked; 80 remaining.", row.Detail);
         Assert.True(row.IsRoutine);
         Assert.Contains(page.Items, item => item.Action == "history-resolution");

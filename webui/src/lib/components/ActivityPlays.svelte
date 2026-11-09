@@ -33,6 +33,8 @@
   let providers = $state<ProviderDefinition[]>([]);
   let loading = $state(true);
   let busy = $state(false);
+  // Only loading an earlier page disables its button; background refreshes stay silent.
+  let olderBusy = $state(false), olderPending = false;
   let error = $state("");
   let cursor = $state("");
   let hasMore = $state(false);
@@ -87,8 +89,9 @@
     return [...counts].map(([label, count]) => label + (count > 1 ? " ×" + count : "")).join(" · ");
   }
   async function load(older = false) {
-    if (busy) { if (!older) refreshPending = true; return; }
+    if (busy) { if (!older) refreshPending = true; else { olderPending = true; olderBusy = true; } return; }
     busy = true; error = "";
+    if (older) olderBusy = true;
     try {
       const visible: PlayTrace[] = [];
       let before = older ? cursor : "", more = false;
@@ -108,8 +111,9 @@
     } catch { if (!disposed) error = "Plays could not be loaded. Try again."; }
     finally {
       if (!disposed) {
-        loading = false; busy = false;
-        if (refreshPending) { refreshPending = false; scheduler.schedule(); }
+        loading = false; busy = false; olderBusy = false;
+        if (olderPending) { olderPending = false; void load(true); }
+        else if (refreshPending) { refreshPending = false; scheduler.schedule(); }
       }
     }
   }
@@ -291,7 +295,7 @@
       <EmptyState title={plays.length ? "No plays match this filter" : "No plays yet"} description={plays.length ? "Choose All to see every loaded play." : "Play something and it will show up here."}>{#snippet icon()}<Headphones size={24} />{/snippet}</EmptyState>
     {/each}
     </div>
-    {#if hasMore}<div class="plays-toolbar"><Button variant="secondary" disabled={busy} onclick={() => void load(true)}>Load earlier plays</Button></div>{/if}
+    {#if hasMore}<div class="plays-toolbar"><Button variant="secondary" disabled={olderBusy} onclick={() => void load(true)}>Load earlier plays</Button></div>{/if}
   {/if}
 </section>
 

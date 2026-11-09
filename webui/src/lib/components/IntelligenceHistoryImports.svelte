@@ -296,7 +296,7 @@
           <p>{historyDateRange(total.earliest, total.latest)}</p>
           <ul><li>{historyPlays(total.completed)}</li><li>{countLabel(total.skipped, "skip")}</li><li>{countLabel(total.songs, "song")}</li><li>{countLabel(total.malformed, "row")} not recognized</li></ul>
           {#if previews.length > 1}<small>The same song can appear in more than one file.</small>{/if}
-          {#if total.unresolvedNewRows}<p>{countLabel(total.unresolvedNewRows, "listen couldn't", "listens couldn't")} be matched to known songs.</p>{/if}
+          {#if total.unresolvedNewRows}<p>{countLabel(total.unresolvedNewRows, "listen is", "listens are")} new to Allstarr and will be matched to songs after you import.</p>{/if}
           {#if total.duplicateInFile || total.duplicateExisting}<p>{formatCount(total.duplicateInFile + total.duplicateExisting)} duplicate {total.duplicateInFile + total.duplicateExisting === 1 ? "listen will" : "listens will"} be left out.</p>{/if}
           {#if total.outsideRetentionRows}<p>{countLabel(total.outsideRetentionRows, "older listen is", "older listens are")} outside your history retention and will be left out.</p>{/if}
         {/if}

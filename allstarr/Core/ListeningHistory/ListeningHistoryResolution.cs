@@ -138,6 +138,9 @@ public sealed partial class ListeningHistoryResolution(
         using var traffic = new HistoryRequestBudget();
         var started = (timeProvider ?? TimeProvider.System).GetTimestamp();
         var reasons = new Dictionary<string, int>();
+        // The newest outcomes and the song being looked up, so Activity can show matches as they happen.
+        var recent = new List<object>();
+        string? checking = null;
         var matchedRecordings = new HashSet<Guid>();
         var state = await LoadAsync(db, context, access, execution.Claim.JobId, saved.Scope, token);
         var tracks = state.Library;
@@ -186,8 +189,9 @@ public sealed partial class ListeningHistoryResolution(
         ProviderError? unavailable = null;
         var resolved = new Dictionary<string, Resolution>();
         var providerFailures = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-        foreach (var group in remaining)
+        for (var index = 0; index < remaining.Count; index++)
         {
+            var group = remaining[index];
             token.ThrowIfCancellationRequested();
             if ((timeProvider ?? TimeProvider.System).GetElapsedTime(started) > TimeSpan.FromHours(1)) break;
             if (attempted > 0 && attempted % 100 == 0 &&
@@ -205,8 +209,10 @@ public sealed partial class ListeningHistoryResolution(
                 : await ResolveProviderAsync(group);
             if (resolution.Canonical != null) resolved[key] = resolution;
             needsRetry |= resolution.Retry;
+            checking = index + 1 < remaining.Count ? $"{Clip(remaining[index + 1].First().Title)} · {Clip(remaining[index + 1].First().Artist)}" : null;
             await SaveAsync([resolution]);
         }
+        checking = null;
         if (tags != null && matchedRecordings.Count > 0) await tags.EnqueuePendingAsync(token, matchedRecordings);
         if (matchedRecordings.Count > 0) await mixes.RefreshAfterHistoryResolutionAsync(user.Id, execution.Claim.JobId, jobs, token);
         var summary = JsonSerializer.Serialize(reasons);
@@ -297,6 +303,14 @@ public sealed partial class ListeningHistoryResolution(
             {
                 reasons[item.Reason] = reasons.GetValueOrDefault(item.Reason) + 1;
                 if (reasons[item.Reason] <= 3) logger?.LogDebug("History outcome {Reason}: {Title}", item.Reason, item.Group.First().Title);
+                var heard = item.Group.First();
+                recent.Insert(0, new
+                {
+                    title = Clip(heard.Title), artist = Clip(heard.Artist), plays = item.Group.Count(),
+                    found = Clip(item.Library?.Title ?? item.Song?.Title), foundArtist = Clip(item.Library?.Artist ?? item.Song?.Artist),
+                    reason = item.Reason
+                });
+                if (recent.Count > 6) recent.RemoveAt(6);
             }
             var next = ProgressPayload(saved.Cursor + batch.Count(item => !item.Retry));
             var json = payloadPolicy.SerializeAndValidate(next);
@@ -425,10 +439,12 @@ public sealed partial class ListeningHistoryResolution(
                     throw new DurableJobExecutionChangedException();
                 saved = next;
             }
-            await execution.ReportProgressAsync(new("history-resolution", saved.Summary ?? "{}", saved.Cursor, total,
-                ThroughputPerSecond: saved.ThroughputPerSecond), token);
+            await execution.ReportProgressAsync(new("history-resolution", JsonSerializer.Serialize(new { reasons, recent }), saved.Cursor, total,
+                Track: checking, ThroughputPerSecond: saved.ThroughputPerSecond), token);
         }
     }
+
+    private static string? Clip(string? value) => value is { Length: > 120 } ? value[..120] : value;
 
     private static ExternalTrackMatchSnapshot Source(string key, ListeningEventRecord play) => new(key,
         "history", key, play.Title ?? "", play.Artist ?? "", play.Album, play.AlbumArtist,

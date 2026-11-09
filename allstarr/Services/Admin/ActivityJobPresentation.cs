@@ -376,7 +376,7 @@ internal static class ActivityJobPresentation
         "playlist.retain-track" => "Keep playlist song",
         "playback.signal" or "playback.signal.process" => "Record a listen",
         "listening-history.import" => "History import",
-        "listening-history.resolve" => "History resolution",
+        "listening-history.resolve" => "Find imported songs",
         "listening.musicbrainz.enrich" => "Identify listened song",
         "recording.keep" => "Keep a song",
         "recording.kept-cleanup" => "Remove unused kept copy",

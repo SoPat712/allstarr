@@ -2,10 +2,11 @@
   import AdvancedFold from "$lib/components/patterns/AdvancedFold.svelte";
   import { formatLocalDateTime } from "$lib/dates";
   import { countLabel } from "$lib/count-label";
+  import { formatCount } from "$lib/intelligence";
   import { onMount, tick, untrack } from "svelte";
   import { activityWork, home, type Job, type JobDetail, type JobProgress } from "$lib/api";
   import { dayLabel, jobName, jobNames, jobState, progressPercent, activityText, validJobId, jobResultLabel, jobSummary, clockRange, groupAttempts, activityRecovery, internalActivityLink } from "$lib/activity";
-  import { progressDetails } from "$lib/jobs";
+  import { historyMatching, progressDetails } from "$lib/jobs";
   import { liveUpdates, createRefreshScheduler } from "$lib/live-updates.svelte";
   import { toast } from "$lib/toasts";
   import { Button } from "$lib/components/ui/button";
@@ -38,6 +39,8 @@
   let preferencesReady = $state(false);
   let loading = $state(true);
   let busy = $state(false);
+  // Only loading an earlier page disables its button; background refreshes stay silent.
+  let olderBusy = $state(false), olderPending = false;
   let error = $state("");
   let stateFilter = $state("");
   let typeFilter = $state("");
@@ -107,9 +110,10 @@
   }
 
   async function load(kind: "replace" | "refresh" | "older" = "refresh") {
-    if (busy && kind !== "replace") { if (kind === "refresh") refreshPending = true; return; }
+    if (busy && kind !== "replace") { if (kind === "refresh") refreshPending = true; else { olderPending = true; olderBusy = true; } return; }
     const version = ++request;
     busy = true;
+    if (kind === "older") olderBusy = true;
     error = "";
     try {
       const [nextQueue, nextFinished] = await Promise.all([
@@ -142,7 +146,9 @@
       if (!disposed && version === request) {
         loading = false;
         busy = false;
-        if (refreshPending) { refreshPending = false; scheduler.schedule(); }
+        olderBusy = false;
+        if (olderPending) { olderPending = false; void load("older"); }
+        else if (refreshPending) { refreshPending = false; scheduler.schedule(); }
       }
     }
   }
@@ -255,10 +261,11 @@
   {@const job = runs[0]}
   {@const latest = progress.find(entry => entry.jobId === job.id)}
   {@const info = latest ? progressDetails(latest) : {}}
+  {@const matching = historyMatching(info)}
   {@const percent = progressPercent(info.completed, info.total)}
   {@const waiting = ["RetryScheduled", "Deferred", "Pending"].includes(job.state) && job.availableAt}
   <article class="job-row" data-job-id={job.id} id={"job-" + job.id} tabindex="-1">
-    <ItemRow title={jobName(job.type, job.displayName) + (runs.length > 1 ? " · " + runs.length + " runs" : "")} subtitle={[meta(job), info.message, info.playlist, info.track, job.summary ? jobSummary(job.summary) : job.targetName ? activityText(job.targetName) : job.lastErrorMessage ? activityText(job.lastErrorMessage) : "", waiting ? "Next try " + clock(job.availableAt) : ""].filter(Boolean).join(" · ")} selected={panelOpen && selectedRuns[0]?.id === job.id} onclick={() => { selectedRuns = runs; void attempts(job); }}>
+    <ItemRow title={jobName(job.type, job.displayName) + (runs.length > 1 ? " · " + runs.length + " runs" : "")} subtitle={[meta(job), matching ? (info.track ? "Checking " + info.track : "") : info.message, info.playlist, matching ? "" : info.track, matching ? "" : job.summary ? jobSummary(job.summary) : job.targetName ? activityText(job.targetName) : job.lastErrorMessage ? activityText(job.lastErrorMessage) : "", waiting ? "Next try " + clock(job.availableAt) : ""].filter(Boolean).join(" · ")} selected={panelOpen && selectedRuns[0]?.id === job.id} onclick={() => { selectedRuns = runs; void attempts(job); }}>
       {#snippet leading()}<ActivityStatusIcon state={resultState(job)} kind={kind(job.type)} label={statusLabel(job)} />{/snippet}
       {#snippet pill()}<ActivityOutcome state={resultState(job)} label={job.cancellationRequestedAt ? "Cancellation requested" : statusLabel(job)} />{/snippet}
       {#snippet trailing()}
@@ -316,22 +323,32 @@
     {#if !visibleQueue.length && !days.length && !linkedJob && !linkedLoading && !linkedError}
       <EmptyState title={stateFilter || typeFilter || filter !== "all" ? "No jobs match these filters" : "No background work yet"} description="Running, waiting and finished work appears here automatically.">{#snippet icon()}<ActivityIcon kind="job" />{/snippet}</EmptyState>
     {/if}
-    {#if hasMore}<nav class="activity-pagination" aria-label="Job pages"><Button variant="secondary" disabled={busy} onclick={() => void load("older")}>Load earlier jobs</Button></nav>{/if}
+    {#if hasMore}<nav class="activity-pagination" aria-label="Job pages"><Button variant="secondary" disabled={olderBusy} onclick={() => void load("older")}>Load earlier jobs</Button></nav>{/if}
   {/if}
 </section>
 {#if selectedJob}
   <SidePanel bind:open={panelOpen} title={jobName(selectedJob.type, selectedJob.displayName) + (selectedRuns.length > 1 ? " · " + selectedRuns.length + " runs" : "")} description={meta(selectedJob)} onclose={() => { expanded = ""; detail = null; void tick().then(() => { if (opener?.isConnected) opener.focus({ preventScroll: true }); }); }}>
     {@const latest = progress.find(entry => entry.jobId === selectedJob.id) ?? detail?.progress?.[0]}
     {@const info = latest ? progressDetails(latest) : {}}
+    {@const matching = historyMatching(info)}
     {@const percent = progressPercent(info.completed, info.total)}
     <div class="job-panel">
       <ActivityOutcome state={resultState(selectedJob)} label={statusLabel(selectedJob)} />
       {#if ["Deferred", "RetryScheduled", "Pending"].includes(selectedJob.state)}<p class="waiting-note"><strong>Waiting until {time(selectedJob.availableAt)}.</strong> {selectedJob.summary ? jobSummary(selectedJob.summary) : "Saved work will continue at the next attempt."}</p>{/if}
       {#if percent !== null}<Progress value={percent} aria-label={percent + "% complete"} /><p>{info.completed} of {info.total} · {percent}%</p>{/if}
-      {#if info.message || info.playlist || info.track}<p>{[info.message, info.playlist, info.track].filter(Boolean).join(" · ")}</p>{/if}
+      {#if matching}
+        {#if info.track && queueStates.includes(selectedJob.state)}<p class="history-checking"><span>Checking</span> {info.track}</p>{/if}
+        <p>{countLabel(matching.found, "song")} found · {formatCount(matching.notFound)} not found{matching.retry ? ` · ${formatCount(matching.retry)} to try again` : ""}</p>
+        {#if matching.recent.length}
+          <section class="history-latest" aria-labelledby="history-latest-heading">
+            <h3 id="history-latest-heading">Latest songs</h3>
+            <ul>{#each matching.recent as song, index (index)}<li><div><strong>{song.title}</strong><small>{[song.artist, song.plays > 1 ? countLabel(song.plays, "play") : "", song.found ? "Matched to " + song.found : ""].filter(Boolean).join(" · ")}</small></div><ActivityOutcome state={song.state} label={song.label} /></li>{/each}</ul>
+          </section>
+        {/if}
+      {:else if info.message || info.playlist || info.track}<p>{[info.message, info.playlist, info.track].filter(Boolean).join(" · ")}</p>{/if}
       <dl class="job-facts"><div><dt>For</dt><dd>{selectedJob.ownerName || "Household"}</dd></div><div><dt>Started</dt><dd>{time(selectedJob.startedAt)}</dd></div><div><dt>Finished</dt><dd>{selectedJob.completedAt ? time(selectedJob.completedAt) : queueStates.includes(selectedJob.state) ? "Still in progress" : "Not recorded"}</dd></div><div><dt>Attempts</dt><dd>{selectedJob.attemptCount ?? 0}</dd></div></dl>
       {#if selectedJob.targetName}<p>{activityText(selectedJob.targetName)}</p>{/if}
-      {#if jobSummary(selectedJob.summary)}<p>{jobSummary(selectedJob.summary)}</p>{/if}
+      {#if !matching && jobSummary(selectedJob.summary)}<p>{jobSummary(selectedJob.summary)}</p>{/if}
       {#if selectedJob.lastErrorMessage && selectedJob.lastErrorMessage !== selectedJob.summary}<p>{activityText(selectedJob.lastErrorMessage)}</p>{/if}
       {#if selectedJob.recovery}<p><strong>Next step:</strong> {activityRecovery(selectedJob.recovery)}</p>{/if}
       {#if selectedRuns.length > 1}
@@ -366,6 +383,16 @@
   .job-row-progress { display: grid; gap: var(--space-1); padding: var(--space-2) var(--space-4); }
   .job-row-progress small { color: var(--color-ink-muted); font-size: var(--text-xs); }
   .job-attempts { display: grid; gap: var(--space-3); }
+  .history-checking { color: var(--md-sys-color-on-surface); }
+  .history-checking span { color: var(--color-ink-muted); }
+  .history-latest { display: grid; gap: var(--space-2); }
+  .history-latest h3 { font-size: var(--text-sm); margin: 0; }
+  .history-latest ul { list-style: none; margin: 0; padding: 0; }
+  .history-latest li { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding-block: var(--space-2); }
+  .history-latest li + li { border-top: 1px solid var(--color-edge); }
+  .history-latest li > div { display: grid; min-width: 0; }
+  .history-latest strong { font-size: var(--text-sm); overflow-wrap: anywhere; }
+  .history-latest small { color: var(--color-ink-muted); font-size: var(--text-xs); overflow-wrap: anywhere; }
   .attempt-timeline { list-style: none; margin: 0; padding: 0; }
   .attempt-timeline li { position: relative; display: flex; align-items: start; gap: var(--space-3); padding-block: var(--space-2); }
   .attempt-timeline li + li { border-top: 1px solid var(--color-edge); }

@@ -27,10 +27,12 @@ public sealed partial class ListeningHistoryResolutionTests
         var handler = Handler();
         await handler.RecoverAsync(default);
         var first = Assert.IsType<DurableJobClaim>(await jobs.ClaimNextAsync("history-paced", [ListeningHistoryResolution.JobTypeName]));
+        var checking = new List<string?>();
         var continued = await handler.ExecuteAsync(new(first, services)
         {
-            ReportProgressAsync = (update, token) => jobs.ReportProgressAsync(first, update, token)
+            ReportProgressAsync = (update, token) => { checking.Add(update.Track); return jobs.ReportProgressAsync(first, update, token); }
         }, default);
+        Assert.Contains(checking, track => track?.StartsWith("Missing ", StringComparison.Ordinal) == true);
         Assert.Equal(DurableJobCompletionKind.Deferred, continued.Kind);
         Assert.True(continued.IsContinuation);
         await jobs.CompleteAsync(first, continued);
@@ -49,6 +51,12 @@ public sealed partial class ListeningHistoryResolutionTests
             using var details = JsonDocument.Parse(progress.DetailsJson);
             Assert.Equal(1, details.RootElement.GetProperty("completed").GetInt32());
             Assert.Equal(3, details.RootElement.GetProperty("total").GetInt32());
+            Assert.Equal(JsonValueKind.Null, details.RootElement.GetProperty("track").ValueKind);
+            using var outcomes = JsonDocument.Parse(details.RootElement.GetProperty("message").GetString()!);
+            var latest = Assert.Single(outcomes.RootElement.GetProperty("recent").EnumerateArray());
+            Assert.StartsWith("Missing ", latest.GetProperty("title").GetString());
+            Assert.Equal("no-candidates", latest.GetProperty("reason").GetString());
+            Assert.Equal(1, outcomes.RootElement.GetProperty("reasons").GetProperty("no-candidates").GetInt32());
             Assert.Empty(await db.AuditEvents.Where(item => item.Category == "job-attempt").ToArrayAsync());
         }
 
