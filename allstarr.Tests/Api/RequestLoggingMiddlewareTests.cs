@@ -8,6 +8,34 @@ namespace allstarr.Tests;
 public sealed class RequestLoggingMiddlewareTests
 {
     [Fact]
+    public async Task FailedAndAbandonedRequestsAreNotedWithoutTheirQueryWhileOthersStayQuiet()
+    {
+        var messages = new List<string>();
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>()).Build();
+        async Task Run(int status, bool abandoned = false)
+        {
+            var context = new DefaultHttpContext();
+            context.Request.Method = "GET";
+            context.Request.Path = "/System/Info/Public";
+            context.Request.QueryString = new QueryString("?api_key=fixture-private");
+            if (abandoned) context.RequestAborted = new CancellationToken(true);
+            await new RequestLoggingMiddleware(http =>
+            {
+                http.Response.StatusCode = status;
+                return Task.CompletedTask;
+            }, new CollectingLogger<RequestLoggingMiddleware>(messages), configuration).InvokeAsync(context);
+        }
+
+        await Run(200);
+        Assert.DoesNotContain(messages, message => message.Contains("/System/Info/Public", StringComparison.Ordinal));
+        await Run(503);
+        await Run(200, abandoned: true);
+        Assert.Contains(messages, message => message.Contains("Request GET /System/Info/Public answered 503 after", StringComparison.Ordinal));
+        Assert.Contains(messages, message => message.Contains("Client gave up on GET /System/Info/Public after", StringComparison.Ordinal));
+        Assert.DoesNotContain(messages, message => message.Contains("fixture-private", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task NotificationDestinationInSettingsBodyIsNeverLogged()
     {
         var messages = new List<string>();

@@ -43,7 +43,15 @@ public class RequestLoggingMiddleware
         var logAllRequests = _configuration.GetValue<bool>("Debug:LogAllRequests");
         if (!logAllRequests)
         {
-            await _next(context);
+            var started = Stopwatch.GetTimestamp();
+            long? answered = null;
+            context.Response.OnStarting(() =>
+            {
+                answered = Stopwatch.GetTimestamp();
+                return Task.CompletedTask;
+            });
+            try { await _next(context); }
+            finally { NoteSlowOrFailed(context, started, answered); }
             return;
         }
 
@@ -118,6 +126,23 @@ public class RequestLoggingMiddleware
                 stopwatch.ElapsedMilliseconds);
             throw;
         }
+    }
+
+    private static readonly TimeSpan SlowAnswer = TimeSpan.FromSeconds(3);
+
+    // Requests that answer slowly, fail, or that the client gives up on before any answer are always noted (path only,
+    // never query values), so a client's connection trouble can be checked against what the server saw. Time counts to
+    // the first byte, so a song streaming for minutes is not slow.
+    private void NoteSlowOrFailed(HttpContext context, long started, long? answered)
+    {
+        if (string.Equals(context.Request.Headers.Upgrade, "websocket", StringComparison.OrdinalIgnoreCase)) return;
+        var waited = (int)Stopwatch.GetElapsedTime(started, answered ?? Stopwatch.GetTimestamp()).TotalMilliseconds;
+        if (answered == null && context.RequestAborted.IsCancellationRequested)
+            _logger.LogWarning("Client gave up on {Method} {Path} after {WaitedMs} ms", context.Request.Method,
+                context.Request.Path.Value, waited);
+        else if (context.Response.StatusCode >= 500 || waited >= SlowAnswer.TotalMilliseconds)
+            _logger.LogWarning("Request {Method} {Path} answered {StatusCode} after {WaitedMs} ms", context.Request.Method,
+                context.Request.Path.Value, context.Response.StatusCode, waited);
     }
 
     private static string MaskAuthHeader(string authHeader)
