@@ -783,6 +783,11 @@ export type PlaylistLink = {
   id: string;
   virtualPlaylistId?: string;
   enabled: boolean;
+  // Whose playlist it is: yours, a feed the service makes for you, or one followed from someone else.
+  // Not "kind": that name marks an Allstarr mix in mixed lists.
+  playlistKind?: "yours" | "feed" | "followed";
+  // Whether its songs fill the Albums, Songs and Artists lists. Feeds and followed playlists start off.
+  countsTowardLibrary?: boolean;
   inApps?: boolean;
   canRemoveFromApps?: boolean;
   name: string;
@@ -2604,6 +2609,15 @@ export const playlistLinks = {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ expectedRevision, enabled }),
+      },
+    ),
+  setCountsTowardLibrary: (id: string, expectedRevision: number, countsTowardLibrary: boolean) =>
+    json<Pick<PlaylistLink, "id" | "revision" | "playlistKind" | "countsTowardLibrary">>(
+      `/api/admin/playlist-links/${encodeURIComponent(id)}/library`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ expectedRevision, countsTowardLibrary }),
       },
     ),
   sources: () => json<{

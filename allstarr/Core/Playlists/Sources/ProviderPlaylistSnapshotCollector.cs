@@ -53,6 +53,9 @@ public sealed record CollectedPlaylistSourceSnapshot(
 {
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? SourceOwnerId { get; init; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? SourceKind { get; init; }
 }
 
 public sealed record PlaylistSnapshotCollectionResult(

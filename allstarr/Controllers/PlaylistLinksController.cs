@@ -545,12 +545,14 @@ public sealed partial class PlaylistLinksController(
                 session.IsAdministrator ? null : session.AllstarrUserId,
                 links.Select(item => item.Id).ToArray(),
                 cancellationToken, session.AllstarrUserId);
+            var kinds = await PlaylistSourceKinds.LatestAsync(db, links.Select(item => item.Id).ToArray(), cancellationToken);
             return Ok(new
             {
                 playlistLinks = links.Select(link =>
                     ToListDto(link, projectionsByLink.GetValueOrDefault(link.Id),
                         !removedKeys.Contains(PlaylistAppRemoval.Key(link.Id)),
-                        link.OwnerUserId == session.AllstarrUserId && !sharedIds.Contains(link.Id)))
+                        link.OwnerUserId == session.AllstarrUserId && !sharedIds.Contains(link.Id),
+                        kinds.GetValueOrDefault(link.Id)))
             });
         });
     }
@@ -819,6 +821,33 @@ public sealed partial class PlaylistLinksController(
             }
             await db.SaveChangesAsync(cancellationToken);
             return Ok(ToDto(tracked));
+        });
+    }
+
+    // Whether the playlist's songs fill the listener's Albums, Songs and Artists lists. It stays a playlist either way.
+    [HttpPatch("{id:guid}/library")]
+    public async Task<IActionResult> SetLibrary(Guid id, [FromBody] SetPlaylistLinkLibraryRequest request, CancellationToken cancellationToken)
+    {
+        return await Execute(async session =>
+        {
+            var existing = await LoadScopedLink(session, id, cancellationToken);
+            await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
+            var tracked = await db.PlaylistLinks.SingleAsync(item =>
+                item.Id == id && item.OwnerUserId == existing.OwnerUserId, cancellationToken);
+            if (tracked.Revision != request.ExpectedRevision)
+                throw new DbUpdateConcurrencyException("The playlist changed before its library setting could be saved.");
+            var kind = (await PlaylistSourceKinds.LatestAsync(db, [id], cancellationToken)).GetValueOrDefault(id);
+            tracked.CountsTowardLibrary = request.CountsTowardLibrary;
+            tracked.UpdatedAt = clock.UtcNow;
+            tracked.Revision++;
+            await db.SaveChangesAsync(cancellationToken);
+            return Ok(new
+            {
+                id = tracked.Id,
+                revision = tracked.Revision,
+                playlistKind = PlaylistSourceKinds.Label(kind).ToLowerInvariant(),
+                countsTowardLibrary = PlaylistSourceKinds.CountsTowardLibrary(tracked.CountsTowardLibrary, kind)
+            });
         });
     }
 
@@ -1411,10 +1440,13 @@ public sealed partial class PlaylistLinksController(
     private static object ToDto(PlaylistLinkRecord value, Guid? initialJobId = null, int? retentionQueued = null, int skippedItemCount = 0, bool restoredToApps = false) => new { id = value.Id, enabled = value.Enabled, providerAccountId = value.ProviderAccountId, sourceProviderId = value.SourceProviderId, sourcePlaylistId = value.SourcePlaylistId, followNewest = value.SourceProviderId == "listenbrainz" && value.SourcePlaylistId.StartsWith("createdfor:", StringComparison.Ordinal), targetProtocol = value.TargetProtocol, targetBackendInstanceId = value.TargetBackendInstanceId, mode = value.Mode.ToString().ToLowerInvariant(), projectionMode = value.ProjectionMode.ToString().ToLowerInvariant(), materializationMode = value.MaterializationMode.ToString().ToLowerInvariant(), importMode = LowerCamel(value.ImportMode.ToString()), trackRetention = LowerCamel(value.TrackRetention.ToString()), scheduleId = value.ScheduleId, targetPlaylistId = value.TargetPlaylistId, targetCredentialReferenceId = value.TargetCredentialReferenceId, mirrorStaleEntries = value.MirrorStaleEntries, preserveManualEntries = value.PreserveManualEntries, syncName = value.SyncName, syncDescription = value.SyncDescription, syncArtwork = value.SyncArtwork, ruleVersion = value.RuleVersion, policyVersion = value.PolicyVersion, revision = value.Revision, virtualPlaylistId = PlaylistVirtualizationService.CreateProtocolId(value.Id), initialJobId, retentionQueued, skippedItemCount, restoredToApps };
     private static string MixArtworkUrl(Guid id, int generation) => $"/api/admin/mixes/{id}/cover?v={generation}";
 
-    private object ToListDto(PlaylistLinkRecord value, DurablePlaylistProjection? projection, bool inApps, bool ownCopy) => new
+    private object ToListDto(PlaylistLinkRecord value, DurablePlaylistProjection? projection, bool inApps, bool ownCopy,
+        string? kind = null) => new
     {
         id = value.Id,
         enabled = value.Enabled,
+        playlistKind = PlaylistSourceKinds.Label(kind).ToLowerInvariant(),
+        countsTowardLibrary = PlaylistSourceKinds.CountsTowardLibrary(value.CountsTowardLibrary, kind),
         inApps,
         canRemoveFromApps = ownCopy && inApps && PlaylistAppRemoval.CanRemove(value),
         name = PlaylistVirtualizationService.DisplayName(value.SourceProviderId, projection?.Name ?? "Playlist"),
@@ -1717,6 +1749,7 @@ public sealed record UpdatePlaylistLinkRequest(long ExpectedRevision, string Mod
     string? ImportMode = null, string? TrackRetention = null);
 public sealed record DeletePlaylistLinkRequest(long ExpectedRevision);
 public sealed record SetPlaylistLinkStateRequest(long ExpectedRevision, bool Enabled);
+public sealed record SetPlaylistLinkLibraryRequest(long ExpectedRevision, bool CountsTowardLibrary);
 public sealed record RunPlaylistLinkRequest(long? Generation = null, Guid? SnapshotId = null);
 public sealed record ApplyProviderPlaylistUpdateRequest(long ExpectedRevision, string ConfirmationId);
 public sealed record ApplyPlaylistRematchRequest(string ConfirmationId, Guid? PlaylistLinkId = null);

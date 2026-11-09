@@ -55,6 +55,8 @@ public sealed record VirtualPlaylistReadModel(
     public string? BackendOwner { get; init; }
     public bool? BackendPublic { get; init; }
     public allstarr.Core.Music.MixCoverInput? MixCover { get; init; }
+    // Yours, Feed or Followed for synced playlists; null for allstarr's own mixes.
+    public string? PlaylistKind { get; init; }
 }
 
 public interface IPlaylistVirtualizationService
@@ -192,6 +194,7 @@ public sealed class PlaylistVirtualizationService(
         var snapshotIds = publishedProjections.Values.Select(item => item.SnapshotId).ToArray();
         var snapshots = await db.PlaylistSourceSnapshots.AsNoTracking().Where(item => snapshotIds.Contains(item.Id))
             .ToDictionaryAsync(item => item.Id, token);
+        var kinds = await PlaylistSourceKinds.LatestAsync(db, authorizedLinks.Select(link => link.Id).ToArray(), token);
         var result = new List<VirtualPlaylistReadModel>();
         foreach (var link in authorizedLinks)
         {
@@ -201,6 +204,7 @@ public sealed class PlaylistVirtualizationService(
                 var playlist = await ReadCoreAsync(context, CreateProtocolId(link.Id), null, token, projection, authorizedTargetIds);
                 if (playlist != null) result.Add(playlist with
                 {
+                    PlaylistKind = PlaylistSourceKinds.Label(kinds.GetValueOrDefault(link.Id)),
                     SummaryTrackCount = playlist.TrackCount,
                     SummaryDurationMilliseconds = playlist.DurationMilliseconds,
                     Tracks = []
@@ -216,6 +220,7 @@ public sealed class PlaylistVirtualizationService(
             {
                 CreatedAt = link.CreatedAt,
                 UpdatedAt = snapshot.PublishedAt,
+                PlaylistKind = PlaylistSourceKinds.Label(kinds.GetValueOrDefault(link.Id)),
                 SummaryTrackCount = source ? projection.SourceEntries.Count : projection.Entries.Count,
                 SummaryDurationMilliseconds = source
                     ? projection.SourceEntries.Sum(item => item.Metadata.DurationMilliseconds ?? durations.GetValueOrDefault(item.Position) ?? 0)
@@ -393,6 +398,7 @@ public sealed class PlaylistVirtualizationService(
         {
             CreatedAt = link.CreatedAt,
             UpdatedAt = snapshot.PublishedAt,
+            PlaylistKind = PlaylistSourceKinds.Label((await PlaylistSourceKinds.LatestAsync(db, [link.Id], cancellationToken)).GetValueOrDefault(link.Id)),
             BackendOwner = link.Mode == PlaylistLinkMode.Virtual ? null : authorizedTarget?.Owner,
             BackendPublic = link.Mode == PlaylistLinkMode.Virtual ? null : authorizedTarget?.IsPublic,
             MixCover = allstarr.Core.Music.PersonalMixService.IsExternalLink(link)

@@ -114,13 +114,17 @@ public sealed class ProviderPlaylistSourceGateway(
                 link.SourceProviderId, ProviderResourceKind.Playlist, link.SourcePlaylistId)));
         if (!result.IsSuccess || result.Snapshot == null)
             throw new PlaylistSourceUnavailableException("source_unavailable", result.Error, link.SourceProviderId);
-        if (identities == null) return result.Snapshot;
+        var collected = result.Snapshot with
+        {
+            SourceKind = await SourceKindAsync(capability, providerContext, link, result.Snapshot.SourceOwnerId)
+        };
+        if (identities == null) return collected;
         var identityContext = link.ProviderAccountId.HasValue ? providerContext : new ProviderExecutionContext(
             actor, providerContext.ProviderId, null, providerContext.Policy, "playlist-source-identity",
             providerContext.CorrelationId, providerContext.Deadline, cancellationToken);
         var remembered = new Dictionary<ProviderExternalResourceId, Guid?>();
-        var entries = new List<CollectedPlaylistSourceEntry>(result.Snapshot.Entries.Count);
-        foreach (var entry in result.Snapshot.Entries)
+        var entries = new List<CollectedPlaylistSourceEntry>(collected.Entries.Count);
+        foreach (var entry in collected.Entries)
         {
             if (entry.TrackId is not { } track)
             {
@@ -145,7 +149,28 @@ public sealed class ProviderPlaylistSourceGateway(
             }
             entries.Add(entry with { CanonicalRecordingId = recordingId });
         }
-        return result.Snapshot with { Entries = entries };
+        return collected with { Entries = entries };
+    }
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<(Guid Account, long Revision), string> SourceUsers = new();
+
+    // Who owns the playlist compared with whose account reads it. The account's user is looked up once per account version;
+    // not knowing it never stops a sync, the playlist just stays unclassified until a later one.
+    private static async Task<string?> SourceKindAsync(IProviderPlaylistCapability capability, ProviderExecutionContext context,
+        PlaylistLinkRecord link, string? ownerId)
+    {
+        var kind = PlaylistSourceKinds.Classify(link.SourceProviderId, link.SourcePlaylistId, ownerId, null);
+        if (kind != null || context.Account is not { } account || string.IsNullOrWhiteSpace(ownerId)) return kind;
+        if (!SourceUsers.TryGetValue((account.AccountId, account.Revision), out var user))
+        {
+            ProviderOutcome<string>? outcome;
+            try { outcome = await capability.GetSourceUserAsync(context); }
+            catch (Exception exception) when (exception is not OperationCanceledException) { return null; }
+            if (outcome is not { IsSuccess: true }) return null;
+            user = outcome.RequireValue();
+            SourceUsers[(account.AccountId, account.Revision)] = user;
+        }
+        return PlaylistSourceKinds.Classify(link.SourceProviderId, link.SourcePlaylistId, ownerId, user);
     }
 
     public async Task<ProviderOutcome<ProviderPlaylistArtwork>> ResolveArtworkAsync(
@@ -796,6 +821,16 @@ public sealed partial class PlaylistOrchestrationService : IPlaylistOrchestratio
                 collected.Entries.Count,
                 collected.Entries.Count,
                 "reused");
+            if (collected.SourceKind != null &&
+                (existing.SourceKind != collected.SourceKind || existing.SourceOwnerId != collected.SourceOwnerId))
+            {
+                await db.PlaylistSourceSnapshots.Where(item => item.Id == existing.Id).ExecuteUpdateAsync(setters => setters
+                    .SetProperty(item => item.SourceOwnerId, collected.SourceOwnerId)
+                    .SetProperty(item => item.SourceKind, collected.SourceKind), cancellationToken);
+                await transaction.CommitAsync(cancellationToken);
+                existing.SourceOwnerId = collected.SourceOwnerId;
+                existing.SourceKind = collected.SourceKind;
+            }
             return existing;
         }
         var version = (await db.PlaylistSourceSnapshots.Where(item =>
@@ -897,6 +932,8 @@ public sealed partial class PlaylistOrchestrationService : IPlaylistOrchestratio
             Description = collected.Description,
             ArtworkReferenceKey = collected.ArtworkReferenceKey,
             PayloadSha256 = playlistPayloadHash,
+            SourceOwnerId = collected.SourceOwnerId,
+            SourceKind = collected.SourceKind ?? (await PlaylistSourceKinds.LatestAsync(db, [link.Id], cancellationToken)).GetValueOrDefault(link.Id),
             CorrelationId = execution.CorrelationId,
             RetrievedAt = now
         };

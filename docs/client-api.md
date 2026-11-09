@@ -23,8 +23,8 @@ when a Subsonic-compatible server identifies itself as Navidrome, or `subsonic` 
 "Subsonic server" otherwise. Server identification is cached. Check feature flags
 before using optional routes.
 `titleMarkers`, `itemDetails`, `playback`, `lyricsRich`, `lyricsSources`, `lyricsVersions`,
-`fixesMatch`, `reports`, `mixes`, `releases`, `follow`, `events`, `appearances`, and
-`similarAlbums` are available;
+`fixesMatch`, `reports`, `mixes`, `releases`, `follow`, `events`, `appearances`,
+`similarAlbums`, and `playlistKinds` are available;
 the other flags remain false until supported.
 The version in the path identifies the contract. Compatible additions stay
 within v1; incompatible changes use a new path version.
@@ -398,6 +398,17 @@ kept for six hours for that listener. Another listener does not receive them,
 and a change to clean-only or the metadata sources that listener allows is read
 again. The server keeps a bounded number of these answers. Songs and other item types return 400.
 Responses use `Cache-Control: no-store`.
+
+Playlists Allstarr syncs from a service (`playlistKinds`) carry
+`AllstarrPlaylistKind` on their Jellyfin item, in playlist lists, `Items?Ids=`
+and `Items/{id}`: `Yours` for a playlist the listener made, `Feed` for one the
+service makes for them (Discover Weekly, Daily Mix, Top 50, ListenBrainz and
+Last.fm recommendations), and `Followed` for another user's playlist. A
+playlist whose owner isn't known yet is `Yours`. Allstarr's mixes and playlists
+made in Jellyfin have no kind. Every kind lists and plays as a playlist, but
+songs from `Feed` and `Followed` playlists don't fill the Albums, Songs and
+Artists lists unless the listener turns on Show songs in my library for that
+playlist. Other Jellyfin apps ignore the field.
 
 `GET /allstarr/v1/releases` returns `{releases,followedArtists}` from the
 listener's stored New releases inbox and follows, without polling providers.

@@ -2566,6 +2566,9 @@
           },
           "similarAlbums": {
             "type": "boolean"
+          },
+          "playlistKinds": {
+            "type": "boolean"
           }
         }
       },

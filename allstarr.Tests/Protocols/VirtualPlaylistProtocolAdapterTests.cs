@@ -220,6 +220,19 @@ public sealed partial class VirtualPlaylistProtocolAdapterTests
     }
 
     [Theory]
+    [InlineData(null)]
+    [InlineData("Yours")]
+    [InlineData("Feed")]
+    [InlineData("Followed")]
+    public void JellyfinPlaylistItem_CarriesWhoseThePlaylistIs(string? kind)
+    {
+        var adapter = new JellyfinVirtualPlaylistProtocolAdapter(new StubVirtualizationService(Model()), new StubJellyfinMutationResolver(null));
+        var item = adapter.ToItem(Model() with { PlaylistKind = kind });
+        Assert.Equal(kind, item.GetValueOrDefault("AllstarrPlaylistKind"));
+        Assert.Equal(kind != null, item.ContainsKey("AllstarrPlaylistKind"));
+    }
+
+    [Theory]
     [InlineData("The Classics", "classics")]
     [InlineData("For the Fam", "for fam")]
     [InlineData("The B-Side 2", "bside 0000000002")]

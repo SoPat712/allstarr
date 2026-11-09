@@ -462,7 +462,11 @@ public sealed class SavedLibraryReader(IDbContextFactory<AllstarrDbContext> fact
             if (!accessible) excludedSources.Add("source:" + link.Id);
             if (!link.Enabled) changes.Add(new(link.UpdatedAt, "removed", "source:" + link.Id, []));
         }
-        await LoadSourceChangesAsync(db, links.Select(link => link.Id).ToArray(), changes, cancellationToken);
+        // Feeds and playlists followed from someone else stay playlists; their songs don't fill the library unless chosen.
+        var kinds = await PlaylistSourceKinds.LatestAsync(db, links.Select(link => link.Id).ToArray(), cancellationToken);
+        await LoadSourceChangesAsync(db, links
+            .Where(link => PlaylistSourceKinds.CountsTowardLibrary(link.CountsTowardLibrary, kinds.GetValueOrDefault(link.Id)))
+            .Select(link => link.Id).ToArray(), changes, cancellationToken);
     }
 
     private static async Task LoadSourceChangesAsync(AllstarrDbContext db, Guid[] linkIds,

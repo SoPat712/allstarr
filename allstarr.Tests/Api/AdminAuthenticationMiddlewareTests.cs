@@ -200,6 +200,7 @@ public class AdminAuthenticationMiddlewareTests
     [InlineData("/api/admin/playlist-links/resolve-url", "POST")]
     [InlineData("/api/admin/playlist-links/019f48f2-5f28-7b11-b42d-0d9b76b73b40/missing-songs", "GET")]
     [InlineData("/api/admin/playlist-links/019f48f2-5f28-7b11-b42d-0d9b76b73b40/rebuild", "POST")]
+    [InlineData("/api/admin/playlist-links/019f48f2-5f28-7b11-b42d-0d9b76b73b40/library", "PATCH")]
     public async Task InvokeAsync_NonAdminUser_PlaylistSelfServiceRoutesPassToScopedControllers(
         string path,
         string method)

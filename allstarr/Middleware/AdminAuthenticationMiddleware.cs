@@ -278,7 +278,7 @@ public class AdminAuthenticationMiddleware
         if (Guid.TryParse(segments[4], out _))
             return segments.Length == 5 && (HttpMethods.IsGet(method) || HttpMethods.IsPut(method) || HttpMethods.IsDelete(method)) ||
                 segments.Length == 6 && (HttpMethods.IsPost(method) && segments[5] is "refresh" or "run" or "schedules" or "rebuild" ||
-                    HttpMethods.IsPatch(method) && segments[5] == "state" || HttpMethods.IsGet(method) && segments[5] is "preview" or "missing-songs");
+                    HttpMethods.IsPatch(method) && segments[5] is "state" or "library" || HttpMethods.IsGet(method) && segments[5] is "preview" or "missing-songs");
         if (segments.Length == 5 && segments[4] == "resolve-url") return HttpMethods.IsPost(method);
         return segments.Length == 6 && (
                 segments[4] == "rematch" && (segments[5] == "preview" && HttpMethods.IsGet(method) ||

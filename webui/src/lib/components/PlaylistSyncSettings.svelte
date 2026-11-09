@@ -39,6 +39,22 @@
     finally { saving = false; }
   }
 
+  const kindNote = $derived(`${playlist.playlistKind === "feed" ? `Made for you by ${sourceName}` : playlist.playlistKind === "followed" ? "Made by someone else" : "Your playlist"}; ${
+    playlist.countsTowardLibrary ?? true ? "its songs appear in Albums, Songs and Artists" : "it stays a playlist only"}`);
+
+  async function changeLibrary(countsTowardLibrary: boolean, undo = false) {
+    if (saving) return;
+    const previous = playlist;
+    saving = true; error = "";
+    try {
+      const saved = await playlistLinks.setCountsTowardLibrary(previous.id, previous.revision, countsTowardLibrary);
+      onPlaylist({ ...previous, ...saved });
+      toast.success(undo ? "Library setting restored." : countsTowardLibrary ? "Songs from this playlist now show in your library." : "Songs from this playlist no longer fill your library.",
+        undo ? undefined : { label: "Undo", run: () => changeLibrary(!countsTowardLibrary, true) });
+    } catch (cause) { error = cause instanceof Error ? cause.message : "The library setting could not be saved. Try again."; }
+    finally { saving = false; }
+  }
+
   async function changePlaylist(changes: Partial<Pick<PlaylistLink, "mirrorStaleEntries" | "trackRetention">>, undo = false) {
     if (saving) return;
     const previous = playlist;
@@ -77,6 +93,7 @@
       void changeSchedule({ cronExpression: String(fields.get("cron")), timeZoneId: String(fields.get("zone")) });
     }}><label class="field"><span>Cron schedule</span><input name="cron" bind:value={() => schedule?.cronExpression ?? "0 4 * * *", cronExpression => void changeSchedule({ cronExpression })} required onchange={event => void changeSchedule({ cronExpression: event.currentTarget.value })} /></label><label class="field"><span>Time zone</span><input name="zone" value={schedule?.timeZoneId ?? Intl.DateTimeFormat().resolvedOptions().timeZone} required onchange={event => void changeSchedule({ timeZoneId: event.currentTarget.value })} /></label></form></details>
   {:else}<p>Imported once. Later changes in {sourceName} are ignored.</p>{/if}
+  <div class="setting"><div><strong>Show songs in my library</strong><small>{kindNote}</small></div><Switch aria-label="Show songs in my library" bind:checked={() => playlist.countsTowardLibrary ?? true, checked => void changeLibrary(checked)} disabled={saving} /></div>
   <div class="setting"><div><strong>Keep downloaded copies</strong><small>Save permanent copies of songs available to download</small></div><Switch aria-label="Keep downloaded copies" bind:checked={() => playlist.trackRetention === "keepAll", checked => void changePlaylist({ trackRetention: checked ? "keepAll" : "onDemand" })} disabled={saving} /></div>
   {#if error}<p class="notice-error" role="alert">{error}</p>{/if}
 </section>

@@ -162,6 +162,12 @@
     (!sourceFilter || (!isPlaylistMix(item) && item.sourceProviderId === sourceFilter)) &&
     (stateFilter === "all" || (!isPlaylistMix(item) && (stateFilter === "attention" ? needsLook(item) : stateFilter === "paused" ? !item.enabled : item.enabled && !needsLook(item))))));
 
+  // Only shown where a playlist differs from its group: a feed whose songs fill the library, or your own that doesn't.
+  function libraryNote(item: PlaylistLink) {
+    const own = (item.playlistKind ?? "yours") === "yours";
+    const counts = item.countsTowardLibrary ?? own;
+    return own === counts ? "" : counts ? " · Songs in your library" : " · Playlist only";
+  }
   function needsLook(item: PlaylistLink) {
     return !item.enabled || item.metrics.review > 0 || item.unmatchedCount > 0 || item.metrics.rejected > 0 || Boolean(jellyfinPlaylistWarning(item, providerName(item.sourceProviderId))) || item.lastRunCode === "backend_access_missing";
   }
@@ -171,7 +177,13 @@
     if (jellyfinPlaylistWarning(item, providerName(item.sourceProviderId))) return consent?.granted && !consent.needsSignIn && item.lastRunCode?.split(",").some(code => code.trim() === "order") ? "Order fixing" : "Needs a look";
     return needsLook(item) ? "Needs a look" : "Healthy";
   }
-  const panelPlaylists = $derived(visiblePlaylists.filter((item): item is PlaylistLink => !isPlaylistMix(item)));
+  // Playlists you made first, then the ones a service makes for you, then ones followed from someone else.
+  const playlistGroups = $derived([
+    { id: "yours", label: "Your playlists", note: "", items: visiblePlaylists.filter(item => !isPlaylistMix(item) && (item.playlistKind ?? "yours") === "yours") },
+    { id: "feed", label: "Feeds", note: "Made for you by a service", items: visiblePlaylists.filter(item => isPlaylistMix(item) || item.playlistKind === "feed") },
+    { id: "followed", label: "Followed", note: "Made by someone else", items: visiblePlaylists.filter(item => !isPlaylistMix(item) && item.playlistKind === "followed") },
+  ].filter(group => group.items.length));
+  const panelPlaylists = $derived(playlistGroups.flatMap(group => group.items).filter((item): item is PlaylistLink => !isPlaylistMix(item)));
   const panelPosition = $derived(panelPlaylists.findIndex(item => item.id === selectedId));
   const refreshablePlaylists = $derived(playlists.filter((playlist) => playlist.importMode === "linked"));
   const projectedTracks = $derived.by((): PlaylistTrack[] => {
@@ -671,7 +683,7 @@
         </div>
       </div>
       <div class="library-rows" aria-label="Playlists">
-        {#each visiblePlaylists as playlist (playlist.id)}
+        {#snippet playlistRow(playlist: PlaylistLink | PlaylistMix)}
           <div class="playlist-row">
           {#if isPlaylistMix(playlist)}
             <ItemRow title={playlist.name} subtitle={`Mix · in your apps · ${playlist.trackCount ?? "?"} ${playlist.trackCount === 1 ? "song" : "songs"}`} href={`#/for-you?mix=${encodeURIComponent(playlist.id)}`} actionLabel={`Open ${playlist.name} mix`}>
@@ -679,7 +691,7 @@
               {#snippet menu()}<DropdownMenu.Root><DropdownMenu.Trigger class={buttonVariants({ variant: "text", size: "icon" })} aria-label={`More options for ${playlist.name}`}><MoreHorizontal size={18} /></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content preventScroll={false} class="bits-menu" align="end"><DropdownMenu.Item class="bits-menu-item library-danger" onSelect={() => { removeError = ""; removingMix = playlist; }}>Remove from my apps</DropdownMenu.Item></DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root>{/snippet}
             </ItemRow>
           {:else}
-            <ItemRow title={playlist.name} subtitle={`${providerName(playlist.sourceProviderId)} → ${providerName(playlist.targetProtocol)} · ${countLabel(playlist.trackCount, "song")}${playlist.routeCoverage.some(route => ["local", playlist.targetProtocol].includes(route.providerId)) ? ` · ${playlist.routeCoverage.filter(route => ["local", playlist.targetProtocol].includes(route.providerId)).reduce((sum, route) => sum + route.count, 0)} from your library` : ""}${hasCopy(playlist) ? " · Your copy" : ""}`} actionLabel={`Open ${playlist.name} playlist details`} selected={playlist.id === selectedId} attention={needsLook(playlist)} onclick={event => void loadDetails(playlist.id, event.currentTarget as HTMLElement)}>
+            <ItemRow title={playlist.name} subtitle={`${providerName(playlist.sourceProviderId)} → ${providerName(playlist.targetProtocol)} · ${countLabel(playlist.trackCount, "song")}${playlist.routeCoverage.some(route => ["local", playlist.targetProtocol].includes(route.providerId)) ? ` · ${playlist.routeCoverage.filter(route => ["local", playlist.targetProtocol].includes(route.providerId)).reduce((sum, route) => sum + route.count, 0)} from your library` : ""}${hasCopy(playlist) ? " · Your copy" : ""}${libraryNote(playlist)}`} actionLabel={`Open ${playlist.name} playlist details`} selected={playlist.id === selectedId} attention={needsLook(playlist)} onclick={event => void loadDetails(playlist.id, event.currentTarget as HTMLElement)}>
               {#snippet leading()}<MediaArtwork class="playlist-art" url={playlist.artworkUrl} />{/snippet}
               {#snippet pill()}<StatePill tone={needsLook(playlist) ? "warn" : "ok"} text={rowState(playlist)} />{/snippet}
               {#snippet menu()}{#if isServiceMix(playlist) || canRemovePlaylistFromApps(playlist)}
@@ -693,6 +705,10 @@
             </ItemRow>
           {/if}
           </div>
+        {/snippet}
+        {#each playlistGroups as group (group.id)}
+          {#if playlistGroups.length > 1}<h3 class="playlist-group">{group.label}{#if group.note}<small>{group.note}</small>{/if}</h3>{/if}
+          {#each group.items as playlist (playlist.id)}{@render playlistRow(playlist)}{/each}
         {:else}<EmptyState title={playlistCount ? "No playlists match these filters" : "No playlists yet"} description={playlistCount ? "Try another filter or search." : "Import a playlist. Songs from your library play alongside songs from connected services."}>{#snippet icon()}<Server size={24} />{/snippet}{#snippet action()}<Button variant="text" onclick={() => { query = ""; sourceFilter = ""; stateFilter = "all"; }}>Clear filters</Button>{/snippet}</EmptyState>{/each}
       </div>
     </article>
@@ -1070,6 +1086,8 @@
 <style>
   .library-playlists { min-width: 0; }.library-list { min-width: 0; }
   .library-heading, .library-actions, .library-search { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+  .playlist-group { display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--space-2); margin: 0; padding: var(--space-4) var(--space-4) var(--space-1); font-size: var(--text-sm); font-weight: 600; }
+  .playlist-group:not(:first-child) { border-top: 1px solid var(--color-edge); }.playlist-group small { color: var(--color-ink-muted); font-size: var(--text-xs); font-weight: 400; }
   .library-heading { justify-content: space-between; margin-bottom: var(--space-3); }.library-heading h2 { margin: 0; font-size: var(--text-section); }
   .library-filters { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-3); margin-block: var(--space-4); }.library-search { flex: 1 1 360px; min-width: 0; flex-wrap: nowrap; }.library-search > :global(:first-child) { min-width: 0; flex: 1 1 0; }.library-search :global(.select-root) { flex: 0 0 auto; }.library-search :global(.select-trigger) { width: auto; gap: var(--space-2); padding-inline: var(--space-2); background: var(--color-panel); color: var(--color-ink); font-size: .8125rem; white-space: nowrap; }
   .playlist-row { display: block; min-height: 0; min-width: 0; padding: 0; border: 0; }.playlist-panel-tools { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--space-2); }.hero-route, .playlist-copy-note { margin: 0; font-size: var(--text-xs); color: var(--color-ink-muted); }
@@ -1090,7 +1108,7 @@
   }
   .playlist-panel-footer { display: flex; justify-content: space-between; align-items: center; gap: var(--space-2); width: 100%; min-width: 0; }.playlist-panel-footer > div { display: flex; align-items: center; gap: var(--space-2); margin-left: auto; }.playlist-panel-footer :global([data-slot="button"]) { padding-inline: var(--space-2); font-size: .75rem; }
   :global(.library-danger) { color: var(--danger); }
-  @media (max-width: 899px) { .library-search { flex-wrap: wrap; }.library-search > :global(:first-child) { flex-basis: 100%; }:global(.playlist-more) :global(.review-filter-button), :global(.playlist-more) :global(.schedule-edit-button), :global(.playlist-more) :global(.track-menu-trigger) { min-width: 44px; min-height: 44px; } }
+  @media (max-width: 899px) { .playlist-group { padding-inline: var(--space-3); }.library-search { flex-wrap: wrap; }.library-search > :global(:first-child) { flex-basis: 100%; }:global(.playlist-more) :global(.review-filter-button), :global(.playlist-more) :global(.schedule-edit-button), :global(.playlist-more) :global(.track-menu-trigger) { min-width: 44px; min-height: 44px; } }
   @media (max-width: 380px) { .playlist-panel-footer :global([data-slot="button"]) { padding-inline: var(--space-1); font-size: .6875rem; } }
 
 </style>

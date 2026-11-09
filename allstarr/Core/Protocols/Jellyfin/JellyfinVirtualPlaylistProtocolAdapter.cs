@@ -345,6 +345,7 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
             .Contains("RecursiveItemCount", StringComparer.OrdinalIgnoreCase) == true)
             item["RecursiveItemCount"] = playlist.TrackCount;
         item["ProviderIds"] = new Dictionary<string, string> { [playlist.SourceProviderId] = playlist.SourcePlaylistId };
+        if (playlist.PlaylistKind != null) item["AllstarrPlaylistKind"] = playlist.PlaylistKind;
         item["DateCreated"] = playlist.CreatedAt.UtcDateTime.ToString("O");
         item["Etag"] = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(
             System.Text.Encoding.UTF8.GetBytes($"{playlist.SnapshotId}:{playlist.SourceRevision}:{playlist.ArtworkReferenceKey}")));
