@@ -35,6 +35,12 @@ public partial class JellyfinController
         [FromQuery] bool recursive = true,
         string? userId = null)
     {
+        includeItemTypes = QueryList("IncludeItemTypes", includeItemTypes);
+        artistIds = QueryList("ArtistIds", artistIds);
+        albumArtistIds = QueryList("AlbumArtistIds", albumArtistIds);
+        contributingArtistIds = QueryList("ContributingArtistIds", contributingArtistIds);
+        albumIds = QueryList("AlbumIds", albumIds);
+        sortBy = QueryList("SortBy", sortBy);
         if (Request.Path.Value?.TrimEnd('/').Equals("/Playlists", StringComparison.OrdinalIgnoreCase) == true)
             includeItemTypes = "Playlist";
 
@@ -498,6 +504,7 @@ public partial class JellyfinController
         [FromQuery] string? includeItemTypes = null,
         string? userId = null)
     {
+        includeItemTypes = QueryList("IncludeItemTypes", includeItemTypes);
         searchTerm = GetEffectiveSearchTerm(searchTerm, Request.QueryString.Value) ?? searchTerm;
 
         if (string.IsNullOrWhiteSpace(searchTerm))
@@ -956,6 +963,12 @@ public partial class JellyfinController
         key.Equals("SortOrder", StringComparison.OrdinalIgnoreCase) ||
         key.Equals("CollapseBoxSetItems", StringComparison.OrdinalIgnoreCase) ||
         key.Equals("ExcludeLocationTypes", StringComparison.OrdinalIgnoreCase);
+
+    // Jellyfin takes a list either comma-separated or as the same parameter repeated; binding keeps only the first of those.
+    private string? QueryList(string name, string? bound) =>
+        Request.Query.TryGetValue(name, out var values) && values.Count > 1
+            ? string.Join(',', values.Where(value => !string.IsNullOrWhiteSpace(value)))
+            : bound;
 
     private HashSet<string> OverlayLinkedPlaylistSummaries(
         IEnumerable<JsonObject> items,

@@ -1094,6 +1094,7 @@ public partial class JellyfinController : ControllerBase
         [FromQuery] string? fields = null,
         [FromQuery] string? userId = null)
     {
+        fields = QueryList("Fields", fields);
         if (JellyfinMusicEndpointPolicy.IsSynthesizedPlaylistId(itemId))
         {
             return await RelaySynthesizedPlaylistTargetAsync(
