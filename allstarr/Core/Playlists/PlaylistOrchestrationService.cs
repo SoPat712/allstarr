@@ -292,10 +292,12 @@ public sealed partial class PlaylistOrchestrationService : IPlaylistOrchestratio
         ILogger<PlaylistOrchestrationService>? logger = null,
         IEffectiveProviderPolicyResolver? effectivePolicies = null,
         IProtocolProviderGateway? providerGateway = null, IProviderRegistry? registry = null,
-        allstarr.Core.ManagedFiles.RecordingKeptFiles? kept = null, DurableJobQueue? jobs = null)
+        allstarr.Core.ManagedFiles.RecordingKeptFiles? kept = null, DurableJobQueue? jobs = null,
+        allstarr.Core.Music.PublicArtworkWarmer? artwork = null)
     {
         (_factory, _source, _targets, _planner, _matcher, _trackMatches, _clock, _logger) =
             (factory, source, targets, planner, matcher, trackMatches, clock, logger);
+        _artwork = artwork;
         _effectivePolicies = effectivePolicies;
         _locks = locks;
         _libraryAccess = libraryAccess;
@@ -307,6 +309,7 @@ public sealed partial class PlaylistOrchestrationService : IPlaylistOrchestratio
     }
 
     private readonly IEffectiveProviderPolicyResolver? _effectivePolicies;
+    private readonly allstarr.Core.Music.PublicArtworkWarmer? _artwork;
 
     public async Task<PlaylistOrchestrationResult> RunAsync(
         ProtocolExecutionContext execution,
@@ -831,6 +834,7 @@ public sealed partial class PlaylistOrchestrationService : IPlaylistOrchestratio
                 existing.SourceOwnerId = collected.SourceOwnerId;
                 existing.SourceKind = collected.SourceKind;
             }
+            WarmArtwork(execution, collected);
             return existing;
         }
         var version = (await db.PlaylistSourceSnapshots.Where(item =>
@@ -959,8 +963,17 @@ public sealed partial class PlaylistOrchestrationService : IPlaylistOrchestratio
             collected.Entries.Count,
             collected.Entries.Count,
             "created");
+        WarmArtwork(execution, collected);
         return snapshot;
     }
+
+    // Apps load song covers without signing in, so each synced song is read once while the listener is known.
+    private void WarmArtwork(ProtocolExecutionContext execution, CollectedPlaylistSourceSnapshot collected) =>
+        _ = _artwork?.Warm(execution, collected.Entries.SelectMany(entry => new[]
+        {
+            entry.CanonicalRecordingId is { } recording ? new allstarr.Models.Domain.Song { ExternalProvider = "allstarr", ExternalId = recording.ToString("D") } : null,
+            entry.TrackId is { } track ? new allstarr.Models.Domain.Song { ExternalProvider = track.ProviderId, ExternalId = track.Value } : null
+        }).OfType<allstarr.Models.Domain.Song>());
 
     private static async Task<PlaylistSourceSnapshotRecord> LoadSnapshotAsync(
         AllstarrDbContext db, PlaylistLinkRecord link, Guid id, CancellationToken cancellationToken) =>

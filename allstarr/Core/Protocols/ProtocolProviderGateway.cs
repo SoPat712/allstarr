@@ -95,12 +95,14 @@ public interface IProtocolProviderGateway
 
     Task<Artist?> GetArtistAsync(ProtocolExecutionContext protocol, string providerId, string externalId);
 
+    // storedOnly answers from stored covers alone, for any source; storedRecordingOnly does so only for recordings.
     Task<Uri?> GetPublicArtworkUriAsync(
         string providerId,
         ProviderResourceKind resourceKind,
         string externalId,
         CancellationToken cancellationToken = default,
-        bool storedRecordingOnly = false);
+        bool storedRecordingOnly = false,
+        bool storedOnly = false);
 
     Task<List<Album>> GetArtistAlbumsAsync(
         ProtocolExecutionContext protocol,
@@ -260,7 +262,8 @@ public sealed partial class ProtocolProviderGateway(
         ProviderResourceKind resourceKind,
         string externalId,
         CancellationToken cancellationToken = default,
-        bool storedRecordingOnly = false)
+        bool storedRecordingOnly = false,
+        bool storedOnly = false)
     {
         providerId = NormalizeProvider(providerId);
         if (resourceKind == ProviderResourceKind.Track &&
@@ -270,7 +273,7 @@ public sealed partial class ProtocolProviderGateway(
         if (identities != null && resourceKind is ProviderResourceKind.Track or ProviderResourceKind.Album or ProviderResourceKind.Artist &&
             await identities.GetStoredArtworkUriAsync(new(providerId, resourceKind, externalId), cancellationToken) is { } stored)
             return stored;
-        if (storedRecordingOnly && providerId == "allstarr") return null;
+        if (storedOnly || storedRecordingOnly && providerId == "allstarr") return null;
         if (providerId != "allstarr" && (!IsPublicMetadataProvider(providerId) ||
             !ResolveProviderOrder(ProviderCapabilityKind.Metadata).Contains(providerId))) return null;
         if (resourceKind is not (ProviderResourceKind.Track or ProviderResourceKind.Album or

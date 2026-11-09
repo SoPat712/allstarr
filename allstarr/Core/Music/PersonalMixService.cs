@@ -52,7 +52,7 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
     NewReleasesService releases, IDurableRuntimeSettings settings, IEffectiveProviderPolicyResolver policies,
     IBackendLibraryAccessResolver libraryAccess, AudioMuseDiscovery? audioMuse = null, SharedTagSources? tagSources = null, IProviderRegistry? registry = null, LastFmSimilarTracks? similarTracks = null,
     ILogger<PersonalMixService>? logger = null, IClientEventPublisher? events = null,
-    ILibraryIndexService? libraryIndex = null, ITrackIdentityService? identities = null)
+    ILibraryIndexService? libraryIndex = null, ITrackIdentityService? identities = null, PublicArtworkWarmer? artwork = null)
 {
     public const string PublishKey = "Mixes:PublishToApps", JobType = "mixes.refresh";
     // Saved songs carry dozens of empty fields; leaving them out keeps a listener's mixes well under the 1 MB a stored
@@ -445,7 +445,10 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
                 if (completed)
                 {
                     if (!dryRun)
+                    {
                         foreach (var kind in kinds) clientEvents?.Publish(owner, ClientEvent.Mix(document.Mixes[kind].Id));
+                        _ = artwork?.Warm(context, kinds.SelectMany(kind => document.Mixes[kind].Songs).Select(item => item.Song));
+                    }
                     return document.Mixes.Values.ToArray();
                 }
             }
