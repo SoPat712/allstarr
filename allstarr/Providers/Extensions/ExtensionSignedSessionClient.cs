@@ -61,6 +61,7 @@ internal sealed class ExtensionSignedSessionClient
     private readonly string _extensionId;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private string? _pendingAuthUrl;
+    private DateTimeOffset? _manualVerificationExpiresAt;
     private string? _lastRenewalFailure;
     private ExtensionSessionChallenge? _automaticChallenge;
     private bool _pendingForRenewal;
@@ -93,12 +94,62 @@ internal sealed class ExtensionSignedSessionClient
         _protector = protector;
         _allowedOrigins = allowedOrigins;
         _extensionId = extensionId;
-        var scope = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
-            $"{config.Namespace}\n{config.BaseUrl}\n{config.AppVersion}\n{config.Platform}"))).ToLowerInvariant()[..16];
-        var fileName = $"signed-session-{scope}.protected";
+        var fileName = StateFileName(config);
         _statePath = Path.Combine(runtimeStateDirectory, fileName);
         if (legacyStateDirectory != null) AdoptLegacyState(legacyStateDirectory, fileName);
     }
+
+    private static string StateFileName(ExtensionSignedSessionConfig config)
+    {
+        var scope = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
+            $"{config.Namespace}\n{config.BaseUrl}\n{config.AppVersion}\n{config.Platform}"))).ToLowerInvariant()[..16];
+        return $"signed-session-{scope}.protected";
+    }
+
+    internal Task<ExtensionSessionView?> AdoptPreviousVersionAsync(
+        IReadOnlyList<ExtensionSignedSessionConfig> previousVersions, CancellationToken cancellationToken) =>
+        RunAdministratorAsync<ExtensionSessionView?>(async limit =>
+        {
+            if (_pendingAuthUrl != null) return null;
+            if (File.Exists(_statePath))
+            {
+                var current = Load();
+                if (!string.IsNullOrEmpty(current.SessionId) || current.RenewalExpiresAt != null || current.SignedOutByAdministrator)
+                    return null;
+            }
+            foreach (var previous in previousVersions)
+            {
+                if (previous.AppVersion == _config.AppVersion || (previous with { AppVersion = _config.AppVersion }) != _config)
+                    continue;
+                var path = Path.Combine(Path.GetDirectoryName(_statePath)!, StateFileName(previous));
+                if (!File.Exists(path)) continue;
+                Directory.CreateDirectory(Path.GetDirectoryName(_statePath)!);
+                var temporary = _statePath + "." + Guid.NewGuid().ToString("N") + ".tmp";
+                try
+                {
+                    File.Copy(path, temporary);
+                    File.Move(temporary, _statePath, overwrite: true);
+                }
+                finally
+                {
+                    if (File.Exists(temporary)) File.Delete(temporary);
+                }
+                var record = Load();
+                if (!HasUsableSession(record)) return ViewOf(record, null);
+                if (!string.IsNullOrWhiteSpace(_config.Endpoints.Refresh))
+                    record = await TryRefreshAsync(record, limit);
+                else
+                {
+                    var result = await BeginVerificationAsync(limit, cancellationToken, allowChallenge: false, call: "restore");
+                    _lastRenewalFailure = result.ReasonCode;
+                    record = Load();
+                }
+                if (_lastRenewalFailure is not (null or "renewal_capped"))
+                    Save(record with { RenewalExpiresAt = record.ExpiresAt ?? record.RenewalExpiresAt ?? FirstSignIn });
+                return ViewOf(record, null) with { Restored = HasUsableSession(record) && _lastRenewalFailure is null or "renewal_capped" };
+            }
+            return null;
+        }, cancellationToken);
 
     private void AdoptLegacyState(string legacyStateDirectory, string fileName)
     {
@@ -233,6 +284,7 @@ internal sealed class ExtensionSignedSessionClient
 
     private string? AutomaticVerificationExpiry(SessionRecord record)
     {
+        ExpireManualVerification();
         if (_pendingAuthUrl != null && !_pendingForRenewal) return null;
         // A new install, or a service moved to another catalog, starts without a sign-in. Signing it in needs nobody, unless
         // an administrator signed it out on purpose.
@@ -242,7 +294,16 @@ internal sealed class ExtensionSignedSessionClient
         return (!string.IsNullOrEmpty(record.SessionId) || record.RenewalExpiresAt != null || _renewalExpiresAt != null) &&
             DateTimeOffset.TryParse(expiry, out var date) && (date <= _timeProvider.GetUtcNow() ||
                 _renewalExpiresAt == expiry || record.RenewalExpiresAt == expiry ||
+                _lastRenewalFailure is "verification_required" or "renewal_rejected" or "session_rejected" ||
                 _lastRenewalFailure == "renewal_capped" && date - _timeProvider.GetUtcNow() <= RefreshSkew) ? expiry : null;
+    }
+
+    private void ExpireManualVerification()
+    {
+        if (_pendingAuthUrl == null || _pendingForRenewal ||
+            _manualVerificationExpiresAt is not { } expiresAt || expiresAt > _timeProvider.GetUtcNow()) return;
+        _pendingAuthUrl = null;
+        _manualVerificationExpiresAt = null;
     }
 
     internal Task<ExtensionSessionView> CompleteAutomaticVerificationAsync(ExtensionSessionChallenge challenge, string grant,
@@ -260,6 +321,20 @@ internal sealed class ExtensionSignedSessionClient
             }
             var current = Load();
             return ViewOf(current, result.ReasonCode) with { Restored = result.ReasonCode == null && HasUsableSession(current) };
+        }, cancellationToken);
+
+    internal Task<ExtensionSessionView> ConfirmAutomaticSessionAsync(Func<CancellationToken, Task<bool>> authorize,
+        CancellationToken cancellationToken) =>
+        RunAdministratorAsync(async limit =>
+        {
+            var record = Load();
+            if (_pendingAuthUrl != null && !_pendingForRenewal)
+                return ViewOf(record, "context_changed");
+            if (HasUsableSession(record) && !string.IsNullOrWhiteSpace(_config.Endpoints.Refresh))
+                record = await TryRefreshAsync(record, limit, authorize);
+            var current = await authorize(limit);
+            var usable = current && HasUsableSession(record) && _lastRenewalFailure is null or "renewal_capped";
+            return ViewOf(record, current ? _lastRenewalFailure : "context_changed") with { Restored = usable };
         }, cancellationToken);
 
     internal Task ReleaseAutomaticVerificationAsync(ExtensionSessionChallenge challenge, CancellationToken cancellationToken) =>
@@ -344,6 +419,9 @@ internal sealed class ExtensionSignedSessionClient
     private void RetainSession(SessionRecord record, string call, string reason, HttpStatusCode? status = null,
         ErrorContract? contract = null)
     {
+        if (SupportsAutomaticVerification && reason is "verification_required" or "renewal_rejected" or "session_rejected" &&
+            record.ExpiresAt != null && record.RenewalExpiresAt != record.ExpiresAt)
+            Save(record with { RenewalExpiresAt = record.ExpiresAt });
         _lastRenewalFailure = reason;
         if (call == "restore") _restoreAttemptedFor = null;
         LogSession("session.retained", record, call, reason, status, contract);
@@ -418,6 +496,7 @@ internal sealed class ExtensionSignedSessionClient
                 SignedOutByAdministrator = false
             });
             _pendingAuthUrl = null;
+            _manualVerificationExpiresAt = null;
             _lastRenewalFailure = null;
             _restoreAttemptedFor = null;
             return SessionResult.Succeeded;
@@ -478,6 +557,11 @@ internal sealed class ExtensionSignedSessionClient
         CancellationToken callerToken = default, bool allowChallenge = true, string call = "verification",
         Func<CancellationToken, Task<bool>>? authorizeBeforeSave = null, string? minimumExpiry = null)
     {
+        ExpireManualVerification();
+        if (_pendingAuthUrl != null && !_pendingForRenewal && call != "verification")
+            return SessionResult.Pending(_pendingAuthUrl);
+        _pendingAuthUrl = null;
+        _manualVerificationExpiresAt = null;
         _automaticChallenge = null;
         _pendingForRenewal = call is "restore" or "signed_fetch";
         if (!_pendingForRenewal) _renewalExpiresAt = null;
@@ -505,6 +589,8 @@ internal sealed class ExtensionSignedSessionClient
             if (!string.IsNullOrWhiteSpace(boot?.SessionId) && !string.IsNullOrWhiteSpace(boot.SessionSecret) &&
                 !string.IsNullOrWhiteSpace(boot.ExpiresAt))
             {
+                if (call == "restore" && (!DateTimeOffset.TryParse(boot.ExpiresAt, out var expiry) || expiry <= _timeProvider.GetUtcNow()))
+                    return SessionResult.Failed("unexpected_response", "The restored sign-in has no usable expiry.");
                 if (minimumExpiry != null && !AdvancesExpiry(boot.ExpiresAt, minimumExpiry))
                     return SessionResult.Failed("unexpected_response", "The renewed sign-in did not extend its expiry.");
                 if (authorizeBeforeSave != null && !await authorizeBeforeSave(cancellationToken))
@@ -525,6 +611,12 @@ internal sealed class ExtensionSignedSessionClient
                 !string.IsNullOrEmpty(verification.UserInfo))
                 return SessionResult.Failed("unexpected_response", "session bootstrap returned an unsafe verification link");
             _pendingAuthUrl = verification.AbsoluteUri;
+            if (!_pendingForRenewal)
+            {
+                _manualVerificationExpiresAt = _timeProvider.GetUtcNow().AddMinutes(10);
+                if (DateTimeOffset.TryParse(boot?.ExpiresAt, out var linkExpiry) && linkExpiry < _manualVerificationExpiresAt)
+                    _manualVerificationExpiresAt = linkExpiry;
+            }
             return SessionResult.Pending(_pendingAuthUrl);
         }
         catch (OperationCanceledException) when (callerToken.IsCancellationRequested)
@@ -629,7 +721,11 @@ internal sealed class ExtensionSignedSessionClient
                         if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.PreconditionRequired ||
                             (int)response.StatusCode >= 500 || response.StatusCode is HttpStatusCode.RequestTimeout or HttpStatusCode.TooManyRequests)
                             RetainSession(record, "signed_fetch", ResponseReason(response.StatusCode, "verification_required"), response.StatusCode, contract);
-                        else if (response.Response.IsSuccessStatusCode) _lastRenewalFailure = null;
+                        else if (response.Response.IsSuccessStatusCode)
+                        {
+                            if (record.RenewalExpiresAt != null) Save(record with { RenewalExpiresAt = null });
+                            _lastRenewalFailure = null;
+                        }
                         return response.ToHostResponse();
                     }
                 }
@@ -706,7 +802,8 @@ internal sealed class ExtensionSignedSessionClient
             $"retry_after={Math.Max(response.RetryAfterSeconds, contract.RetryAfterSeconds)}; elapsed_ms={(long)elapsed.TotalMilliseconds}.");
     }
 
-    private async Task<SessionRecord> TryRefreshAsync(SessionRecord record, CancellationToken cancellationToken)
+    private async Task<SessionRecord> TryRefreshAsync(SessionRecord record, CancellationToken cancellationToken,
+        Func<CancellationToken, Task<bool>>? authorizeBeforeSave = null)
     {
         try
         {
@@ -728,12 +825,18 @@ internal sealed class ExtensionSignedSessionClient
             {
                 SessionId = refreshed?.SessionId ?? record.SessionId,
                 SessionSecret = refreshed?.SessionSecret ?? record.SessionSecret,
-                ExpiresAt = refreshed?.ExpiresAt ?? record.ExpiresAt
+                ExpiresAt = refreshed?.ExpiresAt ?? record.ExpiresAt,
+                RenewalExpiresAt = null
             };
             if (string.IsNullOrWhiteSpace(refreshed?.ExpiresAt) || !TryExpiry(next, out var expiry) ||
                 expiry <= _timeProvider.GetUtcNow() || !HasUsableSession(next))
             {
                 _lastRenewalFailure = "unexpected_response";
+                return record;
+            }
+            if (authorizeBeforeSave != null && !await authorizeBeforeSave(cancellationToken))
+            {
+                _lastRenewalFailure = "context_changed";
                 return record;
             }
             Save(next);
@@ -899,6 +1002,7 @@ internal sealed class ExtensionSignedSessionClient
 
     private void Save(SessionRecord record, bool overwrite = true)
     {
+        if (_pendingForRenewal) _pendingAuthUrl = null;
         _automaticChallenge = null;
         _pendingForRenewal = false;
         _renewalExpiresAt = null;

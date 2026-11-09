@@ -118,7 +118,7 @@ public sealed partial class ExtensionRuntimeCoordinator : IHostedService, IAsync
                         var build = await BuildRegistrationAsync(package, cancellationToken);
                         await WithRuntimeGateAsync(async () =>
                         {
-                            await RegisterRuntimeAsync(package, build);
+                            await RegisterRuntimeAsync(package, build, cancellationToken);
                             return true;
                         }, cancellationToken);
                     }
@@ -185,33 +185,8 @@ public sealed partial class ExtensionRuntimeCoordinator : IHostedService, IAsync
             cancellationToken.ThrowIfCancellationRequested();
             try
             {
-                networkNotReady |= await WithRuntimeGateAsync(async () =>
-                {
-                    var package = await GetPackageAsync(packageId, cancellationToken);
-                    if (package.State != ExtensionPackageState.Active ||
-                        !_sandboxes.TryGetValue(packageId, out var sandbox) || !sandbox.HasSignedSession)
-                        return false;
-                    var packageNetworkNotReady = false;
-                    await using var db = await _factory.CreateDbContextAsync(cancellationToken);
-                    var accounts = await db.ProviderAccounts.AsNoTracking()
-                        .Where(item => item.ProviderId == package.ExtensionId && item.Enabled &&
-                            (item.OwnerUserId == null || db.Users.Any(user => user.Id == item.OwnerUserId && user.Enabled)))
-                        .ToListAsync(cancellationToken);
-                    foreach (var account in accounts.Where(item => !ProviderAccountSettings.IsRemoved(item)))
-                    {
-                        using var scope = sandbox.OpenSignedSessionAccount(account.Id);
-                        var view = await sandbox.RefreshSignedSessionIfDueAsync(cancellationToken);
-                        if (_sessionVerification?.Enabled == true && _sessionJobs != null)
-                            await EnqueueSessionVerificationAsync(package, account,
-                                sandbox.SignedSessionClient, cancellationToken);
-                        if (view == null) continue;
-                        packageNetworkNotReady |= view.LastRenewalFailure == "network_not_ready";
-                        if (view.Restored) _checkRequests?.Request(package.ExtensionId);
-                        var (level, code, text) = RenewalLog(view);
-                        await _controlPlane.WriteLogAsync(packageId, level, code, text, "extension-session", cancellationToken);
-                    }
-                    return packageNetworkNotReady;
-                }, cancellationToken);
+                networkNotReady |= await WithRuntimeGateAsync(() =>
+                    RefreshSignedSessionsForPackageAsync(packageId, cancellationToken), cancellationToken);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
             catch (Exception)
@@ -219,6 +194,35 @@ public sealed partial class ExtensionRuntimeCoordinator : IHostedService, IAsync
                 // Do not include transport details or session material in diagnostics.
                 _logger.LogWarning("An extension session renewal check could not complete; it will be retried next tick");
             }
+        }
+        return networkNotReady;
+    }
+
+    private async Task<bool> RefreshSignedSessionsForPackageAsync(Guid packageId, CancellationToken cancellationToken,
+        IReadOnlyList<ExtensionSignedSessionConfig>? previousVersions = null)
+    {
+        var package = await GetPackageAsync(packageId, cancellationToken);
+        if (package.State != ExtensionPackageState.Active ||
+            !_sandboxes.TryGetValue(packageId, out var sandbox) || !sandbox.HasSignedSession) return false;
+        var networkNotReady = false;
+        await using var db = await _factory.CreateDbContextAsync(cancellationToken);
+        var accounts = await db.ProviderAccounts.AsNoTracking()
+            .Where(item => item.ProviderId == package.ExtensionId && item.Enabled &&
+                (item.OwnerUserId == null || db.Users.Any(user => user.Id == item.OwnerUserId && user.Enabled)))
+            .ToListAsync(cancellationToken);
+        foreach (var account in accounts.Where(item => !ProviderAccountSettings.IsRemoved(item)))
+        {
+            using var scope = sandbox.OpenSignedSessionAccount(account.Id);
+            var client = sandbox.SignedSessionClient;
+            var view = previousVersions == null ? null : await client.AdoptPreviousVersionAsync(previousVersions, cancellationToken);
+            view ??= await sandbox.RefreshSignedSessionIfDueAsync(cancellationToken);
+            if (_sessionVerification?.Enabled == true && _sessionJobs != null)
+                await EnqueueSessionVerificationAsync(package, account, client, cancellationToken);
+            if (view == null) continue;
+            networkNotReady |= view.LastRenewalFailure == "network_not_ready";
+            if (view.Restored) _checkRequests?.Request(package.ExtensionId);
+            var (level, code, text) = RenewalLog(view);
+            await _controlPlane.WriteLogAsync(packageId, level, code, text, "extension-session", cancellationToken);
         }
         return networkNotReady;
     }
@@ -247,7 +251,7 @@ public sealed partial class ExtensionRuntimeCoordinator : IHostedService, IAsync
         return await WithRuntimeGateAsync(async () =>
         {
             var active = await _controlPlane.ActivateAsync(packageId, expectedRevision, cancellationToken);
-            await RegisterRuntimeAsync(package, build);
+            await RegisterRuntimeAsync(package, build, cancellationToken);
             return active;
         }, cancellationToken);
     }
@@ -728,7 +732,7 @@ public sealed partial class ExtensionRuntimeCoordinator : IHostedService, IAsync
             throw new ExtensionSdkValidationException("An extension cannot replace a built-in provider.");
     }
 
-    private async Task RegisterRuntimeAsync(ExtensionPackageRecord package, RuntimeBuild build)
+    private async Task RegisterRuntimeAsync(ExtensionPackageRecord package, RuntimeBuild build, CancellationToken cancellationToken)
     {
         ExtensionDownloadStreamingCapabilityAdapter? previous;
         IReadOnlyList<ExtensionSandbox> replaced;
@@ -741,6 +745,25 @@ public sealed partial class ExtensionRuntimeCoordinator : IHostedService, IAsync
         }
         if (previous != null) await previous.DisposeAsync();
         foreach (var sandbox in replaced) sandbox.Cleanup();
+        if (!build.Sandbox.HasSignedSession) return;
+        var session = ExtensionSdkV1.ParseManifest(package.ManifestJson).SignedSession;
+        if (session == null || !ExtensionSessionVerificationClient.Supports(session.BaseUrl.AbsoluteUri)) return;
+        try
+        {
+            await using var db = await _factory.CreateDbContextAsync(cancellationToken);
+            var manifests = await db.ExtensionPackages.AsNoTracking()
+                .Where(item => item.Id != package.Id && item.ExtensionId == package.ExtensionId &&
+                    item.RegistryId == package.RegistryId && item.ActivatedAt != null)
+                .OrderByDescending(item => item.ActivatedAt).Select(item => item.ManifestJson).ToListAsync(cancellationToken);
+            var previousVersions = manifests.Select(item => ExtensionSdkV1.ParseManifest(item).SignedSession)
+                .OfType<ExtensionSignedSessionConfig>().ToArray();
+            await RefreshSignedSessionsForPackageAsync(package.Id, cancellationToken, previousVersions);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+        catch (Exception)
+        {
+            _logger.LogWarning("An extension session activation check could not complete; it will be retried next tick");
+        }
     }
 
     private async Task RemoveRuntimeAsync(ExtensionPackageRecord package)

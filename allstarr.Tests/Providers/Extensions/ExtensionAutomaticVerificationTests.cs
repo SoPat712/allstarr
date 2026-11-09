@@ -6,7 +6,7 @@ using Microsoft.AspNetCore.DataProtection;
 
 namespace allstarr.Tests;
 
-public sealed class ExtensionAutomaticVerificationTests : IDisposable
+public sealed partial class ExtensionAutomaticVerificationTests : IDisposable
 {
     private readonly string _root = Path.Combine(Path.GetTempPath(), "allstarr-automatic-verification", Guid.NewGuid().ToString("N"));
     private readonly ManualTimeProvider _clock = new(new DateTimeOffset(2026, 10, 19, 12, 0, 0, TimeSpan.Zero));
@@ -212,9 +212,12 @@ public sealed class ExtensionAutomaticVerificationTests : IDisposable
         return client;
     }
 
-    private ExtensionSignedSessionClient Client() => new(
-            new("fixture", new Uri("https://api.zarz.moe/v2"), "fixture@1", "android", "spotiflac://session-grant/", "SPOTIFLAC-HMAC-V1", "X-Sig-", 300,
-                new("/session/bootstrap", "/session/challenge", "/session/exchange", "/session/refresh")),
+    private static ExtensionSignedSessionConfig SessionConfig(string appVersion = "fixture@1") =>
+        new("fixture", new Uri("https://api.zarz.moe/v2"), appVersion, "android", "spotiflac://session-grant/", "SPOTIFLAC-HMAC-V1", "X-Sig-", 300,
+            new("/session/bootstrap", "/session/challenge", "/session/exchange", "/session/refresh"));
+
+    private ExtensionSignedSessionClient Client(string appVersion = "fixture@1") => new(
+            SessionConfig(appVersion),
             new Factory(_handler), _protector, new HashSet<string>(["https://api.zarz.moe/"]), _root, "fixture", timeProvider: _clock);
 
     public void Dispose()
@@ -243,6 +246,7 @@ public sealed class ExtensionAutomaticVerificationTests : IDisposable
         public HttpStatusCode CatalogStatus { get; set; } = HttpStatusCode.Unauthorized;
         public string CatalogCode { get; set; } = "SESSION_INVALID";
         public string CatalogAction { get; set; } = "bootstrap_session";
+        public HttpStatusCode RefreshStatus { get; set; } = HttpStatusCode.OK;
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
@@ -260,7 +264,11 @@ public sealed class ExtensionAutomaticVerificationTests : IDisposable
                     RequestMessage = request
                 };
             else if (request.RequestUri.AbsolutePath.EndsWith("/refresh", StringComparison.Ordinal))
+            {
+                if (RefreshStatus != HttpStatusCode.OK)
+                    return new(RefreshStatus) { RequestMessage = request, Content = new StringContent("{}") };
                 body = JsonSerializer.Serialize(new { expires_at = OriginalExpiry });
+            }
             else
             {
                 Exchanges++;

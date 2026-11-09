@@ -1,5 +1,4 @@
-using System.Security.Cryptography;
-using System.Text;
+using System.Text.Json;
 using allstarr.Core.Jobs;
 using allstarr.Core.Storage;
 using allstarr.Services.Common;
@@ -15,11 +14,28 @@ public sealed partial class ExtensionRuntimeCoordinator
         if (!client.SupportsAutomaticVerification) return;
         var expiresAt = await client.AutomaticVerificationExpiryAsync(cancellationToken);
         if (expiresAt == null) return;
-        var expiryKey = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(expiresAt)))[..16];
-        await _sessionJobs!.EnqueueAsync(new DurableJobEnqueueRequest<ExtensionSessionVerificationRequest>(
-            ExtensionSessionVerificationJobHandler.Type, $"{package.Id:N}:{package.Revision}:{account.Id:N}:{account.Revision}:{expiryKey}",
+        var prefix = $"{package.Id:N}:";
+        await using var db = await _factory.CreateDbContextAsync(cancellationToken);
+        await using var transaction = await db.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable, cancellationToken);
+        if (await db.Jobs.AnyAsync(item => item.Type == ExtensionSessionVerificationJobHandler.Type &&
+                item.ProviderAccountId == account.Id && item.IdempotencyKey.StartsWith(prefix) &&
+                (item.State == DurableJobState.Pending || item.State == DurableJobState.Running ||
+                    item.State == DurableJobState.RetryScheduled), cancellationToken)) return;
+        var history = await db.Jobs.AsNoTracking().Where(item => item.Type == ExtensionSessionVerificationJobHandler.Type &&
+                item.ProviderAccountId == account.Id && item.IdempotencyKey.StartsWith(prefix) &&
+                (item.State == DurableJobState.Failed || item.State == DurableJobState.Succeeded))
+            .OrderByDescending(item => item.CompletedAt).ThenByDescending(item => item.CreatedAt)
+            .Select(item => new { item.State, item.CompletedAt, item.UpdatedAt, item.PayloadJson }).ToListAsync(cancellationToken);
+        var failures = history.Where(item => JsonSerializer.Deserialize<ExtensionSessionVerificationRequest>(item.PayloadJson)?.ExpiresAt == expiresAt)
+            .TakeWhile(item => item.State == DurableJobState.Failed).ToArray();
+        DateTimeOffset? availableAt = failures.Length == 0 ? null :
+            (failures[0].CompletedAt ?? failures[0].UpdatedAt).AddHours(Math.Min(24, Math.Pow(2, Math.Min(failures.Length - 1, 5))));
+        await _sessionJobs!.EnqueueInExistingTransactionAsync(db, new DurableJobEnqueueRequest<ExtensionSessionVerificationRequest>(
+            ExtensionSessionVerificationJobHandler.Type, $"{package.Id:N}:{account.Id:N}:{Guid.NewGuid():N}",
             new(package.Id, package.Revision, expiresAt), account.OwnerUserId, MaxAttempts: 3,
-            ProviderAccountId: account.Id), cancellationToken);
+            AvailableAt: availableAt, ProviderAccountId: account.Id), cancellationToken);
+        await db.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
     }
 
     internal async Task<DurableJobCompletion> VerifyExpiredSignedSessionAsync(DurableJobClaim claim,
@@ -60,18 +76,23 @@ public sealed partial class ExtensionRuntimeCoordinator
         }, cancellationToken);
         if (prepared.Client == null) return DurableJobCompletion.Cancelled();
         if (prepared.Challenge == null)
-        {
-            if (!await CurrentAsync(cancellationToken)) return DurableJobCompletion.Cancelled();
-            if (await prepared.Client.AutomaticVerificationExpiryAsync(cancellationToken) == request.ExpiresAt)
-                return DurableJobCompletion.Retry("session_bootstrap_unavailable", "The sign-in service could not prepare verification.", TimeSpan.FromMinutes(5));
-            var current = await prepared.Client.ViewAsync(cancellationToken);
-            if (current.State == ExtensionSessionStates.SignedIn)
+            return await WithRuntimeGateAsync(async () =>
             {
-                await RequestChecksIfSignedInAsync(request.PackageId, current, cancellationToken);
-                return DurableJobCompletion.Success();
-            }
-            return DurableJobCompletion.Cancelled();
-        }
+                if (!await CurrentAsync(cancellationToken)) return DurableJobCompletion.Cancelled();
+                if (await prepared.Client.AutomaticVerificationExpiryAsync(cancellationToken) == request.ExpiresAt)
+                    return DurableJobCompletion.Retry("session_bootstrap_unavailable", "The sign-in service could not prepare verification.", TimeSpan.FromMinutes(5));
+                var current = await prepared.Client.ViewAsync(cancellationToken);
+                if (current.State == ExtensionSessionStates.SignedIn && current.ReasonCode == null)
+                {
+                    current = await prepared.Client.ConfirmAutomaticSessionAsync(CurrentAsync, cancellationToken);
+                    if (!current.Restored) return current.ReasonCode == "context_changed"
+                        ? DurableJobCompletion.Cancelled()
+                        : DurableJobCompletion.Retry("session_verification_unusable", "The sign-in service did not accept the verified session.", TimeSpan.FromMinutes(5));
+                    await RequestChecksIfSignedInAsync(request.PackageId, current, cancellationToken);
+                    return DurableJobCompletion.Success();
+                }
+                return DurableJobCompletion.Cancelled();
+            }, cancellationToken);
 
         try
         {
@@ -82,9 +103,13 @@ public sealed partial class ExtensionRuntimeCoordinator
             {
                 if (!await CurrentAsync(cancellationToken)) return DurableJobCompletion.Cancelled();
                 var view = await prepared.Client.CompleteAutomaticVerificationAsync(prepared.Challenge, callback, CurrentAsync, cancellationToken);
-                if (!view.Restored) return view.ReasonCode == "context_changed"
+                if (!view.Restored || view.State != ExtensionSessionStates.SignedIn) return view.ReasonCode == "context_changed"
                     ? DurableJobCompletion.Cancelled()
                     : DurableJobCompletion.Retry("session_verification_incomplete", "Sign-in verification did not complete. Reconnect remains available.", TimeSpan.FromMinutes(5));
+                view = await prepared.Client.ConfirmAutomaticSessionAsync(CurrentAsync, cancellationToken);
+                if (!view.Restored) return view.ReasonCode == "context_changed"
+                    ? DurableJobCompletion.Cancelled()
+                    : DurableJobCompletion.Retry("session_verification_unusable", "The sign-in service did not accept the verified session.", TimeSpan.FromMinutes(5));
                 await RequestChecksIfSignedInAsync(request.PackageId, view, cancellationToken);
                 var (level, code, message) = RenewalLog(view);
                 await _controlPlane.WriteLogAsync(request.PackageId, level, code, message, "extension-session", cancellationToken);
