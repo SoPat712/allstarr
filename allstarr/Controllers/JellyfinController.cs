@@ -967,11 +967,27 @@ public partial class JellyfinController : ControllerBase
         return HandleProxyResponse(result, statusCode);
     }
 
-    private Task RecordFavoriteEventSafelyAsync(string itemId, FavoriteOperation operation) =>
-        CanRunOptionalUserScopedWork()
-            ? _favorites.RecordAsync(HttpContext.RequireProtocolExecutionContext(), itemId, operation,
-                Request.Headers, HttpContext.RequestAborted)
-            : Task.CompletedTask;
+    private async Task RecordFavoriteEventSafelyAsync(string itemId, FavoriteOperation operation)
+    {
+        if (!CanRunOptionalUserScopedWork()) return;
+        await _favorites.RecordAsync(HttpContext.RequireProtocolExecutionContext(), itemId, operation,
+            Request.Headers, HttpContext.RequestAborted);
+        await FollowFavoriteArtistSafelyAsync(itemId, operation == FavoriteOperation.Favorite);
+    }
+
+    // Favouriting an artist follows it for new releases and unfavouriting stops, so one action works in every app.
+    // Anything that isn't an artist is left alone, and a follow that fails never fails the favourite.
+    private async Task FollowFavoriteArtistSafelyAsync(string itemId, bool followed)
+    {
+        var (isExternal, _, type, _) = _localLibraryService.ParseExternalId(itemId);
+        if (isExternal && type != "artist" || PlaylistIdHelper.IsExternalPlaylist(itemId) ||
+            HttpContext.RequestServices.GetService<Core.ClientApi.ReleaseReader>() is not { } releases) return;
+        try { await releases.FollowAsync(HttpContext, HttpContext.RequireProtocolExecutionContext(), itemId, followed); }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            _logger.LogDebug(exception, "Following the favourited artist {ItemId} failed", itemId);
+        }
+    }
 
     #endregion
 

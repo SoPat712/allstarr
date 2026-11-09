@@ -79,6 +79,41 @@ public sealed class NewReleasesService(IDbContextFactory<AllstarrDbContext> fact
         finally { Gate.Release(); }
     }
 
+    // Service artists the listener favourited in any app are followed too; only new follows are added.
+    public async Task<int> FollowFavoriteArtistsAsync(Guid owner, CancellationToken token = default)
+    {
+        await using var db = await factory.CreateDbContextAsync(token);
+        var user = await UserAsync(db, owner, token);
+        var rows = await db.FavoriteStates.AsNoTracking().Where(state => state.OwnerUserId == owner && state.IsFavorite &&
+                state.Protocol == user.BackendType && state.BackendInstanceId == user.BackendInstanceId)
+            .Select(state => new { state.ItemId, state.DisplayMetadataJson }).ToArrayAsync(token);
+        var artists = rows.Select(row => FavoriteDisplaySnapshot.Read(row.ItemId, row.DisplayMetadataJson))
+            .OfType<FavoriteDisplaySnapshot>().Where(item => item.Kind == "artist" && !string.IsNullOrWhiteSpace(item.Title))
+            .Select(item => (Id: FavoriteDisplaySnapshot.Resource(item.ItemId), Name: item.Title))
+            .Where(item => item.Id?.ResourceKind == ProviderResourceKind.Artist).Take(200).ToArray();
+        if (artists.Length == 0) return 0;
+        await Gate.WaitAsync(token);
+        try
+        {
+            var follows = (await FollowsAsync(db, user, token)).ToList();
+            var added = 0;
+            foreach (var (id, name) in artists)
+            {
+                if (follows.Any(item => item.ProviderId == id!.ProviderId && item.ArtistId == id.Value)) continue;
+                follows.Add(new(id!.ProviderId, id.Value, name, await KnownArtistMbidAsync(db, user, id, token)));
+                added++;
+            }
+            if (added == 0) return 0;
+            var before = await ReadForEventAsync(owner, token);
+            await SaveAsync(db, user, FollowsKind, Scope(user), follows.ToArray(), token);
+            await EnsureScheduleAsync(db, user, token);
+            await db.SaveChangesAsync(token);
+            await PublishInboxChangeAsync(owner, before, token);
+            return added;
+        }
+        finally { Gate.Release(); }
+    }
+
     public async Task<int> FollowHeartedArtistsAsync(Guid owner, CancellationToken token = default)
     {
         await using var db = await factory.CreateDbContextAsync(token);

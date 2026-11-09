@@ -11,7 +11,7 @@ public sealed class ReleasesController(ReleaseReader reader, ReleaseArtworkReade
     [HttpGet]
     [EndpointName("listReleases")]
     [ProducesResponseType<ClientReleases>(200)]
-    public Task<ActionResult<ClientReleases>> List() => ExecuteAsync(() => reader.ListAsync(Execution));
+    public Task<ActionResult<ClientReleases>> List() => ExecuteAsync(() => reader.ListAsync(HttpContext, Execution));
 
     [HttpGet("{releaseId}/cover")]
     [EndpointName("getReleaseCover")]

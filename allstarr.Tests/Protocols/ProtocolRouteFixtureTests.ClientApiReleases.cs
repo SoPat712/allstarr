@@ -109,6 +109,31 @@ public sealed partial class ProtocolRouteFixtureTests
             metadata.Verify(service => service.SearchArtistsAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderMetadataSearchRequest>()), Times.Never);
     }
 
+    // A heart on an artist in any Jellyfin app follows it for new releases; removing the heart unfollows it.
+    [Fact]
+    public async Task Jellyfin_FavouritingAnArtistFollowsIt()
+    {
+        var metadata = ClientReleaseMetadata();
+        var gateway = new Mock<IProtocolProviderGateway>();
+        gateway.Setup(service => service.GetArtistAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "release-artist"))
+            .ReturnsAsync(new Artist { Id = "ext-deezer-artist-release-artist", Name = "Release artist", ExternalProvider = "deezer", ExternalId = "release-artist" });
+        using var factory = ClientReleaseFactory(metadata, gateway);
+        using var client = CreateClientApiClient(factory);
+        client.DefaultRequestHeaders.Add("X-Emby-Token", "listener-token");
+        var owner = (await factory.Services.GetRequiredService<BackendIdentityResolver>().ResolveAsync(new("Jellyfin", "listener")))!.UserId;
+        var releases = factory.Services.GetRequiredService<NewReleasesService>();
+
+        using (var favourite = await client.PostAsync("/UserFavoriteItems/ext-deezer-artist-release-artist", null))
+            Assert.Equal(HttpStatusCode.OK, favourite.StatusCode);
+        Assert.Equal(("deezer", "release-artist"), (await releases.ListAsync(owner)).Select(item => (item.ProviderId, item.ArtistId)).Single());
+        using (var song = await client.PostAsync("/UserFavoriteItems/ext-deezer-song-release-song", null))
+            Assert.Equal(HttpStatusCode.OK, song.StatusCode);
+        Assert.Single(await releases.ListAsync(owner));
+        using (var unfavourite = await client.DeleteAsync("/UserFavoriteItems/ext-deezer-artist-release-artist"))
+            Assert.Equal(HttpStatusCode.OK, unfavourite.StatusCode);
+        Assert.Empty(await releases.ListAsync(owner));
+    }
+
     [Theory]
     [InlineData("unknown-artist")]
     [InlineData("unmatched-artist")]

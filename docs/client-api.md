@@ -459,6 +459,13 @@ uses the exact-name source lookup shared with the dashboard's follow-from-histor
 action. An unresolvable artist returns 404 `artist_not_found`. Writes affect
 only this listener and use `Cache-Control: no-store`.
 
+Favouriting an artist through Jellyfin (`POST /UserFavoriteItems/{artistId}`)
+follows it the same way, and removing the favourite unfollows it, so one heart
+works in every app. Artists favourited before, or in an app that went straight
+to the media server, are followed the next time the listener's releases are read
+(checked at most every ten minutes, ten new library artists at a time), so
+`followedArtists` keeps up with artist favourites.
+
 `GET /allstarr/v1/events` (`getEvents`) opens a `text/event-stream` response.
 Use the same Jellyfin user token and `DeviceId` as playback. The stream is
 personal, including for administrators. A missing device identity still receives

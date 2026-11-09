@@ -9,9 +9,10 @@ namespace allstarr.Core.ClientApi;
 public sealed class ReleaseReader(NewReleasesService releases, IProtocolProviderGateway providers,
     IProviderRegistry registry, JellyfinProxyService jellyfin)
 {
-    public async Task<ClientReleases> ListAsync(ProtocolExecutionContext execution)
+    public async Task<ClientReleases> ListAsync(HttpContext http, ProtocolExecutionContext execution)
     {
         var owner = execution.RequireActor().EffectiveUserId!.Value;
+        await FollowFavoriteArtistsAsync(http, execution);
         var inbox = await releases.ReadAsync(owner, execution.CancellationToken);
         var follows = await releases.ListAsync(owner, execution.CancellationToken);
         return new(inbox.Entries.Select(entry =>
@@ -70,6 +71,43 @@ public sealed class ReleaseReader(NewReleasesService releases, IProtocolProvider
             !root.TryGetProperty("Name", out var name) || string.IsNullOrWhiteSpace(name.GetString())) return null;
         return follows.FirstOrDefault(item => item.DisplayName.Equals(name.GetString(), StringComparison.OrdinalIgnoreCase)) ??
             await releases.ResolveArtistByNameAsync(owner, name.GetString()!, execution.CancellationToken);
+    }
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, DateTimeOffset> FavoritesChecked = new();
+
+    // Artists favourited before favouriting meant following, or in an app that doesn't tell Allstarr, are followed when
+    // the listener next opens releases. Checked at most every ten minutes; only new follows are added, a few at a time.
+    private async Task FollowFavoriteArtistsAsync(HttpContext http, ProtocolExecutionContext execution)
+    {
+        var owner = execution.RequireActor().EffectiveUserId!.Value;
+        var now = DateTimeOffset.UtcNow;
+        if (FavoritesChecked.TryGetValue(owner, out var last) && now - last < TimeSpan.FromMinutes(10)) return;
+        FavoritesChecked[owner] = now;
+        try
+        {
+            await releases.FollowFavoriteArtistsAsync(owner, execution.CancellationToken);
+            var (body, status) = await jellyfin.GetJsonAsync(
+                $"Users/{Uri.EscapeDataString(execution.VerifiedBackendPrincipalId)}/Items",
+                new() { ["IsFavorite"] = "true", ["IncludeItemTypes"] = "MusicArtist", ["Recursive"] = "true", ["Limit"] = "200" },
+                http.Request.Headers, execution.CancellationToken);
+            using (body)
+            {
+                if (status != 200 || body?.RootElement.TryGetProperty("Items", out var items) != true) return;
+                var follows = await releases.ListAsync(owner, execution.CancellationToken);
+                var added = 0;
+                foreach (var item in items.EnumerateArray())
+                {
+                    if (added == 10) break;
+                    if (!item.TryGetProperty("Id", out var id) || id.GetString() is not { } artistId ||
+                        !item.TryGetProperty("Name", out var name) || string.IsNullOrWhiteSpace(name.GetString()) ||
+                        follows.Any(follow => follow.DisplayName.Equals(name.GetString(), StringComparison.OrdinalIgnoreCase) ||
+                            $"ext-{follow.ProviderId}-artist-{follow.ArtistId}" == artistId)) continue;
+                    if (await FollowAsync(http, execution, artistId, true) != null) added++;
+                }
+            }
+        }
+        // Following favourites is a convenience; the releases list never fails because of it.
+        catch (Exception exception) when (exception is not OperationCanceledException) { }
     }
 
     private static bool SameNativeId(string? first, string second) => first == second ||
