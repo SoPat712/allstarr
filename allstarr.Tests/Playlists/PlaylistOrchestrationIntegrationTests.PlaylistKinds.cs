@@ -88,11 +88,10 @@ public sealed partial class PlaylistOrchestrationIntegrationTests
     [Fact]
     public async Task A_link_no_sync_has_classified_uses_what_its_source_says()
     {
+        await SetSpotifyArtworkLinkAsync(false);
         await using (var db = await _factory.CreateDbContextAsync())
         {
-            var link = await db.PlaylistLinks.SingleAsync(item => item.Id == _link);
-            link.SourceProviderId = "spotify";
-            link.SourcePlaylistId = "37i9dQZF1DWXRqgorJj26U";
+            (await db.PlaylistLinks.SingleAsync(item => item.Id == _link)).SourcePlaylistId = "37i9dQZF1DWXRqgorJj26U";
             await db.SaveChangesAsync();
         }
         await using var read = await _factory.CreateDbContextAsync();
