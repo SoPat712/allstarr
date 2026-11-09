@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using allstarr.Core.Protocols;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Storage;
@@ -113,22 +114,22 @@ public sealed partial class LibraryIndexService
                 .ToDictionary(group => group.Key, group => ManualTrackOverrides.Select(group, context.Principal.UserId).Effective!);
             var pinnedIds = overrides.Values.Where(item => item.Decision == ManualOverrideDecision.Pin && item.LibraryTrackId.HasValue)
                 .Select(item => item.LibraryTrackId!.Value).ToArray();
-            var query = LibraryTrackAccess.Query(db, context, access);
-            if (snapshots.Count == 0)
-                query = query.Where(item => pinnedIds.Contains(item.Id) ||
-                    item.CanonicalRecordingId.HasValue && ids.Contains(item.CanonicalRecordingId.Value) ||
-                    item.Isrc != null && isrcs.Contains(item.Isrc));
-            var tracks = (await query.ToArrayAsync(cancellationToken))
-                .OrderByDescending(item => LocalCopyPreference.FormatRank(Path.GetExtension(item.FilePath)))
-                .ThenByDescending(item => item.SourceModifiedAt)
-                .ThenBy(item => item.BackendLibraryId).ThenBy(item => item.BackendItemId).ThenBy(item => item.Id).ToArray();
             var engine = new TrackMatchDecisionEngine(new TrackMatchPolicy
             {
                 LocalPriorityWindow = policy?.LocalPreferenceWindow ?? .07,
                 ExplicitContent = policy?.Preferences.ExplicitFilter == "CleanOnly"
                     ? ProviderExplicitContentPolicy.CleanOnly : ProviderExplicitContentPolicy.Allow
             });
-            var candidates = engine.PrepareCandidates(tracks.Select(LocalCopyPreference.ToCandidate));
+            LibraryTrackRecord[] tracks;
+            TrackMatchCandidateSet candidates;
+            if (snapshots.Count == 0)
+            {
+                tracks = PreferredFirst(await LibraryTrackAccess.Query(db, context, access).Where(item => pinnedIds.Contains(item.Id) ||
+                    item.CanonicalRecordingId.HasValue && ids.Contains(item.CanonicalRecordingId.Value) ||
+                    item.Isrc != null && isrcs.Contains(item.Isrc)).ToArrayAsync(cancellationToken));
+                candidates = engine.PrepareCandidates(tracks.Select(LocalCopyPreference.ToCandidate));
+            }
+            else (tracks, candidates) = await SharedLibraryAsync(db, context, access, engine, cancellationToken);
             ProviderUseMode Mode(string providerId) => policy?.GetProviderMode(providerId) ??
                 (_registry?.TryGet(providerId, out var descriptor) == true
                     ? descriptor!.DefaultUseMode : ProviderUseMode.Automatic);
@@ -186,6 +187,32 @@ public sealed partial class LibraryIndexService
             return new Dictionary<string, string>(StringComparer.Ordinal);
         }
     }
+
+    // Matching stored songs against the whole library read and indexed every accessible song on each item details
+    // request, most of a second for a large library, so the indexed copy is kept until the library changes.
+    private static readonly TimeSpan SharedLibraryLifetime = TimeSpan.FromMinutes(5);
+    private readonly ConcurrentDictionary<string, SharedLibrary> _sharedLibraries = new(StringComparer.Ordinal);
+    private sealed record SharedLibrary(string Fingerprint, DateTimeOffset LoadedAt, LibraryTrackRecord[] Tracks, TrackMatchCandidateSet Candidates);
+
+    private async Task<(LibraryTrackRecord[] Tracks, TrackMatchCandidateSet Candidates)> SharedLibraryAsync(AllstarrDbContext db,
+        ProtocolExecutionContext context, BackendLibraryAccess access, TrackMatchDecisionEngine engine, CancellationToken cancellationToken)
+    {
+        var key = $"{context.Protocol}|{context.BackendInstanceId}|{string.Join(',', access.LibraryIds.Order(StringComparer.Ordinal))}";
+        var fingerprint = await LibraryTrackFingerprint.ReadAsync(db, cancellationToken);
+        var now = _clock.UtcNow;
+        if (_sharedLibraries.TryGetValue(key, out var shared) && shared.Fingerprint == fingerprint &&
+            now - shared.LoadedAt < SharedLibraryLifetime) return (shared.Tracks, shared.Candidates);
+        var tracks = PreferredFirst(await LibraryTrackAccess.Query(db, context, access).ToArrayAsync(cancellationToken));
+        var candidates = engine.PrepareCandidates(tracks.Select(LocalCopyPreference.ToCandidate));
+        if (_sharedLibraries.Count >= 16) _sharedLibraries.Clear();
+        _sharedLibraries[key] = new(fingerprint, now, tracks, candidates);
+        return (tracks, candidates);
+    }
+
+    private static LibraryTrackRecord[] PreferredFirst(IEnumerable<LibraryTrackRecord> tracks) => tracks
+        .OrderByDescending(item => LocalCopyPreference.FormatRank(Path.GetExtension(item.FilePath)))
+        .ThenByDescending(item => item.SourceModifiedAt)
+        .ThenBy(item => item.BackendLibraryId).ThenBy(item => item.BackendItemId).ThenBy(item => item.Id).ToArray();
 
     private static string? CleanIsrc(string? value)
     {
