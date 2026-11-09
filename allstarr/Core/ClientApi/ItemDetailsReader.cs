@@ -190,6 +190,8 @@ public sealed class ItemDetailsReader(
         // Each song's match and lyrics reads stand alone, so a batch reads a few songs at once instead of one after another.
         using var gate = new SemaphoreSlim(Math.Clamp(Environment.ProcessorCount / 2, 1, 4));
         var libraryMemo = new TrackMatchLibraryMemo();
+        var matchTiming = new ItemMatchTiming();
+        http.Items[typeof(ItemMatchTiming)] = matchTiming;
         var prepared = System.Diagnostics.Stopwatch.GetTimestamp();
         var built = await Task.WhenAll(requested.Select(async id =>
         {
@@ -198,10 +200,10 @@ public sealed class ItemDetailsReader(
             finally { gate.Release(); }
         }));
         var items = built.Where(item => item.Details != null).ToDictionary(item => item.Id, item => item.Details!, StringComparer.Ordinal);
-        logger?.LogInformation("Item details timing: prepare {Prepare} ms, songs {Songs} ms, matches {Matches} ms and lyrics {Lyrics} ms summed over {Count} songs",
+        logger?.LogInformation("Item details timing: prepare {Prepare} ms, songs {Songs} ms, matches {Matches} ms ({MatchSteps} ms) and lyrics {Lyrics} ms summed over {Count} songs",
             (int)System.Diagnostics.Stopwatch.GetElapsedTime(started, prepared).TotalMilliseconds,
             (int)System.Diagnostics.Stopwatch.GetElapsedTime(prepared).TotalMilliseconds,
-            (int)TimeSpan.FromTicks(Interlocked.Read(ref matchTicks)).TotalMilliseconds,
+            (int)TimeSpan.FromTicks(Interlocked.Read(ref matchTicks)).TotalMilliseconds, matchTiming,
             (int)TimeSpan.FromTicks(Interlocked.Read(ref lyricsTicks)).TotalMilliseconds, requested.Length);
         return new(ids.Where(items.ContainsKey).Select(id => items[id]).ToArray(), ids.Where(id => !items.ContainsKey(id)).ToArray());
 

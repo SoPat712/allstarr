@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -76,6 +77,8 @@ public sealed class ItemMatchReader(
     {
         var actor = Actor(execution);
         var token = execution.CancellationToken;
+        var timing = summary ? http.Items[typeof(ItemMatchTiming)] as ItemMatchTiming : null;
+        var mark = Stopwatch.GetTimestamp();
         await using var db = await factory.CreateDbContextAsync(token);
         var query = db.ExternalMetadataSnapshots.AsNoTracking().Where(item => item.OwnerUserId == actor.UserId &&
             item.ResourceKind == "track" && item.ProviderId != "allstarr" &&
@@ -96,6 +99,7 @@ public sealed class ItemMatchReader(
         var recording = external
             ? (await identities.ResolveRecordingAsync(execution.RequireActor(), itemId, token))?.Id
             : await items.ResolveRecordingIdAsync(http, execution, itemId);
+        timing?.Add(ref timing.Resolve, ref mark);
         if (recording.HasValue)
         {
             // The recording's decisions and identities are found first, so only their snapshots are read rather than
@@ -115,9 +119,11 @@ public sealed class ItemMatchReader(
                 .ThenByDescending(item => item.SnapshotVersion).ThenByDescending(item => item.Id).FirstOrDefault();
             if (recorded != null && (snapshot == null || decided.Contains(recorded.Id))) snapshot = recorded;
         }
+        timing?.Add(ref timing.Snapshots, ref mark);
         if (snapshot == null) return null;
         var revision = summary ? "" : await TrackMatchRevision.ReadAsync(db, snapshot, actor.UserId, token);
         var review = await commands.GetClientReviewDataAsync(actor, snapshot.Id, token, libraryMemo);
+        timing?.Add(ref timing.Review, ref mark);
         snapshot = review.Snapshots.OrderByDescending(item => item.RetrievedAt).ThenByDescending(item => item.SnapshotVersion)
             .ThenByDescending(item => item.Id).FirstOrDefault();
         if (snapshot == null) return null;
@@ -127,6 +133,7 @@ public sealed class ItemMatchReader(
             review.ProviderIdentities.FirstOrDefault(identity => identity.ProviderId == snapshot.ProviderId && identity.ExternalIdHash == snapshot.ExternalIdHash);
         var order = await providers.GetPlayableProviderOrderAsync(execution.RequireActor(), token);
         var policy = await policies.ResolveForUserAsync(actor.UserId, token);
+        timing?.Add(ref timing.Policy, ref mark);
         var sourceSong = TrackIdentityService.ReadDisplaySong(snapshot.PayloadJson, snapshot.ProviderId, externalId ?? "stored");
         if (policy.Preferences.ExplicitFilter == "CleanOnly" && (sourceSong == null || !policy.Includes(sourceSong))) return null;
         var projection = TrackRouteProjector.Project(snapshot, decision, layers.Effective, sourceIdentity,
@@ -205,6 +212,7 @@ public sealed class ItemMatchReader(
                 if (candidates[index].Value.CandidateId == current.CandidateId) candidates[index] = candidates[index] with { Value = current };
             confidence = 1;
         }
+        timing?.Add(ref timing.Routes, ref mark);
         if (!summary && revision != await TrackMatchRevision.ReadAsync(db, snapshot, actor.UserId, token))
             throw new DbUpdateConcurrencyException("The match changed.");
         return new(new(state.ToString().ToLowerInvariant(), confidence, layers.EffectiveScope,
@@ -263,4 +271,22 @@ public sealed class ItemMatchReader(
     private static string[] Strings(JsonElement item, string name) => item.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.Array ? value.EnumerateArray().Where(part => part.ValueKind == JsonValueKind.String).Select(part => part.GetString()!).ToArray() : [];
     private sealed record Candidate(ClientMatchCandidate Value, Guid? LibraryTrackId, string? ProviderId, string? ExternalId);
     private sealed record Match(ClientItemMatch Value, ExternalMetadataSnapshotRecord Snapshot, ManualTrackOverrideRecord? Personal, IReadOnlyList<Candidate> Candidates);
+}
+
+// Where a batch of match summaries spends its time, summed across songs.
+internal sealed class ItemMatchTiming
+{
+    public long Resolve, Snapshots, Review, Policy, Routes;
+
+    public void Add(ref long phase, ref long mark)
+    {
+        var now = Stopwatch.GetTimestamp();
+        Interlocked.Add(ref phase, now - mark);
+        mark = now;
+    }
+
+    public override string ToString() =>
+        $"resolve {Ms(ref Resolve)}, snapshots {Ms(ref Snapshots)}, review {Ms(ref Review)}, policy {Ms(ref Policy)}, routes {Ms(ref Routes)}";
+
+    private static int Ms(ref long ticks) => (int)(Interlocked.Read(ref ticks) * 1000 / Stopwatch.Frequency);
 }
