@@ -160,6 +160,11 @@ public sealed class ProviderStreamOpener(
             if (routed == null)
             {
                 Interrupted();
+                // A song nothing is stored for can never open, so apps should move on; a known song may only be waiting
+                // for a source that failed just now, so apps retry it shortly.
+                if (providers is ProtocolProviderGateway stored && await stored.GetStoredSongAsync(context, providerId, externalId) == null)
+                    return new NotFoundObjectResult(new { error = "This song has no playable source.", code = "not_playable" });
+                http.Response.Headers.RetryAfter = "30";
                 return new ObjectResult(new { error = "No verified playback source is available." })
                 {
                     StatusCode = StatusCodes.Status503ServiceUnavailable

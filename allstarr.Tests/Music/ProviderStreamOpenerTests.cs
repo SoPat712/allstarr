@@ -25,11 +25,13 @@ public sealed partial class ProviderStreamOpenerTests
         gateway.Setup(item => item.OpenStreamAsync(_context, "deezer", "42", ProviderAudioQuality.Lossless, null, false))
             .ReturnsAsync((ProtocolProviderStream?)null);
 
+        var http = new DefaultHttpContext();
         var result = await new ProviderStreamOpener(gateway.Object, new ProtocolStreamingResponseAdapter())
-            .OpenAsync(new DefaultHttpContext(), _context, "deezer", "42", ProviderAudioQuality.Lossless);
+            .OpenAsync(http, _context, "deezer", "42", ProviderAudioQuality.Lossless);
 
         var unavailable = Assert.IsType<ObjectResult>(result);
         Assert.Equal(StatusCodes.Status503ServiceUnavailable, unavailable.StatusCode);
+        Assert.Equal("30", http.Response.Headers.RetryAfter.ToString());
     }
 
     [Theory]
