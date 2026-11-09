@@ -1,13 +1,13 @@
 import { expect, test, type Page } from "@playwright/test";
 import type { HouseholdPromotionProfile, PromotionProfile } from "../src/lib/promotion-profile-api";
-import { appearance, capture, mockForYou } from "./for-you-fixtures";
+import { appearance, mockForYou } from "./for-you-fixtures";
 
 const initialScript = "%artist%/%title%.%_extension%";
 const initialProfile: PromotionProfile = {
   namingScript: initialScript, libraryRootId: null,
   qualityFloor: { codecFamily: "lossless", minBitDepth: 16, minSampleRate: 44100 }, hiResCeiling: { maxBitDepth: 24, maxSampleRate: 96000 },
   fakeLosslessCheck: true, allowLossy: false, musicBrainzTags: true, coverMode: "both", lyricsMode: ".lrc", replayGain: true,
-  defaultUnit: "album", afterAdding: false, removeKeptCopy: true,
+  defaultUnit: "album", removeKeptCopy: true,
 };
 const songs = [
   { kind: "album", artist: "North", title: "Blue morning" }, { kind: "multi-disc", artist: "Willow", title: "Open skies" },
@@ -17,13 +17,17 @@ async function fixture(page: Page, admin = true, inherited = false) {
   await mockForYou(page, { admin });
   const state = {
     personal: structuredClone(initialProfile), household: { values: { ...structuredClone(initialProfile), namingScript: "%album%/%title%.%_extension%" }, addWithoutApproval: "admins-and-trusted-listeners" } as HouseholdPromotionProfile,
-    writes: [] as { scope: string; body: any }[], previews: [] as string[], householdReads: 0, failNextSave: false, usesHouseholdDefault: inherited,
+    writes: [] as { scope: string; body: any }[], previews: [] as string[], householdReads: 0, setupReads: 0, failNextSave: false, usesHouseholdDefault: inherited,
   };
   if (inherited) state.personal = structuredClone(state.household.values);
   await page.route("**/api/admin/library-promotions/**", async route => {
     const path = new URL(route.request().url()).pathname, method = route.request().method();
     if (path.endsWith("/folders")) return route.fulfill({ json: { available: true, reason: null, folders: [] } });
-    if (path.endsWith("/setup")) return route.fulfill({ json: { ready: true, allowedBaseConfigured: true, reason: null, rootId: "00000000-0000-0000-0000-000000000001" } });
+    if (path.endsWith("/setup")) {
+      state.setupReads++;
+      return admin ? route.fulfill({ json: { ready: true, allowedBaseConfigured: true, reason: null, rootId: "00000000-0000-0000-0000-000000000001" } })
+        : route.fulfill({ status: 403, json: { error: "Administrator access required." } });
+    }
     if (path.endsWith("/roots")) return route.fulfill({ json: [{ id: "00000000-0000-0000-0000-000000000001", name: "Music" }] });
     if (path.endsWith("/preview")) {
       const { script } = route.request().postDataJSON(); state.previews.push(script);
@@ -122,8 +126,9 @@ test("Autosaves the quality, extras and placement groups through the personal pr
   await page.getByRole("switch", { name: "ReplayGain", exact: true }).click();
   await select(page, "Library folder", "Music");
   await page.getByRole("radio", { name: "Just the song", exact: true }).click();
-  await page.getByRole("switch", { name: "After adding", exact: true }).click();
-  await expect.poll(() => state.personal).toMatchObject({ qualityFloor: { codecFamily: "any", minBitDepth: 0, minSampleRate: 44100 }, hiResCeiling: { maxBitDepth: 24, maxSampleRate: 192000 }, allowLossy: true, fakeLosslessCheck: false, musicBrainzTags: false, coverMode: "embedded", lyricsMode: "off", replayGain: false, libraryRootId: "00000000-0000-0000-0000-000000000001", defaultUnit: "song", afterAdding: true, removeKeptCopy: true });
+  await expect(page.getByRole("switch", { name: "After adding", exact: true })).toHaveCount(0);
+  await page.getByRole("switch", { name: "Remove kept copy", exact: true }).click();
+  await expect.poll(() => state.personal).toMatchObject({ qualityFloor: { codecFamily: "any", minBitDepth: 0, minSampleRate: 44100 }, hiResCeiling: { maxBitDepth: 24, maxSampleRate: 192000 }, allowLossy: true, fakeLosslessCheck: false, musicBrainzTags: false, coverMode: "embedded", lyricsMode: "off", replayGain: false, libraryRootId: "00000000-0000-0000-0000-000000000001", defaultUnit: "song", removeKeptCopy: false });
   expect(state.writes.every(write => write.scope === "me" && !("values" in write.body))).toBe(true);
   await page.reload(); await expect(page.getByRole("switch", { name: "ReplayGain", exact: true })).not.toBeChecked();
 });
@@ -151,6 +156,7 @@ test("Listeners can open their own settings and never request the household endp
   await page.getByRole("switch", { name: "ReplayGain", exact: true }).click();
   await expect.poll(() => state.personal.replayGain).toBe(false);
   expect(state.householdReads).toBe(0);
+  expect(state.setupReads).toBe(0);
   await expect(page.getByRole("navigation", { name: "Settings sections", exact: true }).getByRole("link", { name: "Adding to the library", exact: true })).toBeVisible();
 });
 
@@ -179,11 +185,11 @@ test("A failed autosave keeps the edit and can be retried", async ({ page }) => 
   await expect.poll(() => state.personal.replayGain).toBe(false);
 });
 
-for (const width of [390, 1440]) test(`Library profile fits ${width}px`, async ({ page }) => {
-  await appearance(page, width, "light"); await fixture(page);
+for (const width of [390, 1440]) for (const theme of ["light", "dark"] as const) test(`Library profile fits ${width}px in ${theme}`, async ({ page }, testInfo) => {
+  await appearance(page, width, theme); await fixture(page);
   const script = await scriptField(page); await script.fill("%artist%/%title%.%_extension%");
   await expect(page.getByText("North/Blue morning.flac", { exact: true })).toBeVisible();
-  await capture(page, "library-profile", width, "light");
+  await page.screenshot({ path: testInfo.outputPath(`library-profile-${width}-${theme}.png`), fullPage: true });
 });
 
 for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const) test(`Naming script folds like other card rows ${width}px ${theme}`, async ({ page }) => {

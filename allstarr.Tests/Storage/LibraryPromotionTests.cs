@@ -49,7 +49,7 @@ public sealed partial class LibraryPromotionTests : IAsyncLifetime
             ["Promotion:AllowedBase"] = Path.Combine(directory, "library")
         }).Build();
         Directory.CreateDirectory(Path.Combine(directory, "library", "music"));
-        var value = JsonSerializer.Serialize(new[] { new PromotionRoot(rootId, "Music", Path.Combine(directory, "library", "music")) });
+        var value = JsonSerializer.Serialize(new[] { new PromotionRoot(rootId, "Music", Path.Combine(directory, "library", "music"), BackendLibraryId: "music") });
         settings.Setup(item => item.GetAsync(PromotionRoots.Key, It.IsAny<CancellationToken>())).ReturnsAsync(
             new EffectiveRuntimeSetting(PromotionRoots.Key, RuntimeSettingValueType.String, value, value,
                 RuntimeSettingOrigin.Durable, 1, "test", null, null));

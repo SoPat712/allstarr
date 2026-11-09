@@ -14,6 +14,40 @@ namespace allstarr.Tests;
 public sealed partial class PlaylistOrchestrationIntegrationTests
 {
     [Fact]
+    public async Task PromotionLinkedRecording_SwitchesPublishedPlaylistOnReadAndTheNextSync()
+    {
+        _source.Snapshot = Snapshot("promotion", Entry(0, "promoted", "promoted-source", "New song"));
+        await _service.RunAsync(Context(), new(_link, 1));
+        await using (var db = _factory.CreateDbContext())
+        {
+            var match = await db.TrackMatches.OrderByDescending(item => item.DecisionVersion).FirstAsync();
+            match.LibraryTrackId = null;
+            match.CanonicalRecordingId = _canonical;
+            var identity = ProviderIdentity("promoted-source");
+            var stored = await db.ProviderTrackIdentities.SingleOrDefaultAsync(item => item.ExternalIdHash == identity.ExternalIdHash);
+            if (stored == null) db.ProviderTrackIdentities.Add(identity);
+            else stored.CanonicalRecordingId = _canonical;
+            await db.SaveChangesAsync();
+        }
+        var reader = new DurablePlaylistProjectionReader(_factory, new TestBackendLibraryAccess(_factory, "music"));
+        var before = Assert.IsType<DurablePlaylistProjection>(await reader.ReadByLinkIdAsync(_user, _link));
+        Assert.NotEqual("local", Assert.Single(before.Entries).RouteKind);
+        await using (var db = _factory.CreateDbContext())
+        {
+            var track = Local(Guid.NewGuid(), "promoted-native", "promoted-source", "New song");
+            track.CanonicalRecordingId = _canonical;
+            db.LibraryTracks.Add(track);
+            await db.SaveChangesAsync();
+        }
+
+        var read = Assert.IsType<DurablePlaylistProjection>(await reader.ReadByLinkIdAsync(_user, _link));
+        Assert.Equal("promoted-native", Assert.Single(read.Entries).BackendItemId);
+        Assert.Equal("local", Assert.Single(read.Entries).RouteKind);
+        await _service.RunAsync(Context(), new(_link, 2));
+        Assert.Contains("promoted-native", _target.LastWrite!.OrderedBackendItemIds);
+    }
+
+    [Fact]
     public async Task SelfLovePublishedPlaylistUsesTheSameLibraryPrimaryAsCurrentPlayback()
     {
         _source.Snapshot = Snapshot("self-love", Entry(0, "one", "source-1", SelfLoveMatchFixture.Title) with

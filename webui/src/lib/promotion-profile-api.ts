@@ -13,7 +13,6 @@ export type PromotionProfile = {
   lyricsMode: "off" | ".lrc" | "embedded" | "both";
   replayGain: boolean;
   defaultUnit: "album" | "song";
-  afterAdding: boolean;
   removeKeptCopy: boolean;
 };
 export type ApprovalRoles = "admins" | "admins-and-trusted-listeners";

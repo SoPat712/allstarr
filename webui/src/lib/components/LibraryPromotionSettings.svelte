@@ -7,6 +7,7 @@
   import { promotionProfiles, type ApprovalRoles, type HouseholdPromotionProfile, type NamingError, type NamingPreview, type PersonalPromotionProfile, type PromotionProfile, type PromotionRoot, type PromotionFolders, type PromotionFolder } from "$lib/promotion-profile-api";
   import { createNamingPreview } from "$lib/promotion-preview";
   import { createProfileSave, type ProfileScope } from "$lib/promotion-profile-save";
+  import { loadPromotionSettings } from "$lib/promotion-settings";
   import { Button } from "$lib/components/ui/button";
   import { Switch } from "$lib/components/ui/switch";
   import SelectField from "$lib/components/SelectField.svelte";
@@ -128,7 +129,7 @@
   async function load() {
     loading = true; loadError = "";
     try {
-      const [personal, folders, shared, state, locations] = await Promise.all([promotionProfiles.mine(), promotionProfiles.roots(), administrator ? promotionProfiles.household() : Promise.resolve(null), promotionProfiles.setup(), administrator ? promotionProfiles.folders().catch(() => null) : Promise.resolve(null)]);
+      const [personal, folders, shared, state, locations] = await loadPromotionSettings(administrator);
       setup = state; discovery = locations && Array.isArray(locations.folders) ? locations : null;
       mine = personal; roots = folders; household = shared ?? personal.householdDefault;
       validScripts.add(personal.values.namingScript); validScripts.add(household.values.namingScript);
@@ -142,7 +143,7 @@
 {#snippet errorList(items: NamingError[])}
   <ul class="naming-errors" aria-label="Naming errors">{#each items as error}<li><button type="button" onclick={() => showError(error)}>Character {error.position + 1}: {error.message}</button>{#if profile}<code class="error-location">{profile.namingScript.slice(0, error.position)}<mark>{profile.namingScript.slice(error.position, error.position + error.length) || " "}</mark>{profile.namingScript.slice(error.position + error.length)}</code>{/if}</li>{/each}</ul>
 {/snippet}
-{#snippet toggle(key: "fakeLosslessCheck" | "musicBrainzTags" | "replayGain" | "afterAdding", title: string, description: string)}
+{#snippet toggle(key: "fakeLosslessCheck" | "musicBrainzTags" | "replayGain" | "removeKeptCopy", title: string, description: string)}
   {#if profile}<div class="settings-row"><div><strong>{title}</strong><small>{description}</small></div><span class="settings-toggle"><Switch aria-label={title} checked={profile[key]} onchange={event => update({ [key]: event.currentTarget.checked })} /></span></div>{/if}
 {/snippet}
 
@@ -219,7 +220,7 @@
       <div class="settings-row"><div><strong>Library folder</strong><small>One of the folders Jellyfin reads</small></div><SelectField label="Library folder" value={profile.libraryRootId ?? ""} options={[{ value: "", label: "Default library folder" }, ...roots.map(root => ({ value: root.id, label: root.name })), ...(profile.libraryRootId && !roots.some(root => root.id === profile.libraryRootId) ? [{ value: profile.libraryRootId, label: "Previously selected folder" }] : [])]} onchange={value => update({ libraryRootId: value || null })} /></div>
       {/if}
       <div class="settings-row"><div><strong>Default unit</strong><small>What “Add to library” adds from a song</small></div><ThreeDetentSwitch label="Default unit" value={profile.defaultUnit} options={[{ value: "album", label: "Whole album" }, { value: "song", label: "Just the song" }]} onchange={value => update({ defaultUnit: value })} /></div>
-      {@render toggle("afterAdding", "After adding", "Move playlists, mixes, hearts and plays to the library copy")}
+      {@render toggle("removeKeptCopy", "Remove kept copy", "Release the kept copy after Jellyfin confirms the library song")}
       {#if administrator && scope === "household"}<div class="settings-row"><div><strong>Who adds without approval</strong><small>Everyone else sends a request to an admin</small></div><SelectField label="Who adds without approval" value={household.addWithoutApproval} options={[{ value: "admins-and-trusted-listeners", label: "Admins and trusted listeners" }, { value: "admins", label: "Admins" }]} onchange={value => { if (household) household = { ...household, addWithoutApproval: value as ApprovalRoles }; dirty.add(scope); scheduleSave(); }} /></div>{/if}
     </section>
   </div>

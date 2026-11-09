@@ -6,7 +6,7 @@ const profile: PromotionProfile = {
   qualityFloor: { codecFamily: "lossless", minBitDepth: 16, minSampleRate: 44100 },
   hiResCeiling: { maxBitDepth: 24, maxSampleRate: 96000 },
   fakeLosslessCheck: true, allowLossy: false, musicBrainzTags: true, coverMode: "both", lyricsMode: ".lrc",
-  replayGain: true, defaultUnit: "album", afterAdding: false, removeKeptCopy: true,
+  replayGain: true, defaultUnit: "album", removeKeptCopy: true,
 };
 const trustLabel = "Adds to the library without approval";
 

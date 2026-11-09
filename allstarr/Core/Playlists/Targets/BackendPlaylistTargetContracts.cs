@@ -285,6 +285,7 @@ public interface IBackendPlaylistTarget
             ErrorCode: "native-item-read-unsupported"));
 
     Task<bool> FavoriteAsync(BackendPlaylistTargetContext context, string backendItemId, CancellationToken cancellationToken) => Task.FromResult(false);
+    Task<bool> UnfavoriteAsync(BackendPlaylistTargetContext context, string backendItemId, CancellationToken cancellationToken) => Task.FromResult(false);
 
     Task<BackendPlaylistTargetResult<BackendPlaylistWriteReceipt>> WriteAsync(
         BackendPlaylistTargetContext context,

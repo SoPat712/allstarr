@@ -100,6 +100,7 @@ public sealed partial class LibraryPromotionService
             owners.Contains(item.OwnerUserId ?? Guid.Empty) && (item.Type == "library.refresh" || item.Type == LibraryRecordingLinkQueue.JobType))
             .ToArrayAsync(token);
         var jobsById = relevantJobs.ToDictionary(item => item.Id);
+        var confirmations = await ReadHandoverConfirmationsAsync(db, relevantJobs.Select(item => item.CorrelationId).ToArray(), token);
         var runIds = runs.Select(item => item.Id).ToArray();
         var legacySteps = await db.Set<PromotionStepRecord>().AsNoTracking().Where(item => runIds.Contains(item.RunId)).ToArrayAsync(token);
         var users = await db.Users.AsNoTracking().Where(item => owners.Contains(item.Id)).ToDictionaryAsync(item => item.Id, token);
@@ -131,13 +132,14 @@ public sealed partial class LibraryPromotionService
                 var trackRefresh = track.RefreshJobId is { } trackRefreshId ? jobsById.GetValueOrDefault(trackRefreshId) : legacyRefresh ? refresh : null;
                 var link = trackRefresh == null ? null : relevantJobs.FirstOrDefault(item => item.Type == LibraryRecordingLinkQueue.JobType &&
                     item.OwnerUserId == run.OwnerUserId && item.IdempotencyKey == $"promotion-refresh:{trackRefresh.Id:N}");
+                var confirmed = link?.State == DurableJobState.Succeeded || link != null && confirmations.Contains((link.CorrelationId, track.RecordingId));
                 if (link?.State == DurableJobState.Succeeded && link.CompletedAt is { } completed &&
                     (handoverFinishedAt == null || completed > handoverFinishedAt)) handoverFinishedAt = completed;
                 track.Steps.RemoveAll(item => item.Name is "Refresh" or "Handover");
                 track.Steps.Add(new("Refresh", trackRefresh?.State == DurableJobState.Succeeded ? "Complete" : trackRefresh?.State.ToString() ?? "Pending",
                     trackRefresh?.State == DurableJobState.Succeeded ? "The backend accepted the refresh request." : "Waiting for the backend refresh request."));
-                track.Steps.Add(new("Handover", link?.State == DurableJobState.Succeeded ? "Complete" : link?.State.ToString() ?? "Pending",
-                    link?.State == DurableJobState.Succeeded ? "The refreshed index confirmed the library links." : "Waiting for confirmed library links."));
+                track.Steps.Add(new("Handover", confirmed ? "Complete" : link?.State.ToString() ?? "Pending",
+                    confirmed ? "The library links and listener handover are confirmed." : link?.LastErrorMessage ?? "Waiting for confirmed library links."));
             }
             var added = tracks.Count(IsAdded);
             var needsLook = run.Outcome == "Cancelled" ? 0 : tracks.Count(track => !IsAdded(track) && (track.Outcome is "Needs review" or "Failed" ||

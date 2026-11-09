@@ -22,7 +22,6 @@ public sealed record PromotionProfile
     public string LyricsMode { get; init; } = "both";
     public bool ReplayGain { get; init; } = true;
     public string DefaultUnit { get; init; } = "album";
-    public bool AfterAdding { get; init; }
     public bool RemoveKeptCopy { get; init; }
 }
 

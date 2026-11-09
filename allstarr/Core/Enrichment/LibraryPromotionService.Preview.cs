@@ -21,8 +21,7 @@ public sealed partial class LibraryPromotionService
                 _ => "Lyrics disabled in your profile"
             }, profile.LyricsMode != "off"),
         new("replaygain", "ReplayGain", profile.ReplayGain ? "Track and album gain · partial additions measure the ready songs together" : "ReplayGain disabled in your profile", profile.ReplayGain),
-        new("handover", "Switch to the library copy", profile.AfterAdding ? "Playlists, mixes, hearts and plays move to the new file." +
-            (profile.RemoveKeptCopy ? " Release the kept copy after confirmation." : " Retain the kept copy.") :
-            "Off in your profile; the library still rescans and confirms the new file.", profile.AfterAdding)
+        new("handover", "Switch to the library copy", "Playlists, mixes, hearts and plays move to the new file." +
+            (profile.RemoveKeptCopy ? " Release the kept copy after confirmation." : " Retain the kept copy."), true)
     ];
 }

@@ -15,6 +15,46 @@ namespace allstarr.Tests;
 public sealed partial class LibraryPromotionTests
 {
     [Fact]
+    public async Task PromotionReceipt_ExpiredLinkNeedsALookWhileConfirmedSiblingStaysAdded()
+    {
+        const string reason = "Jellyfin has not confirmed this song after ten minutes. Check its music folder and scan.";
+        var refresh = await queue.EnqueueAsync(new DurableJobEnqueueRequest<object>("library.refresh", "partial-refresh", new { }, owner));
+        var first = ReceiptTrack("Placed");
+        first.ManagedFileId = Guid.NewGuid();
+        var second = ReceiptTrack("Placed");
+        second.ManagedFileId = Guid.NewGuid();
+        second.RecordingId = Guid.NewGuid();
+        var run = await SeedReceiptAsync([first, second], refreshId: refresh.JobId, outcome: "Placed");
+        var link = await queue.EnqueueAsync(new DurableJobEnqueueRequest<object>(LibraryRecordingLinkQueue.JobType,
+            $"promotion-refresh:{refresh.JobId:N}", new { }, owner));
+        await using (var db = factory.CreateDbContext())
+        {
+            (await db.Jobs.SingleAsync(item => item.Id == refresh.JobId)).State = DurableJobState.Succeeded;
+            var job = await db.Jobs.SingleAsync(item => item.Id == link.JobId);
+            job.State = DurableJobState.Failed;
+            job.LastErrorMessage = reason;
+            db.AuditEvents.Add(new()
+            {
+                Id = Guid.NewGuid(),
+                ActorUserId = owner,
+                Action = "promotion.handover-confirmed",
+                CorrelationId = job.CorrelationId,
+                DetailsJson = JsonSerializer.Serialize(new { first.RecordingId })
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var receipt = await service.GetReceiptAsync(Context, run);
+
+        Assert.Equal("needs-look", receipt.State);
+        Assert.Equal(1, receipt.Added);
+        Assert.Equal(1, receipt.NeedsLook);
+        Assert.False(receipt.Active);
+        Assert.Contains(receipt.Tracks[0].Steps, step => step.Name == "Handover" && step.Outcome == "Complete");
+        Assert.Contains(receipt.Tracks[1].Steps, step => step.Name == "Handover" && step.Outcome == "Failed" && step.Reason == reason);
+    }
+
+    [Fact]
     public async Task PromotionList_RestrictsOwnersAndAllowsAdministrators()
     {
         await SeedReceiptAsync([ReceiptTrack("Queued")]);
@@ -285,7 +325,7 @@ public sealed partial class LibraryPromotionTests
         Assert.Equal("fallback", preview.BestCopies.Single(item => item.Provider == "deezer").Verdict);
         Assert.Equal("skipped-below-floor", preview.BestCopies.Single(item => item.Provider == "other").Verdict);
         Assert.Equal(5, preview.ProfileSteps.Count);
-        Assert.All(preview.ProfileSteps, item => Assert.False(item.Enabled));
+        Assert.All(preview.ProfileSteps, item => Assert.Equal(item.Key == "handover", item.Enabled));
         Assert.Equal(rootId, preview.RootId);
         Assert.Equal("music", preview.BackendLibraryId);
         identities.Setup(item => item.GetStoredSongsAsync(It.IsAny<ProviderActorContext>(), recordingId.ToString("D"), It.IsAny<CancellationToken>()))

@@ -155,7 +155,13 @@ public sealed partial class BackendPlaylistTargetTests
             Assert.Equal("/rest/star.view", handler.Path);
             Assert.Contains("id=native-one", handler.Body);
         }
-        else Assert.Equal("/Users/user-1/FavoriteItems/native-one", handler.Path);
+        else
+        {
+            Assert.Equal("/Users/user-1/FavoriteItems/native-one", handler.Path);
+            Assert.True(await target.UnfavoriteAsync(Context(), "native-one", default));
+            Assert.Equal(HttpMethod.Delete, handler.Method);
+            Assert.Equal("/Users/user-1/FavoriteItems/native-one", handler.Path);
+        }
     }
 
     private sealed class FavoriteBackend : HttpMessageHandler

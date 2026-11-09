@@ -56,7 +56,7 @@ public sealed partial class LibraryPromotionService(IDbContextFactory<AllstarrDb
         if (promotionCatalog != null) return (await PreviewAlbumAsync(context, request, token)) with { CanAddDirectly = canAddDirectly };
         await using var db = await factory.CreateDbContextAsync(token);
         await AuthorizeAsync(db, context, token);
-        var root = await roots.RequireAsync(request.RootId, token);
+        var root = await roots.RequireAsync(request.RootId, token, backendLibraryId: request.BackendLibraryId);
         if (!(await libraryAccess.ResolveAsync(context, token)).Allows(request.BackendLibraryId))
             throw new UnauthorizedAccessException("This backend library is unavailable to you.");
         var source = await SourceAsync(db, context.Principal!.UserId, request, token);
@@ -112,7 +112,7 @@ public sealed partial class LibraryPromotionService(IDbContextFactory<AllstarrDb
             if (!(await libraryAccess.ResolveAsync(context, token)).Allows(request.BackendLibraryId))
                 throw new UnauthorizedAccessException("This backend library is unavailable to you.");
             var source = await SourceAsync(db, owner, request, token);
-            var root = await roots.RequireAsync(request.RootId, token);
+            var root = await roots.RequireAsync(request.RootId, token, backendLibraryId: request.BackendLibraryId);
             var plan = await PlanAsync(db, context, request, source, token);
             Destination(root.Path, plan, requireAvailable: true);
             await using var transaction = await db.Database.BeginTransactionAsync(token);
@@ -241,7 +241,7 @@ public sealed partial class LibraryPromotionService(IDbContextFactory<AllstarrDb
             var access = await libraryAccess.ResolveUserAsync(run.OwnerUserId, token);
             if (access.Context == null || !access.Access.Allows(request.BackendLibraryId))
                 throw new UnauthorizedAccessException("The owner's backend library access is unavailable.");
-            var root = await roots.RequireAsync(request.RootId, token, checkFreeSpace: false);
+            var root = await roots.RequireAsync(request.RootId, token, checkFreeSpace: false, backendLibraryId: request.BackendLibraryId);
             if (root.Path != run.RootPath) throw new PromotionException(PromotionFailure.PromotionChanged);
             var workspace = Workspace(id);
             var path = Path.Combine(workspace, "song" + plan.Track.Extension);

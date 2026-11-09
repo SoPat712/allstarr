@@ -169,8 +169,9 @@ public sealed class BackendLibraryRefreshJobHandler(IDbContextFactory<AllstarrDb
                     {
                         RecordingIds = recordings,
                         RemoveKeptCopy = payload.RemoveKeptCopy,
-                        BackendLibraryId = payload.BackendLibraryId
-                    }, user.Id, MaxAttempts: 3, MaxDeferrals: 10000), cancellationToken);
+                        BackendLibraryId = payload.BackendLibraryId,
+                        ConfirmBy = clock.UtcNow.AddMinutes(10)
+                    }, user.Id, Priority: 100, MaxAttempts: 3, MaxDeferrals: 24), cancellationToken);
             return result.Accepted ? DurableJobCompletion.Success() : DurableJobCompletion.Failure("library_refresh_rejected", "The backend rejected its library refresh request.");
         }
         catch (HttpRequestException) { return DurableJobCompletion.Retry("library_refresh_backend_unavailable", "The backend library refresh is temporarily unavailable."); }

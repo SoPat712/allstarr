@@ -105,6 +105,7 @@ public class AdminAuthenticationMiddlewareTests
     [InlineData("/api/admin/library-promotions/019f48f2-5f28-7b11-b42d-0d9b76b73b40", "GET")]
     [InlineData("/api/admin/library-promotions/019f48f2-5f28-7b11-b42d-0d9b76b73b40/approve", "POST")]
     [InlineData("/api/admin/library-promotions/019f48f2-5f28-7b11-b42d-0d9b76b73b40/cancel", "POST")]
+    [InlineData("/api/admin/library-promotions/019f48f2-5f28-7b11-b42d-0d9b76b73b40/songs/019f48f2-5f28-7b11-b42d-0d9b76b73b41/review", "POST")]
     [InlineData("/api/admin/preferences", "PUT")]
     [InlineData("/api/admin/preferences", "DELETE")]
     [InlineData("/api/admin/releases", "GET")]

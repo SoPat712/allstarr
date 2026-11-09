@@ -16,6 +16,8 @@ public sealed record WritablePlaylistMember(string OccurrenceId, string ItemId, 
     public bool IsProvider => Song != null;
     [System.Text.Json.Serialization.JsonIgnore]
     public int? NativePosition { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public string? PromotionSourceId { get; init; }
 }
 
 public sealed record WritablePlaylistState(IReadOnlyList<WritablePlaylistMember> Members)
@@ -49,6 +51,19 @@ public sealed partial class WritablePlaylistMembership(
                 item.Protocol == context.Protocol.ToString().ToLowerInvariant() && item.BackendInstanceId == context.BackendInstanceId)
             .OrderByDescending(item => item.SnapshotVersion).FirstOrDefaultAsync(cancellationToken);
         return row == null ? null : JsonSerializer.Deserialize<WritablePlaylistState>(row.PayloadJson)! with { StoredAt = row.RetrievedAt };
+    }
+
+    public async Task<WritablePlaylistState> PreferLibraryCopiesAsync(ProtocolExecutionContext context,
+        WritablePlaylistState saved, CancellationToken token)
+    {
+        var copies = new Dictionary<string, string?>(StringComparer.Ordinal);
+        foreach (var id in saved.Members.Where(item => item.IsProvider).Select(item => item.ItemId).Distinct(StringComparer.Ordinal))
+            copies[id] = await library.ResolveKnownTrackAsync(context, id, token);
+        return saved with
+        {
+            Members = saved.Members.Select(item => copies.GetValueOrDefault(item.ItemId) is { } native
+            ? item with { ItemId = native, Song = null, NativeEntryId = null, PromotionSourceId = item.ItemId } : item).ToArray()
+        };
     }
 
     public async Task SaveAsync(ProtocolExecutionContext context, string playlistId,
@@ -158,13 +173,20 @@ public sealed partial class WritablePlaylistMembership(
     {
         if (saved == null) return native;
         var remaining = native.ToList();
+        var reserved = saved.Members.Where(item => item.PromotionSourceId == null && item.NativeEntryId != null)
+            .Select(item => item.NativeEntryId).ToHashSet(StringComparer.Ordinal);
         var result = new List<WritablePlaylistMember>();
         foreach (var member in saved.Members)
         {
             if (member.IsProvider) { result.Add(member); continue; }
             var index = member.NativeEntryId == null ? -1 : remaining.FindIndex(item => item.NativeEntryId == member.NativeEntryId);
-            if (index < 0) index = remaining.FindIndex(item => SameNativeId(item.ItemId, member.ItemId));
-            if (index < 0) continue;
+            if (index < 0) index = remaining.FindIndex(item => SameNativeId(item.ItemId, member.ItemId) &&
+                (member.PromotionSourceId == null || !reserved.Contains(item.NativeEntryId)));
+            if (index < 0)
+            {
+                if (member.PromotionSourceId != null) result.Add(member);
+                continue;
+            }
             var current = remaining[index];
             remaining.RemoveAt(index);
             result.Add(current with { OccurrenceId = current.NativeEntryId ?? member.OccurrenceId });

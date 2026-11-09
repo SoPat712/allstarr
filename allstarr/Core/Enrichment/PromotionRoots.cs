@@ -5,7 +5,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Core.Enrichment;
 
-public sealed record PromotionRoot(Guid Id, string Name, string Path, string? BackendPath = null);
+public sealed record PromotionRoot(Guid Id, string Name, string Path, string? BackendPath = null, string? BackendLibraryId = null);
 public sealed record PromotionSetup(bool Ready, bool AllowedBaseConfigured, string? Reason, Guid? RootId);
 
 public sealed class PromotionRoots(IDurableRuntimeSettings settings, IDbContextFactory<AllstarrDbContext> factory,
@@ -45,12 +45,15 @@ public sealed class PromotionRoots(IDurableRuntimeSettings settings, IDbContextF
     internal static bool SameLocation(PromotionRoot left, PromotionRoot right) =>
         left.Id == right.Id && left.Path == right.Path && left.BackendPath == right.BackendPath;
 
-    public async Task<PromotionRoot> RequireAsync(Guid id, CancellationToken token, bool checkFreeSpace = true)
+    public async Task<PromotionRoot> RequireAsync(Guid id, CancellationToken token, bool checkFreeSpace = true,
+        string? backendLibraryId = null)
     {
         var approved = await ReadAsync(token);
         if (approved.Length == 0) throw new PromotionException(PromotionFailure.LibraryFolderNotSet);
         var root = (id == Guid.Empty ? approved.FirstOrDefault() : approved.SingleOrDefault(item => item.Id == id))
             ?? throw new PromotionException(PromotionFailure.LibraryFolderUnavailable);
+        if (backendLibraryId != null && root.BackendLibraryId != backendLibraryId)
+            throw new PromotionException(PromotionFailure.LibraryFolderMismatch);
         try { Validate(root); }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException)
         { throw new PromotionException(PromotionFailure.LibraryFolderUnavailable); }

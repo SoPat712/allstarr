@@ -62,9 +62,9 @@ public sealed partial class LibraryPromotionTests
         using var client = new HttpClient(new FolderResponseHandler(MusicFolderJson(source)));
         var discovery = FolderDiscovery(configured, client);
         var controller = FolderController(configured, discovery, true);
-        var root = new PromotionRoot(Guid.NewGuid(), "Mapped music", path, source);
+        var root = new PromotionRoot(Guid.NewGuid(), "Mapped music", path, source, "music");
 
-        Assert.IsType<OkObjectResult>(await controller.SaveRoots([root], default));
+        Assert.IsType<OkObjectResult>(await controller.SaveRoots([root with { BackendLibraryId = "unverified-library" }], default));
         Assert.Equal(root, Assert.Single(await configured.ReadAsync()));
         Assert.Equal(root, await configured.RequireAsync(root.Id, default));
         var setup = await configured.SetupAsync();
@@ -91,7 +91,7 @@ public sealed partial class LibraryPromotionTests
         Directory.CreateSymbolicLink(broken, Path.Combine(directory, "gone"));
         var configured = FolderRoots([]);
         using var client = new HttpClient(new FolderResponseHandler(JsonSerializer.Serialize(new[]
-            { new { Name = "Music", CollectionType = "music", Locations = new[] { link, broken } } })));
+            { new { ItemId = "music", Name = "Music", CollectionType = "music", Locations = new[] { link, broken } } })));
         var discovery = FolderDiscovery(configured, client);
 
         var folders = (await discovery.ReadAsync(FolderSession(true))).Folders;
@@ -102,7 +102,7 @@ public sealed partial class LibraryPromotionTests
         Assert.Equal("writable", linked.Status);
         Assert.Equal("unreachable", Assert.Single(folders, folder => folder.BackendPath == broken).Status);
 
-        var root = new PromotionRoot(Guid.NewGuid(), linked.Name, linked.Path, linked.BackendPath);
+        var root = new PromotionRoot(Guid.NewGuid(), linked.Name, linked.Path, linked.BackendPath, "music");
         Assert.IsType<OkObjectResult>(await FolderController(configured, discovery, true).SaveRoots([root], default));
         Assert.Equal(root, await configured.RequireAsync(root.Id, default));
         var approved = Assert.Single((await discovery.ReadAsync(FolderSession(true))).Folders, folder => folder.BackendPath == link);
@@ -261,7 +261,7 @@ public sealed partial class LibraryPromotionTests
     }
 
     private static string MusicFolderJson(string path) => JsonSerializer.Serialize(new[]
-        { new { Name = "Music", CollectionType = "music", Locations = new[] { path } } });
+        { new { ItemId = "music", Name = "Music", CollectionType = "music", Locations = new[] { path } } });
 
     private sealed class FolderResponseHandler(string body) : HttpMessageHandler
     {

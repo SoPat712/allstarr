@@ -3,6 +3,7 @@ using allstarr.Core.Capabilities;
 using allstarr.Core.Downloads;
 using allstarr.Core.Jobs;
 using allstarr.Core.Matching;
+using allstarr.Core.ManagedFiles;
 using allstarr.Core.Storage;
 using allstarr.Models.Domain;
 using Microsoft.EntityFrameworkCore;
@@ -21,7 +22,7 @@ internal sealed record PromotionDownloadSource(string ProviderId, string Externa
 internal sealed record PromotionDownloadPayload(Guid RunId, Guid RecordingId, PromotionDownloadSource[] Sources, PromotionProfile Profile);
 
 public sealed class PromotionAcquisition(IDbContextFactory<AllstarrDbContext> factory, DurableJobQueue jobs,
-    ITrackIdentityService identities, ProviderDownloadArtifactResolver artifacts) : IPromotionAcquisition
+    ITrackIdentityService identities, ProviderDownloadArtifactResolver artifacts, RecordingKeptFiles? kept = null) : IPromotionAcquisition
 {
     public const string JobType = "library.promote.acquire";
     public async Task<PromotionAcquisitionResult> AcquireAsync(Guid owner, Guid runId, PromotionTrack track, PromotionProfile profile, CancellationToken token)
@@ -31,6 +32,9 @@ public sealed class PromotionAcquisition(IDbContextFactory<AllstarrDbContext> fa
         {
             var actor = new ProviderActorContext(ProviderActorKind.SystemJob, null, durableJobId: (await db.Set<PromotionRunRecord>()
                 .SingleAsync(item => item.Id == runId, token)).JobId, actingForUserId: owner);
+            if (track.SourceAttempt == 0 && kept != null &&
+                await kept.FindPromotionSourceAsync(actor, track.RecordingId, profile, token) is { } local)
+                return new(local, false, "Reused the verified kept copy meeting the saved quality floor.");
             var songs = await identities.GetStoredSongsAsync(actor, track.RecordingId.ToString("D"), token);
             var sources = PromotionQuality.Order(profile, songs.Append(track.Song)
                 .Where(song => !song.IsLocal && !string.IsNullOrWhiteSpace(song.ExternalProvider) && !string.IsNullOrWhiteSpace(song.ExternalId) &&

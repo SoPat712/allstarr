@@ -5,7 +5,7 @@ using allstarr.Services.Jellyfin;
 
 namespace allstarr.Core.Enrichment;
 
-public sealed record PromotionLibraryFolderSource(string Name, string BackendPath);
+public sealed record PromotionLibraryFolderSource(string Name, string BackendPath, string? BackendLibraryId = null);
 public sealed record PromotionLibraryFolderDiscovery(bool Available, string? Reason, PromotionLibraryFolderSource[] Folders);
 public sealed record PromotionLibraryFolder(string Name, string BackendPath, string Path, bool Mapped,
     bool Reachable, bool Writable, string Status, Guid? RootId, long? FreeBytes = null, bool Linked = false);
@@ -35,11 +35,13 @@ public sealed class PromotionLibraryFolders(JellyfinProxyService jellyfin, Promo
                         !string.Equals(collection.GetString(), "music", StringComparison.OrdinalIgnoreCase)) continue;
                     var name = library.TryGetProperty("Name", out var label) && label.ValueKind == JsonValueKind.String
                         ? label.GetString() : null;
+                    var libraryId = library.TryGetProperty("ItemId", out var itemId) && itemId.ValueKind == JsonValueKind.String
+                        ? itemId.GetString() : null;
                     if (library.TryGetProperty("Locations", out var locations) && locations.ValueKind == JsonValueKind.Array)
                     {
                         foreach (var location in locations.EnumerateArray())
                             if (location.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(location.GetString()))
-                                folders.Add(new(name ?? "Music", WithoutTrailingSeparator(location.GetString()!)));
+                                folders.Add(new(name ?? "Music", WithoutTrailingSeparator(location.GetString()!), libraryId));
                     }
                     if (library.TryGetProperty("LibraryOptions", out var options) && options.ValueKind == JsonValueKind.Object &&
                         options.TryGetProperty("PathInfos", out var paths) && paths.ValueKind == JsonValueKind.Array)
@@ -47,7 +49,7 @@ public sealed class PromotionLibraryFolders(JellyfinProxyService jellyfin, Promo
                         foreach (var path in paths.EnumerateArray())
                             if (path.ValueKind == JsonValueKind.Object && path.TryGetProperty("Path", out var value) &&
                                 value.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(value.GetString()))
-                                folders.Add(new(name ?? "Music", WithoutTrailingSeparator(value.GetString()!)));
+                                folders.Add(new(name ?? "Music", WithoutTrailingSeparator(value.GetString()!), libraryId));
                     }
                 }
                 var distinct = folders.DistinctBy(folder => folder.BackendPath, StringComparer.Ordinal)

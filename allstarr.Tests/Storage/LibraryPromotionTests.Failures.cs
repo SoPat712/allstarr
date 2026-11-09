@@ -19,6 +19,7 @@ public sealed partial class LibraryPromotionTests
     [Theory]
     [InlineData(PromotionFailure.LibraryFolderNotSet, 503, "library-folder-not-set")]
     [InlineData(PromotionFailure.LibraryFolderUnavailable, 503, "library-folder-unavailable")]
+    [InlineData(PromotionFailure.LibraryFolderMismatch, 400, "library-folder-mismatch")]
     [InlineData(PromotionFailure.SourceChanged, 409, "source-changed")]
     [InlineData(PromotionFailure.DestinationExists, 409, "destination-exists")]
     [InlineData(PromotionFailure.PromotionChanged, 409, "promotion-changed")]

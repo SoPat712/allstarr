@@ -87,6 +87,9 @@ public partial class JellyfinController
         if (id == null) return null;
         var saved = await WritablePlaylists.ReadAsync(protocol, id, HttpContext.RequestAborted);
         if (saved == null) return null;
+        var handover = await HandoverWritablePlaylistAsync(id, saved);
+        if (handover.Error is { } error) return StatusCode(error);
+        saved = handover.Saved;
         var (definition, status) = await _proxyService.GetJsonAsync($"Playlists/{Uri.EscapeDataString(id)}" + Request.QueryString.Value, null, Request.Headers);
         using (definition)
         {
@@ -279,6 +282,9 @@ public partial class JellyfinController
 
     private async Task<IActionResult> ReadWritablePlaylistItemsAsync(string id, WritablePlaylistState saved)
     {
+        var handover = await HandoverWritablePlaylistAsync(id, saved);
+        if (handover.Error is { } error) return StatusCode(error);
+        saved = handover.Saved;
         var read = await ReadWritableNativeItemsAsync(id);
         if (read.Envelope == null) return StatusCode(read.Status);
         HttpContext.Items[JellyfinItemFields.PlaylistMembersKey] = true;
@@ -286,6 +292,7 @@ public partial class JellyfinController
         var natives = NativeMembers(read.Envelope);
         var members = WritablePlaylistMembership.Reconcile(saved, natives);
         var rows = new List<Dictionary<string, object?>>();
+        var copies = new Dictionary<string, Dictionary<string, object?>>(StringComparer.Ordinal);
         var remaining = nativeRows.ToList();
         foreach (var member in members)
         {
@@ -301,7 +308,28 @@ public partial class JellyfinController
             {
                 var index = member.NativeEntryId == null ? remaining.FindIndex(row => row["Id"]?.GetValue<string>() == member.ItemId) :
                     remaining.FindIndex(row => row["PlaylistItemId"]?.GetValue<string>() == member.NativeEntryId);
-                if (index < 0) continue;
+                if (index < 0)
+                {
+                    if (member.PromotionSourceId == null) continue;
+                    if (!copies.TryGetValue(member.ItemId, out var copy))
+                    {
+                        var context = HttpContext.RequireProtocolExecutionContext();
+                        var (body, status) = await _proxyService.GetJsonAsync(
+                            $"Users/{Uri.EscapeDataString(context.VerifiedBackendPrincipalId)}/Items/{Uri.EscapeDataString(member.ItemId)}",
+                            new Dictionary<string, string> { ["Fields"] = Request.Query["Fields"].ToString() }, Request.Headers);
+                        using (body)
+                        {
+                            if (status is < 200 or >= 300) return StatusCode(status);
+                            if (body?.RootElement.ValueKind != JsonValueKind.Object ||
+                                !body.RootElement.TryGetProperty("Id", out var itemId) || itemId.GetString() != member.ItemId)
+                                return StatusCode(StatusCodes.Status502BadGateway);
+                            copies[member.ItemId] = copy = body.RootElement.Deserialize<Dictionary<string, object?>>()!;
+                        }
+                    }
+                    var occurrence = new Dictionary<string, object?>(copy) { ["PlaylistItemId"] = member.OccurrenceId };
+                    rows.Add(occurrence);
+                    continue;
+                }
                 rows.Add(remaining[index].Deserialize<Dictionary<string, object?>>()!);
                 remaining.RemoveAt(index);
             }
@@ -312,5 +340,48 @@ public partial class JellyfinController
         read.Envelope["TotalRecordCount"] = page["TotalRecordCount"]!.DeepClone();
         read.Envelope["StartIndex"] = page["StartIndex"]!.DeepClone();
         return Content(NativeItemText.PreserveJson(read.Original!, read.Envelope.ToJsonString(), "Id"), "application/json");
+    }
+
+    private async Task<(WritablePlaylistState Saved, int? Error)> HandoverWritablePlaylistAsync(string id, WritablePlaylistState saved)
+    {
+        var context = HttpContext.RequireProtocolExecutionContext();
+        var token = HttpContext.RequestAborted;
+        var resolved = await WritablePlaylists.PreferLibraryCopiesAsync(context, saved, token);
+        if (!resolved.Members.Any(item => item.PromotionSourceId != null)) return (saved, null);
+        using var lease = await WritablePlaylists.LockAsync(token);
+        saved = await WritablePlaylists.ReadAsync(context, id, token) ?? saved;
+        var read = await ReadWritableNativeItemsAsync(id);
+        if (read.Envelope == null) return (saved, read.Status);
+        var natives = NativeMembers(read.Envelope);
+        if (saved.Members.Any(item => item.PromotionSourceId != null)) resolved = saved;
+        else
+        {
+            var current = new WritablePlaylistState(WritablePlaylistMembership.Reconcile(saved, natives));
+            resolved = await WritablePlaylists.PreferLibraryCopiesAsync(context, current, token);
+            var (permission, status) = await _proxyService.PostJsonAsync(
+                $"Playlists/{Uri.EscapeDataString(id)}/Items?UserId={Uri.EscapeDataString(context.VerifiedBackendPrincipalId)}", "{}", Request.Headers);
+            permission?.Dispose();
+            if (status == StatusCodes.Status403Forbidden) return (resolved, null);
+            if (status != StatusCodes.Status204NoContent) return (saved, status);
+            await WritablePlaylists.SaveAsync(context, id, resolved.Members, token);
+        }
+        var missing = resolved.Members.Where(item => !item.IsProvider).GroupBy(item => item.ItemId)
+            .SelectMany(group => Enumerable.Repeat(group.Key, Math.Max(0, group.Count() - natives.Count(item => item.ItemId == group.Key)))).ToArray();
+        if (missing.Length > 0)
+        {
+            var (body, status) = await _proxyService.PostJsonAsync(QueryHelpers.AddQueryString($"Playlists/{Uri.EscapeDataString(id)}/Items",
+                new Dictionary<string, string?> { ["UserId"] = context.VerifiedBackendPrincipalId, ["Ids"] = string.Join(',', missing) }), "{}", Request.Headers);
+            body?.Dispose();
+            if (status == StatusCodes.Status403Forbidden) return (resolved, null);
+            if (status is < 200 or >= 300) return (saved, status);
+            read = await ReadWritableNativeItemsAsync(id);
+            if (read.Envelope == null) return (saved, read.Status);
+            natives = NativeMembers(read.Envelope);
+        }
+        if (resolved.Members.Where(item => !item.IsProvider).GroupBy(item => item.ItemId)
+            .Any(group => natives.Count(item => item.ItemId == group.Key) < group.Count())) return (saved, StatusCodes.Status502BadGateway);
+        var confirmed = new WritablePlaylistState(WritablePlaylistMembership.Reconcile(resolved, natives));
+        await WritablePlaylists.SaveAsync(context, id, confirmed.Members, token);
+        return (confirmed, null);
     }
 }

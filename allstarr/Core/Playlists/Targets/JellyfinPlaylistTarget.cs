@@ -396,6 +396,9 @@ public sealed class JellyfinPlaylistTarget : IBackendPlaylistTarget
     public async Task<bool> FavoriteAsync(BackendPlaylistTargetContext context, string backendItemId, CancellationToken cancellationToken) =>
         (await SendAsync(context, HttpMethod.Post, $"Users/{Escape(context.VerifiedPrincipalId)}/FavoriteItems/{Escape(backendItemId)}", null, cancellationToken)).IsSuccess;
 
+    public async Task<bool> UnfavoriteAsync(BackendPlaylistTargetContext context, string backendItemId, CancellationToken cancellationToken) =>
+        (await SendAsync(context, HttpMethod.Delete, $"Users/{Escape(context.VerifiedPrincipalId)}/FavoriteItems/{Escape(backendItemId)}", null, cancellationToken)).IsSuccess;
+
     private async Task<BackendPlaylistTargetResult<BackendPlaylistWriteReceipt>> CreateAsync(
         BackendPlaylistTargetContext context,
         BackendPlaylistWriteRequest request,

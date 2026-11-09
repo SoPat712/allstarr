@@ -14,6 +14,7 @@ public sealed record LibraryRecordingLinkPayload(Guid UserId)
     public Guid[]? RecordingIds { get; init; }
     public string? BackendLibraryId { get; init; }
     public bool RemoveKeptCopy { get; init; }
+    public DateTimeOffset? ConfirmBy { get; init; }
 }
 
 public sealed class LibraryRecordingLinkQueue(IDbContextFactory<AllstarrDbContext> factory, DurableJobQueue jobs,
@@ -43,9 +44,10 @@ public sealed class LibraryRecordingLinkQueue(IDbContextFactory<AllstarrDbContex
     }
 }
 
-public sealed class LibraryRecordingLinkJobHandler(ITrackIdentityService identities,
+public sealed partial class LibraryRecordingLinkJobHandler(ITrackIdentityService identities,
     IDbContextFactory<AllstarrDbContext> factory, IPlatformClock clock, RecordingKeptFiles? kept = null,
-    IBackendLibraryAccessResolver? libraryAccess = null) : IDurableJobHandler
+    IBackendLibraryAccessResolver? libraryAccess = null, BackendLibraryCatalogScannerResolver? scanners = null,
+    allstarr.Core.Playlists.IBackendPlaylistTargetResolver? targets = null) : IDurableJobHandler
 {
     public string JobType => LibraryRecordingLinkQueue.JobType;
 
@@ -64,9 +66,26 @@ public sealed class LibraryRecordingLinkJobHandler(ITrackIdentityService identit
             var promotionActor = new ProviderActorContext(ProviderActorKind.SystemJob, null,
                 durableJobId: execution.Claim.JobId, actingForUserId: user);
             var listener = await db.Users.AsNoTracking().SingleAsync(item => item.Id == user && item.Enabled, cancellationToken);
+            var confirmBy = payload.ConfirmBy ?? (await db.Jobs.AsNoTracking().SingleAsync(
+                item => item.Id == execution.Claim.JobId, cancellationToken)).CreatedAt.AddMinutes(10);
+            DurableJobCompletion Pending(string reason) => clock.UtcNow >= confirmBy
+                ? DurableJobCompletion.Failure("library_recording_confirmation_expired",
+                    "The library song or its listener handover was not confirmed after ten minutes. Check the music folder, library scan and heart access in Jellyfin, then retry.")
+                : DurableJobCompletion.Defer("library_recording_scan_pending", reason, TimeSpan.FromSeconds(30));
+            if (scanners != null)
+            {
+                try
+                {
+                    await scanners.Resolve(ProtocolKind.Jellyfin).ScanAsync(
+                        LibraryIndexExecution.Create(listener, null, execution.Claim.CorrelationId, clock, cancellationToken),
+                        new(payload.BackendLibraryId), cancellationToken);
+                }
+                catch (HttpRequestException) { return Pending("Waiting for Jellyfin's refreshed music library to become available."); }
+            }
             var accessible = libraryAccess == null ? db.LibraryTracks.Where(item => item.OwnerUserId == user) :
                 LibraryTrackAccess.Query(db, await libraryAccess.ResolveUserAsync(user, cancellationToken));
-            var confirmed = new List<Guid>();
+            var pending = false;
+            var favorites = new Dictionary<Guid, Dictionary<string, Guid?>>();
             foreach (var recordingId in recordings.Distinct())
             {
                 var recording = await identities.ResolveRecordingAsync(promotionActor, recordingId.ToString("D"), cancellationToken);
@@ -74,18 +93,51 @@ public sealed class LibraryRecordingLinkJobHandler(ITrackIdentityService identit
                 await identities.LinkLibraryRecordingsAsync(promotionActor, execution.Claim.CorrelationId,
                     recording.Id, cancellationToken: cancellationToken);
                 recording = await identities.ResolveRecordingAsync(promotionActor, recordingId.ToString("D"), cancellationToken) ?? recording;
-                var linked = await accessible.AsNoTracking().AnyAsync(item =>
+                var linked = await accessible.AsNoTracking().Where(item =>
                     item.BackendInstanceId == listener.BackendInstanceId && item.BackendLibraryId == payload.BackendLibraryId &&
-                    item.CanonicalRecordingId == recording.Id, cancellationToken);
-                if (!linked) return DurableJobCompletion.Defer("library_recording_scan_pending",
-                    "Waiting for the refreshed library index to confirm every promoted recording.", TimeSpan.FromSeconds(30));
-                confirmed.Add(recording.Id);
+                    item.CanonicalRecordingId == recording.Id).OrderBy(item => item.BackendItemId).Select(item => item.Id).FirstOrDefaultAsync(cancellationToken);
+                if (linked == Guid.Empty) { pending = true; continue; }
+                var details = JsonSerializer.Serialize(new { RecordingId = recordingId, CanonicalRecordingId = recording.Id });
+                if (!await db.AuditEvents.AnyAsync(item => item.ActorUserId == user && item.Action == "promotion.library-linked" &&
+                        item.CorrelationId == execution.Claim.CorrelationId && item.DetailsJson == details, cancellationToken))
+                {
+                    db.AuditEvents.Add(new()
+                    {
+                        Id = Guid.CreateVersion7(),
+                        ActorUserId = user,
+                        Category = "library-promotion",
+                        Action = "promotion.library-linked",
+                        Outcome = "succeeded",
+                        DetailsJson = details,
+                        SubjectType = "library-track",
+                        SubjectId = linked.ToString("N"),
+                        CorrelationId = execution.Claim.CorrelationId,
+                        CreatedAt = clock.UtcNow
+                    });
+                    await db.SaveChangesAsync(cancellationToken);
+                }
+                if (!await HandoverAsync(recording.Id, listener, payload.BackendLibraryId, execution, payload.RemoveKeptCopy, favorites, cancellationToken))
+                { pending = true; continue; }
+                if (!await db.AuditEvents.AnyAsync(item => item.ActorUserId == user && item.Action == "promotion.handover-confirmed" &&
+                        item.CorrelationId == execution.Claim.CorrelationId && item.DetailsJson == details, cancellationToken))
+                {
+                    db.AuditEvents.Add(new()
+                    {
+                        Id = Guid.CreateVersion7(),
+                        ActorUserId = user,
+                        Category = "library-promotion",
+                        Action = "promotion.handover-confirmed",
+                        Outcome = "succeeded",
+                        DetailsJson = details,
+                        SubjectType = "library-track",
+                        SubjectId = linked.ToString("N"),
+                        CorrelationId = execution.Claim.CorrelationId,
+                        CreatedAt = clock.UtcNow
+                    });
+                    await db.SaveChangesAsync(cancellationToken);
+                }
             }
-            if (payload.RemoveKeptCopy && kept != null)
-                foreach (var recordingId in confirmed.Distinct())
-                    await kept.ReleasePromotedCopyAsync(user, recordingId, payload.BackendLibraryId,
-                        execution.Claim.JobId, execution.Claim.CorrelationId, cancellationToken);
-            return DurableJobCompletion.Success();
+            return pending ? Pending("Waiting for Jellyfin to confirm the library song and accept its listener handover.") : DurableJobCompletion.Success();
         }
         if (await db.AuditEvents.AnyAsync(item => item.ActorUserId == user &&
                 item.Action == LibraryRecordingLinkQueue.CompletionAction, cancellationToken))

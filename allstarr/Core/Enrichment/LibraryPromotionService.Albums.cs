@@ -4,6 +4,7 @@ using System.Text.Json;
 using allstarr.Core.Downloads;
 using allstarr.Core.Jobs;
 using allstarr.Core.ManagedFiles;
+using allstarr.Core.Matching;
 using allstarr.Core.Music;
 using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
@@ -35,17 +36,27 @@ public sealed partial class LibraryPromotionService
         var keys = refreshIds.Select(id => $"promotion-refresh:{id:N}").ToArray();
         var links = await db.Jobs.AsNoTracking().Where(item => item.Type == allstarr.Core.Matching.LibraryRecordingLinkQueue.JobType &&
             item.OwnerUserId == run.OwnerUserId && keys.Contains(item.IdempotencyKey)).ToDictionaryAsync(item => item.IdempotencyKey, token);
+        var correlations = links.Values.Select(item => item.CorrelationId).ToArray();
+        var confirmations = await ReadHandoverConfirmationsAsync(db, correlations, token);
         foreach (var track in run.Tracks.Where(item => item.ManagedFileId != null || item.Steps.Any(step => step.Name == "Dedupe")))
         {
             var id = track.RefreshJobId ?? (legacyRefresh ? album.RefreshJobId : null);
             if (id == null || !refreshes.TryGetValue(id.Value, out var refresh)) continue;
             var link = links.GetValueOrDefault($"promotion-refresh:{id.Value:N}");
+            var confirmed = link?.State == DurableJobState.Succeeded || link != null && confirmations.Contains((link.CorrelationId, track.RecordingId));
             track.Steps.RemoveAll(item => item.Name is "Refresh" or "Handover");
             track.Steps.Add(new("Refresh", refresh.State == DurableJobState.Succeeded ? "Complete" : refresh.State.ToString(),
                 refresh.State == DurableJobState.Succeeded ? "The backend accepted the refresh request." : "Waiting for the backend refresh request."));
-            track.Steps.Add(new("Handover", link?.State == DurableJobState.Succeeded ? "Complete" : link?.State.ToString() ?? "Pending",
-                link?.State == DurableJobState.Succeeded ? "The refreshed index confirmed the library links; requested kept cleanup was released safely." : "Waiting for confirmed library links."));
+            track.Steps.Add(new("Handover", confirmed ? "Complete" : link?.State.ToString() ?? "Pending",
+                confirmed ? "The library links and listener handover are confirmed." : link?.LastErrorMessage ?? "Waiting for confirmed library links."));
         }
+    }
+
+    private static async Task<HashSet<(string, Guid)>> ReadHandoverConfirmationsAsync(AllstarrDbContext db, string[] correlations, CancellationToken token)
+    {
+        var audits = await db.AuditEvents.AsNoTracking().Where(item => item.Action == "promotion.handover-confirmed" &&
+            correlations.Contains(item.CorrelationId)).Select(item => new { item.CorrelationId, item.DetailsJson }).ToArrayAsync(token);
+        return audits.Select(item => (item.CorrelationId, JsonSerializer.Deserialize<Dictionary<string, Guid>>(item.DetailsJson)!["RecordingId"])).ToHashSet();
     }
 
     private async Task<PromotionPreview> PreviewAlbumAsync(ProtocolExecutionContext context, PromoteSongRequest request, CancellationToken token, IReadOnlyList<Song>? savedSongs = null)
@@ -53,11 +64,11 @@ public sealed partial class LibraryPromotionService
         await using var db = await factory.CreateDbContextAsync(token);
         await AuthorizeAsync(db, context, token);
         var access = await libraryAccess.ResolveAsync(context, token);
-        var library = string.IsNullOrWhiteSpace(request.BackendLibraryId)
-            ? access.LibraryIds.Order(StringComparer.Ordinal).FirstOrDefault() : request.BackendLibraryId;
-        if (library == null || !access.Allows(library)) throw new UnauthorizedAccessException();
         var profile = (await (profiles ?? new PromotionProfiles(factory)).GetMineAsync(context, token)).Values;
         var root = await roots.RequireAsync(request.RootId == Guid.Empty ? profile.LibraryRootId ?? Guid.Empty : request.RootId, token);
+        var library = string.IsNullOrWhiteSpace(request.BackendLibraryId) ? root.BackendLibraryId : request.BackendLibraryId;
+        if (library == null || !access.Allows(library)) throw new UnauthorizedAccessException();
+        if (root.BackendLibraryId != library) throw new PromotionException(PromotionFailure.LibraryFolderMismatch);
         var songs = savedSongs ?? await promotionCatalog!.ResolveAsync(context, request.RecordingId, Unit(request, profile), token);
         if (songs.Count is 0 or > 256) throw new PromotionException(PromotionFailure.InvalidRequest);
         var opened = songs.FirstOrDefault(song => song.CanonicalRecordingId == request.RecordingId)
@@ -76,13 +87,14 @@ public sealed partial class LibraryPromotionService
         var pathKnown = false;
         if (best?.BitDepth is { } bits && best.SampleRate is { } rate)
         {
-            var converts = bits > profile.HiResCeiling.MaxBitDepth || rate > profile.HiResCeiling.MaxSampleRate;
+            var converts = PromotionQuality.IsLossless(best.Codec) &&
+                (bits > profile.HiResCeiling.MaxBitDepth || rate > profile.HiResCeiling.MaxSampleRate);
             var format = new allstarr.Models.Domain.Song
             {
                 Codec = converts ? "flac" : best.Codec,
                 Container = converts ? "flac" : best.Container,
-                BitDepth = Math.Min(bits, profile.HiResCeiling.MaxBitDepth),
-                SampleRate = Math.Min(rate, profile.HiResCeiling.MaxSampleRate)
+                BitDepth = converts ? Math.Min(bits, profile.HiResCeiling.MaxBitDepth) : bits,
+                SampleRate = converts ? Math.Min(rate, profile.HiResCeiling.MaxSampleRate) : rate
             };
             var quality = PromotionSongFields.FromSong(format);
             fields["_extension"] = quality["_extension"];
@@ -149,7 +161,7 @@ public sealed partial class LibraryPromotionService
             }
             if (!(await libraryAccess.ResolveAsync(context, token)).Allows(request.BackendLibraryId)) throw new UnauthorizedAccessException();
             var profile = (await (profiles ?? new PromotionProfiles(factory)).GetMineAsync(context, token)).Values;
-            var root = await roots.RequireAsync(request.RootId == Guid.Empty ? profile.LibraryRootId ?? Guid.Empty : request.RootId, token);
+            var root = await roots.RequireAsync(request.RootId == Guid.Empty ? profile.LibraryRootId ?? Guid.Empty : request.RootId, token, backendLibraryId: request.BackendLibraryId);
             var songs = savedSongs ?? await promotionCatalog!.ResolveAsync(context, request.RecordingId, Unit(request, profile), token);
             if (songs.Count is 0 or > 256 || songs.Any(song => song.CanonicalRecordingId is null || song.CanonicalRecordingId == Guid.Empty))
                 throw new PromotionException(PromotionFailure.InvalidRequest);
@@ -195,12 +207,12 @@ public sealed partial class LibraryPromotionService
         finally { gate.Release(); }
     }
 
-    private static Task<bool> AlreadyInLibraryAsync(AllstarrDbContext db, ProtocolExecutionContext context, string library,
+    private async Task<bool> AlreadyInLibraryAsync(AllstarrDbContext db, ProtocolExecutionContext context, string library,
         PromotionTrack track, CancellationToken token)
     {
         var isrc = track.Song.Isrc?.Replace("-", "", StringComparison.Ordinal).Trim().ToUpperInvariant();
         var mbid = track.Song.ProviderIds.GetValueOrDefault("musicbrainz_recordingid");
-        return db.LibraryTracks.AnyAsync(item => item.OwnerUserId == context.Principal!.UserId &&
+        return await LibraryTrackAccess.Query(db, context, await libraryAccess.ResolveAsync(context, token)).AnyAsync(item =>
             item.BackendInstanceId == context.BackendInstanceId && item.BackendLibraryId == library &&
             (item.CanonicalRecordingId == track.RecordingId || isrc != null && isrc != "" && item.Isrc != null &&
                 item.Isrc.Replace("-", "").ToUpper() == isrc || mbid != null && item.MusicBrainzRecordingId == mbid), token);
@@ -260,7 +272,7 @@ public sealed partial class LibraryPromotionService
         var access = await libraryAccess.ResolveUserAsync(run.OwnerUserId, token);
         if (access.Context == null || !access.Access.Allows(request.BackendLibraryId)) throw new UnauthorizedAccessException();
         var root = await roots.RequireAsync(request.RootId == Guid.Empty ? album.Profile.LibraryRootId ?? Guid.Empty : request.RootId,
-            token, checkFreeSpace: false);
+            token, checkFreeSpace: false, backendLibraryId: request.BackendLibraryId);
         if (root.Path != run.RootPath) throw new PromotionException(PromotionFailure.PromotionChanged);
         async Task Persist()
         {
@@ -629,7 +641,8 @@ public sealed partial class LibraryPromotionService
 
     private async Task ConvertCeilingAsync(PromotionRunRecord run, PromotionTrack track, PromotionProfile profile, CancellationToken token)
     {
-        if (track.Song.BitDepth <= profile.HiResCeiling.MaxBitDepth && track.Song.SampleRate <= profile.HiResCeiling.MaxSampleRate) return;
+        if (!PromotionQuality.IsLossless(track.Song.Codec) ||
+            !(track.Song.BitDepth > profile.HiResCeiling.MaxBitDepth || track.Song.SampleRate > profile.HiResCeiling.MaxSampleRate)) return;
         var source = new allstarr.Core.Capabilities.ProviderMediaFormat("audio/" + track.Extension!.TrimStart('.'), track.Extension.TrimStart('.'), track.Song.Codec!,
             sampleRate: track.Song.SampleRate, bitDepth: track.Song.BitDepth);
         var delivery = new ProviderAudioDeliveryRequest

@@ -887,6 +887,8 @@ public partial class JellyfinController : ControllerBase
     [HttpPost("UserFavoriteItems/{itemId}")]
     public async Task<IActionResult> MarkFavorite(string itemId, string? userId = null)
     {
+        if (LocalLibraryService.ParseExternalResource(itemId).type == "song" && await ResolveKnownNativeTrackAsync(itemId) is { } native)
+            itemId = native;
         if (string.IsNullOrEmpty(userId))
         {
             userId = Request.Query["userId"].ToString();
@@ -925,6 +927,8 @@ public partial class JellyfinController : ControllerBase
     [HttpDelete("UserFavoriteItems/{itemId}")]
     public async Task<IActionResult> UnmarkFavorite(string itemId, string? userId = null)
     {
+        if (LocalLibraryService.ParseExternalResource(itemId).type == "song" && await ResolveKnownNativeTrackAsync(itemId) is { } native)
+            itemId = native;
         if (string.IsNullOrEmpty(userId))
         {
             userId = Request.Query["userId"].ToString();

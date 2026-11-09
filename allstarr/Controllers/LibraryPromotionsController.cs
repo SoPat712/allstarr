@@ -45,8 +45,10 @@ public sealed class LibraryPromotionsController(LibraryPromotionService promotio
             var verified = request.Select(root =>
             {
                 var source = PromotionLibraryFolders.WithoutTrailingSeparator(root.BackendPath ?? root.Path);
-                if (sources.Contains(source)) return root with { BackendPath = source };
-                if (approved.Any(item => PromotionRoots.SameLocation(item, root))) return root;
+                var discovered = discovery.Folders.SingleOrDefault(folder => folder.BackendPath == source);
+                if (discovered?.BackendLibraryId is { Length: > 0 } libraryId)
+                    return root with { BackendPath = source, BackendLibraryId = libraryId };
+                if (approved.FirstOrDefault(item => PromotionRoots.SameLocation(item, root)) is { } previous) return previous;
                 throw new ArgumentException("Choose a discovered music folder before approving its local path.");
             }).ToArray();
             await roots.SaveAsync(session.AllstarrUserId!.Value, verified, token, sources);

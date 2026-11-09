@@ -109,9 +109,10 @@ public sealed class PromotionProfileTests : IAsyncLifetime
             LyricsMode = ".lrc",
             ReplayGain = false,
             DefaultUnit = "song",
-            AfterAdding = true,
             RemoveKeptCopy = true
         };
+        var previous = System.Text.Json.JsonSerializer.Deserialize<PromotionProfile>("{\"AfterAdding\":false,\"RemoveKeptCopy\":true}");
+        Assert.True(previous!.RemoveKeptCopy);
         await profiles.SaveMineAsync(Context(listener), personal);
         await profiles.SaveHouseholdAsync(Context(administrator), new(new() { NamingScript = "%album%/%title%.%_extension%" }, "admins"));
         var read = await new PromotionProfiles(factory).GetMineAsync(Context(listener));

@@ -122,6 +122,10 @@ public sealed partial class LibraryIndexService
                 .OrderByDescending(item => LocalCopyPreference.FormatRank(Path.GetExtension(item.FilePath)))
                 .ThenByDescending(item => item.SourceModifiedAt)
                 .ThenBy(item => item.BackendLibraryId).ThenBy(item => item.BackendItemId).ThenBy(item => item.Id).ToArray();
+            var copyIds = tracks.Where(item => item.CanonicalRecordingId.HasValue && ids.Contains(item.CanonicalRecordingId.Value))
+                .Select(item => item.Id.ToString("N")).ToArray();
+            var promoted = copyIds.Length == 0 ? [] : await db.AuditEvents.Where(item => item.Action == "promotion.library-linked" &&
+                item.SubjectType == "library-track" && copyIds.Contains(item.SubjectId)).Select(item => item.SubjectId).ToArrayAsync(cancellationToken);
             var engine = new TrackMatchDecisionEngine(new TrackMatchPolicy
             {
                 LocalPriorityWindow = policy?.LocalPreferenceWindow ?? .07,
@@ -134,13 +138,19 @@ public sealed partial class LibraryIndexService
                     ? descriptor!.DefaultUseMode : ProviderUseMode.Automatic);
             foreach (var recording in recordings)
             {
-                if (recording.ProviderId is { } providerId && Mode(providerId) == ProviderUseMode.Off) continue;
                 var snapshot = recording.ProviderId != null && recording.ExternalId != null
                     ? snapshots.GetValueOrDefault((recording.ProviderId, CanonicalCatalogKeys.Hash(recording.ExternalId))) : null;
                 snapshot ??= recording.RecordingId is { } knownId ? snapshotsByRecording.GetValueOrDefault(knownId) : null;
                 var manual = recording.ProviderId != null && recording.ExternalId != null
                     ? overrides.GetValueOrDefault((recording.ProviderId, CanonicalCatalogKeys.Hash(recording.ExternalId))) : null;
                 manual ??= snapshot == null ? null : overrides.GetValueOrDefault((snapshot.ProviderId, snapshot.ExternalIdHash));
+                if (recording.RecordingId.HasValue && tracks.FirstOrDefault(item => item.CanonicalRecordingId == recording.RecordingId &&
+                        promoted.Contains(item.Id.ToString("N"))) is { } promotedCopy)
+                {
+                    result.TryAdd(recording.PublicId, promotedCopy.BackendItemId);
+                    continue;
+                }
+                if (recording.ProviderId is { } providerId && Mode(providerId) == ProviderUseMode.Off) continue;
                 LibraryTrackRecord? track;
                 if (manual != null)
                 {

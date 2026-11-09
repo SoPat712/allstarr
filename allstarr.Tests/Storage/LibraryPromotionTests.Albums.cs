@@ -216,6 +216,7 @@ public sealed partial class LibraryPromotionTests
                 BackendInstanceId = "backend",
                 BackendLibraryId = "music",
                 BackendItemId = "existing",
+                Protocol = "jellyfin",
                 Title = "Existing",
                 Isrc = "USRC17607839"
             });

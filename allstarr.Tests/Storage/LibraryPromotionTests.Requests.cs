@@ -299,6 +299,7 @@ public sealed partial class LibraryPromotionTests
                 BackendLibraryId = "music",
                 BackendItemId = "existing",
                 CanonicalRecordingId = recordingId,
+                Protocol = "jellyfin",
                 Title = "Song"
             });
             await db.SaveChangesAsync();

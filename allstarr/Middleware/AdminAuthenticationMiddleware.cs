@@ -184,7 +184,10 @@ public class AdminAuthenticationMiddleware
                 promotionSegments.Length == 4 && (promotionSegments[3] == "roots" && HttpMethods.IsGet(method) ||
                     promotionSegments[3] == "preview" && HttpMethods.IsPost(method) || Guid.TryParse(promotionSegments[3], out _) && HttpMethods.IsGet(method)) ||
                 promotionSegments.Length == 5 && Guid.TryParse(promotionSegments[3], out _) &&
-                    promotionSegments[4] is "approve" or "cancel" && HttpMethods.IsPost(method);
+                    promotionSegments[4] is "approve" or "cancel" && HttpMethods.IsPost(method) ||
+                promotionSegments.Length == 7 && Guid.TryParse(promotionSegments[3], out _) &&
+                    promotionSegments[4] == "songs" && Guid.TryParse(promotionSegments[5], out _) &&
+                    promotionSegments[6] == "review" && HttpMethods.IsPost(method);
 
         // Which sources a listener uses for themselves; the controller refuses household changes from listeners.
         var useSegments = path.TrimEnd('/').Split('/', StringSplitOptions.RemoveEmptyEntries);

@@ -1,4 +1,5 @@
 using allstarr.Core.Protocols;
+using System.Text.Json;
 using allstarr.Core.Storage;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Music;
@@ -54,32 +55,45 @@ public sealed class FavoriteViewReader(IDbContextFactory<AllstarrDbContext> fact
                                 accepted.BackendPrincipalId == execution.VerifiedBackendPrincipalId &&
                                 accepted.Operation == (state.IsFavorite ? FavoriteOperation.Favorite : FavoriteOperation.Unfavorite)
                           orderby accepted.CreatedAt descending, state.Id
-                          select new { state.ItemId, state.DisplayMetadataJson, accepted.CreatedAt, state.IsFavorite })
+                          select new { state.ItemId, state.DisplayMetadataJson, accepted.CreatedAt, state.IsFavorite, state.LastEventId })
             .ToArrayAsync(cancellationToken);
+        var fingerprint = FavoriteLinkScope.Fingerprint(user);
         var member = await FavoriteLinkScope.MemberAsync(db, user, cancellationToken);
         if (member != null)
         {
+            var handovers = await db.AuditEvents.AsNoTracking().Where(item => item.ActorUserId == userId &&
+                item.Action == "promotion.favorite-moved" && item.Outcome == "succeeded").Select(item => item.DetailsJson).ToArrayAsync(cancellationToken);
+            var moved = new HashSet<(FavoriteResourceKey Key, string Version)>();
+            foreach (var handover in handovers)
+            {
+                using var details = JsonDocument.Parse(handover);
+                if (!details.RootElement.TryGetProperty("Versions", out var versions) || versions.ValueKind != JsonValueKind.Object) continue;
+                foreach (var version in versions.EnumerateObject())
+                    if (version.Value.ValueKind == JsonValueKind.String && FavoriteLinkScope.Key(version.Name) is { } key)
+                        moved.Add((key, version.Value.GetString()!));
+            }
             var link = await db.Set<ProviderFavoriteLinkRecord>().AsNoTracking().SingleAsync(item => item.Id == member.LinkId, cancellationToken);
             var shared = await db.Set<LinkedProviderFavoriteStateRecord>().AsNoTracking().Where(item => item.LinkId == member.LinkId).ToArrayAsync(cancellationToken);
-            var values = new Dictionary<FavoriteResourceKey, DateTimeOffset>();
+            var scope = $"{fingerprint}:{member.LinkId:N}";
+            var values = new Dictionary<FavoriteResourceKey, (DateTimeOffset FavoritedAt, string Version)>();
             if (link.CompletedAt == null)
                 foreach (var original in await FavoriteLinkScope.BaselineAsync(db, member.LinkId, cancellationToken))
-                    if (FavoriteLinkScope.Key(original.ItemId) is { } key) values.TryAdd(key, link.CreatedAt);
+                    if (FavoriteLinkScope.Key(original.ItemId) is { } key) values.TryAdd(key, (link.CreatedAt, $"{scope}:0"));
             foreach (var state in shared)
             {
                 var key = new FavoriteResourceKey(state.ProviderId, state.ResourceKind, state.ExternalId);
-                if (state.IsFavorite) values[key] = state.EffectiveAt;
+                if (state.IsFavorite) values[key] = (state.EffectiveAt, $"{scope}:{state.LifecycleVersion}");
                 else values.Remove(key);
             }
-            return ProjectAlbums(values.OrderByDescending(item => item.Value).ThenBy(item => item.Key.ProviderId, StringComparer.Ordinal)
+            return ProjectAlbums(values.Where(item => !moved.Contains((item.Key, item.Value.Version))).OrderByDescending(item => item.Value.FavoritedAt).ThenBy(item => item.Key.ProviderId, StringComparer.Ordinal)
                 .ThenBy(item => item.Key.Kind, StringComparer.Ordinal).ThenBy(item => item.Key.ExternalId, StringComparer.Ordinal).Select(pair =>
                 {
                     var own = rows.FirstOrDefault(item => FavoriteLinkScope.Key(item.ItemId) == pair.Key);
                     var id = own?.ItemId ?? pair.Key.ItemId;
                     var resource = FavoriteDisplaySnapshot.Resource(id)!;
-                    return new FavoriteViewItem(id, resource, pair.Value, FavoriteDisplaySnapshot.Read(id, own?.DisplayMetadataJson)
+                    return new FavoriteViewItem(id, resource, pair.Value.FavoritedAt, FavoriteDisplaySnapshot.Read(id, own?.DisplayMetadataJson)
                         ?? FavoriteDisplaySnapshot.Placeholder(id, resource.ResourceKind))
-                    { SharedScope = true };
+                    { SharedScope = true, HandoverVersion = pair.Value.Version };
                 }).ToArray());
         }
         var result = new List<FavoriteViewItem>();
@@ -87,7 +101,8 @@ public sealed class FavoriteViewReader(IDbContextFactory<AllstarrDbContext> fact
         {
             if (FavoriteDisplaySnapshot.Resource(row.ItemId) is not { } resource) continue;
             result.Add(new(row.ItemId, resource, row.CreatedAt, FavoriteDisplaySnapshot.Read(row.ItemId, row.DisplayMetadataJson)
-                ?? FavoriteDisplaySnapshot.Placeholder(row.ItemId, resource.ResourceKind)));
+                ?? FavoriteDisplaySnapshot.Placeholder(row.ItemId, resource.ResourceKind))
+            { HandoverVersion = $"{fingerprint}:{row.LastEventId:N}" });
         }
         return ProjectAlbums(result);
     }

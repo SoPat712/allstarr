@@ -12,7 +12,7 @@ async function capture(page: Page, name: string, width: number, theme: string) {
 
 const recording = "10000000-0000-0000-0000-000000000003";
 const file = { path: "FLO/Access All Areas/Unknown - Check.flac", storage: "kept", title: "Check", artist: "FLO", album: "Access All Areas", fileName: "Unknown - Check.flac", size: 29000000, sizeFormatted: "29 MB", lastModified: "2026-11-06T14:00:00Z", lastAccessedAt: "2026-11-06T14:00:00Z", codec: "FLAC", quality: "Lossless", sampleRateHz: 44100, bitDepth: 16, durationMilliseconds: 165106, provider: "apple-musickit", externalId: "check", publicationState: "Referenced", explicitlyKept: true, referenceCount: 1, removable: true };
-const profile = { namingScript: "%artist%/%title%.%_extension%", libraryRootId: null, qualityFloor: { codecFamily: "lossless", minBitDepth: 16, minSampleRate: 44100 }, hiResCeiling: { maxBitDepth: 24, maxSampleRate: 96000 }, fakeLosslessCheck: true, allowLossy: false, musicBrainzTags: true, coverMode: "both", lyricsMode: ".lrc", replayGain: true, defaultUnit: "album", afterAdding: true, removeKeptCopy: true };
+const profile = { namingScript: "%artist%/%title%.%_extension%", libraryRootId: null, qualityFloor: { codecFamily: "lossless", minBitDepth: 16, minSampleRate: 44100 }, hiResCeiling: { maxBitDepth: 24, maxSampleRate: 96000 }, fakeLosslessCheck: true, allowLossy: false, musicBrainzTags: true, coverMode: "both", lyricsMode: ".lrc", replayGain: true, defaultUnit: "album", removeKeptCopy: true };
 
 async function fixture(page: Page, admin = true, membership: "found" | "empty" | "error" = "found", backendAvailable = true) {
   await mockForYou(page, { admin });

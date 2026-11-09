@@ -11,6 +11,27 @@ namespace allstarr.Tests;
 public sealed class WritablePlaylistMembershipTests
 {
     [Fact]
+    public async Task PromotionRead_UsesNativeMembersAndPreservesRepeatedOccurrencesWithoutProviderCalls()
+    {
+        var context = Context();
+        var providers = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        var library = new Mock<ILibraryIndexService>(MockBehavior.Strict);
+        library.Setup(item => item.ResolveKnownTrackAsync(context, "ext-deezer-song-A", It.IsAny<CancellationToken>())).ReturnsAsync("native-copy");
+        var store = new WritablePlaylistMembership(Mock.Of<IDbContextFactory<AllstarrDbContext>>(), providers.Object, library.Object);
+        var source = new WritablePlaylistState([new("first", "ext-deezer-song-A", new() { Title = "Provider title" }),
+            new("second", "ext-deezer-song-A", new() { Title = "Provider title" }), new("native", "existing", NativeEntryId: "native")]);
+
+        var result = await store.PreferLibraryCopiesAsync(context, source, default);
+
+        Assert.Equal(["native-copy", "native-copy", "existing"], result.Members.Select(item => item.ItemId));
+        Assert.Equal(source.Members.Select(item => item.OccurrenceId), result.Members.Select(item => item.OccurrenceId));
+        Assert.All(result.Members, item => Assert.Null(item.Song));
+        library.VerifyAll();
+        library.Verify(item => item.ResolveKnownTrackAsync(context, "ext-deezer-song-A", It.IsAny<CancellationToken>()), Times.Once);
+        providers.VerifyNoOtherCalls();
+    }
+
+    [Fact]
     public async Task SyntheticCleanupRemovesOnlyTheConfirmedPlaylistAndKeepsOtherMembership()
     {
         await using var database = await SqliteTestDatabase.CreateAsync();
