@@ -7,7 +7,7 @@ from http.server import ThreadingHTTPServer
 from unittest.mock import patch
 from urllib.parse import parse_qs, quote, urlsplit
 
-from session_verifier.protocol import allowed_resource, callback_with_grant, challenge_context, grant_from_response
+from session_verifier.protocol import allowed_resource, callback_with_grant, challenge_context, grant_from_page, grant_from_response
 from session_verifier.server import Handler
 
 CALLBACK = "spotiflac://session-grant?cb_version=v2grant&state=fixture"
@@ -43,6 +43,21 @@ class ProtocolTests(unittest.TestCase):
             self.assertFalse(allowed_resource(url))
         self.assertTrue(allowed_resource("https://challenges.cloudflare.com/turnstile/v0/api.js"))
         self.assertTrue(allowed_resource(CHALLENGE))
+
+    def test_grant_is_read_from_the_finished_sign_in_link_on_the_page(self):
+        page = "Verified, returning to app...\nDidn't return to the app?\nspotiflac://session-grant/?cb_version=v2grant&state=fixture&grant=gr_fixture\nCopy link"
+        self.assertEqual("gr_fixture", grant_from_page(page, CALLBACK))
+        for text in [
+            "Preparing access. Complete the challenge to continue back to the app.",
+            "spotiflac://session-grant/?cb_version=v2grant&state=other&grant=gr_wrong",
+            "spotiflac://other-host/?state=fixture&grant=gr_wrong",
+            "spotiflac://session-grant/?state=fixture",
+            "spotiflac://session-grant/?state=fixture&grant=a&grant=b",
+            "x" * (64 * 1024 + 1),
+        ]:
+            with self.subTest(text=text[:60]):
+                self.assertIsNone(grant_from_page(text, CALLBACK))
+        self.assertIsNone(grant_from_page(page, "spotiflac://session-grant?cb_version=v2grant"))
 
     def test_only_grant_from_exact_verification_response_is_accepted(self):
         _, verify = challenge_context(CHALLENGE)

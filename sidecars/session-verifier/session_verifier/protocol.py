@@ -64,3 +64,21 @@ def grant_from_response(url: str, verify_url: str, body: str) -> str | None:
         return grant if isinstance(grant, str) and grant.strip() else None
     except (ValueError, TypeError):
         return None
+
+
+PAGE_LINK = re.compile(r"spotiflac://session-grant/?\?[^\s\"'<>]+")
+
+
+def grant_from_page(text: str, callback: str) -> str | None:
+    """The challenge page also shows the finished sign-in link for people whose app didn't open; read its grant."""
+    if not isinstance(text, str) or len(text) > 64 * 1024:
+        return None
+    expected = parse_qs(urlsplit(callback).query).get("state", [])
+    for match in PAGE_LINK.finditer(text):
+        target = urlsplit(match.group(0))
+        query = parse_qs(target.query)
+        grants = query.get("grant", [])
+        if (target.scheme == "spotiflac" and target.netloc == "session-grant" and expected and query.get("state") == expected
+                and len(grants) == 1 and grants[0].strip()):
+            return grants[0]
+    return None

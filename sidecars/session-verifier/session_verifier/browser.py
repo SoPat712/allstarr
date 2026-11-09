@@ -7,7 +7,7 @@ import os
 import sys
 import tempfile
 
-from .protocol import allowed_resource, callback_with_grant, canonical_resource_url, challenge_context, grant_from_response
+from .protocol import allowed_resource, callback_with_grant, canonical_resource_url, challenge_context, grant_from_page, grant_from_response
 
 
 async def close_browser(browser):
@@ -44,6 +44,7 @@ async def verify(url: str, allowed_request_handler=None) -> str:
             page = await browser.get("about:blank")
             result = asyncio.get_running_loop().create_future()
             requests = set()
+            answered = False
 
             async def route(event):
                 if allowed_resource(event.request.url):
@@ -55,7 +56,9 @@ async def verify(url: str, allowed_request_handler=None) -> str:
                     await page.send(cdp.fetch.fail_request(event.request_id, cdp.network.ErrorReason.BLOCKED_BY_CLIENT))
 
             async def response(event):
+                nonlocal answered
                 if canonical_resource_url(event.response.url) == verify_url and event.response.status == 200:
+                    answered = True
                     requests.add(event.request_id)
 
             async def completed(event):
@@ -96,7 +99,17 @@ async def verify(url: str, allowed_request_handler=None) -> str:
                 for tick in range(40):
                     if result.done():
                         return result.result()
-                    if tick in (8, 24):
+                    if tick % 2:
+                        # Pages that finish verification without a readable response show the sign-in link instead.
+                        try:
+                            text = await page.evaluate("document.body ? document.body.innerText : ''")
+                            grant = grant_from_page(text, callback)
+                            if grant:
+                                answered = True
+                                return callback_with_grant(callback, grant)
+                        except (ValueError, TypeError, nodriver.core.connection.ProtocolException):
+                            pass
+                    if tick in (8, 24) and not answered:
                         try:
                             document = await page.send(cdp.dom.get_document(depth=-1, pierce=True))
                             for frame in frames(document):
@@ -112,7 +125,9 @@ async def verify(url: str, allowed_request_handler=None) -> str:
                         except nodriver.core.connection.ProtocolException:
                             pass
                     await asyncio.sleep(0.5)
-                await page.send(cdp.page.navigate(url))
+                # Reloading after the service answered would start a new challenge and lose the finished one.
+                if not answered:
+                    await page.send(cdp.page.navigate(url))
             raise TimeoutError("verification_timeout")
         finally:
             if browser is not None:
