@@ -538,7 +538,7 @@ public sealed partial class ProtocolLyricsAutomaticTests
     }
 
     [Fact]
-    public async Task ResolverStopCancelsForegroundAndHonorsItsBoundedDrainToken()
+    public async Task ResolverStopCancelsForegroundWithoutWaitingForAnUncooperativeSource()
     {
         var source = new Source("lrclib");
         await using var fixture = new Fixture(source);
@@ -547,12 +547,8 @@ public sealed partial class ProtocolLyricsAutomaticTests
             var pending = fixture.FindAsync();
             await StartAsync(pending, source);
             using var stopToken = new CancellationTokenSource(TimeSpan.FromSeconds(1), fixture.Clock);
-            var stop = fixture.Resolver.StopAsync(stopToken.Token);
-            await fixture.Clock.WaitForTimersAsync(TimeSpan.FromSeconds(1));
+            await fixture.Resolver.StopAsync(stopToken.Token).WaitAsync(TimeSpan.FromSeconds(5));
             Assert.True(Assert.Single(source.Tokens).IsCancellationRequested);
-            Assert.False(stop.IsCompleted);
-            fixture.Clock.Advance(TimeSpan.FromSeconds(1));
-            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => stop);
             Assert.Null(await pending.WaitAsync(TimeSpan.FromSeconds(5)));
             Assert.False(source.Completion.Task.IsCompleted);
         }

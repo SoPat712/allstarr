@@ -14,7 +14,7 @@ public abstract class MetadataLyricsCapabilityAdapter : PublicLyricsCapabilityAd
     protected override TimeProvider Clock => _clock;
     protected override TimeSpan LookupBudget => OverallLookupBudget;
     protected override TimeSpan RequestTimeout => PerRequestTimeout;
-    protected override ProviderError LookupTimeoutError => ProviderError.LyricsUpstreamBusyOrTimedOut();
+    protected override ProviderError LookupTimeoutError => ProviderError.LocalCapacity();
 
     private protected MetadataLyricsCapabilityAdapter(HttpClient http, IApplicationCache? cache, TimeProvider clock,
         MetadataLyricsFailureCache failures, ILogger? logger, Func<TimeSpan>? lyricsTtl)
@@ -46,10 +46,10 @@ public abstract class MetadataLyricsCapabilityAdapter : PublicLyricsCapabilityAd
         var outcome = "failed";
         try
         {
-            if (_failures.Find(key) is { } cached)
+            if (!request.IsHealthProbe && _failures.Find(key) != null)
             {
-                outcome = "cached-upstream-failure";
-                return ProviderOutcome<ProviderLyricsResult>.Failure(cached);
+                outcome = "skipped: recent upstream failure";
+                return ProviderOutcome<ProviderLyricsResult>.Failure(ProviderError.LocalCapacity());
             }
             var result = await ReadLyricsAsync(request, token);
             if (result.Error is { Kind: ProviderErrorKind.TransientFailure or ProviderErrorKind.RateLimited } error)
@@ -63,9 +63,8 @@ public abstract class MetadataLyricsCapabilityAdapter : PublicLyricsCapabilityAd
         }
         catch (OperationCanceledException) when (!caller.IsCancellationRequested)
         {
-            _failures.Remember(key, ProviderError.LyricsUpstreamBusyOrTimedOut());
-            outcome = "timed-out";
-            throw;
+            outcome = "skipped: busy";
+            return ProviderOutcome<ProviderLyricsResult>.Failure(ProviderError.LocalCapacity());
         }
         finally { _logger?.LogInformation("Lyrics lookup {Provider} completed with {Outcome}", ProviderId, outcome); }
     }
@@ -98,7 +97,7 @@ public abstract class MetadataLyricsCapabilityAdapter : PublicLyricsCapabilityAd
 
 internal sealed class MetadataLyricsFailureCache(TimeProvider clock, int capacity = 1024)
 {
-    internal LyricsRequestCoordinator Requests { get; } = new(clock, TimeSpan.FromSeconds(1));
+    internal LyricsRequestCoordinator Requests { get; } = new(clock, TimeSpan.FromMilliseconds(250), 2);
     private readonly Dictionary<string, (ProviderError Error, DateTimeOffset Expires)> _entries = new(StringComparer.Ordinal);
     private readonly Queue<string> _order = new();
     private readonly object _gate = new();
@@ -118,7 +117,7 @@ internal sealed class MetadataLyricsFailureCache(TimeProvider clock, int capacit
                 while (_entries.Count >= capacity) _entries.Remove(_order.Dequeue());
                 _order.Enqueue(key);
             }
-            _entries[key] = (error, clock.GetUtcNow().AddMinutes(10));
+            _entries[key] = (error, clock.GetUtcNow().AddMinutes(2));
         }
     }
 }

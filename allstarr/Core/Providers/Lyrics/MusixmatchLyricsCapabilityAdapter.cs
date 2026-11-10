@@ -110,6 +110,7 @@ public sealed class MusixmatchLyricsCapabilityAdapter : IProviderLyricsCapabilit
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(request);
+        if (context.OperationId == "connection-probe") request = request with { Refresh = true, IsHealthProbe = true };
 
         try
         {
@@ -259,7 +260,7 @@ public sealed class MusixmatchLyricsCapabilityAdapter : IProviderLyricsCapabilit
         var credentialKey = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(credential.UserToken)));
         var coordinator = scopes.GetOrAdd(credentialKey, _ => new(TimeProvider.System, TimeSpan.FromSeconds(1)));
         var key = cacheScope + JsonSerializer.Serialize(new { request.Isrc, request.TrackTitle, request.ArtistNames, request.AlbumTitle, request.DurationSeconds, request.PreferredFormat });
-        return coordinator.RunAsync(key, ct => ReadLookupAsync(http, credential, request, ct, logger, new LookupDiagnostics()), token);
+        return coordinator.RunAsync(key, ct => ReadLookupAsync(http, credential, request, ct, logger, new LookupDiagnostics()), token, refresh: request.IsHealthProbe);
     }
 
     private static async Task<ProviderOutcome<ProviderLyricsResult>> ReadLookupAsync(

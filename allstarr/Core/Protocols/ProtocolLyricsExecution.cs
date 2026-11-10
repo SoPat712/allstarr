@@ -24,12 +24,12 @@ internal interface IProtocolLyricsExecutionGateway
 public sealed class LyricsLookupOptions
 {
     public int ResponseBudgetMilliseconds { get; set; } = 1500;
-    public int SourceTimeoutMilliseconds { get; set; } = 1000;
+    public int SourceTimeoutMilliseconds { get; set; } = 3000;
     public int BackgroundTimeoutMilliseconds { get; set; } = 15000;
     public int Concurrency { get; set; } = 4;
 
     internal TimeSpan ResponseBudget => TimeSpan.FromMilliseconds(Math.Clamp(ResponseBudgetMilliseconds, 1, 15000));
-    internal TimeSpan SourceTimeout => TimeSpan.FromMilliseconds(Math.Clamp(SourceTimeoutMilliseconds, 1, 15000));
+    internal TimeSpan SourceTimeout => TimeSpan.FromMilliseconds(Math.Clamp(SourceTimeoutMilliseconds, 1, 3000));
     internal TimeSpan BackgroundTimeout => TimeSpan.FromMilliseconds(Math.Clamp(BackgroundTimeoutMilliseconds, 1, 30000));
     internal int Parallelism => Math.Clamp(Concurrency, 1, 4);
 }

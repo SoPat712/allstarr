@@ -42,15 +42,13 @@ public sealed class ItemAppearancesReader(PersonalMixService mixes, IDbContextFa
 
         var reader = new SongPlaylistMembershipReader(factory);
         var counts = new Dictionary<Guid, int>();
-        foreach (var song in songs)
-        {
-            var identity = song.LocalId != null
+        var playlistSongs = songs.Select(song => song.LocalId != null
                 ? new SongPlaylistIdentity(Protocol: execution.Protocol.ToString().ToLowerInvariant(),
                     BackendInstanceId: execution.BackendInstanceId, BackendItemId: song.LocalId)
-                : new SongPlaylistIdentity(ProviderId: song.Provider, ExternalId: song.ExternalId);
-            foreach (var membership in (await reader.ReadAsync(owner, identity, token)).DistinctBy(item => item.Id))
+                : new SongPlaylistIdentity(ProviderId: song.Provider, ExternalId: song.ExternalId)).ToArray();
+        foreach (var memberships in await reader.ReadAsync(playlistSongs, owner, token))
+            foreach (var membership in memberships.DistinctBy(item => item.Id))
                 counts[membership.Id] = counts.GetValueOrDefault(membership.Id) + 1;
-        }
         var mixIds = stored.Select(mix => mix.Id).ToHashSet();
         var linkIds = counts.Keys.Where(id => !mixIds.Contains(id)).ToArray();
         if (linkIds.Length > 0)
@@ -58,7 +56,8 @@ public sealed class ItemAppearancesReader(PersonalMixService mixes, IDbContextFa
             await using var db = await factory.CreateDbContextAsync(token);
             var links = await db.PlaylistLinks.AsNoTracking()
                 .Where(link => link.OwnerUserId == owner && linkIds.Contains(link.Id)).ToArrayAsync(token);
-            var hidden = (await PlaylistAppRemoval.Rows(db).Where(item => item.OwnerUserId == owner)
+            var hiddenKeys = linkIds.Select(PlaylistAppRemoval.Key).ToArray();
+            var hidden = (await PlaylistAppRemoval.Rows(db).Where(item => item.OwnerUserId == owner && hiddenKeys.Contains(item.ExternalIdHash))
                 .Select(item => item.ExternalIdHash).ToArrayAsync(token)).ToHashSet(StringComparer.Ordinal);
             var names = await db.PlaylistSourceSnapshots.AsNoTracking()
                 .Where(item => item.OwnerUserId == owner && linkIds.Contains(item.PlaylistLinkId) && item.PublishedAt.HasValue)

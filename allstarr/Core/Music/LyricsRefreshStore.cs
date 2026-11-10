@@ -105,31 +105,42 @@ public sealed class LyricsRefreshStore(IDbContextFactory<AllstarrDbContext> fact
         return snapshot;
     }
 
-    public async Task<LyricsInfo?> RetainedAsync(ProtocolExecutionContext context, Guid recording)
+    public async Task<LyricsInfo?> RetainedAsync(ProtocolExecutionContext context, Guid recording) =>
+        (await RetainedAsync(context, new[] { recording })).GetValueOrDefault(recording);
+
+    public async Task<IReadOnlyDictionary<Guid, LyricsInfo>> RetainedAsync(ProtocolExecutionContext context, IReadOnlyCollection<Guid> recordings)
     {
-        if (context.Actor?.EffectiveUserId is not { } owner) return null;
+        var result = new Dictionary<Guid, LyricsInfo>();
+        if (context.Actor?.EffectiveUserId is not { } owner || recordings.Count == 0) return result;
         await using var db = await factory.CreateDbContextAsync(context.CancellationToken);
-        var row = await db.RecordingLyricsRefreshes.AsNoTracking().SingleOrDefaultAsync(item =>
-            item.OwnerUserId == owner && item.CanonicalRecordingId == recording, context.CancellationToken);
-        if (row == null) return null;
-        var snapshot = Read(row.PayloadJson);
-        if (snapshot?.Lyrics?.Source is not { } source) return null;
-        var provider = LyricsVersions.ProviderId(source);
-        if (provider is "spicylyrics" or "backend" or "kept") return null;
-        snapshot.Lyrics.CacheProvenance = snapshot.Provenance;
-        if (policies != null)
+        var ids = recordings.ToArray();
+        var rows = await db.RecordingLyricsRefreshes.AsNoTracking().Where(item =>
+            item.OwnerUserId == owner && ids.Contains(item.CanonicalRecordingId)).ToArrayAsync(context.CancellationToken);
+        if (rows.Length == 0) return result;
+        var policy = policies == null ? null : await policies.ResolveForUserAsync(owner, context.CancellationToken);
+        var bindings = new Dictionary<string, string?>(StringComparer.Ordinal);
+        foreach (var row in rows)
         {
-            var policy = await policies.ResolveForUserAsync(owner, context.CancellationToken);
-            if (!policy.IsAutomatic(provider) || policy.Preferences.ExplicitFilter == "CleanOnly" &&
-                (provider is not ("backend" or "kept") || !CleanRecordingPolicy.IsVerifiedClean(snapshot.Song))) return null;
+            var snapshot = Read(row.PayloadJson);
+            if (snapshot?.Lyrics?.Source is not { } source) continue;
+            var provider = LyricsVersions.ProviderId(source);
+            if (provider is "spicylyrics" or "backend" or "kept") continue;
+            if (policy != null && (!policy.IsAutomatic(provider) || policy.Preferences.ExplicitFilter == "CleanOnly" &&
+                (provider is not ("backend" or "kept") || !CleanRecordingPolicy.IsVerifiedClean(snapshot.Song)))) continue;
+            if (router != null)
+            {
+                if (!bindings.TryGetValue(provider, out var provenance))
+                {
+                    var plan = await router.PlanAsync<IProviderLyricsCapability>(LyricsSearchIndex.SourceRequest(context, provider) with { CacheOnly = true });
+                    provenance = plan.Candidates.FirstOrDefault() is { } selected ? LyricsSearchIndex.AccountProvenance(selected.Context.Account) : null;
+                    bindings[provider] = provenance;
+                }
+                if (provenance == null || provenance != (snapshot.Provenance ?? "public")) continue;
+            }
+            snapshot.Lyrics.CacheProvenance = snapshot.Provenance;
+            result[row.CanonicalRecordingId] = snapshot.Lyrics;
         }
-        if (router != null && provider is not ("backend" or "kept"))
-        {
-            var plan = await router.PlanAsync<IProviderLyricsCapability>(LyricsSearchIndex.SourceRequest(context, provider) with { CacheOnly = true });
-            if (plan.Candidates.FirstOrDefault() is not { } selected ||
-                LyricsSearchIndex.AccountProvenance(selected.Context.Account) != (snapshot.Provenance ?? "public")) return null;
-        }
-        return snapshot.Lyrics;
+        return result;
     }
 
     public async Task<IReadOnlyList<RecordingLyricsRefreshRecord>> DueAsync(string? source, Guid? owner, int cap, CancellationToken token)

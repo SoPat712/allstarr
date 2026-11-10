@@ -76,6 +76,7 @@ public sealed record ProviderLyricsRequest
 
     public string? Isrc { get; }
     internal bool Refresh { get; init; }
+    internal bool IsHealthProbe { get; init; }
 }
 
 public sealed record ProviderLyricsTimedSegment

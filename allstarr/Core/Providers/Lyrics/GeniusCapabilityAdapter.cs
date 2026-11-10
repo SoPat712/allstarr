@@ -26,7 +26,7 @@ public sealed partial class GeniusCapabilityAdapter : MetadataLyricsCapabilityAd
 
     protected override Task<ProviderOutcome<ProviderLyricsResult>> ReadLyricsAsync(ProviderLyricsRequest request, CancellationToken token) =>
         _requests.RunAsync(Hash(JsonSerializer.Serialize(new { request.Isrc, request.TrackTitle, request.ArtistNames, request.AlbumTitle, request.DurationSeconds })),
-            ct => ReadWorkerAsync(request, ct), token);
+            ct => ReadWorkerAsync(request, ct), token, refresh: request.IsHealthProbe);
 
     private async Task<ProviderOutcome<ProviderLyricsResult>> ReadWorkerAsync(ProviderLyricsRequest request, CancellationToken token)
     {

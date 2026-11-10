@@ -49,7 +49,7 @@ public sealed partial class LibraryIndexServiceTests
         var snapshotRead = Assert.Single(reads.Commands, command =>
             command.Contains("FROM \"external_metadata_snapshots\"", StringComparison.Ordinal));
         Assert.DoesNotContain("provider_track_identities", snapshotRead, StringComparison.Ordinal);
-        Assert.Equal(6, reads.Commands.Count);
+        Assert.Equal(7, reads.Commands.Count);
     }
 
     [Theory]
