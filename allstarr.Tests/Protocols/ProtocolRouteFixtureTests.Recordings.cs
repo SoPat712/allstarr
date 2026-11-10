@@ -92,6 +92,9 @@ public sealed partial class ProtocolRouteFixtureTests
                 ? Json(200, """{"subsonic-response":{"status":"ok","searchResult3":{}}}""")
                 : new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("<subsonic-response xmlns=\"http://subsonic.org/restapi\" status=\"ok\"><searchResult3 /></subsonic-response>", Encoding.UTF8, "application/xml") };
             if (denied) return Json(403, """{"error":"unavailable"}""");
+            if (path.EndsWith("/Users/verified-user/Items", StringComparison.Ordinal) &&
+                request.RequestUri.Query.Contains("Ids=native-track", StringComparison.Ordinal))
+                return Json(200, """{"Items":[{"Id":"native-track","Type":"Audio","Name":"Fixture","Artists":["Artist"],"UnknownField":{"Keep":"native"}}],"TotalRecordCount":1}""");
             if (path.EndsWith("/Items/native-track", StringComparison.Ordinal))
                 return Json(200, """{"Id":"native-track","Type":"Audio","Name":"Fixture","Artists":["Artist"],"UnknownField":{"Keep":"native"}}""");
             if (path.Contains("getSong", StringComparison.Ordinal)) return format == "json"

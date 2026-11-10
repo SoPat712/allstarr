@@ -113,6 +113,8 @@ for (const screen of pages.filter(screen => screen.view !== "reports")) {
     try {
       await page.clock.runFor(250);
       await expect.poll(() => reads).toBeGreaterThan(initialReads);
+      // Becoming visible can start more than one view read; count from the point they have all started.
+      await expect.poll(async () => { const seen = reads; await page.waitForTimeout(200); return reads === seen; }).toBe(true);
       const slowReads = reads;
       await page.getByRole("button", { name: screen.view === "history" ? "Refresh" : "Refresh " + screen.view, exact: true }).click();
       await page.clock.runFor(16_000);
