@@ -248,7 +248,10 @@ public sealed class ItemLyricsReader(
     {
         var (body, status) = await jellyfin.GetJsonAsync($"Audio/{Uri.EscapeDataString(itemId)}/Lyrics", null, headers, token);
         using (body)
+        {
+            if (status >= 500) throw new HttpRequestException("Library lyrics are unavailable.");
             return status == StatusCodes.Status200OK && body != null ? BackendLyrics.ParseJellyfin(body.RootElement) : null;
+        }
     }
 
     internal static bool SameNativeItem(string? actual, string expected) =>

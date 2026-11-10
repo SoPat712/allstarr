@@ -16,6 +16,18 @@ public sealed partial class ProtocolLyricsAutomaticTests
     }
 
     [Fact]
+    public async Task BackgroundRefreshKeepsAutomaticRoutingWhenTheResolverReadsAnExactSource()
+    {
+        await using var fixture = new Fixture(new Source("lyricsplus", Result("lyricsplus", true)));
+        var context = fixture.Protocol with { RefreshLyrics = true, IsReadOnly = true };
+        var found = await fixture.Resolver.FindAllAsync(context,
+            new Song { Title = "Fixture", Artist = "Artist", Duration = 120 }, "recording",
+            new ProtocolLyricsSources { OnlySourceId = "lyricsplus", ReadOnly = true });
+        Assert.NotNull(Assert.Single(found).Lyrics);
+        Assert.All(fixture.Plans, purpose => Assert.Equal(ProviderRoutePurpose.Automatic, purpose));
+    }
+
+    [Fact]
     public async Task CacheOnlyRefreshRankingNeverStartsAColdProviderRead()
     {
         var source = new Source("lyricsplus", Result("lyricsplus", true));

@@ -106,6 +106,38 @@ public sealed partial class TrackMatchCommandService
         CancellationToken cancellationToken, TrackMatchLibraryMemo? libraryMemo = null) =>
         GetReviewDataCoreAsync(actor, null, null, snapshotId, 5000, cancellationToken, true, libraryMemo);
 
+    private readonly ConcurrentDictionary<string, (string Revision, DateTimeOffset Expires,
+        IReadOnlyDictionary<Guid, TrackMatchReviewData> Reviews)> _clientReviews = new(StringComparer.Ordinal);
+
+    public async Task<IReadOnlyDictionary<Guid, TrackMatchReviewData>> GetClientReviewsAsync(TrackMatchActor actor,
+        Guid[] snapshotIds, CancellationToken token, TrackMatchLibraryMemo libraryMemo)
+    {
+        if (snapshotIds.Length == 0) return new Dictionary<Guid, TrackMatchReviewData>();
+        var access = await libraryAccess.ResolveUserAsync(actor.UserId, token);
+        var key = $"{actor.UserId:N}|{access.Context?.Protocol}|{access.Context?.BackendInstanceId}|{access.Access.Succeeded}|" +
+            string.Join(',', access.Access.LibraryIds.Order(StringComparer.Ordinal)) + "|" + string.Join(',', snapshotIds.Order());
+        await using var db = await contextFactory.CreateDbContextAsync(token);
+        var revision = await db.Database.SqlQueryRaw<string>("""
+            SELECT
+                (SELECT COUNT(*) || ':' || COALESCE(SUM("SnapshotVersion"), 0) || ':' || COALESCE(MAX("RetrievedAt"), 0) FROM external_metadata_snapshots) || ':' ||
+                (SELECT COUNT(*) || ':' || COALESCE(SUM("Revision"), 0) || ':' || COALESCE(MAX("DecidedAt"), 0) FROM track_matches) || ':' ||
+                (SELECT COUNT(*) || ':' || COALESCE(SUM("Revision"), 0) || ':' || COUNT("RevokedAt") FROM manual_track_overrides) || ':' ||
+                (SELECT COUNT(*) || ':' || COALESCE(SUM("Revision"), 0) FROM provider_track_identities) || ':' ||
+                (SELECT COUNT(*) || ':' || COALESCE(SUM("Revision"), 0) || ':' || COALESCE(MAX("UpdatedAt"), 0) || ':' ||
+                    COALESCE(MAX("IndexedAt"), 0) FROM library_tracks) || ':' ||
+                (SELECT COUNT(*) || ':' || COALESCE(SUM("Revision"), 0) || ':' || COALESCE(SUM("Enabled"), 0) FROM provider_accounts) || ':' ||
+                (SELECT COUNT(*) || ':' || COUNT("RevokedAt") || ':' || COALESCE(MAX("UpdatedAt"), 0) FROM secret_references)
+                AS "Value"
+            """).SingleAsync(token);
+        if (_clientReviews.TryGetValue(key, out var saved) && saved.Revision == revision && saved.Expires > clock.UtcNow)
+            return saved.Reviews;
+        var result = new Dictionary<Guid, TrackMatchReviewData>();
+        await GetReviewDataCoreAsync(actor, null, null, null, 5000, token, true, libraryMemo, snapshotIds, result);
+        if (_clientReviews.Count >= 32) _clientReviews.Clear();
+        _clientReviews[key] = (revision, clock.UtcNow.AddMinutes(5), result);
+        return result;
+    }
+
     public Task<TrackMatchReviewData> GetReviewDataAsync(
         TrackMatchActor actor,
         string? backendLibraryId = null,
@@ -117,7 +149,8 @@ public sealed partial class TrackMatchCommandService
 
     private async Task<TrackMatchReviewData> GetReviewDataCoreAsync(
         TrackMatchActor actor, string? backendLibraryId, string? search, Guid? externalSnapshotId,
-        int scanLimit, CancellationToken cancellationToken, bool includeSourceHistory, TrackMatchLibraryMemo? libraryMemo = null)
+        int scanLimit, CancellationToken cancellationToken, bool includeSourceHistory, TrackMatchLibraryMemo? libraryMemo = null,
+        Guid[]? sourceIds = null, Dictionary<Guid, TrackMatchReviewData>? batches = null)
     {
         var timings = new List<(string Step, long At)> { ("start", Stopwatch.GetTimestamp()) };
         await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
@@ -130,6 +163,16 @@ public sealed partial class TrackMatchCommandService
             snapshotsQuery = snapshotsQuery.Where(item => item.OwnerUserId == actor.UserId &&
                 (item.ProviderAccountId == null || visibleAccountIds!.Contains(item.ProviderAccountId.Value) &&
                     db.ProviderAccounts.Any(account => account.Id == item.ProviderAccountId && account.ProviderId == item.ProviderId)));
+        var sources = sourceIds == null ? [] : await db.ExternalMetadataSnapshots.AsNoTracking()
+            .Where(item => sourceIds.Contains(item.Id) && item.OwnerUserId == actor.UserId && item.ResourceKind == "track")
+            .ToArrayAsync(cancellationToken);
+        var sourceKeys = sources.Select(item => (item.ProviderId, item.ExternalIdHash, item.Protocol, item.BackendInstanceId, item.BackendPrincipalId)).ToHashSet();
+        if (sourceIds != null)
+        {
+            var providers = sources.Select(item => item.ProviderId).Distinct().ToArray();
+            var sourceHashes = sources.Select(item => item.ExternalIdHash).Distinct().ToArray();
+            snapshotsQuery = snapshotsQuery.Where(item => EF.Parameter(providers).Contains(item.ProviderId) && EF.Parameter(sourceHashes).Contains(item.ExternalIdHash));
+        }
         if (externalSnapshotId.HasValue)
         {
             if (includeSourceHistory)
@@ -150,12 +193,16 @@ public sealed partial class TrackMatchCommandService
         List<ExternalMetadataSnapshotRecord> snapshots = [];
         await foreach (var snapshot in orderedSnapshots.AsAsyncEnumerable().WithCancellation(cancellationToken))
         {
+            if (sourceIds != null && !sourceKeys.Contains((snapshot.ProviderId, snapshot.ExternalIdHash, snapshot.Protocol, snapshot.BackendInstanceId, snapshot.BackendPrincipalId))) continue;
             if (!TrackSnapshotMetadata.HasDisplayLabels(snapshot.PayloadJson)) continue;
             if (normalizedSearch != null && (normalizedSearch.Length == 0 ||
                 !TrackMatchReviewSearch.Matches(snapshot.ProviderId, snapshot.PayloadJson, normalizedSearch))) continue;
             snapshots.Add(snapshot);
-            if (snapshots.Count == limit) break;
+            if (sourceIds == null && snapshots.Count == limit) break;
         }
+        if (sourceIds != null)
+            snapshots = snapshots.GroupBy(item => (item.ProviderId, item.ExternalIdHash, item.Protocol, item.BackendInstanceId, item.BackendPrincipalId))
+                .SelectMany(group => group.Take(limit)).ToList();
         timings.Add(("snapshots", Stopwatch.GetTimestamp()));
         var snapshotIds = snapshots.Select(item => item.Id).ToArray();
         // These lists hold thousands of values. Sent as a single JSON value they cost a few milliseconds in the database;
@@ -276,6 +323,27 @@ public sealed partial class TrackMatchCommandService
         timings.Add(("pairing", Stopwatch.GetTimestamp()));
         logger?.LogInformation("Match review records: {Steps}", string.Join(", ", timings.Skip(1).Select((item, index) =>
             $"{item.Step} {(int)Stopwatch.GetElapsedTime(timings[index].At, item.At).TotalMilliseconds} ms")));
+        if (batches != null)
+            foreach (var source in sources)
+            {
+                var history = snapshots.Where(item => item.ProviderId == source.ProviderId && item.ExternalIdHash == source.ExternalIdHash &&
+                    item.Protocol == source.Protocol && item.BackendInstanceId == source.BackendInstanceId && item.BackendPrincipalId == source.BackendPrincipalId).ToArray();
+                var ids = history.Select(item => item.Id).ToHashSet();
+                var selectedDecisions = decisions.Where(item => ids.Contains(item.ExternalSnapshotId)).ToArray();
+                var selectedOverrides = overrides.Where(item => history.Any(snapshot => item.SourceProviderId == snapshot.ProviderId && item.SourceExternalIdHash == snapshot.ExternalIdHash)).ToArray();
+                var sourceLinks = sourceIdentities.Where(item => history.Any(snapshot => snapshot.ProviderTrackIdentityId == item.Id ||
+                    snapshot.ExternalIdHash == item.ExternalIdHash)).ToArray();
+                var recordings = selectedDecisions.Where(item => item.CanonicalRecordingId.HasValue)
+                    .Select(item => item.CanonicalRecordingId!.Value).Concat(sourceLinks.Select(item => item.CanonicalRecordingId)).ToHashSet();
+                var selectedLibraryIds = selectedDecisions.Where(item => item.LibraryTrackId.HasValue).Select(item => item.LibraryTrackId!.Value)
+                    .Concat(selectedOverrides.Where(item => item.LibraryTrackId.HasValue).Select(item => item.LibraryTrackId!.Value)).ToHashSet();
+                foreach (var snapshot in history)
+                    if (indexes.TryGetValue(snapshot.BackendInstanceId, out var index) && TrackSnapshotMetadata.MatchingSource(snapshot) is { } matchSource)
+                        selectedLibraryIds.UnionWith(index.Select(matchSource).Select(item => item.LibraryTrackId));
+                batches[source.Id] = new(history, selectedDecisions, selectedOverrides,
+                    library.Where(item => selectedLibraryIds.Contains(item.Id) || item.CanonicalRecordingId is { } recording && recordings.Contains(recording)).ToArray(),
+                    identities.Where(item => recordings.Contains(item.CanonicalRecordingId)).ToArray());
+            }
         return new(snapshots, decisions, overrides, library, identities) { MediaSnapshots = mediaBySnapshot };
     }
 

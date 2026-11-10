@@ -8,7 +8,7 @@ using Moq;
 
 namespace allstarr.Tests;
 
-public sealed class MetadataLyricsCapabilityAdapterTests
+public sealed partial class MetadataLyricsCapabilityAdapterTests
 {
     [Fact]
     public async Task RefreshReadsPastStoredResultsAndRetainsTheFailureCooldown()
@@ -65,7 +65,7 @@ public sealed class MetadataLyricsCapabilityAdapterTests
     [Theory]
     [InlineData("genius", 503)]
     [InlineData("genius", 429)]
-    public async Task BusyFailuresAreCachedForTenMinutesAndLogsExcludePayloads(string provider, int status)
+    public async Task UpstreamFailuresAreRememberedAndLogsExcludePayloads(string provider, int status)
     {
         var clock = new ManualTimeProvider();
         var logs = new List<string>();
@@ -78,11 +78,14 @@ public sealed class MetadataLyricsCapabilityAdapterTests
         var first = await adapter.FetchLyricsAsync(Context(provider, clock: clock), Request(provider));
         var second = await adapter.FetchLyricsAsync(Context(provider, clock: clock), Request(provider));
         Assert.False(first.IsSuccess);
-        Assert.Equal(first.Error!.Kind, second.Error!.Kind);
+        Assert.Equal("local-capacity-unavailable", second.Error!.Code);
         Assert.Single(handler.Requests);
         Assert.NotEmpty(logs);
         Assert.All(logs, line => Assert.DoesNotContain("Sensitive lyric payload", line));
-        clock.Advance(TimeSpan.FromMinutes(10));
+        clock.Advance(TimeSpan.FromMinutes(2) - TimeSpan.FromMilliseconds(1));
+        Assert.Equal("local-capacity-unavailable", (await adapter.FetchLyricsAsync(Context(provider, clock: clock), Request(provider))).Error!.Code);
+        Assert.Single(handler.Requests);
+        clock.Advance(TimeSpan.FromMilliseconds(1));
         await adapter.FetchLyricsAsync(Context(provider, clock: clock), Request(provider));
         Assert.Equal(2, handler.Requests.Count);
     }
@@ -98,7 +101,7 @@ public sealed class MetadataLyricsCapabilityAdapterTests
         await clock.WaitForTimersAsync(TimeSpan.FromSeconds(4));
         clock.Advance(TimeSpan.FromSeconds(4));
         Assert.Equal("lyrics-upstream-busy-or-timed-out", (await pending).Error!.Code);
-        Assert.Equal("lyrics-upstream-busy-or-timed-out", (await adapter.FetchLyricsAsync(Context(provider, clock: clock), Request(provider))).Error!.Code);
+        Assert.Equal("local-capacity-unavailable", (await adapter.FetchLyricsAsync(Context(provider, clock: clock), Request(provider))).Error!.Code);
         Assert.Equal(1, handler.Calls);
     }
 

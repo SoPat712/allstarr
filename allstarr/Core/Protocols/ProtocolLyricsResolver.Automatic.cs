@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using allstarr.Core.Providers.Lyrics;
 using allstarr.Core.Music;
 using allstarr.Core.ClientApi;
@@ -49,13 +50,14 @@ public sealed partial class ProtocolLyricsResolver
         internal void Dispose() { cancellation.Dispose(); timer.Dispose(); }
     }
 
+    private readonly ConcurrentDictionary<(string Lookup, string Source), DateTimeOffset> _localMisses = new();
     private readonly object _automaticGate = new();
     private readonly Dictionary<string, AutomaticLookup> _automatic = new(StringComparer.Ordinal);
     private readonly CancellationTokenSource _automaticShutdown = CancellationTokenSource.CreateLinkedTokenSource(lifetime?.ApplicationStopping ?? default);
     private TimeProvider LyricsClock => timeProvider ?? TimeProvider.System;
     private LyricsLookupOptions LookupOptions { get; } = lookupOptions ?? new();
 
-    private static ProtocolExecutionContext WithLyricsToken(ProtocolExecutionContext context, CancellationToken token, DateTimeOffset deadline) =>
+    internal static ProtocolExecutionContext WithLyricsToken(ProtocolExecutionContext context, CancellationToken token, DateTimeOffset deadline) =>
         new(context.Protocol, context.BackendInstanceId, context.VerifiedBackendPrincipalId, context.Principal,
             context.CorrelationId, deadline, token, context.Client)
         {
@@ -122,8 +124,17 @@ public sealed partial class ProtocolLyricsResolver
             {
                 if (source.Local != null)
                 {
-                    var local = await source.Local(lookup.Token).WaitAsync(lookup.Token);
-                    if (local != null) local.Source = source.Id;
+                    var key = (lookup.Key, source.Id);
+                    if (!lookup.Protocol.RefreshLyrics && _localMisses.TryGetValue(key, out var expires) && expires > LyricsClock.GetUtcNow()) return;
+                    using var timer = new CancellationTokenSource(LookupOptions.SourceTimeout, LyricsClock);
+                    using var attempt = CancellationTokenSource.CreateLinkedTokenSource(lookup.Token, timer.Token);
+                    var local = await source.Local(attempt.Token).WaitAsync(attempt.Token);
+                    if (local != null) { local.Source = source.Id; _localMisses.TryRemove(key, out _); }
+                    else if (source.Id != "kept")
+                    {
+                        if (_localMisses.Count >= 512) _localMisses.Clear();
+                        _localMisses[key] = LyricsClock.GetUtcNow().AddHours(6);
+                    }
                     await AcceptAsync(source, local, true);
                     return;
                 }
@@ -134,11 +145,11 @@ public sealed partial class ProtocolLyricsResolver
                 {
                     using var timer = new CancellationTokenSource(LookupOptions.SourceTimeout, LyricsClock);
                     using var attempt = CancellationTokenSource.CreateLinkedTokenSource(lookup.Token, timer.Token);
-                    source.Read = source.Prepare == null ? null : await source.Prepare(attempt.Token);
+                    source.Read = source.Prepare == null ? null : await source.Prepare(attempt.Token).WaitAsync(attempt.Token);
                     if (source.Read == null) { source.Deferred = false; return; }
                     lock (bindings)
                         if (!bindings.Add(source.Read.Binding.ProviderId)) return;
-                    var cached = await gateway.ExecuteAsync(source.Read, LyricsCompletionMode.CacheOnly, attempt.Token);
+                    var cached = await gateway.ExecuteAsync(source.Read, LyricsCompletionMode.CacheOnly, attempt.Token).WaitAsync(attempt.Token);
                     if (HasLyrics(cached))
                     {
                         source.Deferred = false;
@@ -153,7 +164,7 @@ public sealed partial class ProtocolLyricsResolver
                 {
                     using var timer = new CancellationTokenSource(LookupOptions.SourceTimeout, LyricsClock);
                     using var attempt = CancellationTokenSource.CreateLinkedTokenSource(lookup.Token, timer.Token);
-                    var result = await gateway.ExecuteAsync(source.Read!, LyricsCompletionMode.OwnedAutomatic, attempt.Token);
+                    var result = await gateway.ExecuteAsync(source.Read!, LyricsCompletionMode.OwnedAutomatic, attempt.Token).WaitAsync(attempt.Token);
                     if (HasLyrics(result) && !attempt.IsCancellationRequested)
                         await AcceptAsync(source, Map(result!, source), false);
                 }

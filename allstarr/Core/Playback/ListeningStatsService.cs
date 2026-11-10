@@ -129,8 +129,11 @@ public sealed partial class ListeningStatsService(IDbContextFactory<AllstarrDbCo
         var owner = scope.OwnerUserId;
         var policy = policies == null ? null : await policies.ResolveForUserAsync(owner, token);
         var cleanOnly = policy?.Preferences.ExplicitFilter == "CleanOnly";
-        var plays = await db.ListeningEvents.AsNoTracking().LongCountAsync(item => item.OwnerUserId == owner, token);
-        var finished = await db.ListeningEvents.AsNoTracking().LongCountAsync(item => item.OwnerUserId == owner && item.State == ListeningEventState.Completed, token);
+        var stamp = await db.ListeningEvents.AsNoTracking().Where(item => item.OwnerUserId == owner)
+            .GroupBy(item => item.OwnerUserId).Select(group => new
+            { Plays = group.LongCount(), Finished = group.LongCount(item => item.State == ListeningEventState.Completed) }).SingleOrDefaultAsync(token);
+        var plays = stamp?.Plays ?? 0;
+        var finished = stamp?.Finished ?? 0;
         var key = (scope, interval, synthetic, plays, finished, cleanOnly, policy?.PreferenceRevision);
         if (!cleanOnly && cache.TryGetValue(key, out (ListeningStats Stats, DateTimeOffset ExpiresAt) cached) && cached.ExpiresAt > clock.UtcNow + ahead)
         { RequestTiming.Current?.NoteCache(true); return cached.Stats; }
