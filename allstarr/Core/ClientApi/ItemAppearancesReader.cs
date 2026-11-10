@@ -1,3 +1,4 @@
+using allstarr.Core.Operations;
 using System.Text.Json;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Matching;
@@ -21,6 +22,7 @@ public sealed class ItemAppearancesReader(PersonalMixService mixes, IDbContextFa
 
     public async Task<ClientItemAppearances> ReadAsync(HttpContext http, ProtocolExecutionContext execution, string itemId)
     {
+        using var matching = RequestTiming.Current?.Stage("match");
         var owner = execution.RequireActor().EffectiveUserId!.Value;
         var token = execution.CancellationToken;
         var songs = await SongsAsync(http, execution, itemId);
@@ -76,6 +78,7 @@ public sealed class ItemAppearancesReader(PersonalMixService mixes, IDbContextFa
                     $"/Items/{Uri.EscapeDataString(playlistId)}/Images/Primary", counts[link.Id], playlistId));
             }
         }
+        using var serialization = RequestTiming.Current?.Stage("serialize");
         return new(itemId, songs.Count, result
             .OrderByDescending(item => item.MatchedSongCount)
             .ThenBy(item => item.Kind == "mix" ? 0 : 1)

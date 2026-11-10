@@ -67,6 +67,7 @@ public sealed partial class ProtocolRouteFixtureTests
         _lyricsSearchOutput.WriteLine($"Stored releases: {timer.Elapsed.TotalMilliseconds:F1} ms, searches={searches}, library reads={nativeReads}, bytes={payload.Length}");
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        AssertTimingStages(response, "merge", "serialize");
         Assert.Equal(0, searches);
         Assert.Equal(0, nativeReads);
         using var body = JsonDocument.Parse(payload);
@@ -305,6 +306,7 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.Equal($"/allstarr/v1/releases/{inbox.Id}/cover", path);
         using var cover = await client.GetAsync(path);
         Assert.Equal(HttpStatusCode.OK, cover.StatusCode);
+        AssertTimingStages(cover, "match");
         Assert.Equal("image/png", cover.Content.Headers.ContentType?.MediaType);
         Assert.Equal(art, await cover.Content.ReadAsByteArrayAsync());
         Assert.True(cover.Headers.CacheControl?.Private);

@@ -114,6 +114,7 @@ public sealed class MediaAssetResolver(
             () => FetchAsync(identity, descriptorKey, fetch, maximumBytes, cancellationToken),
             LazyThreadSafetyMode.ExecutionAndPublication);
         var pending = _inflight.GetOrAdd(descriptorKey, created);
+        using var waiting = ReferenceEquals(pending, created) ? null : allstarr.Core.Operations.RequestTiming.Current?.Stage("lock");
         if (!ReferenceEquals(pending, created))
         {
             _activity.RecordCoalesced();
@@ -224,6 +225,7 @@ public sealed class MediaAssetResolver(
         var created = new Lazy<Task<StoredPayload>>(
             () => StorePayloadCoreAsync(key, bytes, policy), LazyThreadSafetyMode.ExecutionAndPublication);
         var pending = _payloadInflight.GetOrAdd(key, created);
+        using var waiting = ReferenceEquals(pending, created) ? null : allstarr.Core.Operations.RequestTiming.Current?.Stage("lock");
         try
         {
             return await pending.Value;
@@ -240,9 +242,11 @@ public sealed class MediaAssetResolver(
         ApplicationCacheCategoryPolicy policy)
     {
         var existing = await cache.GetAsync<MediaAssetPayload>(key);
-        var blurHash = existing is { BlurHashComputed: true } && existing.Bytes.AsSpan().SequenceEqual(bytes)
-            ? existing.BlurHash
-            : BlurHashEncoder.TryEncode(bytes);
+        string? blurHash;
+        using (allstarr.Core.Operations.RequestTiming.Current?.Stage("render"))
+            blurHash = existing is { BlurHashComputed: true } && existing.Bytes.AsSpan().SequenceEqual(bytes)
+                ? existing.BlurHash
+                : BlurHashEncoder.TryEncode(bytes);
         var stored = await cache.SetAsync(key, new MediaAssetPayload(bytes, blurHash, true), policy.FreshFor);
         return new(stored, blurHash);
     }
@@ -253,6 +257,7 @@ public sealed class MediaAssetResolver(
         int maximumBytes)
     {
         if (identity.Width is null && identity.Height is null) return source;
+        using var rendering = allstarr.Core.Operations.RequestTiming.Current?.Stage("render");
         try
         {
             using var data = SKData.CreateCopy(source.Bytes);

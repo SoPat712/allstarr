@@ -1,3 +1,4 @@
+using allstarr.Core.Operations;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using allstarr.Core.Matching;
@@ -96,6 +97,7 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
     private async Task<T?> CachedReadAsync<T>(ProtocolExecutionContext context, string scope, Func<Task<T?>> read,
         CancellationToken token) where T : class
     {
+        using var building = RequestTiming.Current?.Stage("build");
         if (readContexts == null || readCache == null) return await read();
         var access = readAccess != null && context.Actor != null && !scope.StartsWith("playlist-song:", StringComparison.Ordinal)
             ? await readAccess.ResolveAsync(context, token) : null;
@@ -152,7 +154,7 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
         var key = context.BackendInstanceId + ":" + context.VerifiedBackendPrincipalId;
         if (_musicLibraries.TryGetValue(key, out var cached) && cached.Expires > DateTimeOffset.UtcNow)
             return cached.Ids.Contains(parentId, StringComparer.OrdinalIgnoreCase);
-        await _viewsLock.WaitAsync(token);
+        using (RequestTiming.Current?.Stage("lock")) await _viewsLock.WaitAsync(token);
         try
         {
             if (!_musicLibraries.TryGetValue(key, out cached) || cached.Expires <= DateTimeOffset.UtcNow)
@@ -338,6 +340,7 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
     public async Task<MixCoverInput?> GetMixCoverAsync(
         ProtocolExecutionContext? context, string id, CancellationToken cancellationToken)
     {
+        using var resolving = RequestTiming.Current?.Stage("resolve");
         if (context == null)
             return personalMixes != null && PlaylistVirtualizationService.TryParseProtocolId(id, out var linkId)
                 ? await personalMixes.PublishedCoverAsync(linkId, cancellationToken) : null;
@@ -360,6 +363,7 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
         string? serverId = null,
         bool includeAllFields = false)
     {
+        using var serialization = RequestTiming.Current?.Stage("serialize");
         var id = responsePlaylistId ?? playlist.ProtocolId;
         var item = _builder.ConvertPlaylistToJellyfinItem(new ExternalPlaylist
         {
@@ -498,6 +502,7 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
         IHeaderDictionary? clientHeaders,
         IQueryCollection? clientQuery)
     {
+        using var building = RequestTiming.Current?.Stage("build");
         clientQuery ??= httpContexts?.HttpContext?.Request.Query;
         if (httpContexts?.HttpContext is { } http) http.Items[JellyfinItemFields.PlaylistMembersKey] = true;
         var startIndex = QueryInt(clientQuery, "StartIndex", 0);
@@ -518,6 +523,7 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
             if (nativeServerId != null) proxyService.RememberServerId(context.BackendInstanceId, nativeServerId);
         }
         var serverId = hasSyntheticItems ? await ServerIdAsync(context) : null;
+        using var serialization = RequestTiming.Current?.Stage("serialize");
         var items = tracks.Select(track =>
         {
             JsonObject item;

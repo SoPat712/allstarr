@@ -210,6 +210,7 @@ public partial class JellyfinController : ControllerBase
         string externalId,
         CancellationToken cancellationToken)
     {
+        using var resolving = allstarr.Core.Operations.RequestTiming.Current?.Stage("resolve");
         var kind = resourceKind switch
         {
             "song" => ProviderResourceKind.Track,
@@ -627,9 +628,13 @@ public partial class JellyfinController : ControllerBase
                         return new MediaAssetSource(artwork.Bytes, artwork.ContentType);
                 }
 
-                var coverUrl = storedOnly
-                    ? (await _providerGateway.GetStoredAlbumAsync(ImageContext(token)!, provider, resourceId))?.CoverArtUrl
-                    : await GetProviderImageUrlAsync(provider, resourceKind, resourceId, token);
+                string? coverUrl;
+                if (storedOnly)
+                {
+                    using var resolving = allstarr.Core.Operations.RequestTiming.Current?.Stage("resolve");
+                    coverUrl = (await _providerGateway.GetStoredAlbumAsync(ImageContext(token)!, provider, resourceId))?.CoverArtUrl;
+                }
+                else coverUrl = await GetProviderImageUrlAsync(provider, resourceKind, resourceId, token);
                 if ((storedOnly || actor == null) && string.IsNullOrWhiteSpace(coverUrl)) return null;
                 if (resourceKind == "album" && ProviderArtworkFallback.IsFallback(provider, coverUrl, resourceKind))
                 {
@@ -657,6 +662,7 @@ public partial class JellyfinController : ControllerBase
                 var originalCoverUri = coverUri;
                 coverUri = SelectExternalArtworkVariant(
                     coverUri, provider, width, height);
+                using var fetching = allstarr.Core.Operations.RequestTiming.Current?.Stage("fetch");
                 HttpResponseMessage response;
                 try { response = await _proxyService.HttpClient.GetAsync(coverUri, token); }
                 catch (OperationCanceledException) when (!token.IsCancellationRequested)
@@ -808,6 +814,7 @@ public partial class JellyfinController : ControllerBase
         ResolvedMediaAsset asset,
         string? requestedFormat)
     {
+        using var rendering = allstarr.Core.Operations.RequestTiming.Current?.Stage("render");
         var format = requestedFormat?.ToLowerInvariant() switch
         {
             "jpg" or "jpeg" => SKEncodedImageFormat.Jpeg,

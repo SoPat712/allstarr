@@ -49,6 +49,7 @@ public sealed partial class PersonalMixService
     internal async Task<ResolvedMediaAsset?> LoadServiceArtworkAsync(MixCoverInput input, Guid owner,
         IMediaAssetResolver assets, CancellationToken token)
     {
+        using var resolving = allstarr.Core.Operations.RequestTiming.Current?.Stage("resolve");
         if (registry == null || input.Kind != "external" || input.ServiceArtwork == null || input.SourcePlaylistId.Length == 0) return null;
         await using var db = await factory.CreateDbContextAsync(token);
         var user = await UserAsync(db, owner, token);
@@ -65,6 +66,7 @@ public sealed partial class PersonalMixService
         return await assets.ResolveAsync(new(owner, account.Id, input.Source, "playlist", input.SourcePlaylistId, revision, Width: 512),
             async cancellation =>
             {
+                using var fetching = allstarr.Core.Operations.RequestTiming.Current?.Stage("fetch");
                 var outcome = await capability!.ResolveArtworkAsync(FeedContext(context, account, cancellation), new(reference, maximumBytes: 4 * 1024 * 1024));
                 return outcome.IsSuccess ? new MediaAssetSource(outcome.RequireValue().Bytes, outcome.RequireValue().ContentType) : null;
             }, 4 * 1024 * 1024, token);

@@ -1,3 +1,4 @@
+using allstarr.Core.Operations;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using allstarr.Core.Capabilities;
@@ -24,6 +25,7 @@ public sealed class ClientListeningHistory(IDbContextFactory<AllstarrDbContext> 
 
     public async Task<ClientHistoryPage> ReadAsync(ProtocolExecutionContext execution, int limit, string? before)
     {
+        using var merging = RequestTiming.Current?.Stage("merge");
         if (limit is < 1 or > 200) throw new ArgumentException("Invalid history limit.");
         Cursor? cursor = null;
         if (before != null)
@@ -67,6 +69,7 @@ public sealed class ClientListeningHistory(IDbContextFactory<AllstarrDbContext> 
         var access = trackIds.Length == 0 ? new Dictionary<Guid, LibraryTrackRecord>() :
             await LibraryTrackAccess.Query(db, execution, await libraryAccess.ResolveAsync(execution, token)).Where(item => trackIds.Contains(item.Id))
             .ToDictionaryAsync(item => item.Id, token);
+        using var serialization = RequestTiming.Current?.Stage("serialize");
         var plays = rows.Select(item =>
         {
             var parsed = LocalLibraryService.ParseExternalResource(item.TrackReference);
