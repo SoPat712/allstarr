@@ -51,6 +51,7 @@ public sealed class MixCoverArtLoader(JellyfinProxyService jellyfin, IHttpClient
             timeout.CancelAfter(TimeSpan.FromSeconds(5));
             if (reference.StartsWith("library:", StringComparison.Ordinal))
             {
+                using var fetching = allstarr.Core.Operations.RequestTiming.Current?.Stage("fetch");
                 // The media server shares pictures without a sign-in, so a cover works for apps that load images without one.
                 var (body, _, success) = await jellyfin.GetBytesSafeAsync(
                     $"Items/{Uri.EscapeDataString(reference[8..])}/Images/Primary", new() { ["maxWidth"] = "400", ["quality"] = "90" }, cancellationToken: timeout.Token);
@@ -60,11 +61,13 @@ public sealed class MixCoverArtLoader(JellyfinProxyService jellyfin, IHttpClient
             {
                 var external = LocalLibraryService.ParseExternalResource(reference[8..]);
                 if (!external.isExternal || external.type != "song") return null;
+                using var resolving = allstarr.Core.Operations.RequestTiming.Current?.Stage("resolve");
                 reference = (await providers.GetPublicArtworkUriAsync(external.provider!, ProviderResourceKind.Track,
                     external.externalId!, timeout.Token, storedRecordingOnly: external.provider == "allstarr").WaitAsync(timeout.Token))?.AbsoluteUri ?? "";
                 if (ProviderArtworkFallback.IsFallback(external.provider!, reference, "song")) return null;
             }
             if (!OutboundRequestGuard.TryCreateSafeHttpUri(reference, out var uri, out _) || uri == null) return null;
+            using var fetchingRemote = allstarr.Core.Operations.RequestTiming.Current?.Stage("fetch");
             using var response = await clients.CreateClient().GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, timeout.Token).WaitAsync(timeout.Token);
             var contentType = response.Content.Headers.ContentType?.MediaType;
             if (!response.IsSuccessStatusCode || contentType?.StartsWith("image/", StringComparison.OrdinalIgnoreCase) != true ||

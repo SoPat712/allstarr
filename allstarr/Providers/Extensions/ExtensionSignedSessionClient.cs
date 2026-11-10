@@ -381,6 +381,7 @@ internal sealed class ExtensionSignedSessionClient
 
     private async Task WaitForGateAsync(CancellationToken cancellationToken)
     {
+        using var waiting = allstarr.Core.Operations.RequestTiming.Current?.Stage("lock");
         using var timeout = new CancellationTokenSource(GateWait, _timeProvider);
         using var limit = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);
         try { await _gate.WaitAsync(limit.Token); }

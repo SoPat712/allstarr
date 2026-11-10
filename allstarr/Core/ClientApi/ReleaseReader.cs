@@ -1,3 +1,4 @@
+using allstarr.Core.Operations;
 using System.Text.Json;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Identity;
@@ -14,23 +15,15 @@ namespace allstarr.Core.ClientApi;
 public sealed class ReleaseReader(NewReleasesService releases, IProtocolProviderGateway providers,
     IProviderRegistry registry, JellyfinProxyService jellyfin, IDbContextFactory<AllstarrDbContext> factory,
     IBackendLibraryPermissionSource permissions, IApplicationCache cache, ApplicationCacheRequestCoalescer readCoalescer,
-    IBackendLibraryAccessResolver libraryAccess)
+    IBackendLibraryAccessResolver libraryAccess, IPlatformClock clock)
 {
     public async Task<ClientReleases> ListAsync(HttpContext http, ProtocolExecutionContext execution)
     {
-        await using var db = await factory.CreateDbContextAsync(execution.CancellationToken);
+        using var merging = RequestTiming.Current?.Stage("merge");
         var access = await libraryAccess.ResolveAsync(execution, execution.CancellationToken);
-        var scope = "releases:" + JsonSerializer.Serialize(access);
-        var key = db.FeedReadKey(execution, scope);
-        if (await cache.GetAsync<ClientReleases>(key) is { } cached) return cached;
-        return await readCoalescer.RunAsync(key, async () =>
-        {
-            if (await cache.GetAsync<ClientReleases>(key) is { } existing) return existing;
-            var result = await ListCoreAsync(execution);
-            if (access.Succeeded && key == db.FeedReadKey(execution, scope))
-                await cache.SetAsync(key, result, TimeSpan.FromSeconds(30));
-            return result;
-        }, execution.CancellationToken);
+        return (await FeedReadCache.ReadAsync<ClientReleases>(factory, cache, readCoalescer, clock, execution,
+            "releases", access, http, async (request, context) =>
+                await request!.RequestServices.GetRequiredService<ReleaseReader>().ListCoreAsync(context)))!;
     }
 
     private async Task<ClientReleases> ListCoreAsync(ProtocolExecutionContext execution)
@@ -38,6 +31,7 @@ public sealed class ReleaseReader(NewReleasesService releases, IProtocolProvider
         var owner = execution.RequireActor().EffectiveUserId!.Value;
         await releases.EnsurePollingAsync(owner, execution.CancellationToken);
         var inbox = await releases.ReadAsync(owner, execution.CancellationToken);
+        using var serialization = RequestTiming.Current?.Stage("serialize");
         var follows = inbox.Coverage.Select(item => item.Artist).ToArray();
         return new(inbox.Entries.Select(entry =>
         {
@@ -65,6 +59,7 @@ public sealed class ReleaseReader(NewReleasesService releases, IProtocolProvider
 
     public async Task<ReleaseSource?> CoverAsync(ProtocolExecutionContext execution, string releaseId)
     {
+        using var matching = RequestTiming.Current?.Stage("match");
         var inbox = await releases.ReadAsync(execution.RequireActor().EffectiveUserId!.Value, execution.CancellationToken);
         var entry = inbox.Entries.FirstOrDefault(item => item.Id == releaseId);
         return entry == null ? null : ReleaseInboxProjection.PrimarySource(entry.Sources);

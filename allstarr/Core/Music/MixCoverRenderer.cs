@@ -1,3 +1,4 @@
+using allstarr.Core.Operations;
 using System.Globalization;
 using SkiaSharp;
 
@@ -9,6 +10,7 @@ public sealed class MixCoverRenderer
 
     public static byte[] Render(MixCoverInput input)
     {
+        using var rendering = RequestTiming.Current?.Stage("render");
         var (stops, angle) = Gradient(input);
         using var bitmap = new SKBitmap(Size, Size, SKColorType.Rgba8888, SKAlphaType.Premul);
         using var canvas = new SKCanvas(bitmap);
@@ -29,6 +31,7 @@ public sealed class MixCoverRenderer
     // Four pictures make a 2×2 grid and one fills the square, each cropped to its centre. Null when a picture can't be read.
     public static byte[]? RenderCollage(IReadOnlyList<byte[]> pictures)
     {
+        using var rendering = RequestTiming.Current?.Stage("render");
         if (pictures.Count is not (1 or 4)) return null;
         var images = new List<SKImage>(pictures.Count);
         try

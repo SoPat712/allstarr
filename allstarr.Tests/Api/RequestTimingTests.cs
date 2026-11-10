@@ -43,6 +43,82 @@ public sealed class RequestTimingTests
         Assert.Null(RequestTiming.Current);
     }
 
+    [Fact]
+    public async Task NestedAndRepeatedStagesSumAcrossAsyncBoundaries()
+    {
+        using var timing = RequestTiming.Begin();
+        double inner;
+        using (RequestTiming.Current?.Stage("build"))
+        {
+            await Task.Yield();
+            Assert.Same(timing, RequestTiming.Current);
+            using (RequestTiming.Current?.Stage("build"))
+                await Task.Delay(10);
+            inner = timing.Snapshot("stats").Stages["build"];
+        }
+        var nested = timing.Snapshot("stats").Stages["build"];
+        Assert.True(inner > 0);
+        Assert.True(nested >= inner * 2);
+        using (RequestTiming.Current?.Stage("build"))
+            await Task.Delay(10);
+        Assert.True(timing.Snapshot("stats").Stages["build"] > nested);
+
+        await Task.WhenAll(Enumerable.Range(0, 8).Select(async _ =>
+        {
+            using (RequestTiming.Current?.Stage("render"))
+                await Task.Delay(10);
+        }));
+        var result = timing.Snapshot("stats");
+        Assert.Equal(2, result.Stages.Count);
+        Assert.True(result.Stages["render"] >= 40);
+    }
+
+    [Fact]
+    public void NamedStagesRejectPrivateValuesAndStopAtEightDistinctNames()
+    {
+        using var timing = RequestTiming.Begin();
+        string[] rejected = ["private-user-id", "https://private.test/path?token=private", "build;desc=\"private\"", "Build", ""];
+        foreach (var name in rejected)
+            using (timing.Stage(name)) { }
+        using (timing.Stage(null!)) { }
+        string[] accepted = ["lock", "build", "render", "match", "merge", "serialize", "queue", "library"];
+        foreach (var name in accepted)
+            using (timing.Stage(name)) { }
+        string[] remaining = ["sources", "saved", "owned", "resolve", "fetch", "store"];
+        foreach (var name in remaining)
+            using (timing.Stage(name)) { }
+        using (timing.Stage("lock")) { }
+
+        var result = timing.Snapshot("stats");
+        Assert.Equal(accepted.Order(), result.Stages.Keys.Order());
+        Assert.Equal(16, result.Header.Split(", ").Length);
+        Assert.DoesNotContain("private", result.Header);
+        Assert.DoesNotContain("sources;", result.Header);
+        Assert.DoesNotContain("saved;", result.Header);
+        Assert.DoesNotContain("owned;", result.Header);
+        Assert.DoesNotContain("resolve;", result.Header);
+        Assert.DoesNotContain("fetch;", result.Header);
+        Assert.DoesNotContain("store;", result.Header);
+
+        using var other = RequestTiming.Begin();
+        foreach (var name in remaining)
+            using (other.Stage(name)) { }
+        Assert.Equal(remaining.Order(), other.Snapshot("stats").Stages.Keys.Order());
+    }
+
+    [Fact]
+    public void DisabledStageCallsAllocateNothingAfterWarmup()
+    {
+        Assert.Null(RequestTiming.Current);
+        for (var i = 0; i < 512; i++)
+            using (RequestTiming.Current?.Stage("lock")) { }
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        for (var i = 0; i < 10_000; i++)
+            using (RequestTiming.Current?.Stage("lock")) { }
+        var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+        Assert.Equal(0, allocated);
+    }
+
     [Theory]
     [InlineData("/allstarr/v1/me/sound", 8080, "sound")]
     [InlineData("/Users/private-id/Items", 8080, "jellyfin")]
@@ -63,6 +139,8 @@ public sealed class RequestTimingTests
         Assert.Contains("provider;dur=0", header);
         Assert.Contains("cache;desc=\"hit\"", header);
         Assert.Contains($"route;desc=\"{route}\"", header);
+        Assert.Contains($"route;desc=\"{route}\", pre;dur=", header);
+        Assert.Matches(", inflight;desc=\"[0-9]+\", build;dur=", header);
         Assert.DoesNotContain("private", header);
         Assert.DoesNotContain("Aloud", header);
     }
@@ -88,16 +166,21 @@ public sealed class RequestTimingTests
     [Fact]
     public async Task OutboundTimingCountsFailedCallsAndUsesInvariantNumbers()
     {
-        using var timing = RequestTiming.Begin();
+        using var timing = RequestTiming.Begin(12.3, 4);
         using var client = new HttpClient(new RequestTimingHandler(true) { InnerHandler = new Failure() });
         await Assert.ThrowsAsync<HttpRequestException>(() => client.GetAsync("https://backend.invalid/private?token=secret"));
         Assert.Equal(1, timing.Snapshot("jellyfin").JellyfinCalls);
         timing.Add(RequestTimingStage.Db, TimeSpan.FromMilliseconds(1.2));
+        using (timing.Stage("serialize")) await Task.Delay(10);
         var previous = CultureInfo.CurrentCulture;
         try
         {
             CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo("fr-FR");
-            Assert.Contains("db;dur=1.2", timing.Snapshot("jellyfin").Header);
+            var result = timing.Snapshot("jellyfin");
+            Assert.Contains("db;dur=1.2", result.Header);
+            Assert.Equal(12.3, result.PreMs);
+            Assert.Equal(4, result.Inflight);
+            Assert.Contains(FormattableString.Invariant($"route;desc=\"jellyfin\", pre;dur=12.3, inflight;desc=\"4\", serialize;dur={result.Stages["serialize"]:0.0}"), result.Header);
         }
         finally { CultureInfo.CurrentCulture = previous; }
     }
@@ -139,7 +222,7 @@ public sealed class RequestTimingTests
         {
             Assert.Equal(enabled ?? true, RequestTiming.Current != null);
             RequestTiming.Current?.Add(RequestTimingStage.Jellyfin, TimeSpan.FromMilliseconds(4));
-            await Task.Yield();
+            using (RequestTiming.Current?.Stage("build")) await Task.Yield();
             RequestTiming.Current?.Add(RequestTimingStage.Jellyfin, TimeSpan.FromMilliseconds(4.1));
             RequestTiming.Current?.Add(RequestTimingStage.Db, TimeSpan.FromMilliseconds(1.2));
             RequestTiming.Current?.NoteCache(true);
