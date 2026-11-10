@@ -77,6 +77,7 @@ public sealed class MixCoverDiskCacheTests(ITestOutputHelper output) : IDisposab
         var first = Assert.IsType<FileContentResult>(await service.CreateResponseAsync(input, new DefaultHttpContext()));
         var cold = timer.Elapsed.TotalMilliseconds;
         Assert.Equal(MixCoverRenderer.RenderCollage([bytes]), first.FileContents);
+        await cache.FlushWritesAsync();
         using var restartedCache = Cache();
         var restarted = new MixCoverImageService(_ => throw new InvalidOperationException(), Load, cache: restartedCache);
         timer.Restart();
@@ -84,6 +85,7 @@ public sealed class MixCoverDiskCacheTests(ITestOutputHelper output) : IDisposab
         var warm = timer.Elapsed.TotalMilliseconds;
         Assert.Equal(first.FileContents, repeated.FileContents);
         Assert.Equal(1, loads);
+        await restartedCache.FlushWritesAsync();
         var conditional = new DefaultHttpContext();
         conditional.Request.Headers.IfNoneMatch = $"\"{MixCoverImageService.GetTag(input)}\"";
         Assert.Equal(304, Assert.IsType<StatusCodeResult>(await restarted.CreateResponseAsync(input, conditional)).StatusCode);
@@ -120,6 +122,7 @@ public sealed class MixCoverDiskCacheTests(ITestOutputHelper output) : IDisposab
         await service.WarmAsync([input with { Generation = 2 }, input with { Generation = 3 }], Guid.NewGuid());
         Assert.Equal(3, loads);
         Assert.Equal(1, maximumActive);
+        await cache.FlushWritesAsync();
         using var afterRestart = Cache();
         var restarted = new MixCoverImageService(_ => throw new InvalidOperationException(),
             (_, _) => throw new InvalidOperationException(), cache: afterRestart);
@@ -134,12 +137,16 @@ public sealed class MixCoverDiskCacheTests(ITestOutputHelper output) : IDisposab
         MixCoverImageService Service() => new(_ => { renders++; return new byte[120]; }, cache: cache);
         var input = new MixCoverInput("mix", 1, "daily");
         await Service().CreateResponseAsync(input, new DefaultHttpContext());
+        await cache.FlushWritesAsync();
         _clock.UtcNow += TimeSpan.FromSeconds(1);
         await Service().CreateResponseAsync(input with { Id = "second" }, new DefaultHttpContext());
+        await cache.FlushWritesAsync();
         _clock.UtcNow += TimeSpan.FromSeconds(1);
         await Service().CreateResponseAsync(input, new DefaultHttpContext());
+        await cache.FlushWritesAsync();
         _clock.UtcNow += TimeSpan.FromSeconds(1);
         await Service().CreateResponseAsync(input with { Id = "third" }, new DefaultHttpContext());
+        await cache.FlushWritesAsync();
         await Service().CreateResponseAsync(input, new DefaultHttpContext());
         Assert.Equal(3, renders);
         await Service().CreateResponseAsync(input with { Id = "second" }, new DefaultHttpContext());

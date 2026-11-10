@@ -51,7 +51,7 @@ public sealed record ListeningStats(ListeningStatsPeriod Period, long PlayCount,
 
 public sealed partial class ListeningStatsService(IDbContextFactory<AllstarrDbContext> factory, IPlatformClock clock, SharedTagStore? tags = null,
     IEffectiveProviderPolicyResolver? policies = null, JellyfinProxyService? jellyfin = null,
-    IBackendLibraryAccessResolver? libraryAccess = null, IHttpContextAccessor? http = null) : IDisposable
+    IBackendLibraryAccessResolver? libraryAccess = null, IHttpContextAccessor? http = null, RecapArtworkWarmUp? artwork = null) : IDisposable
 {
     private const int TopLimit = 50;
     public static readonly TimeSpan WarmEvery = TimeSpan.FromMinutes(1);
@@ -95,7 +95,7 @@ public sealed partial class ListeningStatsService(IDbContextFactory<AllstarrDbCo
         var interval = CreatePeriod(period, year, clock.UtcNow, zone);
         opened[new(scope, period, year, zone)] = clock.UtcNow;
         if (opened.Count > RememberedRecaps) opened.TryRemove(opened.MinBy(item => item.Value));
-        return await CachedAsync(db, scope, interval, zone, actor.IsSynthetic, TimeSpan.Zero, token);
+        return await CachedAsync(db, scope, interval, zone, actor, TimeSpan.Zero, token);
     }
 
     // A recap opened lately is read again once the listener's plays changed or its answer is about to expire, so the next
@@ -110,20 +110,19 @@ public sealed partial class ListeningStatsService(IDbContextFactory<AllstarrDbCo
                 continue;
             }
             await using var db = await factory.CreateDbContextAsync(token);
-            var synthetic = await db.Users.AsNoTracking().Where(user => user.Id == recap.Scope.OwnerUserId && user.Enabled)
-                .Select(user => (bool?)user.IsSynthetic).SingleOrDefaultAsync(token);
-            if (synthetic == null)
+            var listener = await db.Users.AsNoTracking().SingleOrDefaultAsync(user => user.Id == recap.Scope.OwnerUserId && user.Enabled, token);
+            if (listener == null)
             {
                 opened.TryRemove(KeyValuePair.Create(recap, at));
                 continue;
             }
             var interval = CreatePeriod(recap.Period, recap.Year, clock.UtcNow, recap.Zone);
-            await CachedAsync(db, recap.Scope, interval, recap.Zone, synthetic.Value, 2 * WarmEvery, token);
+            await CachedAsync(db, recap.Scope, interval, recap.Zone, listener, 2 * WarmEvery, token);
         }
     }
 
     private async Task<ListeningStats> CachedAsync(AllstarrDbContext db, IntelligenceScope scope, ListeningStatsPeriod interval,
-        TimeZoneInfo zone, bool synthetic, TimeSpan ahead, CancellationToken token)
+        TimeZoneInfo zone, UserRecord listener, TimeSpan ahead, CancellationToken token)
     {
         // Reading a long history takes a moment, so an answer is kept until the listener's plays change.
         var owner = scope.OwnerUserId;
@@ -134,9 +133,9 @@ public sealed partial class ListeningStatsService(IDbContextFactory<AllstarrDbCo
             { Plays = group.LongCount(), Finished = group.LongCount(item => item.State == ListeningEventState.Completed) }).SingleOrDefaultAsync(token);
         var plays = stamp?.Plays ?? 0;
         var finished = stamp?.Finished ?? 0;
-        var key = (scope, interval, synthetic, plays, finished, cleanOnly, policy?.PreferenceRevision);
+        var key = (scope, interval, listener.IsSynthetic, plays, finished, cleanOnly, policy?.PreferenceRevision);
         if (!cleanOnly && cache.TryGetValue(key, out (ListeningStats Stats, DateTimeOffset ExpiresAt) cached) && cached.ExpiresAt > clock.UtcNow + ahead)
-        { RequestTiming.Current?.NoteCache(true); return cached.Stats; }
+        { RequestTiming.Current?.NoteCache(true); artwork?.Queue(listener, cached.Stats); return cached.Stats; }
         RequestTiming.Current?.NoteCache(false);
         var result = await ReadAsync(db, scope, interval, zone, token, clock.UtcNow, tags, cleanOnly, jellyfin, libraryAccess, http?.HttpContext?.Request.Headers);
         cache.Set(key, (result, clock.UtcNow + KeptFor), new MemoryCacheEntryOptions
@@ -144,6 +143,7 @@ public sealed partial class ListeningStatsService(IDbContextFactory<AllstarrDbCo
             Size = 1,
             AbsoluteExpirationRelativeToNow = KeptFor
         });
+        artwork?.Queue(listener, result);
         return result;
     }
 

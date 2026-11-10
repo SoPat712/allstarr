@@ -386,6 +386,7 @@ public sealed class SpicyLyricsCapabilityAdapterTests
             var source = new SpicyLyricsCapabilityAdapter(http, new SpicyLyricsTestSecrets(), cache, clock: clock);
             var context = SpicyLyricsTestData.Context(deadline: clock.UtcNow.AddMinutes(1));
             var first = (await source.FetchLyricsAsync(context, SpicyLyricsTestData.Request())).RequireValue();
+            await cache.FlushWritesAsync();
             using var restarted = new FileMediaApplicationCache(options, clock, NullLogger<FileMediaApplicationCache>.Instance);
             var replay = new SpicyLyricsCapabilityAdapter(http, new SpicyLyricsTestSecrets(), restarted, clock: clock);
             var second = (await replay.FetchLyricsAsync(context, SpicyLyricsTestData.Request())).RequireValue();

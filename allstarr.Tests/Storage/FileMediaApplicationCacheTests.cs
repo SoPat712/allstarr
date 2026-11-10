@@ -3,6 +3,7 @@ using allstarr.Core.Capabilities;
 using allstarr.Services.Common;
 using Microsoft.Extensions.Logging.Abstractions;
 using System.Text.Json.Nodes;
+using System.Reflection;
 
 namespace allstarr.Tests;
 
@@ -33,6 +34,8 @@ public sealed class FileMediaApplicationCacheTests : IAsyncLifetime
         Assert.True(await _cache.SetStringAsync(key, "\"image-bytes\"", TimeSpan.FromHours(1)));
         Assert.Equal("\"image-bytes\"", await _cache.GetStringAsync(key));
 
+        await _cache.FlushWritesAsync();
+
         var files = Directory.GetFiles(_root, "*", SearchOption.AllDirectories);
         Assert.Equal(2, files.Length);
         Assert.All(files, path => Assert.DoesNotContain("..", Path.GetFileName(path), StringComparison.Ordinal));
@@ -61,6 +64,7 @@ public sealed class FileMediaApplicationCacheTests : IAsyncLifetime
             [new("Words", TimeSpan.FromSeconds(1), segments: [new("Words", TimeSpan.FromTicks(12_345_678), null, true, false)])]);
         const string key = "lyrics:v3:musixmatch:fixture";
         Assert.True(await first.SetAsync(key, data, TimeSpan.FromHours(1)));
+        await first.FlushWritesAsync();
         var restarted = new FileMediaApplicationCache(options, _clock, NullLogger<FileMediaApplicationCache>.Instance);
         var retained = await restarted.GetAsync<ProviderLyricsResult>(key);
         Assert.NotNull(retained);
@@ -70,6 +74,49 @@ public sealed class FileMediaApplicationCacheTests : IAsyncLifetime
         Assert.False(segment.Synthetic);
         Assert.Null(segment.Duration);
         Assert.Equal(data.Content, retained.Content);
+    }
+
+    [Fact]
+    public async Task QueuedWritesRetainTheirOriginalExpiryWhileDiskIsBusy()
+    {
+        const string key = "artwork:payload:v1:queued";
+        var gate = (SemaphoreSlim)typeof(FileMediaApplicationCache).GetField("_gate", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(_cache)!;
+        await gate.WaitAsync();
+        try
+        {
+            Assert.True(await _cache.SetStringAsync(key, "image", TimeSpan.FromMinutes(1)).WaitAsync(TimeSpan.FromSeconds(1)));
+            Assert.Equal("image", await _cache.GetStringAsync(key).WaitAsync(TimeSpan.FromSeconds(1)));
+            _clock.UtcNow = _clock.UtcNow.AddMinutes(2);
+            Assert.Null(await _cache.GetStringAsync(key).WaitAsync(TimeSpan.FromSeconds(1)));
+        }
+        finally { gate.Release(); }
+        await _cache.FlushWritesAsync();
+        using var restarted = new FileMediaApplicationCache(new FileMediaCacheOptions(_root), _clock, NullLogger<FileMediaApplicationCache>.Instance);
+        Assert.Null(await restarted.GetStringAsync(key));
+    }
+
+    [Fact]
+    public async Task QueuedHitsPreserveLeastRecentlyUsedOrder()
+    {
+        var gate = (SemaphoreSlim)typeof(FileMediaApplicationCache).GetField("_gate", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(_cache)!;
+        await gate.WaitAsync();
+        try
+        {
+            await _cache.SetStringAsync("artwork:payload:v1:first", new string('a', 20));
+            _clock.UtcNow = _clock.UtcNow.AddSeconds(1);
+            await _cache.SetStringAsync("artwork:payload:v1:second", new string('b', 20));
+            _clock.UtcNow = _clock.UtcNow.AddSeconds(1);
+            Assert.Equal(new string('a', 20), await _cache.GetStringAsync("artwork:payload:v1:first"));
+            _clock.UtcNow = _clock.UtcNow.AddSeconds(1);
+            await _cache.SetStringAsync("artwork:payload:v1:third", new string('c', 40));
+        }
+        finally { gate.Release(); }
+        await _cache.FlushWritesAsync();
+        Assert.Equal(2, (await _cache.GetUsageAsync()).EntryCount);
+        Assert.Equal(new string('a', 20), await _cache.GetStringAsync("artwork:payload:v1:first"));
+        await _cache.FlushWritesAsync();
+        Assert.Null(await _cache.GetStringAsync("artwork:payload:v1:second"));
+        Assert.Equal(new string('c', 40), await _cache.GetStringAsync("artwork:payload:v1:third"));
     }
 
     [Fact]
@@ -83,9 +130,11 @@ public sealed class FileMediaApplicationCacheTests : IAsyncLifetime
     public async Task ExpiredEntry_IsRemovedOnRead()
     {
         await _cache.SetStringAsync("artwork:payload:v1:expired", "value", TimeSpan.FromMinutes(1));
+        await _cache.FlushWritesAsync();
         _clock.UtcNow = _clock.UtcNow.AddMinutes(2);
 
         Assert.Null(await _cache.GetStringAsync("artwork:payload:v1:expired"));
+        await _cache.FlushWritesAsync();
         Assert.Empty(Directory.GetFiles(_root, "*", SearchOption.AllDirectories));
     }
 
@@ -95,6 +144,7 @@ public sealed class FileMediaApplicationCacheTests : IAsyncLifetime
         await _cache.SetStringAsync("artwork:payload:v1:first", new string('a', 40));
         _clock.UtcNow = _clock.UtcNow.AddSeconds(1);
         await _cache.SetStringAsync("artwork:payload:v1:second", new string('b', 40));
+        await _cache.FlushWritesAsync();
 
         Assert.Null(await _cache.GetStringAsync("artwork:payload:v1:first"));
         Assert.Equal(new string('b', 40), await _cache.GetStringAsync("artwork:payload:v1:second"));
@@ -118,6 +168,7 @@ public sealed class FileMediaApplicationCacheTests : IAsyncLifetime
     public async Task Cleanup_RemovesMalformedOrphanedAndTemporaryFiles(string invalidMetadata)
     {
         await _cache.SetStringAsync("artwork:payload:v1:malformed", "value");
+        await _cache.FlushWritesAsync();
         var entryFiles = Directory.GetFiles(_root, "*", SearchOption.AllDirectories);
         var metadataPath = Assert.Single(
             entryFiles,
@@ -140,6 +191,7 @@ public sealed class FileMediaApplicationCacheTests : IAsyncLifetime
     {
         const string key = "artwork:payload:v1:no-ttl";
         await _cache.SetStringAsync(key, "value");
+        await _cache.FlushWritesAsync();
         var metadataPath = Assert.Single(Directory.GetFiles(_root, "*.json", SearchOption.AllDirectories));
         var metadata = JsonNode.Parse(await File.ReadAllTextAsync(metadataPath))!.AsObject();
         metadata["expiresAt"] = null;

@@ -11,6 +11,7 @@ using allstarr.Core.Protocols;
 using allstarr.Core.Routing;
 using allstarr.Core.Settings;
 using allstarr.Core.Storage;
+using allstarr.Services.Common;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Hosting;
@@ -95,7 +96,17 @@ public sealed class TasteWarmUpTests
         var lyrics = new LyricsSearchReader(index, factory, access, policies.Object, gateway,
             new Mock<IProviderRouter>().Object, null!, null!, Microsoft.Extensions.Logging.Abstractions.NullLogger<LyricsSearchReader>.Instance,
             new LyricsSearchChanges(), new RuntimeSettingsChangeSignal());
-        using var services = new ServiceCollection().AddScoped(_ => lyrics).BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true });
+        using var disk = new FileMediaApplicationCache(new FileMediaCacheOptions(Path.Combine(database.StorageOptions.DataDirectory, "cache")), clock,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<FileMediaApplicationCache>.Instance);
+        using var memory = new MemoryApplicationCache(clock);
+        var cache = new HybridApplicationCache(memory, disk, clock: clock);
+        var recentKey = CacheKeyBuilder.BuildProtocolMetadataKey("fixture", recent.ToString(), "Album", "recent");
+        var inactiveKey = CacheKeyBuilder.BuildProtocolMetadataKey("fixture", "inactive", "Album", "inactive");
+        Assert.True(disk.QueueWrite(recentKey, "{}", TimeSpan.FromHours(1), recent));
+        Assert.True(disk.QueueWrite(inactiveKey, "{}", TimeSpan.FromHours(1), Guid.NewGuid()));
+        await disk.FlushWritesAsync();
+        using var services = new ServiceCollection().AddScoped(_ => lyrics).AddSingleton(cache)
+            .BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true });
         var storage = new DurableStorageState(database.StorageOptions);
         storage.Set(DurableStorageReadiness.Ready);
         using var lifetime = new Lifetime();
@@ -136,6 +147,8 @@ public sealed class TasteWarmUpTests
         }
         await warming.WaitAsync(stop.Token);
         Assert.Empty(logger.Messages);
+        Assert.Equal("{}", await memory.GetStringAsync(recentKey));
+        Assert.Null(await memory.GetStringAsync(inactiveKey));
         await using (var db = factory.CreateDbContext())
             Assert.Equal(new[] { recent, boundary }.Order(), (await db.TasteProfiles.Select(item => item.OwnerUserId).ToArrayAsync()).Order());
         using var timing = RequestTiming.Begin();

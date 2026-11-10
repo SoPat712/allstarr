@@ -151,6 +151,7 @@ public sealed class CacheDiagnosticsTests : IAsyncLifetime
             "artwork:payload:v1:expired",
             "media",
             TimeSpan.FromMinutes(1)));
+        await _media.FlushWritesAsync();
         _clock.UtcNow = _clock.UtcNow.AddMinutes(2);
 
         var preview = await _cache.PreviewMaintenanceAsync();
@@ -262,6 +263,7 @@ public sealed class CacheDiagnosticsTests : IAsyncLifetime
         await _cache.SetStringAsync("lyrics:v2:restart", "lyrics");
         await _cache.SetStringAsync(payload, "artwork");
         await _cache.SetStringAsync(descriptor, JsonSerializer.Serialize(new { PayloadKey = payload }));
+        await _media.FlushWritesAsync();
         using var memory = new MemoryApplicationCache(_clock);
         using var files = new FileMediaApplicationCache(new FileMediaCacheOptions(_mediaPath), _clock,
             NullLogger<FileMediaApplicationCache>.Instance);
