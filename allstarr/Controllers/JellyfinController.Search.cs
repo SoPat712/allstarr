@@ -305,8 +305,7 @@ public partial class JellyfinController
                 new MusicSearchWindow(externalSearchLimits.ArtistLimit),
                 _settings.EnableExternalPlaylists && externalSearchLimits.AlbumLimit > 0 && !artistSearch ? new MusicSearchWindow(integratedFetchLimit) : MusicSearchWindow.None,
                 IncludeProviders: !favoritesOnlyRequest,
-                HideProviderArtistsNamedLikeNative: true)
-            { LimitProviderWait = true },
+                HideProviderArtistsNamedLikeNative: true),
             new JellyfinNativeMusicSearch(
                 cancellationToken => GetLocalSearchResultForCurrentRequest(
                     cleanQuery, includeItemTypes, artistSearch ? int.MaxValue : integratedFetchLimit, recursive, userId, cancellationToken),
