@@ -26,7 +26,6 @@ public sealed class LyricsSearchReader(LyricsSearchIndex index, IDbContextFactor
 
     private async Task<LyricsSearchResponse> ReadAsync(HttpContext http, ProtocolExecutionContext execution, string query, int limit, bool warmOnly)
     {
-        using var matching = RequestTiming.Current?.Stage("match");
         var total = Stopwatch.StartNew();
         var stage = Stopwatch.StartNew();
         void Timed(string name)

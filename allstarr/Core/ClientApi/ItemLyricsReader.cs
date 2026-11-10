@@ -1,4 +1,3 @@
-using allstarr.Core.Operations;
 using System.Text.Json;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Matching;
@@ -32,7 +31,6 @@ public sealed class ItemLyricsReader(
 
     public async Task<RichLyrics?> ReadAsync(HttpContext http, ProtocolExecutionContext execution, string itemId, string? sourceId = null)
     {
-        using var sourcesTiming = RequestTiming.Current?.Stage("sources");
         var item = await ResolveAsync(http, execution, itemId);
         if (item == null) return null;
         if (sourceId == null) return await ReadRichAsync(execution with { RequestedItemId = itemId }, item);
@@ -53,13 +51,11 @@ public sealed class ItemLyricsReader(
     public async Task<ClientLyricsSources?> SourcesAsync(HttpContext http, ProtocolExecutionContext execution, string itemId,
         bool includeLyrics = false)
     {
-        using var sourcesTiming = RequestTiming.Current?.Stage("sources");
         var item = await ResolveAsync(http, execution, itemId);
         if (item == null) return null;
         var layers = await ChoicesAsync(execution, item);
         var recordingDurationMs = await RecordingDurationMsAsync(execution, item);
         var candidates = await lyrics.FindAllAsync(execution with { RequestedItemId = itemId }, item.Song, item.ResourceKey, item.Sources);
-        using var serialization = RequestTiming.Current?.Stage("serialize");
         var scored = recordingDurationMs is > 0
             ? candidates.Select(candidate => candidate with { Assessment = null }).ToArray()
             : candidates;
@@ -201,7 +197,6 @@ public sealed class ItemLyricsReader(
 
     private async Task<LyricsItem?> ResolveAsync(HttpContext http, ProtocolExecutionContext execution, string itemId)
     {
-        using var matching = RequestTiming.Current?.Stage("match");
         if (string.IsNullOrWhiteSpace(itemId)) return null;
         var policy = policies != null && execution.Actor?.EffectiveUserId is { } owner
             ? await policies.ResolveForUserAsync(owner, execution.CancellationToken) : execution.Policy;

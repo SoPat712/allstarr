@@ -140,7 +140,7 @@ public sealed partial class ProtocolLyricsResolver
                 }
                 if (providers is not IProtocolLyricsExecutionGateway gateway) return;
                 source.Deferred = lookup.CacheOnly;
-                using (allstarr.Core.Operations.RequestTiming.Current?.Stage("lock")) await preparation.WaitAsync(lookup.Token);
+                await preparation.WaitAsync(lookup.Token);
                 try
                 {
                     using var timer = new CancellationTokenSource(LookupOptions.SourceTimeout, LyricsClock);
@@ -159,7 +159,7 @@ public sealed partial class ProtocolLyricsResolver
                 }
                 finally { preparation.Release(); }
                 if (lookup.CacheOnly) return;
-                using (allstarr.Core.Operations.RequestTiming.Current?.Stage("lock")) await remote.WaitAsync(lookup.Token);
+                await remote.WaitAsync(lookup.Token);
                 try
                 {
                     using var timer = new CancellationTokenSource(LookupOptions.SourceTimeout, LyricsClock);
@@ -317,10 +317,7 @@ public sealed partial class ProtocolLyricsResolver
                 }
                 changed = lookup.Changed.Task;
             }
-            try
-            {
-                using (allstarr.Core.Operations.RequestTiming.Current?.Stage("queue")) await changed.WaitAsync(waiting.Token);
-            }
+            try { await changed.WaitAsync(waiting.Token); }
             catch (OperationCanceledException) when (!caller.IsCancellationRequested) { }
         }
     }

@@ -41,7 +41,6 @@ public sealed partial class ProtocolRouteFixtureTests
             var timer = System.Diagnostics.Stopwatch.StartNew();
             using var response = await client.GetAsync(path);
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-            AssertTimingStages(response, "library");
             samples.Add(timer.Elapsed.TotalMilliseconds);
             overhead.Add(timer.Elapsed.TotalMilliseconds - backendMs);
         }

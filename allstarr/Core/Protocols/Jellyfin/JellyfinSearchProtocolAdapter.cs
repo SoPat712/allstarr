@@ -1,4 +1,3 @@
-using allstarr.Core.Operations;
 using System.Text.Json;
 
 namespace allstarr.Core.Protocols.Jellyfin;
@@ -31,7 +30,6 @@ public sealed class JellyfinSearchProtocolAdapter : IJellyfinSearchProtocolAdapt
         int limit,
         int? totalRecordCount = null)
     {
-        using var serialization = RequestTiming.Current?.Stage("serialize");
         ArgumentNullException.ThrowIfNull(items);
 
         var response = new JellyfinSearchItemsResponse(

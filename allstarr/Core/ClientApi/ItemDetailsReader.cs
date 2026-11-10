@@ -1,4 +1,3 @@
-using allstarr.Core.Operations;
 using System.Text.Json;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Favorites;
@@ -32,7 +31,6 @@ public sealed class ItemDetailsReader(
 {
     public async Task<ItemDetailsResponse> ReadAsync(HttpContext http, ProtocolExecutionContext execution, string[] ids)
     {
-        using var building = RequestTiming.Current?.Stage("build");
         var started = System.Diagnostics.Stopwatch.GetTimestamp();
         long matchTicks = 0, lyricsTicks = 0;
         var steps = new List<string>();
@@ -199,7 +197,7 @@ public sealed class ItemDetailsReader(
         var servingProviders = (await Task.WhenAll(external.Where(source => source.Provider == "allstarr" && songs.ContainsKey(source.Id))
             .Select(async source =>
             {
-                using (RequestTiming.Current?.Stage("lock")) await routeGate.WaitAsync(token);
+                await routeGate.WaitAsync(token);
                 try { return (source.Id, Provider: gateway == null ? null : await gateway.GetStreamingProviderAsync(execution, source.Provider, source.ExternalId)); }
                 finally { routeGate.Release(); }
             }))).ToDictionary(item => item.Id, item => item.Provider, StringComparer.Ordinal);
@@ -230,7 +228,7 @@ public sealed class ItemDetailsReader(
         var prepared = System.Diagnostics.Stopwatch.GetTimestamp();
         var built = await Task.WhenAll(requested.Select(async id =>
         {
-            using (RequestTiming.Current?.Stage("lock")) await gate.WaitAsync(token);
+            await gate.WaitAsync(token);
             try { return (Id: id, Details: await ReadItemAsync(id)); }
             finally { gate.Release(); }
         }));
@@ -240,12 +238,10 @@ public sealed class ItemDetailsReader(
             (int)System.Diagnostics.Stopwatch.GetElapsedTime(prepared).TotalMilliseconds,
             (int)TimeSpan.FromTicks(Interlocked.Read(ref matchTicks)).TotalMilliseconds, matchTiming,
             (int)TimeSpan.FromTicks(Interlocked.Read(ref lyricsTicks)).TotalMilliseconds, requested.Length);
-        using var serialization = RequestTiming.Current?.Stage("serialize");
         return new(ids.Where(items.ContainsKey).Select(id => items[id]).ToArray(), ids.Where(id => !items.ContainsKey(id)).ToArray());
 
         async Task<ItemDetails?> ReadItemAsync(string id)
         {
-            using var matching = RequestTiming.Current?.Stage("match");
             var song = songs.GetValueOrDefault(id);
             if (song == null && !native.ContainsKey(id)) return null;
             var local = library.FirstOrDefault(item => SameNativeId(item.BackendItemId, localIds.GetValueOrDefault(id) ?? id));

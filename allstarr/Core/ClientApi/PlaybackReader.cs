@@ -30,7 +30,6 @@ public sealed class PlaybackReader(
 
     public async Task<ClientPlayback?> CurrentAsync(HttpContext http, ProtocolExecutionContext execution)
     {
-        using var matching = RequestTiming.Current?.Stage("match");
         if (execution.Client.DeviceId is not { } device) return null;
         var owner = execution.RequireActor().EffectiveUserId!.Value;
         var state = activity.SelectMany(source => source.GetActivePlaybackStates(TimeSpan.FromMinutes(5)))

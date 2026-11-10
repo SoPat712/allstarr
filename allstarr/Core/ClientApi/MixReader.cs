@@ -1,4 +1,3 @@
-using allstarr.Core.Operations;
 using System.Text.Json;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Matching;
@@ -22,7 +21,6 @@ public sealed class MixReader(PersonalMixService mixes, IDbContextFactory<Allsta
 {
     public async Task<ClientMixes> ListAsync(HttpContext http, ProtocolExecutionContext execution, string? timeZoneId)
     {
-        using var building = RequestTiming.Current?.Stage("build");
         await using var db = await factory.CreateDbContextAsync(execution.CancellationToken);
         var access = await libraryAccess.ResolveAsync(execution, execution.CancellationToken);
         var scope = "mixes:" + timeZoneId + ":" + JsonSerializer.Serialize(access);
@@ -66,7 +64,6 @@ public sealed class MixReader(PersonalMixService mixes, IDbContextFactory<Allsta
         foreach (var item in await ReadNativeAsync(http, execution, remainingIds)) native[item.Key] = item.Value;
         var publish = (bool)(await settings.GetAsync(PersonalMixService.PublishKey, token)).Value;
         var covers = await CoverInputsAsync(execution, stored);
-        using var serialization = RequestTiming.Current?.Stage("serialize");
         return new(stored.Select(mix =>
         {
             var songs = Playable(mix, allowed);
@@ -83,7 +80,6 @@ public sealed class MixReader(PersonalMixService mixes, IDbContextFactory<Allsta
 
     public async Task<ClientMixItems> ItemsAsync(HttpContext http, ProtocolExecutionContext execution, Guid mixId)
     {
-        using var building = RequestTiming.Current?.Stage("build");
         await using var db = await factory.CreateDbContextAsync(execution.CancellationToken);
         var access = await libraryAccess.ResolveAsync(execution, execution.CancellationToken);
         var scope = "mix-items:" + mixId + ":" + JsonSerializer.Serialize(access);
@@ -127,7 +123,6 @@ public sealed class MixReader(PersonalMixService mixes, IDbContextFactory<Allsta
             foreach (var entry in await Task.WhenAll(batch.Select(async id =>
                 (Id: id, Provider: await providers.GetStreamingProviderAsync(execution, "allstarr", id)))))
                 streaming[entry.Id] = entry.Provider;
-        using var serialization = RequestTiming.Current?.Stage("serialize");
         var result = new List<ClientMixItem>(songs.Count);
         foreach (var item in songs)
         {
@@ -178,8 +173,6 @@ public sealed class MixReader(PersonalMixService mixes, IDbContextFactory<Allsta
 
     public async Task<MixCoverInput> CoverAsync(ProtocolExecutionContext execution, Guid mixId)
     {
-        using var resolving = RequestTiming.Current?.Stage("resolve");
-        using var building = RequestTiming.Current?.Stage("build");
         var owner = execution.RequireActor().EffectiveUserId!.Value;
         var mix = await mixes.GetCoverAsync(owner, mixId, execution.CancellationToken);
         var input = (await CoverInputsAsync(execution, [mix]))[mix.Id];
@@ -204,7 +197,6 @@ public sealed class MixReader(PersonalMixService mixes, IDbContextFactory<Allsta
 
     private async Task<HashSet<string>> AllowedLocalIdsAsync(ProtocolExecutionContext execution, IReadOnlyList<PersonalMix> stored)
     {
-        using var matching = RequestTiming.Current?.Stage("match");
         var ids = stored.SelectMany(mix => mix.Songs).Where(item => item.Song.IsLocal).Select(item => item.Song.Id).Distinct().ToArray();
         if (ids.Length == 0) return [];
         await using var db = await factory.CreateDbContextAsync(execution.CancellationToken);

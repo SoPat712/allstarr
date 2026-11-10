@@ -343,7 +343,6 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
     private async Task<IReadOnlyList<PersonalMix>> ListCoreAsync(Guid owner, string? timeZoneId, CancellationToken token,
         ProtocolExecutionContext? context = null, bool cardsOnly = false, bool background = false)
     {
-        using var merging = RequestTiming.Current?.Stage("merge");
         await using var db = await factory.CreateDbContextAsync(token);
         var user = await BrowseUserAsync(db, owner, token, context);
         if (user == null) return [];
@@ -379,8 +378,7 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
         string? timeZoneId = null, CancellationToken token = default, bool scheduled = false, bool allowProviderReads = true,
         bool afterNewHistory = false)
     {
-        using var building = RequestTiming.Current?.Stage("build");
-        using (RequestTiming.Current?.Stage("lock")) await generations.WaitAsync(token);
+        await generations.WaitAsync(token);
         var diagnostics = new MixGenerationDiagnostics();
         var generatedKinds = Array.Empty<string>();
         PersonalMixDocument? generated = null;
@@ -659,7 +657,6 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
     private async Task<IReadOnlyList<PersonalMix>> VisibleAsync(Guid owner, PersonalMixDocument document, CancellationToken token,
         bool preferLocalCopies = true)
     {
-        using var matching = RequestTiming.Current?.Stage("match");
         var songs = document.Mixes.Values.SelectMany(mix => mix.Songs).Select(item => item.Song).ToArray();
         var blocked = await taste.BlockedSongsAsync(owner, songs, token);
         var policy = await policies.ResolveForUserAsync(owner, token);

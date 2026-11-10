@@ -1,4 +1,3 @@
-using allstarr.Core.Operations;
 using allstarr.Core.Matching;
 using allstarr.Core.Protocols;
 using allstarr.Core.Settings;
@@ -93,7 +92,7 @@ public interface INativeMusicSearch<TPayload>
         using var slots = new SemaphoreSlim(4);
         var rows = await Task.WhenAll(ids.Select(async id =>
         {
-            using (RequestTiming.Current?.Stage("lock")) await slots.WaitAsync(cancellationToken);
+            await slots.WaitAsync(cancellationToken);
             try
             {
                 var row = await GetSongAsync(id, cancellationToken);
@@ -227,14 +226,13 @@ public sealed partial class MusicSearchService(
 
         var started = System.Diagnostics.Stopwatch.GetTimestamp();
         long Elapsed() => (long)System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds;
-        async Task<T> Timed<T>(Task<T> work, long[] finished, int slot, string name)
+        async Task<T> Timed<T>(Task<T> work, long[] finished, int slot)
         {
-            using var phase = RequestTiming.Current?.Stage(name);
             try { return await work; }
             finally { finished[slot] = Elapsed(); }
         }
         var phases = new long[3];
-        var nativeTask = Timed(native.SearchAsync(cancellationToken), phases, 0, "library");
+        var nativeTask = Timed(native.SearchAsync(cancellationToken), phases, 0);
         var providerTask = request.IncludeProviders
             ? Task.Run(() => providers.SearchAsync(
                 context,
@@ -243,11 +241,11 @@ public sealed partial class MusicSearchService(
                 request.Albums.Fetch,
                 request.Artists.Fetch))
             : Task.FromResult(new SearchResult());
-        providerTask = Timed(providerTask, phases, 1, "sources");
+        providerTask = Timed(providerTask, phases, 1);
         var playlistTask = request.IncludeProviders && request.Playlists.Fetch > 0
             ? Task.Run(() => providers.SearchPlaylistsAsync(context, request.Query, request.Playlists.Fetch))
             : Task.FromResult(new List<ExternalPlaylist>());
-        playlistTask = Timed(playlistTask, phases, 2, "sources");
+        playlistTask = Timed(playlistTask, phases, 2);
         var nativeRows = await nativeTask;
         using var providerWindow = request.LimitProviderWait
             ? new CancellationTokenSource(TimeSpan.FromSeconds(3), timeProvider ?? TimeProvider.System) : null;
@@ -293,11 +291,7 @@ public sealed partial class MusicSearchService(
                 ? new CancellationTokenSource(EnrichmentBudget(Elapsed()), timeProvider ?? TimeProvider.System) : null;
             using var enrichmentStop = CancellationTokenSource.CreateLinkedTokenSource(workToken, enrichmentWindow?.Token ?? default);
             var enrichmentToken = enrichmentStop.Token;
-            try
-            {
-                using (RequestTiming.Current?.Stage("queue"))
-                    return await Task.Run(EnrichAsync).WaitAsync(enrichmentToken);
-            }
+            try { return await Task.Run(EnrichAsync).WaitAsync(enrichmentToken); }
             catch (OperationCanceledException) when (enrichmentWindow?.IsCancellationRequested == true && !workToken.IsCancellationRequested)
             {
                 logger?.LogInformation("Search enrichment budget expired; keeping {Count} streaming songs", originalSongs.Count);
@@ -313,16 +307,14 @@ public sealed partial class MusicSearchService(
                 {
                     try
                     {
-                        using (RequestTiming.Current?.Stage("saved"))
-                            await savedLibrary.PreferSavedIdsAsync(context, songs, albums, enrichmentToken);
+                        await savedLibrary.PreferSavedIdsAsync(context, songs, albums, enrichmentToken);
                     }
                     catch (Exception) when (!enrichmentToken.IsCancellationRequested) { }
                     songs = songs.DistinctBy(song => song.Id, StringComparer.Ordinal).ToList();
                 }
                 albums = request.Albums.Apply(MusicAlbumReleases.Collapse(albums)).ToList();
                 savedAt = Elapsed();
-                using (RequestTiming.Current?.Stage("owned"))
-                    await PreferOwnedSongsAsync(context, songs, nativeSongs, native, enrichmentToken);
+                await PreferOwnedSongsAsync(context, songs, nativeSongs, native, enrichmentToken);
                 logger?.LogInformation("Search timing: library {Library} ms, sources {Sources} ms, playlists {Playlists} ms, saved songs {Saved} ms, owned songs {Owned} ms, total {Total} ms",
                     phases[0], phases[1], phases[2], savedAt - gathered, Elapsed() - savedAt, Elapsed());
                 return Merge(
@@ -347,7 +339,6 @@ public sealed partial class MusicSearchService(
         IEnumerable<ExternalPlaylist> playlists,
         bool hideProviderArtistsNamedLikeNative)
     {
-        using var merging = RequestTiming.Current?.Stage("merge");
         var native = nativeRows.ToList();
         var nativeArtists = native.Where(item => item.Kind == MusicItemKind.Artist).ToList();
         var nativeAlbums = native.Where(item => item.Kind == MusicItemKind.Album).ToList();
@@ -539,7 +530,6 @@ public sealed partial class MusicSearchService(
             Lookups = lookups
         }))));
         OwnedSearchLookup cached;
-        bool shared;
         lock (ownedSearchLookups)
         {
             if (!ownedSearchLookups.TryGetValue(key, out cached!) || cached.ExpiresAt <= clock.GetUtcNow())
@@ -550,9 +540,7 @@ public sealed partial class MusicSearchService(
                     await libraryIndex!.FindKnownRecordingTracksAsync(context, lookups, CancellationToken.None)));
                 ownedSearchLookups[key] = cached;
             }
-            shared = cached.Work.IsValueCreated;
         }
-        using var waiting = shared ? RequestTiming.Current?.Stage("lock") : null;
         try { return await cached.Work.Value.WaitAsync(cancellationToken).WaitAsync(context.CancellationToken); }
         catch
         {
