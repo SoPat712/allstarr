@@ -1,5 +1,4 @@
 import { expect, test, type Page } from "@playwright/test";
-import { mkdir } from "node:fs/promises";
 import { panelFixture } from "./shared-design-fixtures";
 
 const playlistId = "22222222-2222-4222-8222-222222222222";
@@ -41,8 +40,7 @@ async function open(page: Page) {
 
 async function capture(page: Page, name: string) {
   await page.evaluate(async () => { await document.fonts.ready; (document.activeElement as HTMLElement)?.blur(); });
-  await mkdir("test-results/panel-controls", { recursive: true });
-  await page.screenshot({ path: `test-results/panel-controls/${name}-dark.png`, fullPage: true });
+  await page.screenshot({ path: test.info().outputPath(`${name}-dark.png`) });
 }
 
 test("Panel drag and keyboard sizing persist and reset independently of content", async ({ page }) => {
@@ -109,6 +107,7 @@ for (const width of [1280, 1024]) test(`Panel expansion restores its width and k
   if (width === 1280) expect(await panel.locator(".track-scroll").evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
   await panel.getByRole("table", { name: "Evening mix tracks", exact: true }).scrollIntoViewIfNeeded();
   await capture(page, `expanded-${width}`);
+  await expect(panel).toHaveAttribute("data-expanded", "true");
   await panel.getByRole("button", { name: "Restore", exact: true }).click();
   await expect(panel).toHaveAttribute("data-expanded", "false");
   expect((await panel.boundingBox())!.width).toBe(initial.width);

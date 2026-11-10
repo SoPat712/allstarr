@@ -1,11 +1,8 @@
 import { expect, test, type Locator, type Page, type TestInfo } from "@playwright/test";
-import { mkdir } from "node:fs/promises";
 import { homeFixture, panelFixture, settingsFixture } from "./shared-design-fixtures";
 
 async function capture(page: Page, info: TestInfo, name: string) {
-  const folder = "../artifacts/segfocus";
-  await mkdir(folder, { recursive: true });
-  const path = `${folder}/${name}.png`;
+  const path = info.outputPath(`${name}.png`);
   await page.screenshot({ path, fullPage: true });
   await info.attach(name, { path, contentType: "image/png" });
 }
@@ -102,11 +99,25 @@ for (const width of [1280, 390]) for (const theme of ["dark", "light"] as const)
       await page.keyboard.press(key);
       const end = key === "Home" ? first : last;
       await expect(end).toBeFocused();
-      await expect.poll(async () => {
-        const outer = (await scroller.boundingBox())!, inner = (await end.boundingBox())!;
-        return inner.x >= outer.x && inner.x + inner.width <= outer.x + outer.width + 1 && inner.y >= outer.y && inner.y + inner.height <= outer.y + outer.height + 1;
-      }, { message: "the focused end and its inset ring fit inside the History scroller" }).toBe(true);
+      await expect.poll(() => end.evaluate(element => {
+        const group = element.parentElement!, outer = group.getBoundingClientRect(), inner = element.getBoundingClientRect();
+        return { visible: inner.left >= outer.left && inner.right <= outer.right + 1 && inner.top >= outer.top && inner.bottom <= outer.bottom + 1,
+          left: inner.left - outer.left, right: outer.right - inner.right, scrollLeft: group.scrollLeft, focused: element === document.activeElement };
+      }), { message: "the focused end and its inset ring fit inside the History scroller" }).toMatchObject({ visible: true, focused: true });
     }
+    // Selection and navigation can happen before the deferred selection scroll runs.
+    await first.evaluate(element => {
+      (element as HTMLButtonElement).click();
+      element.focus();
+      element.dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true, cancelable: true }));
+    });
+    await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+    await expect(last).toBeFocused();
+    await expect(first).toHaveAttribute("aria-checked", "true");
+    await expect.poll(() => last.evaluate(element => {
+      const outer = element.parentElement!.getBoundingClientRect(), inner = element.getBoundingClientRect();
+      return inner.left >= outer.left && inner.right <= outer.right + 1;
+    }), { message: "a pending selection scroll keeps keyboard focus visible" }).toBe(true);
     if (width === 390) expect(await scroller.evaluate(element => element.scrollWidth > element.clientWidth)).toBe(true);
     await group.evaluate(element => element.setAttribute("dir", "rtl"));
     await expect(first).toHaveCSS("border-top-right-radius", "999px");
