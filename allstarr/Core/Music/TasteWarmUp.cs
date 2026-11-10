@@ -34,7 +34,7 @@ public sealed class TasteWarmUp(TasteService taste, IDbContextFactory<AllstarrDb
         {
             try
             {
-                await taste.GetAsync(user, stoppingToken);
+                await taste.RefreshProfileAsync(user, stoppingToken);
                 if (sound != null) await sound.GetAsync(user, stoppingToken);
             }
             catch (Exception error) when (error is not OperationCanceledException) { logger.LogDebug("Taste warm-up skipped a listener ({ErrorType})", error.GetType().Name); }

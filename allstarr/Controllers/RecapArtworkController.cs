@@ -28,17 +28,21 @@ public sealed class RecapArtworkController(AdminProtocolExecutionContextFactory 
                 clientHeaders: headers, cancellationToken: token);
             using (body)
             {
-                if (status != 200 || body == null || !body.RootElement.TryGetProperty("Id", out var id) ||
-                    id.GetString() != libraryArtistId || !body.RootElement.TryGetProperty("Type", out var type) ||
-                    type.GetString() != "MusicArtist") return NoContent();
-                var tag = body.RootElement.TryGetProperty("ImageTags", out var tags) && tags.TryGetProperty("Primary", out var primary)
-                    ? primary.GetString() : null;
-                var image = await jellyfin.GetImageAsync(libraryArtistId, imageTag: tag, clientHeaders: headers);
-                Response.Headers.CacheControl = "private, max-age=3600";
-                return image.Body != null && image.ContentType != null ? File(image.Body, image.ContentType) : NoContent();
+                if (status == 200 && body != null && body.RootElement.TryGetProperty("Id", out var id) &&
+                    id.GetString() == libraryArtistId && body.RootElement.TryGetProperty("Type", out var type) && type.GetString() == "MusicArtist")
+                {
+                    var tag = body.RootElement.TryGetProperty("ImageTags", out var tags) && tags.TryGetProperty("Primary", out var primary)
+                        ? primary.GetString() : null;
+                    var image = await jellyfin.GetImageAsync(libraryArtistId, imageTag: tag, clientHeaders: headers);
+                    if (image.Body != null && image.ContentType != null)
+                    {
+                        Response.Headers.CacheControl = "private, max-age=3600";
+                        return File(image.Body, image.ContentType);
+                    }
+                }
             }
         }
-        var asset = await artwork.ReadAsync(protocol, artist, title, album, token);
+        var asset = await artwork.ReadAsync(protocol, artist, title, album, token, libraryArtistId);
         Response.Headers.CacheControl = asset != null ? "private, max-age=604800" : "private, max-age=3600";
         return asset != null ? File(asset.Bytes, asset.ContentType) : NoContent();
     }

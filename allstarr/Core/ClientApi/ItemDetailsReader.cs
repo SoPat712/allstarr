@@ -4,6 +4,7 @@ using allstarr.Core.Favorites;
 using allstarr.Core.ManagedFiles;
 using allstarr.Core.Matching;
 using allstarr.Core.Music;
+using allstarr.Core.Playback;
 using allstarr.Core.Protocols;
 using allstarr.Core.Settings;
 using allstarr.Core.Storage;
@@ -88,6 +89,15 @@ public sealed class ItemDetailsReader(
             .ToArrayAsync(token);
         recordingIds = recordingIds.Concat(decisions.Where(item => item.CanonicalRecordingId.HasValue)
             .Select(item => item.CanonicalRecordingId!.Value)).Distinct().ToArray();
+        var libraryTrackIds = library.Select(item => item.Id).ToArray();
+        var playQuery = ListeningStatsService.CountedPlays(db, new(owner, protocol, execution.BackendInstanceId));
+        var playCounts = await playQuery.Where(item =>
+                item.CanonicalRecordingId != null && recordingIds.Contains(item.CanonicalRecordingId.Value) ||
+                item.LibraryTrackId != null && libraryTrackIds.Contains(item.LibraryTrackId.Value) ||
+                requested.Contains(item.TrackReference) || nativeLookupIds.Contains(item.TrackReference))
+            .GroupBy(item => new { item.CanonicalRecordingId, item.LibraryTrackId, item.TrackReference })
+            .Select(group => new { group.Key, Count = group.LongCount(), Last = group.Max(item => item.ListenedAt ?? item.StartedAt) })
+            .ToArrayAsync(token);
         var links = await db.ProviderTrackIdentities.AsNoTracking().Where(item => recordingIds.Contains(item.CanonicalRecordingId) &&
             item.ResourceKind == ProviderResourceKind.Track && item.Verification == ProviderIdentityVerification.Verified &&
             item.VerificationMethod != "automatic-suggestion" && item.VerificationMethod != "source-snapshot-hash" &&
@@ -283,9 +293,17 @@ public sealed class ItemDetailsReader(
                 audio = new(artifact.Codec, artifact.BitDepth, artifact.SampleRate, artifact.Bitrate);
             var explicitContent = (song?.ExplicitContentLyrics ?? native.GetValueOrDefault(id)?.Rating) switch { 1 => true, 0 or 3 => false, _ => (bool?)null };
             explicitContent ??= recordingId.HasValue ? recordings.GetValueOrDefault(recordingId.Value)?.IsExplicit : null;
+            var counted = playCounts.Where(item => recordingId.HasValue && item.Key.CanonicalRecordingId == recordingId ||
+                local != null && item.Key.LibraryTrackId == local.Id || item.Key.TrackReference == id ||
+                SameNativeId(item.Key.TrackReference, localIds.GetValueOrDefault(id) ?? id)).ToArray();
+            var isSong = song != null || local != null || native.GetValueOrDefault(id)?.IsSong == true;
             return new ItemDetails(id, song != null, recordingId?.ToString("D"), identity?.Isrc ?? song?.Isrc ?? local?.Isrc ?? identifiers.FirstOrDefault(item => item.RecordingId == recordingId)?.Value,
                 song == null ? libraryProvider : providers.GetValueOrDefault(servingProviders.GetValueOrDefault(id) ?? song.ExternalProvider!), audio, explicitContent,
-                song == null ? native[id].Saved : saved.Contains(id), keep, match, lyrics);
+                song == null ? native[id].Saved : saved.Contains(id), keep, match, lyrics)
+            {
+                PlayCount = isSong ? counted.Sum(item => item.Count) : null,
+                LastPlayedAt = isSong ? counted.Select(item => item.Last).Max() : null
+            };
         }
     }
 
@@ -309,14 +327,15 @@ public sealed class ItemDetailsReader(
                     ? CleanOnlyProtocolContent.Rating(field.GetString()) : null;
                 if (policy.Preferences.ExplicitFilter == "CleanOnly" && rating is not (0 or 3)) continue;
                 foreach (var requestedId in batch.Where(requestedId => SameNativeId(id, requestedId)))
-                    result[requestedId] = new(item.TryGetProperty("UserData", out var data) && data.TryGetProperty("IsFavorite", out var favorite) && favorite.ValueKind == JsonValueKind.True, rating);
+                    result[requestedId] = new(item.TryGetProperty("UserData", out var data) && data.TryGetProperty("IsFavorite", out var favorite) && favorite.ValueKind == JsonValueKind.True, rating,
+                        item.TryGetProperty("Type", out var type) && type.GetString() == "Audio");
             }
         }
         return result;
     }
 
     private sealed record Source(string Id, string Provider, string ExternalId);
-    private sealed record NativeDetails(bool Saved, int? Rating);
+    private sealed record NativeDetails(bool Saved, int? Rating, bool IsSong);
 
     private static bool SameNativeId(string first, string second) => first == second ||
         Guid.TryParse(first, out var firstId) && Guid.TryParse(second, out var secondId) && firstId == secondId;

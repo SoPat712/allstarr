@@ -117,9 +117,9 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.False(string.IsNullOrWhiteSpace(root.GetProperty("serverVersion").GetString()));
         AssertLibraryProvider(root.GetProperty("library"));
         var features = root.GetProperty("features");
-        Assert.Equal(["appearances", "events", "fixesMatch", "follow", "itemDetails", "lyricsRich", "lyricsSearch", "lyricsSources", "lyricsVersions", "mixes", "playback", "playlistKinds", "releases", "reports", "similarAlbums", "stats", "taste", "titleMarkers"],
-            features.EnumerateObject().Select(item => item.Name).Order().ToArray());
-        Assert.All(features.EnumerateObject(), item => Assert.Equal(item.Name is "titleMarkers" or "itemDetails" or "playback" or "lyricsRich" or "lyricsSources" or "lyricsVersions" or "fixesMatch" or "reports" or "mixes" or "releases" or "follow" or "lyricsSearch" or "events" or "appearances" or "similarAlbums" or "playlistKinds" or "stats" or "taste", item.Value.GetBoolean()));
+        Assert.Equal(["appearances", "dashboardLink", "events", "fixesMatch", "follow", "history", "historyImports", "historyRecheck", "itemDetails", "lyricsRich", "lyricsSearch", "lyricsSources", "lyricsVersions", "mixes", "playActivity", "playCounts", "playback", "playlistKinds", "releases", "reports", "similarAlbums", "sound", "stats", "taste", "titleMarkers"],
+            features.EnumerateObject().Select(item => item.Name).Order(StringComparer.Ordinal).ToArray());
+        Assert.All(features.EnumerateObject(), item => Assert.Equal(item.Name != "dashboardLink", item.Value.GetBoolean()));
         Assert.NotNull(observed?.Principal);
         Assert.False(observed.Principal.IsAdministrator);
         Assert.Equal(ProviderActorKind.User, observed.RequireActor().Kind);

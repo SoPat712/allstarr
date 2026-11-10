@@ -14,7 +14,10 @@ public sealed record ClientCapabilities(
     [property: JsonPropertyName("serverVersion")] string ServerVersion,
     [property: JsonPropertyName("apiVersion")] int ApiVersion,
     [property: JsonPropertyName("features")] ClientFeatures Features,
-    [property: JsonPropertyName("library")] ItemDetailsProvider Library);
+    [property: JsonPropertyName("library")] ItemDetailsProvider Library,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ClientDashboard? Dashboard = null);
+
+public sealed record ClientDashboard(string Url);
 
 public sealed record ClientFeatures
 {
@@ -36,6 +39,13 @@ public sealed record ClientFeatures
     [JsonPropertyName("playlistKinds")] public bool PlaylistKinds { get; init; } = true;
     [JsonPropertyName("stats")] public bool Stats { get; init; }
     [JsonPropertyName("taste")] public bool Taste { get; init; }
+    [JsonPropertyName("dashboardLink")] public bool DashboardLink { get; init; }
+    [JsonPropertyName("history")] public bool History { get; init; } = true;
+    [JsonPropertyName("playCounts")] public bool PlayCounts { get; init; } = true;
+    [JsonPropertyName("sound")] public bool Sound { get; init; }
+    [JsonPropertyName("playActivity")] public bool PlayActivity { get; init; }
+    [JsonPropertyName("historyImports")] public bool HistoryImports { get; init; }
+    [JsonPropertyName("historyRecheck")] public bool HistoryRecheck { get; init; }
 }
 
 public sealed record ClientApiError(

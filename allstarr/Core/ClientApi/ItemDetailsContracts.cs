@@ -24,7 +24,11 @@ public sealed record ItemDetails(
     [property: JsonPropertyName("saved")] bool Saved,
     [property: JsonPropertyName("keep")] ItemDetailsKeep Keep,
     [property: JsonPropertyName("match")] ItemDetailsMatch? Match,
-    [property: JsonPropertyName("lyrics")] ItemDetailsLyrics Lyrics);
+    [property: JsonPropertyName("lyrics")] ItemDetailsLyrics Lyrics)
+{
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public long? PlayCount { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public DateTimeOffset? LastPlayedAt { get; init; }
+}
 
 public sealed record ItemDetailsProvider(
     [property: JsonPropertyName("id")] string Id,

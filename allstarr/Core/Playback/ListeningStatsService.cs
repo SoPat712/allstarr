@@ -6,6 +6,8 @@ using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
 using allstarr.Core.Settings;
 using allstarr.Services.Admin;
+using allstarr.Services.Jellyfin;
+using System.Text.Json.Serialization;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 
@@ -20,6 +22,7 @@ public sealed record ListeningStatsSong(string Title, string Artist, string? Alb
 public sealed record ListeningStatsArtist(string Artist, long PlayCount)
 {
     public string? ArtworkUrl { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string? Id { get; init; }
 }
 public sealed record ListeningStatsAlbum(string Album, string Artist, long PlayCount)
 {
@@ -46,8 +49,9 @@ public sealed record ListeningStats(ListeningStatsPeriod Period, long PlayCount,
     public IReadOnlyList<ListeningStatsArtist> NewArtists { get; init; } = [];
 }
 
-public sealed class ListeningStatsService(IDbContextFactory<AllstarrDbContext> factory, IPlatformClock clock, SharedTagStore? tags = null,
-    IEffectiveProviderPolicyResolver? policies = null) : IDisposable
+public sealed partial class ListeningStatsService(IDbContextFactory<AllstarrDbContext> factory, IPlatformClock clock, SharedTagStore? tags = null,
+    IEffectiveProviderPolicyResolver? policies = null, JellyfinProxyService? jellyfin = null,
+    IBackendLibraryAccessResolver? libraryAccess = null, IHttpContextAccessor? http = null) : IDisposable
 {
     private const int TopLimit = 50;
     public static readonly TimeSpan WarmEvery = TimeSpan.FromMinutes(1);
@@ -130,7 +134,7 @@ public sealed class ListeningStatsService(IDbContextFactory<AllstarrDbContext> f
         var key = (scope, interval, synthetic, plays, finished, cleanOnly, policy?.PreferenceRevision);
         if (!cleanOnly && cache.TryGetValue(key, out (ListeningStats Stats, DateTimeOffset ExpiresAt) cached) && cached.ExpiresAt > clock.UtcNow + ahead)
             return cached.Stats;
-        var result = await ReadAsync(db, scope, interval, zone, token, clock.UtcNow, tags, cleanOnly);
+        var result = await ReadAsync(db, scope, interval, zone, token, clock.UtcNow, tags, cleanOnly, jellyfin, libraryAccess, http?.HttpContext?.Request.Headers);
         cache.Set(key, (result, clock.UtcNow + KeptFor), new MemoryCacheEntryOptions
         {
             Size = 1,
@@ -178,15 +182,22 @@ public sealed class ListeningStatsService(IDbContextFactory<AllstarrDbContext> f
 
     private const long CountedPlayTicks = 30 * TimeSpan.TicksPerSecond;
 
-    internal static async Task<ListeningStats> ReadAsync(AllstarrDbContext db, IntelligenceScope scope,
-        ListeningStatsPeriod period, TimeZoneInfo zone, CancellationToken token, DateTimeOffset? now = null, SharedTagStore? tags = null,
-        bool cleanOnly = false)
-    {
-        var listened = db.ListeningEvents.AsNoTracking().Where(item => item.OwnerUserId == scope.OwnerUserId &&
+    internal static IQueryable<ListeningEventRecord> ListenedQuery(AllstarrDbContext db, IntelligenceScope scope) =>
+        db.ListeningEvents.AsNoTracking().Where(item => item.OwnerUserId == scope.OwnerUserId &&
             item.Protocol == scope.Protocol && item.BackendInstanceId == scope.BackendInstanceId &&
             (item.State == ListeningEventState.Completed ? item.ListenedAt != null :
                 (item.State == ListeningEventState.Abandoned || item.State == ListeningEventState.Skipped) && item.StartedAt != null) &&
             db.Users.Any(user => user.Id == scope.OwnerUserId && !user.IsSynthetic));
+
+    internal static IQueryable<ListeningEventRecord> CountedPlays(AllstarrDbContext db, IntelligenceScope scope) =>
+        ListenedQuery(db, scope).Where(item => (item.State == ListeningEventState.Completed || item.PositionTicks >= CountedPlayTicks) &&
+            (item.SourceKind == "protocol" || item.SourceKind == "listenbrainz-api" || item.SourceKind == "import" || item.ImportProvenance != null));
+
+    internal static async Task<ListeningStats> ReadAsync(AllstarrDbContext db, IntelligenceScope scope,
+        ListeningStatsPeriod period, TimeZoneInfo zone, CancellationToken token, DateTimeOffset? now = null, SharedTagStore? tags = null,
+        bool cleanOnly = false, JellyfinProxyService? jellyfin = null, IBackendLibraryAccessResolver? libraryAccess = null, IHeaderDictionary? headers = null)
+    {
+        var listened = ListenedQuery(db, scope);
         if (cleanOnly) listened = listened.Where(item => db.CanonicalRecordings.Any(recording =>
             recording.Id == item.CanonicalRecordingId && recording.IsExplicit == false));
         // A play counts once it finished or reached 30 seconds, the rule streaming services use.
@@ -218,8 +229,10 @@ public sealed class ListeningStatsService(IDbContextFactory<AllstarrDbContext> f
             return new ListeningStatsSong(song.Title!.Trim(), song.Artist!.Trim(), song.Album?.Trim(), group.LongCount()) { ArtworkUrl = ArtworkByName(song.Artist!.Trim(), title: song.Title!.Trim()) };
         }).OrderByDescending(item => item.PlayCount).ThenBy(item => item.Artist, StringComparer.Ordinal)
             .ThenBy(item => item.Title, StringComparer.Ordinal).ThenBy(item => item.Album, StringComparer.Ordinal).Take(TopLimit).ToArray();
-        var artistGroups = plays.Where(item => !string.IsNullOrWhiteSpace(item.Artist)).GroupBy(item => item.Artist!.Trim(), StringComparer.OrdinalIgnoreCase).ToArray();
-        var artists = artistGroups.Select(group => new ListeningStatsArtist(group.Key, group.LongCount()) { ArtworkUrl = ArtworkByName(group.Key) })
+        var credits = await ArtistCreditsAsync(db, scope, qualified.Where(item => (item.ListenedAt ?? item.StartedAt) < period.To), token, jellyfin, libraryAccess, headers);
+        var artistGroups = plays.SelectMany(item => credits.GetValueOrDefault((item.TrackReference, item.CanonicalRecordingId, item.Artist)) ?? [])
+            .GroupBy(item => item.Name.Trim(), StringComparer.OrdinalIgnoreCase).ToArray();
+        var artists = artistGroups.Select(StatsArtist)
             .OrderByDescending(item => item.PlayCount).ThenBy(item => item.Artist, StringComparer.Ordinal).Take(TopLimit).ToArray();
         var albums = plays.Where(item => !string.IsNullOrWhiteSpace(item.Album) && !string.IsNullOrWhiteSpace(item.AlbumArtist ?? item.Artist))
             .GroupBy(item => (Album: Normalize(item.Album!), Artist: Normalize(item.AlbumArtist ?? item.Artist!)))
@@ -240,13 +253,15 @@ public sealed class ListeningStatsService(IDbContextFactory<AllstarrDbContext> f
         var newArtistCount = 0L;
         if (period.From is { } since)
         {
-            var earlier = (await qualified.Where(item => (item.ListenedAt ?? item.StartedAt) < since && item.Artist != null).Select(item => item.Artist!).Distinct().ToListAsync(token))
-                .Select(item => item.Trim()).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var earlier = (await qualified.Where(item => (item.ListenedAt ?? item.StartedAt) < since && item.Artist != null)
+                .Select(item => new { item.TrackReference, item.CanonicalRecordingId, item.Artist }).Distinct().ToListAsync(token))
+                .SelectMany(item => credits.GetValueOrDefault((item.TrackReference, item.CanonicalRecordingId, item.Artist)) ?? [])
+                .Select(item => item.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
             if (earlier.Count > 0)
             {
                 var fresh = artistGroups.Where(group => !earlier.Contains(group.Key)).ToArray();
                 newArtistCount = fresh.Length;
-                newArtists = fresh.Select(group => new ListeningStatsArtist(group.Key, group.LongCount()))
+                newArtists = fresh.Select(StatsArtist)
                     .OrderByDescending(item => item.PlayCount).ThenBy(item => item.Artist, StringComparer.Ordinal).Take(12).ToArray();
             }
         }
@@ -272,9 +287,23 @@ public sealed class ListeningStatsService(IDbContextFactory<AllstarrDbContext> f
         };
     }
 
-    private static string ArtworkByName(string artist, string? title = null, string? album = null) =>
+    private static ListeningStatsArtist StatsArtist(IGrouping<string, ListeningArtist> group)
+    {
+        var ids = group.Select(item => item.Id).OfType<string>().Distinct(StringComparer.Ordinal).ToArray();
+        var native = ids.Where(id => !id.StartsWith("ext-", StringComparison.Ordinal)).ToArray();
+        var id = native.Length == 1 ? native[0] : ids.Length == 1 ? ids[0] : null;
+        return new(group.Key, group.LongCount())
+        {
+            Id = id,
+            ArtworkUrl = ArtworkByName(group.Key,
+            libraryArtistId: id != null && !id.StartsWith("ext-", StringComparison.Ordinal) ? id : null)
+        };
+    }
+
+    private static string ArtworkByName(string artist, string? title = null, string? album = null, string? libraryArtistId = null) =>
         $"/api/admin/stats/art?artist={Uri.EscapeDataString(artist)}" +
-        (title != null ? $"&title={Uri.EscapeDataString(title)}" : album != null ? $"&album={Uri.EscapeDataString(album)}" : "");
+        (title != null ? $"&title={Uri.EscapeDataString(title)}" : album != null ? $"&album={Uri.EscapeDataString(album)}" : "") +
+        (libraryArtistId == null ? "" : "&libraryArtistId=" + Uri.EscapeDataString(libraryArtistId));
 
     // A long span reads best by month, a short one by day.
     private static (string Unit, IReadOnlyList<ListeningStatsPoint> Points) Timeline(ListeningStatsPeriod period, TimeZoneInfo zone,

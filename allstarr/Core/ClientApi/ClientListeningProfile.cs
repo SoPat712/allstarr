@@ -1,10 +1,15 @@
+using System.Text.Json.Serialization;
 using allstarr.Core.Music;
 using allstarr.Core.Playback;
 
 namespace allstarr.Core.ClientApi;
 
-public sealed record ClientStatsArtist(string Name, long PlayCount, string? ArtworkUrl);
+public sealed record ClientStatsArtist(string Name, long PlayCount, string? ArtworkUrl)
+{
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string? Id { get; init; }
+}
 public sealed record ClientStatsAlbum(string Title, string Artist, long PlayCount, string? ArtworkUrl);
+public sealed record ClientPlayTrace(PlayTraceDetail Play, ItemDetailsProvider? Provider, string? ArtworkUrl);
 
 public sealed class ClientListeningStats(ListeningStats stats)
 {
@@ -34,11 +39,14 @@ public sealed class ClientListeningStats(ListeningStats stats)
     public IReadOnlyList<ClientStatsArtist> NewArtists { get; } = Artists(stats.NewArtists);
 
     private static ClientStatsArtist[] Artists(IReadOnlyList<ListeningStatsArtist> artists) => artists.Select(item =>
-        new ClientStatsArtist(item.Artist, item.PlayCount, Artwork(item.Artist))).ToArray();
+        new ClientStatsArtist(item.Artist, item.PlayCount, Artwork(item.Artist,
+            libraryArtistId: item.Id != null && !item.Id.StartsWith("ext-", StringComparison.Ordinal) ? item.Id : null))
+        { Id = item.Id }).ToArray();
 
-    private static string Artwork(string artist, string? title = null, string? album = null) =>
+    internal static string Artwork(string artist, string? title = null, string? album = null, string? libraryArtistId = null) =>
         "/allstarr/v1/me/stats/art?artist=" + Uri.EscapeDataString(artist) +
-        (title != null ? "&title=" + Uri.EscapeDataString(title) : album != null ? "&album=" + Uri.EscapeDataString(album) : "");
+        (title != null ? "&title=" + Uri.EscapeDataString(title) : album != null ? "&album=" + Uri.EscapeDataString(album) : "") +
+        (libraryArtistId == null ? "" : "&libraryArtistId=" + Uri.EscapeDataString(libraryArtistId));
 }
 
 public sealed record ClientTasteStrength(string Name, int Strength);

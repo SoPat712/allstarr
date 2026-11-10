@@ -214,6 +214,7 @@ public sealed partial class ListeningHistoryResolution(
         }
         checking = null;
         if (tags != null && matchedRecordings.Count > 0) await tags.EnqueuePendingAsync(token, matchedRecordings);
+        if (taste != null && matchedRecordings.Count > 0) await taste.RememberPlaybackAsync(user.Id, token);
         if (matchedRecordings.Count > 0) await mixes.RefreshAfterHistoryResolutionAsync(user.Id, execution.Claim.JobId, jobs, token);
         var summary = JsonSerializer.Serialize(reasons);
         logger?.LogInformation("History resolution {JobId}: reasons {Reasons}; matched by tier {MatchedByTier}; HTTP calls {HttpCalls}",

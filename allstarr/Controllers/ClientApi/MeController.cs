@@ -1,3 +1,4 @@
+using System.ComponentModel.DataAnnotations;
 using allstarr.Core.ClientApi;
 using allstarr.Core.Music;
 using allstarr.Core.Playback;
@@ -7,8 +8,18 @@ namespace allstarr.Controllers.ClientApi;
 
 [Route("allstarr/v1/me")]
 public sealed class MeController(ListeningStatsService stats, TasteService taste, SoundProfileService sound,
-    RecapArtworkReader artwork) : ClientApiControllerBase
+    RecapArtworkReader artwork, ClientListeningHistory history) : ClientApiControllerBase
 {
+    [HttpGet("history")]
+    [EndpointName("getMyHistory")]
+    [ProducesResponseType<ClientHistoryPage>(200)]
+    public async Task<ActionResult<ClientHistoryPage>> History([FromQuery, Range(1, 200)] int limit = 50, [FromQuery] string? before = null)
+    {
+        Response.Headers.CacheControl = "private, no-store";
+        try { return Ok(await history.ReadAsync(Execution, limit, before)); }
+        catch (ArgumentException) { return BadRequest(); }
+    }
+
     [HttpGet("stats")]
     [EndpointName("getMyStats")]
     [ProducesResponseType<ClientListeningStats>(200)]
@@ -29,12 +40,12 @@ public sealed class MeController(ListeningStatsService stats, TasteService taste
     [ProducesResponseType(typeof(byte[]), 200, "image/png", "image/jpeg", "image/webp", "image/gif", "image/avif")]
     [ProducesResponseType(204)]
     public async Task<IActionResult> Art([FromQuery] string? artist, [FromQuery] string? title = null,
-        [FromQuery] string? album = null, CancellationToken token = default)
+        [FromQuery] string? album = null, CancellationToken token = default, [FromQuery] string? libraryArtistId = null)
     {
         if (string.IsNullOrWhiteSpace(artist)) return BadRequest();
         try
         {
-            var asset = await artwork.ReadAsync(Execution, artist, title, album, token);
+            var asset = await artwork.ReadAsync(Execution, artist, title, album, token, libraryArtistId);
             Response.Headers.CacheControl = asset != null ? "private, max-age=604800" : "private, max-age=3600";
             return asset != null ? File(asset.Bytes, asset.ContentType) : NoContent();
         }
@@ -50,7 +61,7 @@ public sealed class MeController(ListeningStatsService stats, TasteService taste
         Response.Headers.CacheControl = "private, no-store";
         try
         {
-            var profile = await taste.GetAsync(Execution.Principal!.UserId, token);
+            var profile = await taste.GetCachedAsync(Execution.Principal!.UserId, token);
             return Ok(new ClientTasteProfile(ClientTasteLayer.From(profile.Lately), ClientTasteLayer.From(profile.Usually),
                 profile.LatelyWeight, profile.Paused, profile.UseImportedHistory, profile.Nudges));
         }

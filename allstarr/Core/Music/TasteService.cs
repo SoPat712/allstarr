@@ -37,9 +37,11 @@ internal sealed class TasteDocument
     public Dictionary<Guid, DateTimeOffset> Plays { get; set; } = [];
     public Dictionary<string, TastePlaybackLearning> PlaybackLearning { get; set; } = [];
     public Dictionary<string, TasteOccurrence> Occurrences { get; set; } = [];
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public TasteProfileSnapshot? Snapshot { get; set; }
 }
 
-public sealed partial class TasteService(IDbContextFactory<AllstarrDbContext> factory, SharedTagStore tags, IPlatformClock clock, allstarr.Core.Jobs.DurableJobQueue? jobs = null)
+public sealed partial class TasteService(IDbContextFactory<AllstarrDbContext> factory, SharedTagStore tags, IPlatformClock clock,
+    allstarr.Core.Jobs.DurableJobQueue? jobs = null, ILogger<TasteService>? logger = null)
 {
     public static readonly TimeSpan LatelyHalfLife = TimeSpan.FromHours(6);
     // Live preferences halve over 30 days as listening changes.
@@ -100,7 +102,9 @@ public sealed partial class TasteService(IDbContextFactory<AllstarrDbContext> fa
                 await AddListeningHistoryAsync(db, user, document, token,
                     history?.Count(item => item.State is ListeningEventState.Completed or ListeningEventState.Skipped) == plays ? history : null);
             document.Scales = Scales(document);
-            loaded[user] = new(revision, plays, tagChanges, clock.UtcNow, document);
+            var result = new LoadedTaste(revision, plays, tagChanges, clock.UtcNow, document);
+            await StoreProfileAsync(user, result, token);
+            loaded[user] = result;
             return document;
         }
         finally { gate.Release(); }
@@ -121,6 +125,7 @@ public sealed partial class TasteService(IDbContextFactory<AllstarrDbContext> fa
 
     private async Task ChangeAsync(Guid user, Action<TasteDocument> change, CancellationToken token)
     {
+        var refresh = false;
         await writes.WaitAsync(token);
         try
         {
@@ -128,6 +133,7 @@ public sealed partial class TasteService(IDbContextFactory<AllstarrDbContext> fa
             await RequireUser(db, user, token);
             var row = await db.TasteProfiles.SingleOrDefaultAsync(item => item.OwnerUserId == user, token);
             var document = Read(row);
+            refresh = document.Snapshot != null;
             await RememberPlaybackAsync(db, user, document, token);
             Prune(document);
             change(document);
@@ -137,11 +143,13 @@ public sealed partial class TasteService(IDbContextFactory<AllstarrDbContext> fa
             await db.SaveChangesAsync(token);
         }
         finally { writes.Release(); }
+        if (refresh) _ = RefreshProfileAsync(user);
     }
 
-    public async Task<TasteProfile> GetAsync(Guid user, CancellationToken token = default)
+    public async Task<TasteProfile> GetAsync(Guid user, CancellationToken token = default) => Profile(await LoadAsync(user, token));
+
+    private TasteProfile Profile(TasteDocument document)
     {
-        var document = await LoadAsync(user, token);
         TasteLayer Layer(bool lately)
         {
             TasteStrength[] Top(string kind)

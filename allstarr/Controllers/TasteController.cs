@@ -20,7 +20,7 @@ public sealed class TasteController(TasteService taste, IDbContextFactory<Allsta
         new { profile = sound == null ? null : await sound.GetAsync(user, token) });
 
     [HttpGet]
-    public Task<IActionResult> Get(CancellationToken token) => ExecuteAsync(async user => await taste.GetAsync(user, token));
+    public Task<IActionResult> Get(CancellationToken token) => ExecuteAsync(async user => await taste.GetCachedAsync(user, token));
 
     [HttpPut("nudge")]
     public Task<IActionResult> PutNudge([FromBody] TasteNudgeRequest request, CancellationToken token) => ExecuteAsync(async user =>

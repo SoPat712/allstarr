@@ -161,6 +161,12 @@ public sealed partial class ProtocolRouteFixtureTests
     [InlineData("stats/art?artist=Artist")]
     [InlineData("taste")]
     [InlineData("sound")]
+    [InlineData("history")]
+    [InlineData("plays")]
+    [InlineData("plays/00000000-0000-0000-0000-000000000001")]
+    [InlineData("history/imports")]
+    [InlineData("history/imports/00000000-0000-0000-0000-000000000001")]
+    [InlineData("history/imports/recheck")]
     public async Task ClientApi_MeRequiresAListenerAndTheMusicPort(string path)
     {
         using var factory = ClientMeFactory();
@@ -279,7 +285,7 @@ public sealed partial class ProtocolRouteFixtureTests
     [Theory]
     [InlineData("title=Song", 8, 0, 0)]
     [InlineData("album=Album", 0, 8, 0)]
-    [InlineData("", 0, 0, 5)]
+    [InlineData("", 0, 0, 0)]
     public async Task ClientApi_MeStatsArtworkUsesThePersonalScopeAndMusicOrigin(string query, int songs, int albums, int artists)
     {
         var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
@@ -316,7 +322,8 @@ public sealed partial class ProtocolRouteFixtureTests
             Assert.True(response.Headers.CacheControl?.Private);
             Assert.Equal(listener.Owner, owners.Last());
             Assert.All(scopes, context => Assert.False(context.Principal!.IsAdministrator));
-            Assert.Equal(listener.Owner, scopes.Last().Principal!.UserId);
+            if (query.Length > 0) Assert.Equal(listener.Owner, scopes.Last().Principal!.UserId);
+            else Assert.Empty(scopes);
         }
         using var dashboardPort = await client.GetAsync("http://localhost:5275/allstarr/v1/me/stats/art?artist=Own%20artist");
         await AssertClientApiError(dashboardPort, 404, "not_found");

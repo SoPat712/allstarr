@@ -1453,6 +1453,553 @@
         }
       }
     },
+    "/allstarr/v1/me/plays": {
+      "get": {
+        "tags": [
+          "MeActivity"
+        ],
+        "operationId": "getMyPlays",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "default": 50
+            }
+          },
+          {
+            "name": "before",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ClientPlayTrace"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/allstarr/v1/me/plays/{id}": {
+      "get": {
+        "tags": [
+          "MeActivity"
+        ],
+        "operationId": "getMyPlay",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientPlayTrace"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/allstarr/v1/me/history/imports": {
+      "get": {
+        "tags": [
+          "MeActivity"
+        ],
+        "operationId": "getMyHistoryImports",
+        "responses": {
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ListeningHistoryImportPreviewResult"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/allstarr/v1/me/history/imports/{id}": {
+      "get": {
+        "tags": [
+          "MeActivity"
+        ],
+        "operationId": "getMyHistoryImport",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListeningHistoryImportPreviewResult"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/allstarr/v1/me/history/imports/recheck": {
+      "get": {
+        "tags": [
+          "MeActivity"
+        ],
+        "operationId": "getMyHistoryRecheck",
+        "responses": {
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HistoryRecheck"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/allstarr/v1/me/history": {
+      "get": {
+        "tags": [
+          "Me"
+        ],
+        "operationId": "getMyHistory",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "maximum": 200,
+              "minimum": 1,
+              "type": "integer",
+              "format": "int32",
+              "default": 50
+            }
+          },
+          {
+            "name": "before",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientHistoryPage"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/allstarr/v1/me/stats": {
       "get": {
         "tags": [
@@ -1580,6 +2127,13 @@
           },
           {
             "name": "album",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "libraryArtistId",
             "in": "query",
             "schema": {
               "type": "string"
@@ -2921,6 +3475,31 @@
           },
           "library": {
             "$ref": "#/components/schemas/ItemDetailsProvider"
+          },
+          "dashboard": {
+            "type": [
+              "null",
+              "object"
+            ],
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ClientDashboard"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "ClientDashboard": {
+        "required": [
+          "url"
+        ],
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string"
           }
         }
       },
@@ -2980,6 +3559,108 @@
           },
           "taste": {
             "type": "boolean"
+          },
+          "dashboardLink": {
+            "type": "boolean"
+          },
+          "history": {
+            "type": "boolean"
+          },
+          "playCounts": {
+            "type": "boolean"
+          },
+          "sound": {
+            "type": "boolean"
+          },
+          "playActivity": {
+            "type": "boolean"
+          },
+          "historyImports": {
+            "type": "boolean"
+          },
+          "historyRecheck": {
+            "type": "boolean"
+          }
+        }
+      },
+      "ClientHistoryPage": {
+        "required": [
+          "plays",
+          "next"
+        ],
+        "type": "object",
+        "properties": {
+          "plays": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ClientHistoryPlay"
+            }
+          },
+          "next": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
+      "ClientHistoryPlay": {
+        "required": [
+          "itemId",
+          "title",
+          "artist",
+          "album",
+          "durationMs",
+          "artworkUrl",
+          "playedAt",
+          "isExternal",
+          "provider"
+        ],
+        "type": "object",
+        "properties": {
+          "itemId": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "artist": {
+            "type": "string"
+          },
+          "album": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "durationMs": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int64"
+          },
+          "artworkUrl": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "playedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "isExternal": {
+            "type": "boolean"
+          },
+          "provider": {
+            "type": [
+              "null",
+              "string"
+            ]
           }
         }
       },
@@ -3810,6 +4491,39 @@
           }
         }
       },
+      "ClientPlayTrace": {
+        "required": [
+          "play",
+          "provider",
+          "artworkUrl"
+        ],
+        "type": "object",
+        "properties": {
+          "play": {
+            "$ref": "#/components/schemas/PlayTraceDetail"
+          },
+          "provider": {
+            "type": [
+              "null",
+              "object"
+            ],
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ItemDetailsProvider"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "artworkUrl": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
       "ClientRelease": {
         "required": [
           "releaseId",
@@ -4049,6 +4763,12 @@
               "null",
               "string"
             ]
+          },
+          "id": {
+            "type": [
+              "null",
+              "string"
+            ]
           }
         }
       },
@@ -4153,6 +4873,97 @@
         },
         "additionalProperties": false
       },
+      "HistoryRecheck": {
+        "required": [
+          "songs",
+          "unchecked",
+          "doubtful",
+          "doubtfulPlays",
+          "examples"
+        ],
+        "type": "object",
+        "properties": {
+          "songs": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "unchecked": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "doubtful": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "doubtfulPlays": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "examples": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HistoryRecheckSong"
+            }
+          }
+        }
+      },
+      "HistoryRecheckSong": {
+        "required": [
+          "recordingId",
+          "title",
+          "artist",
+          "album",
+          "matchedTitle",
+          "matchedArtist",
+          "matchedAlbum",
+          "verdict",
+          "plays"
+        ],
+        "type": "object",
+        "properties": {
+          "recordingId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "title": {
+            "type": "string"
+          },
+          "artist": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "album": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "matchedTitle": {
+            "type": "string"
+          },
+          "matchedArtist": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "matchedAlbum": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "verdict": {
+            "type": "string"
+          },
+          "plays": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
       "ItemDetails": {
         "required": [
           "id",
@@ -4243,6 +5054,20 @@
           },
           "lyrics": {
             "$ref": "#/components/schemas/ItemDetailsLyrics"
+          },
+          "playCount": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int64"
+          },
+          "lastPlayedAt": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "date-time"
           }
         }
       },
@@ -4415,6 +5240,221 @@
             }
           }
         }
+      },
+      "ListeningHistoryImportPreview": {
+        "required": [
+          "format",
+          "fileRows",
+          "musicRows",
+          "completed",
+          "partial",
+          "skipped",
+          "episodes",
+          "nonTrack",
+          "malformed",
+          "duplicateInFile",
+          "duplicateExisting",
+          "newRows",
+          "resolvedNewRows",
+          "unresolvedNewRows",
+          "rowsWithoutProviderIdentity",
+          "sourceUserCount",
+          "estimatedMusicBrainzLookups",
+          "earliest",
+          "latest",
+          "reasonCounts"
+        ],
+        "type": "object",
+        "properties": {
+          "format": {
+            "type": "string"
+          },
+          "fileRows": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "musicRows": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "completed": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "partial": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "skipped": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "episodes": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "nonTrack": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "malformed": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "duplicateInFile": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "duplicateExisting": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "newRows": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "resolvedNewRows": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "unresolvedNewRows": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "rowsWithoutProviderIdentity": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "sourceUserCount": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "estimatedMusicBrainzLookups": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "earliest": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "date-time"
+          },
+          "latest": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "date-time"
+          },
+          "reasonCounts": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          "outsideRetentionRows": {
+            "type": "integer",
+            "format": "int64",
+            "default": 0
+          },
+          "songs": {
+            "type": "integer",
+            "format": "int32",
+            "default": 0
+          }
+        }
+      },
+      "ListeningHistoryImportPreviewResult": {
+        "required": [
+          "importId",
+          "revision",
+          "displayFileName",
+          "sizeBytes",
+          "expiresAt",
+          "state",
+          "jobId",
+          "jobState",
+          "lastErrorCode",
+          "lastErrorMessage",
+          "importedRows",
+          "duplicateRows",
+          "resolvedRows",
+          "unresolvedRows",
+          "preview"
+        ],
+        "type": "object",
+        "properties": {
+          "importId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "revision": {
+            "type": "string"
+          },
+          "displayFileName": {
+            "type": "string"
+          },
+          "sizeBytes": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "state": {
+            "$ref": "#/components/schemas/ListeningHistoryImportState"
+          },
+          "jobId": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "uuid"
+          },
+          "jobState": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "lastErrorCode": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "lastErrorMessage": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "importedRows": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "duplicateRows": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "resolvedRows": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "unresolvedRows": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "preview": {
+            "$ref": "#/components/schemas/ListeningHistoryImportPreview"
+          }
+        }
+      },
+      "ListeningHistoryImportState": {
+        "type": "integer"
       },
       "ListeningStatsCoverage": {
         "required": [
@@ -4711,6 +5751,436 @@
           }
         }
       },
+      "PlaybackStartPhase": {
+        "enum": [
+          "Route",
+          "Account",
+          "Lease",
+          "Source",
+          "Verify",
+          "Retry",
+          "Segments",
+          "Process",
+          "Headers",
+          "FirstByte",
+          "Preparation",
+          "Kept",
+          "Match"
+        ],
+        "type": "string"
+      },
+      "PlaybackStartPhaseTiming": {
+        "required": [
+          "phase",
+          "provider",
+          "startedMs",
+          "elapsedMs"
+        ],
+        "type": "object",
+        "properties": {
+          "phase": {
+            "$ref": "#/components/schemas/PlaybackStartPhase"
+          },
+          "provider": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "startedMs": {
+            "type": "number",
+            "format": "double"
+          },
+          "elapsedMs": {
+            "type": "number",
+            "format": "double"
+          }
+        }
+      },
+      "PlayTraceDelivery": {
+        "required": [
+          "maxBitrate",
+          "maxSampleRate",
+          "maxChannels",
+          "maxBitDepth",
+          "converted",
+          "container",
+          "codec",
+          "startTimeTicks",
+          "containers",
+          "codecs"
+        ],
+        "type": "object",
+        "properties": {
+          "maxBitrate": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int64"
+          },
+          "maxSampleRate": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int32"
+          },
+          "maxChannels": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int32"
+          },
+          "maxBitDepth": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int32"
+          },
+          "converted": {
+            "type": "boolean"
+          },
+          "container": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "codec": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "startTimeTicks": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "containers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "codecs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "output": {
+            "type": [
+              "null",
+              "object"
+            ],
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProviderMediaFormat"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "PlayTraceDetail": {
+        "required": [
+          "id",
+          "startedAt",
+          "outcome",
+          "request",
+          "resolution",
+          "received",
+          "delivery",
+          "differences",
+          "timing"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "startedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "outcome": {
+            "type": "string"
+          },
+          "request": {
+            "$ref": "#/components/schemas/PlayTraceRequest"
+          },
+          "resolution": {
+            "$ref": "#/components/schemas/PlayTraceResolution"
+          },
+          "received": {
+            "type": [
+              "null",
+              "object"
+            ],
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TrackMediaFacts"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "delivery": {
+            "type": [
+              "null",
+              "object"
+            ],
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PlayTraceDelivery"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "differences": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "timing": {
+            "$ref": "#/components/schemas/PlayTraceTiming"
+          },
+          "listenerId": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "uuid"
+          }
+        }
+      },
+      "PlayTraceMetadata": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "artist": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "album": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "durationMilliseconds": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int64"
+          },
+          "artwork": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "isExplicit": {
+            "type": [
+              "null",
+              "boolean"
+            ]
+          }
+        }
+      },
+      "PlayTraceRequest": {
+        "required": [
+          "protocol",
+          "itemId",
+          "client",
+          "device",
+          "presented"
+        ],
+        "type": "object",
+        "properties": {
+          "protocol": {
+            "type": "string"
+          },
+          "itemId": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "client": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "device": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "presented": {
+            "$ref": "#/components/schemas/PlayTraceMetadata"
+          }
+        }
+      },
+      "PlayTraceResolution": {
+        "type": "object",
+        "properties": {
+          "canonicalRecordingId": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "uuid"
+          },
+          "externalSnapshotId": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "uuid"
+          },
+          "decisionId": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "uuid"
+          },
+          "state": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "score": {
+            "type": [
+              "null",
+              "number"
+            ],
+            "format": "double"
+          },
+          "authorityScope": {
+            "type": "string",
+            "default": "automatic"
+          },
+          "provider": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "route": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "accountLabel": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "cached": {
+            "type": [
+              "null",
+              "boolean"
+            ]
+          },
+          "quality": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "authorityId": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "uuid"
+          },
+          "authorityRevision": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int64"
+          },
+          "authorityKind": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "externalId": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
+      "PlayTraceTiming": {
+        "required": [
+          "elapsedMs",
+          "headersMs",
+          "firstByteMs",
+          "phases",
+          "omittedPhases"
+        ],
+        "type": "object",
+        "properties": {
+          "elapsedMs": {
+            "type": "number",
+            "format": "double"
+          },
+          "headersMs": {
+            "type": [
+              "null",
+              "number"
+            ],
+            "format": "double"
+          },
+          "firstByteMs": {
+            "type": [
+              "null",
+              "number"
+            ],
+            "format": "double"
+          },
+          "phases": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PlaybackStartPhaseTiming"
+            }
+          },
+          "omittedPhases": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
       "ProblemDetails": {
         "type": "object",
         "properties": {
@@ -4744,6 +6214,86 @@
               "null",
               "string"
             ]
+          }
+        }
+      },
+      "ProviderMediaFormat": {
+        "required": [
+          "mimeType",
+          "container",
+          "codec"
+        ],
+        "type": "object",
+        "properties": {
+          "mimeType": {
+            "type": "string"
+          },
+          "container": {
+            "type": "string"
+          },
+          "codec": {
+            "type": "string"
+          },
+          "bitrate": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int32"
+          },
+          "sampleRate": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int32"
+          },
+          "bitDepth": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int32"
+          },
+          "channels": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int32"
+          }
+        }
+      },
+      "ProviderReplayGain": {
+        "type": "object",
+        "properties": {
+          "trackGain": {
+            "type": [
+              "null",
+              "number"
+            ],
+            "format": "double"
+          },
+          "albumGain": {
+            "type": [
+              "null",
+              "number"
+            ],
+            "format": "double"
+          },
+          "trackPeak": {
+            "type": [
+              "null",
+              "number"
+            ],
+            "format": "double"
+          },
+          "albumPeak": {
+            "type": [
+              "null",
+              "number"
+            ],
+            "format": "double"
           }
         }
       },
@@ -4999,6 +6549,94 @@
             "format": "date-time"
           }
         }
+      },
+      "TrackAudioTags": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "artist": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "album": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "isrc": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "isExplicit": {
+            "type": [
+              "null",
+              "boolean"
+            ]
+          }
+        }
+      },
+      "TrackMediaFacts": {
+        "required": [
+          "media"
+        ],
+        "type": "object",
+        "properties": {
+          "media": {
+            "$ref": "#/components/schemas/ProviderMediaFormat"
+          },
+          "size": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int64"
+          },
+          "durationSeconds": {
+            "type": [
+              "null",
+              "number"
+            ],
+            "format": "double"
+          },
+          "replayGain": {
+            "type": [
+              "null",
+              "object"
+            ],
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProviderReplayGain"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tags": {
+            "type": [
+              "null",
+              "object"
+            ],
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TrackAudioTags"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
       }
     }
   },
@@ -5026,6 +6664,9 @@
     },
     {
       "name": "LyricsSearch"
+    },
+    {
+      "name": "MeActivity"
     },
     {
       "name": "Me"

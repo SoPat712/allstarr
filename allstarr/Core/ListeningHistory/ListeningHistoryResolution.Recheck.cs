@@ -23,6 +23,17 @@ public sealed partial class ListeningHistoryResolution
         var context = new ProtocolExecutionContext(Enum.Parse<ProtocolKind>(user.BackendType, true), user.BackendInstanceId,
             user.BackendPrincipalId, new(user.Id, user.BackendType, user.BackendInstanceId, user.BackendPrincipalId, user.DisplayName, user.IsAdmin),
             "history-recheck", clock.UtcNow.AddMinutes(10), token);
+        return await RecheckAsync(db, scope, context, token);
+    }
+
+    public async Task<HistoryRecheck> RecheckAsync(ProtocolExecutionContext context, CancellationToken token)
+    {
+        await using var db = await factory.CreateDbContextAsync(token);
+        return await RecheckAsync(db, new(context.Principal!.UserId, context.Protocol.ToString().ToLowerInvariant(), context.BackendInstanceId), context, token);
+    }
+
+    private async Task<HistoryRecheck> RecheckAsync(AllstarrDbContext db, IntelligenceScope scope, ProtocolExecutionContext context, CancellationToken token)
+    {
         var access = await libraryAccess.ResolveAsync(context, token);
         if (!access.Succeeded) throw new UnauthorizedAccessException();
         var tracks = await LibraryTrackAccess.Query(db, context, access).ToArrayAsync(token);
@@ -36,7 +47,7 @@ public sealed partial class ListeningHistoryResolution
             .GroupBy(item => new { item.CanonicalRecordingId, item.Title, item.Artist, item.Album, item.DurationMilliseconds, item.Isrc, item.ProviderTrackReference })
             .Select(group => new { group.Key, Plays = group.Count() })
             .ToArrayAsync(token);
-        var matchScope = new TrackMatchScope(user.Id, user.BackendInstanceId, null, 2, 1, access.LibraryIds.ToHashSet());
+        var matchScope = new TrackMatchScope(context.Principal!.UserId, context.BackendInstanceId, null, 2, 1, access.LibraryIds.ToHashSet());
         var unread = 0;
         var doubtful = new List<HistoryRecheckSong>();
         foreach (var song in matched)

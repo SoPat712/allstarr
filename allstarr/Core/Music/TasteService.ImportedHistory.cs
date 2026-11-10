@@ -1,3 +1,4 @@
+using allstarr.Core.Enrichment;
 using allstarr.Core.Intelligence;
 using allstarr.Core.Storage;
 using allstarr.Models.Domain;
@@ -74,7 +75,10 @@ public sealed partial class TasteService
                     offsets[key] = import.CompletedAt.Value - last.At;
             }
         }
-        var profiles = history == null ? null : await tags.GetTags(history.Select(item => item.CanonicalRecordingId).OfType<Guid>().Distinct().ToArray(), token);
+        var recordingIds = history == null
+            ? await events.Where(item => item.CanonicalRecordingId != null).Select(item => item.CanonicalRecordingId!.Value).Distinct().ToArrayAsync(token)
+            : history.Select(item => item.CanonicalRecordingId).OfType<Guid>().Distinct().ToArray();
+        var profiles = recordingIds.Length == 0 ? new Dictionary<Guid, SharedSongTags>() : await tags.GetTags(recordingIds, token);
         var batch = new List<ListeningEventRecord>(500);
         await foreach (var item in (history == null ? events.AsAsyncEnumerable() : Captured()).WithCancellation(token))
         {
@@ -97,7 +101,7 @@ public sealed partial class TasteService
         {
             if (batch.Count == 0) return;
             var songs = batch.Select(item => new Song { CanonicalRecordingId = item.CanonicalRecordingId, Artist = item.Artist ?? "" }).ToArray();
-            var features = profiles == null ? await FeaturesAsync(songs, token) : Features(songs, profiles);
+            var features = Features(songs, profiles);
             for (var index = 0; index < batch.Count; index++)
             {
                 var item = batch[index];

@@ -24,9 +24,13 @@ when a Subsonic-compatible server identifies itself as Navidrome, or `subsonic` 
 before using optional routes.
 `titleMarkers`, `itemDetails`, `playback`, `lyricsRich`, `lyricsSources`, `lyricsVersions`,
 `fixesMatch`, `reports`, `mixes`, `releases`, `follow`, `events`, `appearances`,
-`similarAlbums`, and `playlistKinds` are available. `stats` and `taste` are true
-when their respective services are registered;
-the other flags remain false until supported.
+`similarAlbums`, `playlistKinds`, `history`, and `playCounts` are available.
+`stats`, `taste`, `sound`, `playActivity`, `historyImports`, and `historyRecheck`
+are true when their respective services are registered. `dashboardLink` is false.
+When `Admin:Oidc:PublicUrl` is configured, capabilities also includes
+`dashboard: {url}` with that public control-panel address, including its base
+path. The app can open it in a browser for normal sign-in. The object is omitted
+when no public address is configured; no signed-in link is provided.
 The version in the path identifies the contract. Compatible additions stay
 within v1; incompatible changes use a new path version.
 
@@ -56,7 +60,7 @@ values use the server's time zone. Calendar windows include their start and
 exclude their end.
 
 Song items have `{title,artist,album,playCount,artworkUrl}`; artist items have
-`{name,playCount,artworkUrl}`; album items have
+`{name,playCount,artworkUrl,id?}`; album items have
 `{title,artist,playCount,artworkUrl}`. Artwork URLs point to the music listener's
 `GET /allstarr/v1/me/stats/art?artist=&title=|album=` route. Omit both `title`
 and `album` for an artist photo. Send the Jellyfin token on image requests too.
@@ -64,11 +68,30 @@ The route uses the dashboard's artwork lookup and listener-scoped cache;
 missing artwork returns 204. Images use private seven-day caching, and missing
 images use private one-hour caching.
 
+Artist totals count each credited artist individually. Structured library
+`ArtistItems`, owned service-song credits and stored import enrichment take
+precedence over display text. Without structured credits, only `, `, ` & `,
+` feat. `, ` ft. ` and ` x ` separate names. Known single artist names, including
+`Tyler, The Creator`, stay intact. An artist's optional `id` is a known library
+artist ID or a service artist ID from verified stored credits; unknown IDs are
+omitted.
+
+Artist pictures use the artist identity from an accessible played library
+track first, then a verified artist index when available, then a cover from
+the listener's own plays. This server has no artist index, so that middle step
+is skipped. Artist-name searches are never used for these pictures. The app
+should use the supplied `artworkUrl`, which can include `libraryArtistId`.
+
 `GET /allstarr/v1/me/taste` returns
 `{lately:{tags,artists},usually:{tags,artists},latelyWeight,paused,useImportedHistory,nudges}`.
 Each tag or artist is `{name,strength}`, with strength from 0 to 100. Nudges are
 `{kind,name,mode,expiresAt}`; `expiresAt` is null for an ongoing nudge. This route
 reads the listener's existing taste profile and settings.
+The route returns the last computed profile, including after a restart, while
+refreshing changed or expired inputs in the background. It shares this behavior
+with the dashboard. Nudges and learning settings reflect the current saved
+values; learned layers can briefly be stale. Before a first full computation,
+the route returns the saved live learning while building the full profile.
 
 `GET /allstarr/v1/me/sound` returns
 `{songs,skippedSongs,librarySongs,traits,tempo,libraryTempo,at}`. Traits are
@@ -79,8 +102,45 @@ songs with analysis and 20 other analyzed library songs; insufficient history
 or unavailable analysis returns 404 `not_found`. Apps can show an empty state
 until a profile is available.
 
-Stats, taste and sound are always personal, including for administrator tokens,
-and use `Cache-Control: private, no-store` for JSON responses.
+`GET /allstarr/v1/me/history?limit=50&before=` returns `{plays,next?}`. `limit`
+must be between 1 and 200. Plays are newest first, with a stable order when
+timestamps match. Pass the opaque `next` value unchanged as `before` to read
+older plays; `next` is omitted at the end. Invalid paging returns 400.
+Each play has `{itemId,title,artist,album,durationMs,artworkUrl,playedAt,isExternal,provider}`.
+`playedAt` is an ISO 8601 timestamp. Unknown metadata is null, except unknown
+title or artist text is empty. Artwork uses the same authenticated, same-origin
+`/me/stats/art` route as stats. A known local library copy uses its native
+Jellyfin item ID; otherwise a recording with an eligible enabled provider route
+uses its `ext-` recording ID. Imported plays without a playable item have
+`itemId: null`. Imports are included regardless of the taste imported-history
+setting. Counts and history use the stats rule: completed plays, or stopped
+plays that reached 30 seconds. Artist/album IDs and album/playlist/mix context
+are omitted because the listening records do not retain those references.
+
+`GET /allstarr/v1/me/plays?limit=50&before=` returns the dashboard's recent
+Activity plays as an array of `{play,provider,artworkUrl}`. `play` contains the existing
+play-trace fields: `id`, `startedAt`, `outcome`, `request`, `resolution`,
+`received`, `delivery`, `differences`, `timing`, and `listenerId`. The timing
+includes start phases; received/delivery data describes the recorded audio.
+`provider` supplies display metadata and authenticated icon URLs when known;
+library plays use `capabilities.library`. `artworkUrl` uses `/me/stats/art`.
+The service clamps `limit` to 1..100. Use the last play's `id` as `before`;
+an empty array ends paging. Traces follow the dashboard's existing seven-day,
+500-sample retention, so they are separate from durable listening history.
+`GET /allstarr/v1/me/plays/{id}` returns one `{play,provider,artworkUrl}` detail; the app
+can also derive the dashboard's copied diagnostics from that detail. Missing,
+expired or another listener's IDs return 404, including paging references.
+
+The Recap import-status panels are available through
+`GET /allstarr/v1/me/history/imports` (up to 50 recent imports),
+`GET /allstarr/v1/me/history/imports/{id}` (one import), and
+`GET /allstarr/v1/me/history/imports/recheck` (stored match-quality summary).
+They reuse the dashboard's preview/progress and recheck schemas. Another
+listener's import ID returns 404. Reading an expired preview leaves its state
+unchanged. Upload, confirm, delete, unmatch and all other writes are unavailable.
+
+All `/me` reads are personal, including for administrator tokens, and use
+`Cache-Control: private, no-store` for JSON responses.
 
 Browser clients may send `X-Allstarr-*` headers. Responses expose
 `X-Allstarr-Playback-Request` through CORS.
@@ -133,6 +193,14 @@ Every item includes all of these fields, with `null` for unknown values:
 | `keep` | `{state,progress}`. State is `none`, `inProgress`, `kept`, or `failed`; progress is null when no measurement is stored. |
 | `match` | Effective `{state,confidence,authority}`, or `null`. Authority is `automatic`, `household`, or `personal`, with personal choices taking precedence. |
 | `lyrics` | Stored `{available,format,source}`. Format is `word`, `line`, `plain`, or `null`. |
+
+Song details additionally expose optional `playCount` and `lastPlayedAt` for
+the signed-in listener, including imports and plays of the same recording
+through other item IDs. Unplayed songs have `playCount: 0` and omit
+`lastPlayedAt`. These values come from Allstarr's listening records, including
+recording and indexed-library links, rather than Jellyfin's user play counts.
+Unresolved imports without such a link cannot be assigned to an item. Album
+and artist details omit both fields.
 
 `provider` is always present for library items in details, mix items, local match
 candidates and the current local match, and playback facts. Apps must keep using

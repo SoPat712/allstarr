@@ -16,7 +16,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Tests;
 
-public sealed class TasteServiceTests
+public sealed partial class TasteServiceTests
 {
     [Fact]
     public void Decay_HalvesAtTheDocumentedIntervals()
@@ -593,6 +593,7 @@ public sealed class TasteServiceTests
     }
     private sealed class Factory(DbContextOptions<AllstarrDbContext> options) : IDbContextFactory<AllstarrDbContext>
     {
+        public DbContextOptions<AllstarrDbContext> Options => options;
         public AllstarrDbContext CreateDbContext() => new(options);
         public Task<AllstarrDbContext> CreateDbContextAsync(CancellationToken cancellationToken = default) => Task.FromResult(CreateDbContext());
     }

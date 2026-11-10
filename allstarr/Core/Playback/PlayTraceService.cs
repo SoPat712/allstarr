@@ -21,6 +21,18 @@ public sealed class PlayTraceService(IDbContextFactory<AllstarrDbContext> factor
         await reports.RequireSessionAsync(session, token);
         await using var db = await factory.CreateDbContextAsync(token);
         var query = Visible(db, session);
+        return await ListAsync(query, limit, before, await CleanOnlyAsync(session, token), token);
+    }
+
+    public async Task<IReadOnlyList<PlayTraceDetail>> ListAsync(ProtocolExecutionContext context, int limit, CancellationToken token, Guid? before = null)
+    {
+        await using var db = await factory.CreateDbContextAsync(token);
+        return await ListAsync(Visible(db, context), limit, before, await CleanOnlyAsync(context, token), token);
+    }
+
+    private static async Task<IReadOnlyList<PlayTraceDetail>> ListAsync(IQueryable<AuditEventRecord> query, int limit,
+        Guid? before, bool cleanOnly, CancellationToken token)
+    {
         if (before.HasValue)
         {
             var previous = await query.SingleOrDefaultAsync(item => item.Id == before.Value, token) ?? throw ProblemReportException.Missing();
@@ -29,8 +41,23 @@ public sealed class PlayTraceService(IDbContextFactory<AllstarrDbContext> factor
         var rows = await query.OrderByDescending(item => item.CreatedAt).ThenByDescending(item => item.Id)
             .Take(Math.Clamp(limit, 1, 100)).ToArrayAsync(token);
         var traces = rows.Select(Read).OfType<PlayTraceDetail>().ToArray();
-        return await CleanOnlyAsync(session, token) ? traces.Where(IsClean).ToArray() : traces;
+        return cleanOnly ? traces.Where(IsClean).ToArray() : traces;
     }
+
+    public async Task<PlayTraceDetail> DetailAsync(ProtocolExecutionContext context, Guid id, CancellationToken token)
+    {
+        await using var db = await factory.CreateDbContextAsync(token);
+        var row = await Visible(db, context).SingleOrDefaultAsync(item => item.Id == id, token);
+        var trace = row == null ? null : Read(row);
+        return trace == null || await CleanOnlyAsync(context, token) && !IsClean(trace)
+            ? throw ProblemReportException.Missing() : trace;
+    }
+
+    private async Task<bool> CleanOnlyAsync(ProtocolExecutionContext context, CancellationToken token) =>
+        (context.Policy ?? (policies == null ? null : await policies.ResolveForUserAsync(context.Principal!.UserId, token)))?.Preferences.ExplicitFilter == "CleanOnly";
+
+    private IQueryable<AuditEventRecord> Visible(AllstarrDbContext db, ProtocolExecutionContext context) =>
+        PlaybackStartTimingStore.RecentEvents(db, clock.GetUtcNow()).Where(item => item.ActorUserId == context.Principal!.UserId);
 
     public async Task<PlayTraceDetail> DetailAsync(AdminAuthSession session, Guid id, CancellationToken token)
     {

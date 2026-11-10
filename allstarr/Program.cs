@@ -453,6 +453,7 @@ builder.Services.AddHttpClient(LibraryBackendBrandResolver.HttpClientName, clien
 builder.Services.AddScoped<LibraryBackendBrandResolver>();
 builder.Services.AddScoped<LibraryProviderResolver>();
 builder.Services.AddScoped<ItemDetailsReader>();
+builder.Services.AddScoped<ClientListeningHistory>();
 builder.Services.AddScoped<ItemLyricsReader>();
 builder.Services.AddScoped<LyricsSearchReader>();
 builder.Services.AddSingleton<LyricsSearchIndex>();
