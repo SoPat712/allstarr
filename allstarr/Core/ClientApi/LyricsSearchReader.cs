@@ -85,7 +85,7 @@ public sealed class LyricsSearchReader(LyricsSearchIndex index, IDbContextFactor
             index.ListenerCache.Set(cacheKey, cached, new MemoryCacheEntryOptions
             {
                 Size = Math.Max(1, visible.Length + playableRecordings.Count),
-                AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(5)
+                AbsoluteExpirationRelativeToNow = LyricsSearchIndex.ListenerViewLifetime
             });
         }
         else Timed("visibility-cache");
@@ -147,7 +147,7 @@ public sealed class LyricsSearchReader(LyricsSearchIndex index, IDbContextFactor
                     index.ListenerCache.Set((cacheKey, recording), available.Contains(recording), new MemoryCacheEntryOptions
                     {
                         Size = 1,
-                        AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(5)
+                        AbsoluteExpirationRelativeToNow = LyricsSearchIndex.ListenerViewLifetime
                     });
                     if (available.Contains(recording)) keptRecordings.Add(recording);
                 }

@@ -26,6 +26,9 @@ public sealed class LyricsSearchIndex(StorageOptions options, IProviderRouter? r
     private long _revision;
     private long Revision => Interlocked.Read(ref _revision);
     internal MemoryCache ListenerCache { get; } = new(new MemoryCacheOptions { SizeLimit = 500_000 });
+    // Every cached view is keyed on the index revision or the library, settings and permission versions, so it can live
+    // long enough to cover a search session without going stale.
+    internal static readonly TimeSpan ListenerViewLifetime = TimeSpan.FromMinutes(1);
     private SqliteConnection? _connection;
     private SqliteTransaction? _transaction;
     public string DatabasePath => Path.Combine(options.DataDirectory, "lyrics-search-v1.db");
@@ -112,7 +115,7 @@ public sealed class LyricsSearchIndex(StorageOptions options, IProviderRouter? r
             ListenerCache.Set(key, documents, new MemoryCacheEntryOptions
             {
                 Size = Math.Max(1, documents.Length),
-                AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(5)
+                AbsoluteExpirationRelativeToNow = ListenerViewLifetime
             });
             return documents;
         }
