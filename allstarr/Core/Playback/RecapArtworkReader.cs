@@ -11,25 +11,69 @@ namespace allstarr.Core.Playback;
 // Artist pictures come from the identities and covers in the listener's own plays.
 public sealed class RecapArtworkReader(IProtocolProviderGateway gateway, IMediaAssetResolver media, IHttpClientFactory clients,
     IDbContextFactory<AllstarrDbContext>? factory = null, JellyfinProxyService? jellyfin = null,
-    IBackendLibraryAccessResolver? libraryAccess = null, IHttpContextAccessor? http = null)
+    IBackendLibraryAccessResolver? libraryAccess = null, IHttpContextAccessor? http = null, TimeProvider? time = null)
 {
     private const int MaximumBytes = 8 * 1024 * 1024, MinimumBytes = 1024;
 
     public async Task<ResolvedMediaAsset?> ReadAsync(ProtocolExecutionContext protocol, string artist, string? title, string? album, CancellationToken token,
         string? libraryArtistId = null)
     {
+        try
+        {
+            return await ResolveAsync(protocol, artist, title, album, libraryArtistId, TimeSpan.FromSeconds(5))
+                .WaitAsync(TimeSpan.FromSeconds(5), time ?? TimeProvider.System, token);
+        }
+        catch (TimeoutException) { return null; }
+    }
+
+    internal Task<ResolvedMediaAsset?> PrepareAsync(ProtocolExecutionContext protocol, string artist, string? title, string? album,
+        CancellationToken token, string? libraryArtistId = null) =>
+        ResolveAsync(protocol, artist, title, album, libraryArtistId, TimeSpan.FromSeconds(30)).WaitAsync(token);
+
+    private async Task<ResolvedMediaAsset?> ResolveAsync(ProtocolExecutionContext protocol, string artist, string? title, string? album,
+        string? libraryArtistId, TimeSpan budget)
+    {
         if (string.IsNullOrWhiteSpace(artist) || artist.Length > 500 || title?.Length > 500 || album?.Length > 500 || libraryArtistId?.Length > 500)
             throw new ArgumentException("The artwork request is invalid.");
-        var kind = title != null ? "recap-song" : album != null ? "recap-album" : "recap-artist-identity";
-        var id = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes($"{Key(artist)}|{Key(title)}|{Key(album)}|{libraryArtistId}")));
-        var asset = await media.ResolveAsync(new(protocol.RequireActor().EffectiveUserId, null, "recap", kind, id, Width: 192), async cancel =>
+        var asset = await media.ResolveAsync(Identity(protocol.RequireActor().EffectiveUserId, artist, title, album, libraryArtistId), async _ =>
         {
-            return title == null && album == null ? await ArtistAsync(protocol, artist, libraryArtistId, cancel) :
-                await FetchAsync(await FindAsync(protocol, artist, title, album), cancel);
-        }, MaximumBytes, token);
+            // The media resolver shares this fetch; an image loader disconnecting must not cancel other waiters.
+            var clock = time ?? TimeProvider.System;
+            using var timeout = new CancellationTokenSource(budget, clock);
+            var deadline = clock.GetUtcNow().Add(budget);
+            if (protocol.Deadline < deadline) deadline = protocol.Deadline;
+            var context = new ProtocolExecutionContext(protocol.Protocol, protocol.BackendInstanceId, protocol.VerifiedBackendPrincipalId,
+                protocol.Principal, protocol.CorrelationId, deadline, timeout.Token, protocol.Client)
+            {
+                Policy = protocol.Policy,
+                IsReadOnly = protocol.IsReadOnly,
+                RequestedItemId = protocol.RequestedItemId,
+                UseStoredBackendCredentials = protocol.UseStoredBackendCredentials,
+                BackendCredentialReferenceId = protocol.BackendCredentialReferenceId
+            };
+            try
+            {
+                // Some providers do work before returning a task; that must stay inside the wait budget too.
+                return await Task.Run(() => ReadSourceAsync(context, artist, title, album, libraryArtistId, context.CancellationToken), timeout.Token)
+                    .WaitAsync(timeout.Token);
+            }
+            catch (OperationCanceledException) when (timeout.IsCancellationRequested) { return null; }
+        }, MaximumBytes, CancellationToken.None);
         // Some sources hold a blank picture for an artist; use the placeholder instead.
         return asset is { Bytes.Length: >= MinimumBytes } ? asset : null;
     }
+
+    internal static MediaAssetIdentity Identity(Guid? owner, string artist, string? title, string? album, string? libraryArtistId)
+    {
+        var kind = title != null ? "recap-song" : album != null ? "recap-album" : "recap-artist-identity";
+        var id = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes($"{Key(artist)}|{Key(title)}|{Key(album)}|{libraryArtistId}")));
+        return new(owner, null, "recap", kind, id, Width: 192);
+    }
+
+    private async Task<MediaAssetSource?> ReadSourceAsync(ProtocolExecutionContext protocol, string artist, string? title, string? album,
+        string? libraryArtistId, CancellationToken token) => title == null && album == null
+        ? await ArtistAsync(protocol, artist, libraryArtistId, token)
+        : await FetchAsync(await FindAsync(protocol, artist, title, album), token);
 
     private async Task<MediaAssetSource?> ArtistAsync(ProtocolExecutionContext protocol, string artist, string? requestedId, CancellationToken token)
     {
@@ -59,6 +103,7 @@ public sealed class RecapArtworkReader(IProtocolProviderGateway gateway, IMediaA
         }
         foreach (var credit in credits.DistinctBy(item => (item.LibraryCover, item.CoverUrl)))
         {
+            token.ThrowIfCancellationRequested();
             if (jellyfin != null && credit.LibraryCover is { } cover)
             {
                 var image = await jellyfin.GetImageAsync(cover, clientHeaders: http?.HttpContext?.Request.Headers);
@@ -71,6 +116,7 @@ public sealed class RecapArtworkReader(IProtocolProviderGateway gateway, IMediaA
 
     private async Task<MediaAssetSource?> FetchAsync(string? url, CancellationToken token)
     {
+        token.ThrowIfCancellationRequested();
         if (!OutboundRequestGuard.TryCreateSafeHttpUri(url, out var uri, out _) || uri == null) return null;
         using var response = await clients.CreateClient().GetAsync(uri, token);
         var contentType = response.Content.Headers.ContentType?.MediaType;
@@ -86,7 +132,10 @@ public sealed class RecapArtworkReader(IProtocolProviderGateway gateway, IMediaA
         foreach (var source in new[] { "deezer", null })
         {
             var query = title != null ? $"{artist} {title}" : $"{artist} {album}";
-            var found = await gateway.SearchAsync(protocol, query, title != null ? 8 : 0, title == null ? 8 : 0, 0, source);
+            protocol.CancellationToken.ThrowIfCancellationRequested();
+            var found = await gateway.SearchAsync(protocol, query, title != null ? 8 : 0, title == null ? 8 : 0, 0, source)
+                .WaitAsync(protocol.CancellationToken);
+            protocol.CancellationToken.ThrowIfCancellationRequested();
             var url = title != null
                 ? found.Songs.Where(song => Credited(song.Artist, artist) && Close(song.Title, title)).Select(song => song.CoverArtUrlLarge ?? song.CoverArtUrl).FirstOrDefault(Usable)
                 : found.Albums.Where(item => Credited(item.Artist, artist) && Close(item.Title, album!)).Select(item => item.CoverArtUrl).FirstOrDefault(Usable);
