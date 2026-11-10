@@ -23,7 +23,7 @@ public sealed partial class SpotifyPlaylistCapabilityAdapter
         context = new ProviderExecutionContext(context.Actor, context.ProviderId, context.Account, context.Policy,
             context.OperationId, context.CorrelationId, context.Deadline, deadline.Token, context.IdempotencyKey);
         var cacheKey = LyricsCacheKey(context.Account!, request);
-        if (_cache != null && context.OperationId != "connection-probe")
+        if (_cache != null)
         {
             try
             {

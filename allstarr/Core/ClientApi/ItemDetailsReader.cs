@@ -49,10 +49,9 @@ public sealed class ItemDetailsReader(
             .Where(item => item.Parsed.isExternal && item.Parsed.type == "song" && ValidProvider(item.Parsed.provider!))
             .Select(item => new Source(item.Id, registry.ResolveProviderId(item.Parsed.provider!), item.Parsed.externalId!)).ToArray();
         IReadOnlyDictionary<string, string> localIds = new Dictionary<string, string>(StringComparer.Ordinal);
-        IReadOnlyDictionary<string, CanonicalRecordingIdentity?> known = new Dictionary<string, CanonicalRecordingIdentity?>(StringComparer.Ordinal);
         if (libraryIndex != null && external.Length > 0)
         {
-            known = await identities.ResolveRecordingsAsync(execution.RequireActor(), external.Select(source => source.Id).ToArray(), token);
+            var known = await identities.ResolveRecordingsAsync(execution.RequireActor(), external.Select(source => source.Id).ToArray(), token);
             var lookups = external.Where(source => known.GetValueOrDefault(source.Id) != null).Select(source => new LibraryRecordingLookup(
                 source.Id, known[source.Id]!.Id, known[source.Id]!.Isrc, source.Provider, source.ExternalId)).ToArray();
             if (lookups.Length > 0) localIds = await libraryIndex.FindKnownRecordingTracksAsync(execution, lookups, token);
@@ -68,14 +67,11 @@ public sealed class ItemDetailsReader(
         var nativeLookupIds = nativeIds.SelectMany(id => Guid.TryParse(id, out var parsed)
             ? new[] { id, parsed.ToString("N"), parsed.ToString("D") } : [id]).Distinct(StringComparer.Ordinal).ToArray();
         await using var db = await factory.CreateDbContextAsync(token);
-        var library = nativeLookupIds.Length == 0 ? [] : await db.LibraryTracks.AsNoTracking().Where(item => item.OwnerUserId == owner &&
+        var library = await db.LibraryTracks.AsNoTracking().Where(item => item.OwnerUserId == owner &&
             item.Protocol == protocol && item.BackendInstanceId == execution.BackendInstanceId && nativeLookupIds.Contains(item.BackendItemId))
             .ToArrayAsync(token);
-        var resolved = known.ToDictionary(item => item.Key, item => item.Value, StringComparer.Ordinal);
-        var remaining = external.Select(item => item.Id).Concat(library.Where(item => item.CanonicalRecordingId.HasValue)
-            .Select(item => item.CanonicalRecordingId!.Value.ToString("D"))).Where(id => !resolved.ContainsKey(id)).Distinct(StringComparer.Ordinal).ToArray();
-        if (remaining.Length > 0)
-            foreach (var item in await identities.ResolveRecordingsAsync(execution.RequireActor(), remaining, token)) resolved[item.Key] = item.Value;
+        var resolved = await identities.ResolveRecordingsAsync(execution.RequireActor(), external.Select(item => item.Id)
+            .Concat(library.Where(item => item.CanonicalRecordingId.HasValue).Select(item => item.CanonicalRecordingId!.Value.ToString("D"))).ToArray(), token);
         var recordingIds = resolved.Values.OfType<CanonicalRecordingIdentity>().Select(item => item.Id).Distinct().ToArray();
         var hashes = external.Select(item => CanonicalCatalogKeys.Hash(item.ExternalId)).Distinct().ToArray();
         var snapshots = await db.ExternalMetadataSnapshots.AsNoTracking().Where(item => item.OwnerUserId == owner &&
@@ -128,12 +124,12 @@ public sealed class ItemDetailsReader(
                                 accepted.Operation == (state.IsFavorite ? FavoriteOperation.Favorite : FavoriteOperation.Unfavorite)
                             select state).ToArrayAsync(token);
         var eventIds = states.Select(item => item.LastEventId).ToArray();
-        var actions = eventIds.Length == 0 ? [] : await (from action in db.FavoriteActions.AsNoTracking()
-                                                         join accepted in db.FavoriteEvents.AsNoTracking() on action.EventId equals accepted.Id
-                                                         where action.OwnerUserId == owner && accepted.OwnerUserId == owner && accepted.Protocol == protocol &&
-                                                             accepted.BackendInstanceId == execution.BackendInstanceId && accepted.BackendPrincipalId == execution.VerifiedBackendPrincipalId &&
-                                                             accepted.Operation == FavoriteOperation.Favorite && eventIds.Contains(accepted.Id) && action.ActionType == "download"
-                                                         select action).ToArrayAsync(token);
+        var actions = await (from action in db.FavoriteActions.AsNoTracking()
+                             join accepted in db.FavoriteEvents.AsNoTracking() on action.EventId equals accepted.Id
+                             where action.OwnerUserId == owner && accepted.OwnerUserId == owner && accepted.Protocol == protocol &&
+                                 accepted.BackendInstanceId == execution.BackendInstanceId && accepted.BackendPrincipalId == execution.VerifiedBackendPrincipalId &&
+                                 accepted.Operation == FavoriteOperation.Favorite && eventIds.Contains(accepted.Id) && action.ActionType == "download"
+                             select action).ToArrayAsync(token);
         var heartKeys = states.Where(item => item.IsFavorite).Select(item => $"heart:{item.Id:N}").ToArray();
         var retained = await (from route in db.Set<RecordingKeptRouteEntity>().AsNoTracking()
                               join recording in db.CanonicalRecordings on route.CanonicalRecordingId equals recording.Id
@@ -145,7 +141,7 @@ public sealed class ItemDetailsReader(
         var placement = http.RequestServices.GetRequiredService<FilePlacementService>();
         retained = retained.Where(item => AvailableFile(placement, item.File, token)).ToArray();
         var fileIds = retained.Select(item => item.File.Id).ToArray();
-        var references = fileIds.Length == 0 || heartKeys.Length == 0 ? [] : await db.ManagedFileReferences.AsNoTracking().Where(item => fileIds.Contains(item.ManagedFileId) &&
+        var references = await db.ManagedFileReferences.AsNoTracking().Where(item => fileIds.Contains(item.ManagedFileId) &&
             item.ReleasedAt == null && heartKeys.Contains(item.ReferenceKey)).ToArrayAsync(token);
         var accounts = await db.ProviderAccounts.AsNoTracking().Where(item => item.Enabled &&
             (item.OwnerUserId == owner || item.OwnerUserId == null) &&
@@ -212,16 +208,10 @@ public sealed class ItemDetailsReader(
         var choices = await db.RecordingLyricsChoices.AsNoTracking().Where(item => recordingIds.Contains(item.CanonicalRecordingId) &&
             item.RevokedAt == null && (item.OwnerUserId == owner || item.OwnerUserId == null)).ToArrayAsync(token);
         var lyricsEndpoint = (await settings.GetAsync("LyricsPlus:BaseUrl", token)).NormalizedValue;
-        var retainedLyrics = refreshStore == null ? new Dictionary<Guid, allstarr.Models.Lyrics.LyricsInfo>() :
-            await refreshStore.RetainedAsync(execution, recordingIds);
         var libraryProvider = native.Count > 0 ? await http.RequestServices.GetRequiredService<LibraryProviderResolver>().ResolveAsync(http, execution) : null;
         // Each song's match and lyrics reads stand alone, so a batch reads a few songs at once instead of one after another.
         using var gate = new SemaphoreSlim(Math.Clamp(Environment.ProcessorCount / 2, 1, 4));
         var libraryMemo = new TrackMatchLibraryMemo();
-        await matches.PrepareSummariesAsync(http, execution, requested.Select(id => (Id: id,
-            Recording: resolved.GetValueOrDefault(id)?.Id ?? library.FirstOrDefault(item => SameNativeId(item.BackendItemId, localIds.GetValueOrDefault(id) ?? id))?.CanonicalRecordingId))
-            .SelectMany(item => item.Recording.HasValue ? new[] { item, (Id: CanonicalRecordingRecord.DefaultPublicId(item.Recording.Value), item.Recording) } : new[] { item })
-            .DistinctBy(item => item.Id).ToDictionary(item => item.Id, item => item.Recording, StringComparer.Ordinal), libraryMemo);
         var matchTiming = new ItemMatchTiming();
         http.Items[typeof(ItemMatchTiming)] = matchTiming;
         Step("states and choices");
@@ -293,7 +283,8 @@ public sealed class ItemDetailsReader(
             var lyrics = await StoredItemLyrics.ReadAsync(cache, lyricsSong, recordingId, choice?.SourceId, storedFile?.File.CanonicalPath,
                 policy, lyricsEndpoint, execution, accounts, links, token,
                 recordingDurationMs: recordingId.HasValue ? recordings.GetValueOrDefault(recordingId.Value)?.DurationMilliseconds : null,
-                automaticLyrics: choice == null && recordingId.HasValue ? retainedLyrics.GetValueOrDefault(recordingId.Value) : null);
+                automaticLyrics: choice == null && recordingId.HasValue && refreshStore != null
+                    ? await refreshStore.RetainedAsync(execution, recordingId.Value) : null);
             Interlocked.Add(ref lyricsTicks, System.Diagnostics.Stopwatch.GetElapsedTime(lyricsStarted).Ticks);
             var audio = song == null || song.Codec == null && song.BitDepth == null && song.SampleRate == null && song.Bitrate == null ? null :
                 new ItemDetailsAudio(song.Codec, song.BitDepth, song.SampleRate, song.Bitrate);

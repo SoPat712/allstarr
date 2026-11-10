@@ -38,13 +38,10 @@ public sealed class PlaybackReader(
             .OrderByDescending(state => state.LastActivity).FirstOrDefault();
         if (state == null || !await content.AllowsAsync(http, state.ItemId)) return null;
         await using var db = await factory.CreateDbContextAsync(execution.CancellationToken);
+        var rows = await Visible(db, execution).OrderByDescending(item => item.CreatedAt).ThenByDescending(item => item.Id)
+            .Take(PlaybackStartTimingStore.MaximumSamples).ToArrayAsync(execution.CancellationToken);
         var stream = deliveries.StreamFor(owner, device, state.ItemId);
         if (stream != null && !stream.Matches(execution.Protocol.ToString().ToLowerInvariant(), execution.BackendInstanceId)) stream = null;
-        var recent = Visible(db, execution).OrderByDescending(item => item.CreatedAt).ThenByDescending(item => item.Id)
-            .Take(PlaybackStartTimingStore.MaximumSamples);
-        var rows = stream?.PlaybackRequestId is { } requestId
-            ? await recent.Where(item => item.Id == requestId).ToArrayAsync(execution.CancellationToken)
-            : await recent.ToArrayAsync(execution.CancellationToken);
         var sample = rows.Select(row => Read(row, execution)).OfType<PlaybackStartSample>()
             .FirstOrDefault(sample => SameItem(sample.Trace!.Request.ItemId, state.ItemId) &&
                 (stream == null || stream.PlaybackRequestId == sample.Id));

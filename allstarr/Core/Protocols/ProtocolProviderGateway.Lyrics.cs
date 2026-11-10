@@ -4,16 +4,11 @@ using allstarr.Core.Capabilities;
 using allstarr.Core.Health;
 using allstarr.Core.Providers.Lyrics;
 using allstarr.Services.Common;
-using allstarr.Core.Matching;
-using System.Collections.Concurrent;
-using System.Text.Json;
 
 namespace allstarr.Core.Protocols;
 
 public sealed partial class ProtocolProviderGateway : IProtocolLyricsExecutionGateway
 {
-    private readonly ConcurrentDictionary<string, DateTimeOffset> _lyricsMisses = new(StringComparer.Ordinal);
-
     async ValueTask<PreparedLyricsRead?> IProtocolLyricsExecutionGateway.PrepareAsync(LyricsReadSpec spec, CancellationToken token)
     {
         var candidate = await PlanAutomaticLyricsAsync(spec, token, cached: true);
@@ -33,38 +28,17 @@ public sealed partial class ProtocolProviderGateway : IProtocolLyricsExecutionGa
         if (candidate == null) return null;
         var request = prepared.Spec.Request;
         request = new(request.CanonicalRecordingId, candidate.TrackId ?? request.ProviderTrackId, request.AvailabilityOnly,
-            request.PreferredFormat, request.TrackTitle, request.ArtistNames, request.AlbumTitle, request.DurationSeconds, request.Isrc)
-        { Refresh = request.Refresh };
+            request.PreferredFormat, request.TrackTitle, request.ArtistNames, request.AlbumTitle, request.DurationSeconds, request.Isrc);
         if (completion == LyricsCompletionMode.CacheOnly && candidate.Implementation is not IInternalLyricsCapability) return null;
-        var now = (timeProvider ?? TimeProvider.System).GetUtcNow();
-        var key = CanonicalCatalogKeys.Hash(JsonSerializer.Serialize(new
-        { prepared.Spec.Actor, prepared.Binding, prepared.Source.ConfigurationId, Request = request }));
-        if (!cached && !request.Refresh && _lyricsMisses.TryGetValue(key, out var expires) && expires > now) return null;
-        if (!cached && !request.Refresh && outcomes is ProviderRuntimeHealth health)
-        {
-            var statusKey = candidate.Context.Account is { } account
-                ? ProviderRuntimeStatusKey.CreateManaged(candidate.Context.ProviderId, ProviderCapabilities.Lyrics, account.AccountId)
-                : ProviderRuntimeStatusKey.CreateAccountFree(candidate.Context.ProviderId, ProviderCapabilities.Lyrics);
-            var failure = health.GetLyrics(statusKey, candidate.Context.Account?.Revision, prepared.Source.ConfigurationId);
-            if (failure is { ConsecutiveFailures: > 0 } && now - failure.ObservedAt < TimeSpan.FromMinutes(2)) return null;
-        }
-        var outcome = await (candidate.Implementation is IInternalLyricsCapability capability
-            ? capability.FetchAsync(candidate.Context, request, new(completion, prepared.Source, prepared.Spec.Snapshot))
-            : candidate.Implementation.FetchLyricsAsync(candidate.Context, request)).WaitAsync(token);
+        var outcome = candidate.Implementation is IInternalLyricsCapability capability
+            ? await capability.FetchAsync(candidate.Context, request, new(completion, prepared.Source, prepared.Spec.Snapshot))
+            : await candidate.Implementation.FetchLyricsAsync(candidate.Context, request);
         token.ThrowIfCancellationRequested();
-        if (!outcome.IsSuccess) return null;
+        if (!outcome.IsSuccess || outcome.RequireValue().Availability != ProviderLyricsAvailabilityState.Available) return null;
         if (await CurrentLyricsCandidateAsync(prepared, token, cached) == null) return null;
-        var result = outcome.RequireValue();
-        if (result.Availability == ProviderLyricsAvailabilityState.Available) _lyricsMisses.TryRemove(key, out _);
-        if (!cached && result.Availability == ProviderLyricsAvailabilityState.Unavailable)
-        {
-            if (_lyricsMisses.Count >= 512) _lyricsMisses.Clear();
-            _lyricsMisses[key] = now.AddHours(6);
-        }
-        if (result.Availability != ProviderLyricsAvailabilityState.Available) return null;
-        if (completion == LyricsCompletionMode.OwnedAutomatic && prepared.Spec.Actor.EffectiveUserId is { } user)
+        if (completion != LyricsCompletionMode.CacheOnly && prepared.Spec.Actor.EffectiveUserId is { } user)
             lyricsChanges?.RecordingChanged(user, request.CanonicalRecordingId);
-        return result;
+        return outcome.RequireValue();
     }
 
     async ValueTask<bool> IProtocolLyricsExecutionGateway.IsCurrentAsync(PreparedLyricsRead prepared, CancellationToken token) =>

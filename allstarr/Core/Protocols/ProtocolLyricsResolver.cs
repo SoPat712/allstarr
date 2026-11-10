@@ -490,10 +490,9 @@ public sealed partial class ProtocolLyricsResolver(
                 ? new ProviderExternalResourceId("allstarr", ProviderResourceKind.Track, recording.Value.ToString("D")) : target;
             var canonical = recording ?? new Guid(SHA256.HashData(Encoding.UTF8.GetBytes($"{providerId}\n{externalId}")).AsSpan(0, 16));
             return new(protocol.Actor!, providerId, source, new(canonical, target, preferredFormat: ProviderLyricsFormat.LineTimed,
-                trackTitle: string.IsNullOrWhiteSpace(song.Title) ? null : song.Title.Trim(), artistNames: artists.Where(artist => !string.IsNullOrWhiteSpace(artist)).Select(artist => artist.Trim()).ToArray(), albumTitle: string.IsNullOrWhiteSpace(song.Album) ? null : song.Album.Trim(), durationSeconds: song.Duration, isrc: song.Isrc)
-            { Refresh = protocol.RefreshLyrics },
+                trackTitle: string.IsNullOrWhiteSpace(song.Title) ? null : song.Title.Trim(), artistNames: artists.Where(artist => !string.IsNullOrWhiteSpace(artist)).Select(artist => artist.Trim()).ToArray(), albumTitle: string.IsNullOrWhiteSpace(song.Album) ? null : song.Album.Trim(), durationSeconds: song.Duration, isrc: song.Isrc),
                 householdOnly ? [ProviderAccountScope.Shared] : [ProviderAccountScope.Personal, ProviderAccountScope.Shared], protocol.CorrelationId, deadline, householdOnly)
-            { ManualSelection = sources?.OnlySourceId != null || !automaticLookup || providerId == preferredProvider, Snapshot = executionSnapshot };
+            { ManualSelection = !automaticLookup || providerId == preferredProvider, Snapshot = executionSnapshot };
         }
 
         var best = bestLocal;
@@ -536,86 +535,57 @@ public sealed partial class ProtocolLyricsResolver(
 
         async Task<LyricsInfo?> ReadOneAsync(string providerId)
         {
-            if (sources?.ForPermanentSidecar == true) return await ReadOneCoreAsync(providerId, protocol);
-            var now = LyricsClock.GetUtcNow();
-            var deadline = now.Add(LookupOptions.SourceTimeout);
-            if (protocol.Deadline < deadline) deadline = protocol.Deadline;
-            if (deadline <= now) return null;
-            using var timer = new CancellationTokenSource(deadline - now, LyricsClock);
-            using var attempt = CancellationTokenSource.CreateLinkedTokenSource(callerToken, timer.Token);
-            try
-            {
-                return await ReadOneCoreAsync(providerId, WithLyricsToken(protocol, attempt.Token, deadline)).WaitAsync(attempt.Token);
-            }
-            catch (OperationCanceledException) when (!callerToken.IsCancellationRequested) { return null; }
-        }
-
-        async Task<LyricsInfo?> ReadOneCoreAsync(string providerId, ProtocolExecutionContext readProtocol)
-        {
             if (sources?.ForPermanentSidecar == true && providerId == "spicylyrics") return null;
             try
             {
                 LyricsInfo? lyrics;
                 if (localSources.TryGetValue(providerId, out var readLocal))
                 {
-                    lyrics = await readLocal(readProtocol.CancellationToken);
+                    lyrics = await readLocal(protocol.CancellationToken);
                     if (lyrics != null) lyrics.Source = providerId;
-                    if (sources?.ReadOnly != true && !householdOnly) await IndexAsync(readProtocol, song, lyrics, canonicalRecordingId);
+                    if (sources?.ReadOnly != true && !householdOnly) await IndexAsync(protocol, song, lyrics, canonicalRecordingId);
                 }
                 else
                 {
                     if (sources?.CacheOnly == true) return null;
                     if (providerId is "backend" or "kept") return null;
+                    var externalId = providerId == "spicylyrics" ? await ResolveSpicySelectorAsync(true, protocol.CancellationToken) : ResolveExternalId(
+                        providerId, resourceKey, sourceProvider, sourceExternalId, spotifyTrackId ?? song.SpotifyId);
+                    if (providerId == "spicylyrics" && externalId == null) return null;
+                    if (externalId == null && crossLinks != null && protocol.Actor != null &&
+                        !string.IsNullOrWhiteSpace(sourceProvider) && !string.IsNullOrWhiteSpace(sourceExternalId))
+                    {
+                        resolvedLinks ??= await crossLinks.ResolveAsync(new(resourceKey, sourceProvider, sourceExternalId,
+                                song.Title, string.Join(", ", artists), song.Album, null, (long?)song.Duration * 1000,
+                                song.Isrc, null, null), [], protocol.Actor, protocol.CorrelationId, protocol.CancellationToken);
+                        externalId = resolvedLinks.FirstOrDefault(item => item.Verified &&
+                            OdesliService.NormalizeProviderId(item.ProviderId) == OdesliService.NormalizeProviderId(providerId))?.ExternalId;
+                    }
                     ProviderLyricsResult? result;
-                    if (providers is IProtocolLyricsExecutionGateway preparedGateway && readProtocol.Actor != null && sources?.ForPermanentSidecar != true)
+                    if (externalId == null)
                     {
-                        var spec = await PrepareSpecAsync(providerId, readProtocol.Deadline, true, readProtocol.CancellationToken);
-                        var prepared = spec == null ? null : await preparedGateway.PrepareAsync(spec, readProtocol.CancellationToken);
-                        result = prepared == null ? null : await preparedGateway.ExecuteAsync(prepared, LyricsCompletionMode.CacheOnly, readProtocol.CancellationToken);
-                        if (prepared != null && !HasLyrics(result))
-                            result = await preparedGateway.ExecuteAsync(prepared, LyricsCompletionMode.RequestBound, readProtocol.CancellationToken);
-                        if (result != null) result = result with
-                        { CacheProvenance = LyricsSearchIndex.AccountProvenance(prepared!.Binding.AccountId, prepared.Binding.AccountRevision) };
+                        var recordingId = await ResolveAliasRecordingAsync(protocol.CancellationToken);
+                        if (!recordingId.HasValue) return null;
+                        result = await providers.GetRecordingLyricsAsync(protocol, providerId, recordingId.Value,
+                            ProviderLyricsFormat.LineTimed, song.Title, artists, song.Album, song.Duration, householdOnly, song.Isrc);
                     }
-                    else
-                    {
-                        var externalId = providerId == "spicylyrics" ? await ResolveSpicySelectorAsync(true, readProtocol.CancellationToken) : ResolveExternalId(
-                            providerId, resourceKey, sourceProvider, sourceExternalId, spotifyTrackId ?? song.SpotifyId);
-                        if (providerId == "spicylyrics" && externalId == null) return null;
-                        if (externalId == null && crossLinks != null && readProtocol.Actor != null &&
-                            !string.IsNullOrWhiteSpace(sourceProvider) && !string.IsNullOrWhiteSpace(sourceExternalId))
-                        {
-                            resolvedLinks ??= await crossLinks.ResolveAsync(new(resourceKey, sourceProvider, sourceExternalId,
-                                    song.Title, string.Join(", ", artists), song.Album, null, (long?)song.Duration * 1000,
-                                    song.Isrc, null, null), [], readProtocol.Actor, readProtocol.CorrelationId, readProtocol.CancellationToken);
-                            externalId = resolvedLinks.FirstOrDefault(item => item.Verified &&
-                                OdesliService.NormalizeProviderId(item.ProviderId) == OdesliService.NormalizeProviderId(providerId))?.ExternalId;
-                        }
-                        if (externalId == null)
-                        {
-                            var recordingId = await ResolveAliasRecordingAsync(readProtocol.CancellationToken);
-                            if (!recordingId.HasValue) return null;
-                            result = await providers.GetRecordingLyricsAsync(readProtocol, providerId, recordingId.Value,
-                                ProviderLyricsFormat.LineTimed, song.Title, artists, song.Album, song.Duration, householdOnly, song.Isrc);
-                        }
-                        else result = householdOnly ? await providers.GetHouseholdLyricsAsync(
-                            readProtocol, providerId, externalId, ProviderLyricsFormat.LineTimed,
-                            song.Title, artists, song.Album, song.Duration, song.Isrc) : await providers.GetLyricsAsync(
-                            readProtocol,
-                            providerId,
-                            externalId,
-                            ProviderLyricsFormat.LineTimed,
-                            song.Title,
-                            artists,
-                            song.Album,
-                            song.Duration,
-                            song.Isrc);
-                    }
-                    readProtocol.CancellationToken.ThrowIfCancellationRequested();
+                    else result = householdOnly ? await providers.GetHouseholdLyricsAsync(
+                        protocol, providerId, externalId, ProviderLyricsFormat.LineTimed,
+                        song.Title, artists, song.Album, song.Duration, song.Isrc) : await providers.GetLyricsAsync(
+                        protocol,
+                        providerId,
+                        externalId,
+                        ProviderLyricsFormat.LineTimed,
+                        song.Title,
+                        artists,
+                        song.Album,
+                        song.Duration,
+                        song.Isrc);
+                    protocol.CancellationToken.ThrowIfCancellationRequested();
                     if (result == null || string.IsNullOrWhiteSpace(result.Content) && result.Versions?.Any(version => !string.IsNullOrWhiteSpace(version.Content)) != true)
                     {
                         if (sources?.ReadOnly != true && !householdOnly && searchIndex != null)
-                            await searchIndex.ReconcileVersionsAsync(readProtocol, song, providerId, new HashSet<string>(), unavailable: true);
+                            await searchIndex.ReconcileVersionsAsync(protocol, song, providerId, new HashSet<string>(), unavailable: true);
                         return null;
                     }
                     lyrics = LyricsVersions.Map(result, providerId, song.Duration);
@@ -625,20 +595,20 @@ public sealed partial class ProtocolLyricsResolver(
                     lyrics.Duration = song.Duration ?? 0;
                     if (sources?.ReadOnly != true && !householdOnly)
                     {
-                        await IndexAsync(readProtocol, song, lyrics, canonicalRecordingId);
+                        await IndexAsync(protocol, song, lyrics, canonicalRecordingId);
                         if (lyrics.Versions != null)
                         {
                             foreach (var version in LyricsVersions.Candidates(providerId, lyrics))
-                                await IndexAsync(readProtocol, song, version, canonicalRecordingId);
+                                await IndexAsync(protocol, song, version, canonicalRecordingId);
                             if (searchIndex != null)
-                                await searchIndex.ReconcileVersionsAsync(readProtocol, song, providerId,
+                                await searchIndex.ReconcileVersionsAsync(protocol, song, providerId,
                                     LyricsVersions.Candidates(providerId, lyrics).Select(version => version.Source!).ToHashSet(StringComparer.Ordinal));
                         }
                         else if (searchIndex != null)
-                            await searchIndex.ReconcileVersionsAsync(readProtocol, song, providerId, new HashSet<string>());
+                            await searchIndex.ReconcileVersionsAsync(protocol, song, providerId, new HashSet<string>());
                     }
                 }
-                readProtocol.CancellationToken.ThrowIfCancellationRequested();
+                protocol.CancellationToken.ThrowIfCancellationRequested();
                 if (lyrics == null || string.IsNullOrWhiteSpace(lyrics.SyncedLyrics) && string.IsNullOrWhiteSpace(lyrics.PlainLyrics) && lyrics.Versions?.Count is not > 0)
                     return null;
                 return lyrics;

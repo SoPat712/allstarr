@@ -161,8 +161,6 @@ public abstract class ExtensionCapabilityAdapterBase : IProviderUrlCapability, I
         }
         catch (OperationCanceledException) when (context.CancellationToken.IsCancellationRequested || Intelligence.HistoryRequestBudget.Current != null)
         { return Failure<T>(ProviderErrorKind.Canceled); }
-        catch (Exception exception) when (hook == "fetchLyrics" && (exception is TimeoutException || LocalCapacityException.IsLocal(exception)))
-        { return ProviderOutcome<T>.Failure(ProviderError.LocalCapacity()); }
         catch (Exception exception) when (hook == "download")
         {
             if (!LocalCapacityException.IsLocal(exception)) _sandbox.LogDownloadFailure(exception);

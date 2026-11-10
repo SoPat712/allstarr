@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using allstarr.Core.Protocols;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Storage;
@@ -12,9 +11,6 @@ public sealed record LibraryRecordingLookup(
 
 public sealed partial class LibraryIndexService
 {
-    private readonly ConcurrentDictionary<string, (string Revision, DateTimeOffset Expires, LibraryTrackRecord[] Tracks,
-        TrackMatchCandidateSet Candidates)> _recordingLibraries = new(StringComparer.Ordinal);
-
     public async Task<string?> ResolveKnownTrackAsync(ProtocolExecutionContext context, string publicId,
         CancellationToken cancellationToken = default)
     {
@@ -122,15 +118,7 @@ public sealed partial class LibraryIndexService
                 query = query.Where(item => pinnedIds.Contains(item.Id) ||
                     item.CanonicalRecordingId.HasValue && ids.Contains(item.CanonicalRecordingId.Value) ||
                     item.Isrc != null && isrcs.Contains(item.Isrc));
-            var revision = snapshots.Count == 0 ? null : await db.Database.SqlQueryRaw<string>("""
-                SELECT COUNT(*) || ':' || COALESCE(SUM("Revision"), 0) || ':' || COALESCE(MAX("UpdatedAt"), 0) || ':' ||
-                    COALESCE(MAX("IndexedAt"), 0) AS "Value" FROM library_tracks
-                """).SingleAsync(cancellationToken);
-            var libraryKey = $"{context.Principal.UserId:N}|{context.Protocol}|{context.BackendInstanceId}|{context.VerifiedBackendPrincipalId}|" +
-                string.Join(',', access.LibraryIds.Order(StringComparer.Ordinal));
-            _recordingLibraries.TryGetValue(libraryKey, out var storedLibrary);
-            var hit = revision != null && storedLibrary.Revision == revision && storedLibrary.Expires > _clock.UtcNow;
-            var tracks = hit ? storedLibrary.Tracks : (await query.ToArrayAsync(cancellationToken))
+            var tracks = (await query.ToArrayAsync(cancellationToken))
                 .OrderByDescending(item => LocalCopyPreference.FormatRank(Path.GetExtension(item.FilePath)))
                 .ThenByDescending(item => item.SourceModifiedAt)
                 .ThenBy(item => item.BackendLibraryId).ThenBy(item => item.BackendItemId).ThenBy(item => item.Id).ToArray();
@@ -144,12 +132,7 @@ public sealed partial class LibraryIndexService
                 ExplicitContent = policy?.Preferences.ExplicitFilter == "CleanOnly"
                     ? ProviderExplicitContentPolicy.CleanOnly : ProviderExplicitContentPolicy.Allow
             });
-            var candidates = hit ? storedLibrary.Candidates : engine.PrepareCandidates(tracks.Select(LocalCopyPreference.ToCandidate));
-            if (!hit && revision != null)
-            {
-                if (_recordingLibraries.Count >= 4) _recordingLibraries.Clear();
-                _recordingLibraries[libraryKey] = (revision, _clock.UtcNow.AddMinutes(5), tracks, candidates);
-            }
+            var candidates = engine.PrepareCandidates(tracks.Select(LocalCopyPreference.ToCandidate));
             ProviderUseMode Mode(string providerId) => policy?.GetProviderMode(providerId) ??
                 (_registry?.TryGet(providerId, out var descriptor) == true
                     ? descriptor!.DefaultUseMode : ProviderUseMode.Automatic);

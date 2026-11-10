@@ -39,7 +39,6 @@ public abstract class PublicLyricsCapabilityAdapter(
             return Failure(ProviderErrorKind.Forbidden);
         if (context.CancellationToken.IsCancellationRequested) return Failure(ProviderErrorKind.Canceled);
         if (context.IsExpired(Clock.GetUtcNow())) return Failure(ProviderErrorKind.CapabilityUnavailable);
-        if (context.OperationId == "connection-probe") request = request with { Refresh = true, IsHealthProbe = true };
         if (RequiresArtist && request.ArtistNames.Count == 0 &&
             (!string.IsNullOrWhiteSpace(request.TrackTitle) || !string.IsNullOrWhiteSpace(request.Isrc)))
             return ProviderOutcome<ProviderLyricsResult>.Failure(ProviderError.LyricsArtistRequired());

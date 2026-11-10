@@ -32,54 +32,6 @@ public sealed partial class ItemMatchReader(
         TrackMatchLibraryMemo libraryMemo) =>
         (await LoadAsync(http, execution, itemId, libraryMemo, summary: true))?.Value;
 
-    internal async Task PrepareSummariesAsync(HttpContext http, ProtocolExecutionContext execution,
-        IReadOnlyDictionary<string, Guid?> recordings, TrackMatchLibraryMemo libraryMemo)
-    {
-        var owner = Actor(execution).UserId;
-        var token = execution.CancellationToken;
-        var recordingIds = recordings.Values.OfType<Guid>().Distinct().ToArray();
-        var hashes = recordings.Keys.Select(LocalLibraryService.ParseExternalResource).Where(item => item.isExternal)
-            .Select(item => CanonicalCatalogKeys.Hash(item.externalId!)).Distinct().ToArray();
-        await using var db = await factory.CreateDbContextAsync(token);
-        var decisions = await db.TrackMatches.AsNoTracking().Where(item => item.OwnerUserId == owner &&
-            item.CanonicalRecordingId.HasValue && recordingIds.Contains(item.CanonicalRecordingId.Value)).ToArrayAsync(token);
-        var links = await db.ProviderTrackIdentities.AsNoTracking().Where(item => recordingIds.Contains(item.CanonicalRecordingId)).ToArrayAsync(token);
-        var snapshotIds = decisions.Select(item => item.ExternalSnapshotId).ToArray();
-        var identityIds = links.Select(item => (Guid?)item.Id).ToArray();
-        hashes = hashes.Concat(links.Select(item => item.ExternalIdHash)).Distinct().ToArray();
-        var snapshots = await db.ExternalMetadataSnapshots.AsNoTracking().Where(item => item.OwnerUserId == owner &&
-            item.ResourceKind == "track" && item.ProviderId != "allstarr" && item.Protocol == execution.Protocol.ToString().ToLowerInvariant() &&
-            item.BackendInstanceId == execution.BackendInstanceId && item.BackendPrincipalId == execution.VerifiedBackendPrincipalId &&
-            (snapshotIds.Contains(item.Id) || identityIds.Contains(item.ProviderTrackIdentityId) || hashes.Contains(item.ExternalIdHash)))
-            .OrderByDescending(item => item.RetrievedAt).ThenByDescending(item => item.SnapshotVersion).ThenByDescending(item => item.Id).ToArrayAsync(token);
-        var selected = new Dictionary<string, ExternalMetadataSnapshotRecord>(StringComparer.Ordinal);
-        foreach (var (itemId, recording) in recordings)
-        {
-            var parsed = LocalLibraryService.ParseExternalResource(itemId);
-            if (parsed.isExternal && parsed.type != "song") continue;
-            var provider = parsed.isExternal ? registry.ResolveProviderId(parsed.provider!) : null;
-            var hash = parsed.isExternal ? CanonicalCatalogKeys.Hash(parsed.externalId!) : null;
-            var snapshot = parsed.isExternal && provider != "allstarr" ? snapshots.FirstOrDefault(item =>
-                (item.ProviderId == provider || item.ProviderId == parsed.provider) && item.ExternalIdHash == hash) : null;
-            if (recording.HasValue)
-            {
-                var decided = decisions.Where(item => item.CanonicalRecordingId == recording).Select(item => item.ExternalSnapshotId).ToHashSet();
-                var linked = links.Where(item => item.CanonicalRecordingId == recording).ToArray();
-                var recorded = snapshots.Where(item => decided.Contains(item.Id) || linked.Any(link => link.Id == item.ProviderTrackIdentityId ||
-                    link.ProviderId == item.ProviderId && link.ExternalIdHash == item.ExternalIdHash))
-                    .OrderByDescending(item => decided.Contains(item.Id)).FirstOrDefault();
-                if (recorded != null && (snapshot == null || decided.Contains(recorded.Id))) snapshot = recorded;
-            }
-            if (snapshot != null) selected[itemId] = snapshot;
-        }
-        var reviews = await commands.GetClientReviewsAsync(Actor(execution), selected.Values.Select(item => item.Id).Distinct().ToArray(), token, libraryMemo);
-        http.Items[typeof(SummaryBatch)] = new SummaryBatch(selected.Where(item => reviews.ContainsKey(item.Value.Id))
-            .ToDictionary(item => item.Key, item => new SummaryEntry(item.Value, reviews[item.Value.Id]), StringComparer.Ordinal));
-    }
-
-    private sealed record SummaryEntry(ExternalMetadataSnapshotRecord Snapshot, TrackMatchReviewData Review);
-    private sealed record SummaryBatch(IReadOnlyDictionary<string, SummaryEntry> Items);
-
     public async Task<ClientItemMatch?> SetAsync(HttpContext http, ProtocolExecutionContext execution, string itemId, SetClientMatchRequest request)
     {
         var match = await LoadAsync(http, execution, itemId);
@@ -128,61 +80,49 @@ public sealed partial class ItemMatchReader(
         var timing = summary ? http.Items[typeof(ItemMatchTiming)] as ItemMatchTiming : null;
         var mark = Stopwatch.GetTimestamp();
         await using var db = await factory.CreateDbContextAsync(token);
+        var query = db.ExternalMetadataSnapshots.AsNoTracking().Where(item => item.OwnerUserId == actor.UserId &&
+            item.ResourceKind == "track" && item.ProviderId != "allstarr" &&
+            item.Protocol == execution.Protocol.ToString().ToLowerInvariant() && item.BackendInstanceId == execution.BackendInstanceId &&
+            item.BackendPrincipalId == execution.VerifiedBackendPrincipalId);
         var (external, provider, kind, externalId) = localLibrary.ParseExternalId(itemId);
         if (external && kind != "song") return null;
         var requestedProvider = provider;
         if (external) provider = registry.ResolveProviderId(provider!);
-        ExternalMetadataSnapshotRecord? snapshot;
-        TrackMatchReviewData review;
-        var revision = "";
-        if (summary && http.Items[typeof(SummaryBatch)] is SummaryBatch batch)
+        ExternalMetadataSnapshotRecord? snapshot = null;
+        if (external && provider != "allstarr")
         {
-            if (!batch.Items.TryGetValue(itemId, out var entry)) return null;
-            snapshot = entry.Snapshot;
-            review = entry.Review;
+            var hash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(externalId!)));
+            snapshot = await query.Where(item => (item.ProviderId == provider || item.ProviderId == requestedProvider) && item.ExternalIdHash == hash)
+                .OrderByDescending(item => item.RetrievedAt).ThenByDescending(item => item.SnapshotVersion)
+                .ThenByDescending(item => item.Id).FirstOrDefaultAsync(token);
         }
-        else
+        var recording = external
+            ? (await identities.ResolveRecordingAsync(execution.RequireActor(), itemId, token))?.Id
+            : await items.ResolveRecordingIdAsync(http, execution, itemId);
+        timing?.Add(ref timing.Resolve, ref mark);
+        if (recording.HasValue)
         {
-            var query = db.ExternalMetadataSnapshots.AsNoTracking().Where(item => item.OwnerUserId == actor.UserId &&
-                item.ResourceKind == "track" && item.ProviderId != "allstarr" &&
-                item.Protocol == execution.Protocol.ToString().ToLowerInvariant() && item.BackendInstanceId == execution.BackendInstanceId &&
-                item.BackendPrincipalId == execution.VerifiedBackendPrincipalId);
-            snapshot = null;
-            if (external && provider != "allstarr")
-            {
-                var hash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(externalId!)));
-                snapshot = await query.Where(item => (item.ProviderId == provider || item.ProviderId == requestedProvider) && item.ExternalIdHash == hash)
-                    .OrderByDescending(item => item.RetrievedAt).ThenByDescending(item => item.SnapshotVersion)
-                    .ThenByDescending(item => item.Id).FirstOrDefaultAsync(token);
-            }
-            var recording = external
-                ? (await identities.ResolveRecordingAsync(execution.RequireActor(), itemId, token))?.Id
-                : await items.ResolveRecordingIdAsync(http, execution, itemId);
-            timing?.Add(ref timing.Resolve, ref mark);
-            if (recording.HasValue)
-            {
-                // The recording's decisions and identities are found first, so only their snapshots are read rather than
-                // every song the listener has.
-                var decided = (await db.TrackMatches.AsNoTracking().Where(decision => decision.OwnerUserId == actor.UserId &&
-                        decision.CanonicalRecordingId == recording).Select(decision => decision.ExternalSnapshotId).ToArrayAsync(token)).ToHashSet();
-                var linked = await db.ProviderTrackIdentities.AsNoTracking().Where(identity => identity.CanonicalRecordingId == recording)
-                    .Select(identity => new { identity.Id, identity.ProviderId, identity.ExternalIdHash }).ToArrayAsync(token);
-                var decidedIds = decided.ToArray();
-                var identityIds = linked.Select(identity => (Guid?)identity.Id).ToArray();
-                var hashes = linked.Select(identity => identity.ExternalIdHash).Distinct(StringComparer.Ordinal).ToArray();
-                var recorded = (await query.Where(item => decidedIds.Contains(item.Id) || identityIds.Contains(item.ProviderTrackIdentityId) ||
-                        hashes.Contains(item.ExternalIdHash)).ToArrayAsync(token))
-                    .Where(item => decided.Contains(item.Id) || linked.Any(identity => identity.Id == item.ProviderTrackIdentityId ||
-                        identity.ProviderId == item.ProviderId && identity.ExternalIdHash == item.ExternalIdHash))
-                    .OrderByDescending(item => decided.Contains(item.Id)).ThenByDescending(item => item.RetrievedAt)
-                    .ThenByDescending(item => item.SnapshotVersion).ThenByDescending(item => item.Id).FirstOrDefault();
-                if (recorded != null && (snapshot == null || decided.Contains(recorded.Id))) snapshot = recorded;
-            }
-            timing?.Add(ref timing.Snapshots, ref mark);
-            if (snapshot == null) return null;
-            revision = summary ? "" : await TrackMatchRevision.ReadAsync(db, snapshot, actor.UserId, token);
-            review = await commands.GetClientReviewDataAsync(actor, snapshot.Id, token, libraryMemo);
+            // The recording's decisions and identities are found first, so only their snapshots are read rather than
+            // every song the listener has.
+            var decided = (await db.TrackMatches.AsNoTracking().Where(decision => decision.OwnerUserId == actor.UserId &&
+                    decision.CanonicalRecordingId == recording).Select(decision => decision.ExternalSnapshotId).ToArrayAsync(token)).ToHashSet();
+            var linked = await db.ProviderTrackIdentities.AsNoTracking().Where(identity => identity.CanonicalRecordingId == recording)
+                .Select(identity => new { identity.Id, identity.ProviderId, identity.ExternalIdHash }).ToArrayAsync(token);
+            var decidedIds = decided.ToArray();
+            var identityIds = linked.Select(identity => (Guid?)identity.Id).ToArray();
+            var hashes = linked.Select(identity => identity.ExternalIdHash).Distinct(StringComparer.Ordinal).ToArray();
+            var recorded = (await query.Where(item => decidedIds.Contains(item.Id) || identityIds.Contains(item.ProviderTrackIdentityId) ||
+                    hashes.Contains(item.ExternalIdHash)).ToArrayAsync(token))
+                .Where(item => decided.Contains(item.Id) || linked.Any(identity => identity.Id == item.ProviderTrackIdentityId ||
+                    identity.ProviderId == item.ProviderId && identity.ExternalIdHash == item.ExternalIdHash))
+                .OrderByDescending(item => decided.Contains(item.Id)).ThenByDescending(item => item.RetrievedAt)
+                .ThenByDescending(item => item.SnapshotVersion).ThenByDescending(item => item.Id).FirstOrDefault();
+            if (recorded != null && (snapshot == null || decided.Contains(recorded.Id))) snapshot = recorded;
         }
+        timing?.Add(ref timing.Snapshots, ref mark);
+        if (snapshot == null) return null;
+        var revision = summary ? "" : await TrackMatchRevision.ReadAsync(db, snapshot, actor.UserId, token);
+        var review = await commands.GetClientReviewDataAsync(actor, snapshot.Id, token, libraryMemo);
         timing?.Add(ref timing.Review, ref mark);
         snapshot = review.Snapshots.OrderByDescending(item => item.RetrievedAt).ThenByDescending(item => item.SnapshotVersion)
             .ThenByDescending(item => item.Id).FirstOrDefault();

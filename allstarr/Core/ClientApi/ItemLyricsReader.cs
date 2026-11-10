@@ -21,7 +21,7 @@ public sealed class ItemLyricsReader(
     ITrackIdentityService identities,
     IRecordingLyricsReview review,
     IRecordingLyricsChoices choices,
-    IProviderRegistry? registry = null, IEffectiveProviderPolicyResolver? policies = null, TimeProvider? timeProvider = null)
+    IProviderRegistry? registry = null, IEffectiveProviderPolicyResolver? policies = null)
 {
     public async Task<Guid?> ResolveRecordingIdAsync(HttpContext http, ProtocolExecutionContext execution, string itemId)
     {
@@ -31,7 +31,6 @@ public sealed class ItemLyricsReader(
 
     public async Task<RichLyrics?> ReadAsync(HttpContext http, ProtocolExecutionContext execution, string itemId, string? sourceId = null)
     {
-        execution = WithLyricsDeadline(execution);
         var item = await ResolveAsync(http, execution, itemId);
         if (item == null) return null;
         if (sourceId == null) return await ReadRichAsync(execution with { RequestedItemId = itemId }, item);
@@ -52,7 +51,6 @@ public sealed class ItemLyricsReader(
     public async Task<ClientLyricsSources?> SourcesAsync(HttpContext http, ProtocolExecutionContext execution, string itemId,
         bool includeLyrics = false)
     {
-        execution = WithLyricsDeadline(execution);
         var item = await ResolveAsync(http, execution, itemId);
         if (item == null) return null;
         var layers = await ChoicesAsync(execution, item);
@@ -98,13 +96,6 @@ public sealed class ItemLyricsReader(
                 Lyrics = includeLyrics ? source.Rich : null
             }).ToArray(),
             Chosen(layers, selected?.Rich), ClientLyricsRevision.From(layers.Revision));
-    }
-
-    private ProtocolExecutionContext WithLyricsDeadline(ProtocolExecutionContext execution)
-    {
-        var deadline = (timeProvider ?? TimeProvider.System).GetUtcNow().AddSeconds(3);
-        return ProtocolLyricsResolver.WithLyricsToken(execution, execution.CancellationToken,
-            deadline < execution.Deadline ? deadline : execution.Deadline);
     }
 
     private static RichLyrics? Rich(ProtocolLyricsCandidate candidate) => RichLyricsMapper.Map(candidate.Lyrics) is { } rich
@@ -257,10 +248,7 @@ public sealed class ItemLyricsReader(
     {
         var (body, status) = await jellyfin.GetJsonAsync($"Audio/{Uri.EscapeDataString(itemId)}/Lyrics", null, headers, token);
         using (body)
-        {
-            if (status >= 500) throw new HttpRequestException("Library lyrics are unavailable.");
             return status == StatusCodes.Status200OK && body != null ? BackendLyrics.ParseJellyfin(body.RootElement) : null;
-        }
     }
 
     internal static bool SameNativeItem(string? actual, string expected) =>
