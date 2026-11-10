@@ -288,7 +288,7 @@ public sealed partial class MusicSearchService(
             songs = songs.Select(song => song.Copy()).ToList();
             albums = albums.Select(album => album.Copy()).ToList();
             using var enrichmentWindow = request.LimitProviderWait
-                ? new CancellationTokenSource(TimeSpan.FromMilliseconds(300), timeProvider ?? TimeProvider.System) : null;
+                ? new CancellationTokenSource(EnrichmentBudget(Elapsed()), timeProvider ?? TimeProvider.System) : null;
             using var enrichmentStop = CancellationTokenSource.CreateLinkedTokenSource(workToken, enrichmentWindow?.Token ?? default);
             var enrichmentToken = enrichmentStop.Token;
             try { return await Task.Run(EnrichAsync).WaitAsync(enrichmentToken); }
@@ -412,11 +412,16 @@ public sealed partial class MusicSearchService(
             : SearchRelevanceRanker.ScoreSong(query, entry.Song!, knownDuration);
     }
 
+    // The library check gets what is left of a two-second search, never under 300 ms, so quick services leave it room
+    // and a slow one can't stretch the answer much past the provider cap.
+    internal static TimeSpan EnrichmentBudget(long elapsedMilliseconds) =>
+        TimeSpan.FromMilliseconds(Math.Max(300, 2_000 - elapsedMilliseconds));
+
     public async Task<IReadOnlyList<MusicSearchEntry<TPayload>>> ProjectSearchSongsAsync<TPayload>(
         ProtocolExecutionContext context, IReadOnlyList<Song> songs, INativeMusicSearch<TPayload> native,
         CancellationToken cancellationToken = default)
     {
-        using var window = new CancellationTokenSource(TimeSpan.FromMilliseconds(300), timeProvider ?? TimeProvider.System);
+        using var window = new CancellationTokenSource(TimeSpan.FromSeconds(1), timeProvider ?? TimeProvider.System);
         using var stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, context.CancellationToken, window.Token);
         try { return await Task.Run(PrepareAsync).WaitAsync(stop.Token); }
         catch (OperationCanceledException) when (window.IsCancellationRequested && !cancellationToken.IsCancellationRequested &&

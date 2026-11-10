@@ -111,7 +111,7 @@ public sealed class MusicSearchServiceTests
         try
         {
             await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
-            clock.Advance(TimeSpan.FromMilliseconds(300));
+            clock.Advance(TimeSpan.FromSeconds(2));
             Assert.Equal("external", Assert.Single((await pending.WaitAsync(TimeSpan.FromSeconds(5))).Songs).Song!.Id);
         }
         finally { release.Set(); }
@@ -157,7 +157,7 @@ public sealed class MusicSearchServiceTests
         var request = Request("Track") with { LimitProviderWait = true };
         var pending = service.SearchAsync(_context, request, native);
         await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        clock.Advance(TimeSpan.FromMilliseconds(300));
+        clock.Advance(TimeSpan.FromSeconds(2));
         Assert.Equal("external", Assert.Single((await pending.WaitAsync(TimeSpan.FromSeconds(5))).Songs).Song!.Id);
         release.SetResult(new Dictionary<string, string> { ["external"] = "native" });
         var repeat = await service.SearchAsync(_context, request, native);
