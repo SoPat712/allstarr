@@ -3,7 +3,9 @@ using System.Net.Sockets;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication.OpenIdConnect;
+using System.Text;
 using Microsoft.IdentityModel.Protocols.OpenIdConnect;
+using Microsoft.IdentityModel.Tokens;
 
 namespace allstarr.Services.Admin;
 
@@ -112,6 +114,9 @@ public static class AdminOidcRegistration
             options.ResponseType = OpenIdConnectResponseType.Code;
             options.ResponseMode = OpenIdConnectResponseMode.Query;
             options.UsePkce = true;
+            // Providers without a signing certificate (Authentik with no signing key, for one) sign ID tokens with the client
+            // secret (HS256) and publish no keys; the handler adds the provider's published keys to this one.
+            options.TokenValidationParameters.IssuerSigningKeys = [new SymmetricSecurityKey(Encoding.UTF8.GetBytes(settings.ClientSecret))];
             options.MapInboundClaims = false;
             options.ClaimActions.Clear();
             options.SaveTokens = false;

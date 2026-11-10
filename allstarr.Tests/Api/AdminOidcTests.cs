@@ -85,6 +85,9 @@ public sealed class AdminOidcTests
     [InlineData("/allstarr", "cookie", false)]
     [InlineData("", "none", true)]
     [InlineData("/allstarr", "none", true)]
+    [InlineData("", "secret", false)]
+    [InlineData("", "secret", true)]
+    [InlineData("/allstarr", "wrong-secret", false)]
     public async Task AuthorizationCodeFlowVerifiesTokenAndPreservesPrefix(string prefix, string failure, bool privateHttp)
     {
         var authority = privateHttp ? "http://identity.lan" : "https://idp.test";
@@ -94,6 +97,13 @@ public sealed class AdminOidcTests
         var key = new RsaSecurityKey(signingRsa) { KeyId = "fixture" };
         var tokenKey = failure == "signature" ? new RsaSecurityKey(wrongRsa) { KeyId = "fixture" } : key;
         string? nonce = null;
+        const string secret = "fixture-secret-long-enough-for-hmac-sha256";
+        var signing = failure switch
+        {
+            "secret" => new SigningCredentials(new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secret)), SecurityAlgorithms.HmacSha256),
+            "wrong-secret" => new SigningCredentials(new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secret + "-other")), SecurityAlgorithms.HmacSha256),
+            _ => new SigningCredentials(tokenKey, SecurityAlgorithms.RsaSha256)
+        };
         var backchannel = new TokenHandler(() => new JsonWebTokenHandler().CreateToken(new SecurityTokenDescriptor
         {
             Issuer = failure == "issuer" ? "https://wrong-issuer.test" : authority,
@@ -107,7 +117,7 @@ public sealed class AdminOidcTests
                 ["email"] = "not-an-identity@test",
                 ["role"] = "admin"
             },
-            SigningCredentials = new SigningCredentials(tokenKey, SecurityAlgorithms.RsaSha256)
+            SigningCredentials = signing
         }));
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
@@ -116,7 +126,7 @@ public sealed class AdminOidcTests
             ["Admin:Oidc:Authority"] = authority,
             ["Admin:Oidc:PublicUrl"] = publicUrl,
             ["Admin:Oidc:ClientId"] = "allstarr-test",
-            ["Admin:Oidc:ClientSecret"] = "fixture-secret"
+            ["Admin:Oidc:ClientSecret"] = secret
         }).Build();
         using var host = await new HostBuilder().ConfigureWebHost(web => web.UseTestServer().ConfigureServices(services =>
         {
@@ -192,7 +202,7 @@ public sealed class AdminOidcTests
         if (failure != "cookie") callback.Headers.Add("Cookie", string.Join("; ", cookies.Select(cookie => cookie.Split(';')[0])));
         using var response = await client.SendAsync(callback);
         Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
-        if (failure != "none")
+        if (failure is not ("none" or "secret"))
         {
             Assert.EndsWith("/?oidc=failed", response.Headers.Location!.ToString());
             Assert.DoesNotContain(response.Headers.TryGetValues("Set-Cookie", out var failedCookies) ? failedCookies : [],
