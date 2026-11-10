@@ -4,7 +4,7 @@
   import { onMount, tick } from "svelte";
   import { CalendarClock } from "@lucide/svelte";
   import { activityWork, playlistLinks, home, type PlaylistLink, type ProviderDefinition, type ActivityTask } from "$lib/api";
-  import { liveUpdates, createRefreshScheduler } from "$lib/live-updates.svelte";
+  import { createActivityRefreshScheduler } from "$lib/activity-requests";
   import { toast } from "$lib/toasts";
   import { Button } from "$lib/components/ui/button";
   import RefreshButton from "$lib/components/RefreshButton.svelte";
@@ -45,8 +45,13 @@
   function time(value?: string | null) {
     return formatLocalDateTime(value, "Not recorded", { timeZone: zones.length === 1 ? zones[0] : undefined });
   }
-  async function load() {
-    if (busy) return;
+  let loadPromise: Promise<void> = Promise.resolve();
+  function load(): Promise<void> {
+    if (disposed) return Promise.resolve();
+    if (busy) return loadPromise;
+    return loadPromise = loadPage();
+  }
+  async function loadPage() {
     busy = true; error = "";
     try {
       const next = await activityWork.tasks(scope);
@@ -85,12 +90,12 @@
     } catch { if (!disposed) toast.error("Task could not be queued. Refresh Tasks and try again."); }
     finally { if (!disposed) running = ""; }
   }
-  const scheduler = createRefreshScheduler(load);
+  const scheduler = createActivityRefreshScheduler(load);
   onMount(() => {
     void load();
     void playlistLinks.list().then(result => { if (!disposed) links = result.playlistLinks ?? []; }).catch(() => {});
     void home.schema().then(result => { if (!disposed) providers = result.providers ?? []; }).catch(() => {});
-    const unsubscribe = liveUpdates.subscribe(scheduler.schedule);
+    const unsubscribe = scheduler.subscribe();
     return () => { disposed = true; unsubscribe(); scheduler.cancel(); };
   });
 </script>

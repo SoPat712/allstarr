@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using allstarr.Core.Capabilities;
+using allstarr.Core.Operations;
 using allstarr.Models.Domain;
 using allstarr.Models.Settings;
 using allstarr.Services.Common;
@@ -106,9 +107,13 @@ public interface IEffectiveProviderPolicyResolver
         Guid userId, CancellationToken cancellationToken = default);
 }
 
-public sealed class EffectiveProviderPolicyResolver(IDurableRuntimeSettings settings, IProviderRegistry? registry = null)
+public sealed class EffectiveProviderPolicyResolver(IDurableRuntimeSettings settings, IProviderRegistry? registry = null,
+    IRuntimeSettingsChangeSignal? changes = null)
     : IEffectiveProviderPolicyResolver
 {
+    private sealed record HouseholdPolicy(long Version, IReadOnlyList<ProviderDescriptor>? Providers,
+        Lazy<Task<EffectiveProviderPolicySnapshot>> Snapshot);
+    private HouseholdPolicy? household;
     private static readonly string[] Keys =
     [
         .. ProviderOrderPolicyCatalog.Definitions.Select(item => item.SettingKey),
@@ -117,8 +122,32 @@ public sealed class EffectiveProviderPolicyResolver(IDurableRuntimeSettings sett
         "Matching:LocalPreferencePercent"
     ];
 
-    public async Task<EffectiveProviderPolicySnapshot> ResolveAsync(
-        CancellationToken cancellationToken = default) => await ResolveCoreAsync(null, cancellationToken);
+    public async Task<EffectiveProviderPolicySnapshot> ResolveAsync(CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (changes == null) return await ResolveCoreAsync(null, cancellationToken);
+        HouseholdPolicy entry;
+        while (true)
+        {
+            var known = Volatile.Read(ref household);
+            var version = changes.Version;
+            var providers = registry?.Providers;
+            if (known != null && known.Version == version && ReferenceEquals(known.Providers, providers) &&
+                (!known.Snapshot.IsValueCreated || !known.Snapshot.Value.IsFaulted && !known.Snapshot.Value.IsCanceled))
+            {
+                RequestTiming.Current?.NoteCache(true);
+                entry = known;
+                break;
+            }
+            entry = new(version, providers, new(() => ResolveCoreAsync(null, CancellationToken.None)));
+            if (Interlocked.CompareExchange(ref household, entry, known) == known)
+            {
+                RequestTiming.Current?.NoteCache(false);
+                break;
+            }
+        }
+        return await entry.Snapshot.Value.WaitAsync(cancellationToken);
+    }
 
     public Task<EffectiveProviderPolicySnapshot> ResolveForUserAsync(
         Guid userId, CancellationToken cancellationToken = default) =>

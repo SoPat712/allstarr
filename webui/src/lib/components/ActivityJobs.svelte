@@ -7,7 +7,7 @@
   import { activityWork, home, type Job, type JobDetail, type JobProgress } from "$lib/api";
   import { dayLabel, jobName, jobNames, jobState, progressPercent, activityText, validJobId, jobResultLabel, jobSummary, clockRange, groupAttempts, activityRecovery, internalActivityLink } from "$lib/activity";
   import { historyMatching, progressDetails } from "$lib/jobs";
-  import { liveUpdates, createRefreshScheduler } from "$lib/live-updates.svelte";
+  import { createActivityRefreshScheduler } from "$lib/activity-requests";
   import { toast } from "$lib/toasts";
   import { Button } from "$lib/components/ui/button";
   import RefreshButton from "$lib/components/RefreshButton.svelte";
@@ -65,7 +65,6 @@
   let request = 0;
   let opener: HTMLElement | null = null;
   let disposed = false;
-  let refreshPending = false;
   const stateOptions = [...queueStates, ...finishedStates].map((value) => ({ value, label: ({ Pending: "Waiting to start", Deferred: "Waiting between batches", RetryScheduled: "Waiting to retry" } as Record<string, string>)[value] || jobState(value) }));
   const wantsQueue = $derived(!stateFilter || queueStates.includes(stateFilter));
   const wantsFinished = $derived(!stateFilter || finishedStates.includes(stateFilter));
@@ -109,8 +108,13 @@
     return [administrator ? job.ownerName || "Household" : "", job.source].filter(Boolean).join(" · ");
   }
 
-  async function load(kind: "replace" | "refresh" | "older" = "refresh") {
-    if (busy && kind !== "replace") { if (kind === "refresh") refreshPending = true; else { olderPending = true; olderBusy = true; } return; }
+  let loadPromise: Promise<void> = Promise.resolve();
+  function load(kind: "replace" | "refresh" | "older" = "refresh"): Promise<void> {
+    if (disposed) return Promise.resolve();
+    if (busy && kind !== "replace") { if (kind === "older") { olderPending = true; olderBusy = true; } return loadPromise; }
+    return loadPromise = loadPage(kind);
+  }
+  async function loadPage(kind: "replace" | "refresh" | "older") {
     const version = ++request;
     busy = true;
     if (kind === "older") olderBusy = true;
@@ -148,11 +152,15 @@
         busy = false;
         olderBusy = false;
         if (olderPending) { olderPending = false; void load("older"); }
-        else if (refreshPending) { refreshPending = false; scheduler.schedule(); }
       }
     }
   }
-  const scheduler = createRefreshScheduler(() => load());
+  const scheduler = createActivityRefreshScheduler(async () => {
+    await load();
+    if (disposed || document.visibilityState === "hidden" || !expanded || detailBusy) return;
+    const job = [...(linkedJob ? [linkedJob] : []), ...queue, ...finished].find(item => item.id === expanded);
+    if (job) await attempts(job, true);
+  });
 
   $effect(() => {
     stateFilter; typeFilter;
@@ -221,7 +229,7 @@
     preferencesReady = true;
     mounted = true;
     if (initialJobId) void openLinkedJob(initialJobId);
-    const unsubscribe = liveUpdates.subscribe(() => { scheduler.schedule(); if (expanded && !detailBusy) { const job = [...(linkedJob ? [linkedJob] : []), ...queue, ...finished].find((item) => item.id === expanded); if (job) void attempts(job, true); } });
+    const unsubscribe = scheduler.subscribe();
     return () => { disposed = true; request++; unsubscribe(); scheduler.cancel(); };
   });
 </script>

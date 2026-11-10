@@ -48,7 +48,7 @@
   import ActivityIcon from "$lib/components/ActivityIcon.svelte";
   import SearchField from "$lib/components/SearchField.svelte";
   import SelectField from "$lib/components/SelectField.svelte";
-  import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
+  import { createActivityRefreshScheduler } from "$lib/activity-requests";
   import { findProviderDefinition } from "$lib/sources";
 
   let { administrator = false, scope = "mine" }: { administrator?: boolean; scope?: "mine" | "everyone" } = $props();
@@ -124,8 +124,13 @@
     return findProviderDefinition(providers, providerId)?.name ?? humanize(providerId);
   }
 
-  async function load(mode: "initial" | "refresh" | "older" = "refresh") {
-    if (disposed || refreshing || loadingEarlier) return;
+  let loadPromise: Promise<void> = Promise.resolve();
+  function load(mode: "initial" | "refresh" | "older" = "refresh"): Promise<void> {
+    if (disposed) return Promise.resolve();
+    if (refreshing || loadingEarlier) return loadPromise;
+    return loadPromise = loadPage(mode);
+  }
+  async function loadPage(mode: "initial" | "refresh" | "older") {
     if (mode === "older") loadingEarlier = true;
     else refreshing = true;
     if (mode === "initial" && !items.length) loading = true;
@@ -191,8 +196,7 @@
     }
   }
 
-  const refreshScheduler = createRefreshScheduler(() => load("refresh"));
-  const scheduleRefresh = refreshScheduler.schedule;
+  const refreshScheduler = createActivityRefreshScheduler(() => load("refresh"));
 
   function resetFilters() {
     query = "";
@@ -300,7 +304,7 @@
     motionPreference.addEventListener("change", syncMotion);
     void loadProviders();
     void load("initial");
-    const unsubscribe = liveUpdates.subscribe(scheduleRefresh);
+    const unsubscribe = refreshScheduler.subscribe();
     return () => {
       disposed = true;
       motionPreference.removeEventListener("change", syncMotion);

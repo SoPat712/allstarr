@@ -1,11 +1,63 @@
 using allstarr.Core.Capabilities;
 using allstarr.Core.Settings;
+using Microsoft.Extensions.DependencyInjection;
 using Moq;
 
 namespace allstarr.Tests;
 
 public sealed class EffectiveProviderPolicyTests
 {
+    [Fact]
+    public async Task HouseholdSnapshotIsReusedUntilSettingsChange()
+    {
+        var settings = new Mock<IDurableRuntimeSettings>(MockBehavior.Strict);
+        settings.Setup(item => item.GetManyAsync(It.IsAny<IEnumerable<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((IEnumerable<string> keys, CancellationToken _) => keys.ToDictionary(key => key, Setting));
+        settings.Setup(item => item.GetPreferencesAsync(null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PersonalListeningPreferences(new(), new(), true, "initial"));
+        var signal = new RuntimeSettingsChangeSignal();
+        using var services = new ServiceCollection().AddSingleton<IRuntimeSettingsChangeSignal>(signal).BuildServiceProvider();
+        var resolver = ActivatorUtilities.CreateInstance<EffectiveProviderPolicyResolver>(services, settings.Object);
+
+        var first = await resolver.ResolveAsync();
+        Assert.Same(first, await resolver.ResolveAsync());
+        settings.Verify(item => item.GetManyAsync(It.IsAny<IEnumerable<string>>(), It.IsAny<CancellationToken>()), Times.Once);
+        settings.Verify(item => item.GetPreferencesAsync(null, It.IsAny<CancellationToken>()), Times.Once);
+
+        settings.Setup(item => item.GetPreferencesAsync(null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PersonalListeningPreferences(new(QualityLimit: "High"), new(), true, "updated"));
+        signal.Publish();
+        var updated = await resolver.ResolveAsync();
+        Assert.NotSame(first, updated);
+        Assert.Equal("updated", updated.PreferenceRevision);
+        Assert.Equal("High", updated.AudioQuality);
+    }
+
+    [Fact]
+    public async Task HouseholdSnapshotCoalescesReadsAndDoesNotRetainFailuresOrCallerCancellation()
+    {
+        var settings = new Mock<IDurableRuntimeSettings>(MockBehavior.Strict);
+        var pending = new TaskCompletionSource<IReadOnlyDictionary<string, EffectiveRuntimeSetting>>(TaskCreationOptions.RunContinuationsAsynchronously);
+        settings.Setup(item => item.GetManyAsync(It.IsAny<IEnumerable<string>>(), It.IsAny<CancellationToken>()))
+            .Returns(pending.Task);
+        settings.Setup(item => item.GetPreferencesAsync(null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PersonalListeningPreferences(new(), new(), true, "initial"));
+        using var services = new ServiceCollection().AddSingleton<IRuntimeSettingsChangeSignal>(new RuntimeSettingsChangeSignal()).BuildServiceProvider();
+        var resolver = ActivatorUtilities.CreateInstance<EffectiveProviderPolicyResolver>(services, settings.Object);
+        using var cancelled = new CancellationTokenSource();
+        var abandoned = resolver.ResolveAsync(cancelled.Token);
+        var retained = resolver.ResolveAsync();
+        cancelled.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => abandoned.WaitAsync(TimeSpan.FromSeconds(2)));
+        pending.SetException(new InvalidOperationException("settings unavailable"));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => retained);
+        settings.Verify(item => item.GetManyAsync(It.IsAny<IEnumerable<string>>(), It.IsAny<CancellationToken>()), Times.Once);
+
+        settings.Setup(item => item.GetManyAsync(It.IsAny<IEnumerable<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((IEnumerable<string> keys, CancellationToken _) => keys.ToDictionary(key => key, Setting));
+        Assert.Equal("initial", (await resolver.ResolveAsync()).PreferenceRevision);
+    }
+
     [Theory]
     [InlineData("automatic", "manualOnly", ProviderUseMode.ManualOnly)]
     [InlineData("manualOnly", "automatic", ProviderUseMode.Automatic)]

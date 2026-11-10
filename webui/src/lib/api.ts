@@ -1,6 +1,7 @@
 import { newUuid } from "./uuid";
 import { adminUrl } from "./admin-url";
 import { ApiError, json, normalizeResponse, request } from "./api-client";
+import { readActivity } from "./activity-requests";
 
 export { ApiError, json, normalizeResponse } from "./api-client";
 export { auth, onboarding, setupAccess } from "./access-api";
@@ -2373,7 +2374,7 @@ export const eventLog = {
     const query = new URLSearchParams({ limit: String(params.limit ?? 50), scope: params.scope ?? "mine" });
     if (params.before) query.set("before", params.before);
     if (params.beforeId) query.set("beforeId", params.beforeId);
-    return json<ActivityResponse>(`/api/admin/ui/activity?${query}`);
+    return readActivity<ActivityResponse>(`/api/admin/ui/activity?${query}`);
   },
 };
 
@@ -2843,8 +2844,8 @@ export const appleDownload = {
 
 
 export const playTraces = {
-  list: (before = "") => json<PlayTrace[]>(`/api/admin/play-traces?limit=50${before ? `&before=${encodeURIComponent(before)}` : ""}`),
-  detail: (id: string) => json<PlayTrace>(`/api/admin/play-traces/${encodeURIComponent(id)}`),
+  list: (before = "") => readActivity<PlayTrace[]>(`/api/admin/play-traces?limit=50${before ? `&before=${encodeURIComponent(before)}` : ""}`),
+  detail: (id: string) => readActivity<PlayTrace>(`/api/admin/play-traces/${encodeURIComponent(id)}`),
   diagnostics: async (id: string) => (await request(`/api/admin/play-traces/${encodeURIComponent(id)}/diagnostics`)).text(),
   report: (id: string, body: PlayTraceReportRequest) => json<{ replayed: boolean }>(`/api/admin/play-traces/${encodeURIComponent(id)}/report`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
@@ -2863,14 +2864,15 @@ export const activityWork = {
     if (state) query.set("state", state);
     if (type) query.set("type", type);
     if (before && beforeId) { query.set("before", before); query.set("beforeId", beforeId); }
-    return json<JobResponse>(`/api/admin/jobs?${query}`);
+    return readActivity<JobResponse>(`/api/admin/jobs?${query}`);
   },
   detail: (id: string, before = "", beforeId = "", signal?: AbortSignal) => {
     const query = new URLSearchParams({ limit: "25" });
     if (before && beforeId) { query.set("before", before); query.set("beforeId", beforeId); }
-    return json<JobDetail>(`/api/admin/jobs/${encodeURIComponent(id)}?${query}`, { signal });
+    const url = `/api/admin/jobs/${encodeURIComponent(id)}?${query}`;
+    return signal ? json<JobDetail>(url, { signal }) : readActivity<JobDetail>(url);
   },
-  tasks: (scope: "mine" | "everyone" = "mine") => json<{ items: ActivityTask[]; hasMore?: boolean }>(scope === "mine" ? "/api/admin/activity/tasks" : `/api/admin/activity/tasks?scope=${scope}`),
+  tasks: (scope: "mine" | "everyone" = "mine") => readActivity<{ items: ActivityTask[]; hasMore?: boolean }>(scope === "mine" ? "/api/admin/activity/tasks" : `/api/admin/activity/tasks?scope=${scope}`),
   run: (endpoint: string) => json<{ jobId: string; created: boolean }>(endpoint, { method: "POST" }),
 };
 

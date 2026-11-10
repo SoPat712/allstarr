@@ -696,6 +696,7 @@ public class AdminUiController : ControllerBase
                 .Where(item => item.ProviderAccountId.HasValue && artifactAccountIds.Contains(item.ProviderAccountId.Value) &&
                     artifactProviderIds.Contains(item.ProviderId) && artifactExternalIds.Contains(item.ExternalId))
                 .ToArrayAsync(cancellationToken);
+        activityTimings.Add(("download mappings", Stopwatch.GetTimestamp()));
         var mappingByArtifact = new Dictionary<Guid, (string? Title, string? Artist)>();
         foreach (var artifact in downloadArtifacts)
         {
@@ -708,6 +709,7 @@ public class AdminUiController : ControllerBase
             if (mapping != null)
                 mappingByArtifact[artifact.Id] = (ActivityPresentation.SafeText(mapping.Title, 500), ActivityPresentation.SafeText(mapping.Artist, 500));
         }
+        activityTimings.Add(("download names", Stopwatch.GetTimestamp()));
 
         var activity = new List<AdminUiActivityItem>();
         activity.AddRange(jobs.Select(item =>
@@ -735,6 +737,7 @@ public class AdminUiController : ControllerBase
                 ActionLabel: display.ActionLabel,
                 TechnicalDetails: display.TechnicalDetails);
         }));
+        activityTimings.Add(("job rows", Stopwatch.GetTimestamp()));
         activity.AddRange(playlistRuns.Select(item =>
         {
             playlistLinks.TryGetValue(item.PlaylistLinkId, out var link);
@@ -771,9 +774,11 @@ public class AdminUiController : ControllerBase
                     ? null
                     : PlaylistArtworkUrl(link));
         }));
+        activityTimings.Add(("playlist rows", Stopwatch.GetTimestamp()));
         var effectivePolicy = _effectivePolicies == null
             ? null
             : await _effectivePolicies.ResolveAsync(cancellationToken);
+        activityTimings.Add(("policy", Stopwatch.GetTimestamp()));
         var routeProviderPriority = _providerGateway == null
             ? null
             : ProviderOrder(ProviderCapabilityKind.Streaming)
@@ -785,8 +790,12 @@ public class AdminUiController : ControllerBase
         IReadOnlyList<string> ProviderOrder(ProviderCapabilityKind capability)
         {
             var available = _providerGateway.GetProviderOrder(capability);
+            activityTimings.Add(($"{capability.ToString().ToLowerInvariant()} order", Stopwatch.GetTimestamp()));
             return effectivePolicy?.ApplyProviderAvailability(capability, available) ?? available;
         }
+        activityTimings.Add(("provider priority", Stopwatch.GetTimestamp()));
+        var routeLibrary = new TrackRouteLibrary(libraryTracks);
+        activityTimings.Add(("library projection", Stopwatch.GetTimestamp()));
         activity.AddRange(matches.Select(item =>
         {
             externalSnapshots.TryGetValue(item.ExternalSnapshotId, out var snapshot);
@@ -809,9 +818,10 @@ public class AdminUiController : ControllerBase
                 snapshot,
                 identity,
                 routeIdentities,
-                libraryTracks,
+                routeLibrary,
                 routeProviderPriority);
         }));
+        activityTimings.Add(("match rows", Stopwatch.GetTimestamp()));
         activity.AddRange(audits.Where(item =>
             AuditJobReference(item) is not { } jobId || !activityJobs.TryGetValue(jobId, out var boundJob) ||
             boundJob.OwnerUserId != item.ActorUserId || ActivityJobPresentation.ShowAuditInHistory(item, boundJob)).Select(item =>
@@ -866,6 +876,7 @@ public class AdminUiController : ControllerBase
                 ActionLabel = item.Category == "health-check" && item.Action == "configured" && session.IsAdministrator ? "Open Health" : projected.ActionLabel
             };
         }));
+        activityTimings.Add(("audit rows", Stopwatch.GetTimestamp()));
         activity.AddRange(extensionLogs.Select(item => new AdminUiActivityItem(
             item.Id.ToString("N"),
             "extension",
@@ -883,6 +894,7 @@ public class AdminUiController : ControllerBase
                 ["extensionPackageId"] = item.ExtensionPackageId.ToString("N"),
                 ["eventCode"] = item.EventCode
             })));
+        activityTimings.Add(("extension rows", Stopwatch.GetTimestamp()));
         activity.AddRange(downloadArtifacts.Select(item =>
         {
             mappingByArtifact.TryGetValue(item.Id, out var mapping);
@@ -925,6 +937,7 @@ public class AdminUiController : ControllerBase
                 });
         }));
 
+        activityTimings.Add(("download rows", Stopwatch.GetTimestamp()));
         activity = activity.Select(item => item with { State = ActivityPresentation.NormalizeState(item.State) }).ToList();
         var currentRematchStates = activity.Where(item => item.Kind == "job" && item.Action == TrackRematchJobHandler.Type && item.Id == item.JobId)
             .Select(item => (item.Id, item.State, item.OccurredAt)).ToHashSet();
@@ -943,8 +956,10 @@ public class AdminUiController : ControllerBase
         var ordered = activity.OrderByDescending(item => item.OccurredAt).ThenByDescending(item => item.Id).Take(limit + 1).ToArray();
         var actorIds = ordered.Select(item => Guid.TryParse(item.ActorUserId, out var id) ? id : (Guid?)null)
             .OfType<Guid>().Distinct().ToArray();
+        activityTimings.Add(("ordering", Stopwatch.GetTimestamp()));
         var actors = await context.Users.AsNoTracking().Where(item => actorIds.Contains(item.Id))
             .ToDictionaryAsync(item => item.Id, cancellationToken);
+        activityTimings.Add(("actors", Stopwatch.GetTimestamp()));
         var items = ordered.Take(limit).Select(item =>
         {
             var actor = Guid.TryParse(item.ActorUserId, out var actorId) ? actors.GetValueOrDefault(actorId) : null;
@@ -988,7 +1003,17 @@ public class AdminUiController : ControllerBase
         ProviderTrackIdentityRecord? sourceIdentity,
         IReadOnlyCollection<ProviderTrackIdentityRecord> providerIdentities,
         IReadOnlyCollection<LibraryTrackRecord> libraryTracks,
-        IReadOnlyCollection<string>? providerPriority = null)
+        IReadOnlyCollection<string>? providerPriority = null) =>
+        MatchActivityItem(match, snapshot, sourceIdentity, providerIdentities,
+            new TrackRouteLibrary(libraryTracks.Where(item => item.BackendInstanceId == snapshot?.BackendInstanceId)), providerPriority);
+
+    private static AdminUiActivityItem MatchActivityItem(
+        TrackMatchRecord match,
+        ExternalMetadataSnapshotRecord? snapshot,
+        ProviderTrackIdentityRecord? sourceIdentity,
+        IReadOnlyCollection<ProviderTrackIdentityRecord> providerIdentities,
+        TrackRouteLibrary library,
+        IReadOnlyCollection<string>? providerPriority)
     {
         var route = snapshot == null
             ? null
@@ -997,7 +1022,7 @@ public class AdminUiController : ControllerBase
                 match,
                 manual: null,
                 sourceIdentity,
-                libraryTracks,
+                library,
                 providerIdentities,
                 providerPriority);
         var libraryTrack = route?.LibraryTrack;

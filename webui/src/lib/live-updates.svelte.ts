@@ -149,19 +149,19 @@ export const liveUpdates = {
     this.close();
     this.connect(administrator, scope);
   },
-  subscribe(listener: (event: UpdateEvent) => void, pollInterval = 5_000) {
+  subscribe(listener: (event: UpdateEvent) => void, pollInterval: number | false = 5_000) {
     listeners.add(listener);
     // Some changes have no outbox event. Reconcile visible pages even on a healthy stream.
     const reconcile = (reason: "poll" | "resume") => {
       if (typeof document === "undefined" || document.visibilityState !== "hidden") listener({ reason });
     };
     const resume = () => reconcile("resume");
-    const fallback = setInterval(() => reconcile("poll"), pollInterval);
+    const fallback = pollInterval === false ? null : setInterval(() => reconcile("poll"), pollInterval);
     if (typeof window !== "undefined") window.addEventListener("focus", resume);
     if (typeof document !== "undefined") document.addEventListener("visibilitychange", resume);
     return () => {
       listeners.delete(listener);
-      clearInterval(fallback);
+      if (fallback !== null) clearInterval(fallback);
       if (typeof window !== "undefined") window.removeEventListener("focus", resume);
       if (typeof document !== "undefined") document.removeEventListener("visibilitychange", resume);
     };

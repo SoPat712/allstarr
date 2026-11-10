@@ -7,7 +7,7 @@
   import { expectedAuthorityForScope } from "$lib/matching-api";
   import { dayLabel, playArtwork } from "$lib/activity";
   import { playDuration, playOutcome, playPhase, playSource, playComparison, playActionError } from "$lib/play-traces";
-  import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
+  import { createActivityRefreshScheduler } from "$lib/activity-requests";
   import { toast } from "$lib/toasts";
   import { Button } from "$lib/components/ui/button";
   import { MoreHorizontal, Headphones } from "@lucide/svelte";
@@ -59,7 +59,6 @@
   let opener: HTMLElement | null = null;
   let disposed = false;
   let detailRequest = 0;
-  let refreshPending = false;
   const days = $derived.by(() => {
     const result: { label: string; plays: PlayTrace[][] }[] = [];
     for (const runs of groupPlays(plays)) {
@@ -88,8 +87,13 @@
     for (const run of runs) { const label = playOutcome(run.outcome).label; counts.set(label, (counts.get(label) ?? 0) + 1); }
     return [...counts].map(([label, count]) => label + (count > 1 ? " ×" + count : "")).join(" · ");
   }
-  async function load(older = false) {
-    if (busy) { if (!older) refreshPending = true; else { olderPending = true; olderBusy = true; } return; }
+  let loadPromise: Promise<void> = Promise.resolve();
+  function load(older = false): Promise<void> {
+    if (disposed) return Promise.resolve();
+    if (busy) { if (older) { olderPending = true; olderBusy = true; } return loadPromise; }
+    return loadPromise = loadPage(older);
+  }
+  async function loadPage(older: boolean) {
     busy = true; error = "";
     if (older) olderBusy = true;
     try {
@@ -113,11 +117,10 @@
       if (!disposed) {
         loading = false; busy = false; olderBusy = false;
         if (olderPending) { olderPending = false; void load(true); }
-        else if (refreshPending) { refreshPending = false; scheduler.schedule(); }
       }
     }
   }
-  const scheduler = createRefreshScheduler(() => load());
+  const scheduler = createActivityRefreshScheduler(() => load());
   async function loadDetail(id: string, passive = false) {
     const request = ++detailRequest;
     if (!passive) { detailBusy = true; detailError = ""; }
@@ -244,7 +247,7 @@
   onMount(() => {
     void home.schema().then(next => { if (!disposed) { providers = next.providers; backend = next.activeBackend ?? "Local library"; } }).catch(() => {});
     void load();
-    const unsubscribe = liveUpdates.subscribe(scheduler.schedule);
+    const unsubscribe = scheduler.subscribe();
     return () => { disposed = true; detailRequest++; unsubscribe(); scheduler.cancel(); };
   });
 </script>

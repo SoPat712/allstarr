@@ -79,6 +79,146 @@ const pages = [
   { view: "tasks", status: "Tasks status", filters: "Task filters", row: ".task-open", title: "Weekly Exploration" },
   { view: "reports", status: "Reports status", filters: "Report status", row: ".report-list .row-action", title: "Playback" },
 ];
+
+for (const screen of pages.filter(screen => screen.view !== "reports")) {
+  test("Activity requests " + screen.view + " pause hidden refreshes and reuse slow reads", async ({ page }) => {
+    await fixture(page);
+    await page.clock.install();
+    const endpoint = ({ history: "/api/admin/ui/activity", plays: "/api/admin/play-traces", jobs: "/api/admin/jobs", tasks: "/api/admin/activity/tasks" } as Record<string, string>)[screen.view];
+    let held = false, release: () => void = () => {}, reads = 0, peak = 0;
+    const pending = new Promise<void>(resolve => { release = resolve; });
+    const active = new Map<string, number>();
+    await page.route(url => url.pathname === endpoint, async route => {
+      const key = route.request().url();
+      reads++;
+      active.set(key, (active.get(key) ?? 0) + 1);
+      peak = Math.max(peak, active.get(key)!);
+      try { if (held) await pending; await route.fallback(); }
+      finally { active.set(key, active.get(key)! - 1); }
+    });
+    await page.goto("/#/activity?view=" + screen.view);
+    await expect(page.locator(screen.row).first()).toBeVisible();
+    const initialReads = reads;
+    await page.evaluate(() => {
+      window.dispatchEvent(new Event("focus"));
+      Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
+    });
+    await page.clock.runFor(6_000);
+    expect(reads).toBe(initialReads);
+    held = true;
+    await page.evaluate(() => {
+      Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    try {
+      await page.clock.runFor(250);
+      await expect.poll(() => reads).toBeGreaterThan(initialReads);
+      const slowReads = reads;
+      await page.getByRole("button", { name: screen.view === "history" ? "Refresh" : "Refresh " + screen.view, exact: true }).click();
+      await page.clock.runFor(16_000);
+      expect(reads).toBe(slowReads);
+      expect(peak).toBe(1);
+    } finally { release(); }
+    await expect(page.locator(screen.row).first()).toBeVisible();
+  });
+}
+
+test("Activity requests reuse jobs when returning to an unfinished filter", async ({ page }) => {
+  await fixture(page);
+  let release: () => void = () => {};
+  const pending = new Promise<void>(resolve => { release = resolve; });
+  const reads: string[] = [];
+  await page.route("**/api/admin/jobs?**", async route => {
+    const url = new URL(route.request().url());
+    reads.push(url.search);
+    if (!url.searchParams.has("type")) await pending;
+    await route.fallback();
+  });
+  await page.goto("/#/activity?view=jobs");
+  await expect.poll(() => reads.length).toBe(2);
+  try {
+    await page.getByRole("button", { name: "Job type", exact: true }).click();
+    await page.getByRole("option", { name: "Update playlist", exact: true }).click();
+    await expect.poll(() => reads.length).toBe(4);
+    await page.getByRole("button", { name: "Job type", exact: true }).click();
+    await page.getByRole("option", { name: "All work", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Job type", exact: true })).toContainText("All work");
+    expect(reads).toHaveLength(4);
+  } finally { release(); }
+  await expect(page.locator(".job-row")).toHaveCount(1);
+  expect(reads).toHaveLength(4);
+});
+
+test("Activity requests keep jobs pagination behind a slow refresh", async ({ page }) => {
+  await fixture(page);
+  let held = false, release: () => void = () => {};
+  const pending = new Promise<void>(resolve => { release = resolve; });
+  const cursors: string[] = [];
+  await page.route("**/api/admin/jobs?**", async route => {
+    const url = new URL(route.request().url());
+    if (url.searchParams.get("view") === "queue") return route.fulfill({ json: { jobs: [], progress: [] } });
+    const before = url.searchParams.get("beforeId") ?? "";
+    cursors.push(before);
+    if (held && !before) await pending;
+    return route.fulfill({ json: { jobs: [{ ...waiting, id: before || jobId, state: "Succeeded", completedAt: timestamp }], hasMore: !before, nextCursor: timestamp, nextCursorId: "older" } });
+  });
+  await page.goto("/#/activity?view=jobs");
+  const earlier = page.getByRole("button", { name: "Load earlier jobs", exact: true });
+  await expect(earlier).toBeEnabled();
+  held = true;
+  await page.getByRole("button", { name: "Refresh jobs", exact: true }).click();
+  await expect.poll(() => cursors.length).toBe(2);
+  try {
+    await earlier.click();
+    expect(cursors).toEqual(["", ""]);
+  } finally { release(); }
+  await expect.poll(() => cursors).toEqual(["", "", "older"]);
+  await expect(earlier).toHaveCount(0);
+});
+
+test("Activity requests reuse slow reads after reopening a view", async ({ page }) => {
+  await fixture(page);
+  let release: () => void = () => {}, reads = 0;
+  const pending = new Promise<void>(resolve => { release = resolve; });
+  await page.route("**/api/admin/activity/tasks**", async route => {
+    reads++;
+    await pending;
+    await route.fallback();
+  });
+  await page.goto("/#/activity?view=tasks");
+  await expect.poll(() => reads).toBe(1);
+  try {
+    await page.getByRole("tab", { name: "Jobs", exact: true }).click();
+    await expect(page.locator(".job-row")).toHaveCount(1);
+    await page.getByRole("tab", { name: "Tasks", exact: true }).click();
+    await expect(page.getByRole("status", { name: "Loading tasks", exact: true })).toBeVisible();
+    expect(reads).toBe(1);
+  } finally { release(); }
+  await expect(page.locator(".task-open")).toHaveCount(1);
+  expect(reads).toBe(1);
+});
+
+test("Activity requests reuse play details during slow opening", async ({ page }) => {
+  await fixture(page);
+  let release: () => void = () => {}, reads = 0;
+  const pending = new Promise<void>(resolve => { release = resolve; });
+  await page.route("**/api/admin/play-traces/recent", async route => {
+    reads++;
+    await pending;
+    await route.fallback();
+  });
+  await page.goto("/#/activity?view=plays");
+  const row = page.locator(".play-row .row-action").first();
+  await row.click();
+  await expect.poll(() => reads).toBe(1);
+  try {
+    await row.click();
+    expect(reads).toBe(1);
+  } finally { release(); }
+  await expect(page.getByRole("dialog", { name: "Evening song", exact: true })).toBeVisible();
+  expect(reads).toBe(1);
+});
+
 for (const screen of pages.filter(screen => ["jobs", "tasks", "reports"].includes(screen.view))) {
   test("Activity " + screen.view + " fits with wider text at 320px", async ({ page }) => {
     await page.setViewportSize({ width: 320, height: 900 });
