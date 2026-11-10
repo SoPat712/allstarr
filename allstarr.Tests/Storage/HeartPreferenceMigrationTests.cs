@@ -19,8 +19,13 @@ public sealed class HeartPreferenceMigrationTests
         await SqliteTestDatabase.InsertHistoricalUserAsync(db, new() { Id = owner, BackendPrincipalId = "preference-listener", DisplayName = "Listener" });
         var existing = new RuntimeSettingRecord
         {
-            Id = Guid.CreateVersion7(), OwnerUserId = owner, Key = ListeningPreferenceKeys.ShowExternalLabel,
-            ValueType = RuntimeSettingValueType.Boolean, ValueJson = "false", Source = "personal-preferences", Revision = 3
+            Id = Guid.CreateVersion7(),
+            OwnerUserId = owner,
+            Key = ListeningPreferenceKeys.ShowExternalLabel,
+            ValueType = RuntimeSettingValueType.Boolean,
+            ValueJson = "false",
+            Source = "personal-preferences",
+            Revision = 3
         };
         db.RuntimeSettings.Add(existing);
         await db.SaveChangesAsync();
@@ -29,8 +34,13 @@ public sealed class HeartPreferenceMigrationTests
         Assert.Equal(3, (await db.RuntimeSettings.AsNoTracking().SingleAsync()).Revision);
         db.RuntimeSettings.Add(new()
         {
-            Id = Guid.CreateVersion7(), OwnerUserId = owner, Key = ListeningPreferenceKeys.HeartAction,
-            ValueType = RuntimeSettingValueType.String, ValueJson = "\"heart\"", Source = "personal-preferences", Revision = 1
+            Id = Guid.CreateVersion7(),
+            OwnerUserId = owner,
+            Key = ListeningPreferenceKeys.HeartAction,
+            ValueType = RuntimeSettingValueType.String,
+            ValueJson = "\"heart\"",
+            Source = "personal-preferences",
+            Revision = 1
         });
         await db.SaveChangesAsync();
         var error = await Assert.ThrowsAsync<Microsoft.Data.Sqlite.SqliteException>(() => migrator.MigrateAsync("20261106072734_AddPromotionRequests"));

@@ -80,8 +80,13 @@ public sealed partial class ProtocolRouteFixtureTests
             foreach (var listener in new[] { owner, other })
                 db.PromotionRequests.Add(new()
                 {
-                    Id = Guid.CreateVersion7(), RequesterUserId = listener, RecordingId = Guid.NewGuid(),
-                    IdentityKey = listener.ToString(), RequestJson = "{}", SongsJson = "[]", CreatedAt = DateTimeOffset.UtcNow
+                    Id = Guid.CreateVersion7(),
+                    RequesterUserId = listener,
+                    RecordingId = Guid.NewGuid(),
+                    IdentityKey = listener.ToString(),
+                    RequestJson = "{}",
+                    SongsJson = "[]",
+                    CreatedAt = DateTimeOffset.UtcNow
                 });
             await db.SaveChangesAsync();
         }

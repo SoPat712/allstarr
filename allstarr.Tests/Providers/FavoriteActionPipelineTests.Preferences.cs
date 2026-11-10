@@ -17,9 +17,13 @@ public sealed partial class FavoriteActionPipelineTests
         {
             db.RuntimeSettings.Add(new()
             {
-                Id = Guid.CreateVersion7(), OwnerUserId = _userId, Key = ListeningPreferenceKeys.HeartAction,
-                ValueType = RuntimeSettingValueType.String, ValueJson = JsonSerializer.Serialize(value),
-                Source = "personal-preferences", Revision = 1
+                Id = Guid.CreateVersion7(),
+                OwnerUserId = _userId,
+                Key = ListeningPreferenceKeys.HeartAction,
+                ValueType = RuntimeSettingValueType.String,
+                ValueJson = JsonSerializer.Serialize(value),
+                Source = "personal-preferences",
+                Revision = 1
             });
             await db.SaveChangesAsync();
         }
@@ -45,8 +49,11 @@ public sealed partial class FavoriteActionPipelineTests
         {
             db.FavoriteActions.Add(new()
             {
-                Id = Guid.CreateVersion7(), EventId = receipt.EventId, OwnerUserId = _userId,
-                ActionType = "add-to-library", IdempotencyKey = "library-action"
+                Id = Guid.CreateVersion7(),
+                EventId = receipt.EventId,
+                OwnerUserId = _userId,
+                ActionType = "add-to-library",
+                IdempotencyKey = "library-action"
             });
             await db.SaveChangesAsync();
         }

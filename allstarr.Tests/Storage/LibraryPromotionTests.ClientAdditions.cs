@@ -113,8 +113,13 @@ public sealed partial class LibraryPromotionTests
         var executor = new FavoriteLibraryAdditionExecutor(ClientAdditions(batch));
         var favorite = new FavoriteEventRecord
         {
-            Id = Guid.CreateVersion7(), OwnerUserId = owner, Protocol = "jellyfin", BackendInstanceId = "backend",
-            BackendPrincipalId = "principal", ItemId = recordingId.ToString(), CorrelationId = "heart-addition"
+            Id = Guid.CreateVersion7(),
+            OwnerUserId = owner,
+            Protocol = "jellyfin",
+            BackendInstanceId = "backend",
+            BackendPrincipalId = "principal",
+            ItemId = recordingId.ToString(),
+            CorrelationId = "heart-addition"
         };
         Assert.True((await executor.ExecuteAsync(favorite, new(), 1, default)).Succeeded);
         Assert.True((await executor.ExecuteAsync(favorite, new(), 2, default)).Succeeded);

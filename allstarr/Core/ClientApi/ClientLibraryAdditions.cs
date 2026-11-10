@@ -107,8 +107,11 @@ public sealed class ClientLibraryAdditions(IDbContextFactory<AllstarrDbContext> 
     {
         var state = request.State switch
         {
-            "pending" => "waitingForApproval", "declined" => "declined", "cancelled" => "cancelled",
-            "added" => "done", "failed" => run?.Outcome == "Cancelled" ? "cancelled" : "needsLook",
+            "pending" => "waitingForApproval",
+            "declined" => "declined",
+            "cancelled" => "cancelled",
+            "added" => "done",
+            "failed" => run?.Outcome == "Cancelled" ? "cancelled" : "needsLook",
             _ => run == null ? "adding" : RunState(run)
         };
         return new(request.Id, $"ext-allstarr-song-{request.RecordingId:D}", request.Unit, state,
@@ -117,13 +120,19 @@ public sealed class ClientLibraryAdditions(IDbContextFactory<AllstarrDbContext> 
 
     private static string RunState(PromotionRunRecord run) => run.Outcome switch
     {
-        "Placed" => "done", "Cancelled" => "cancelled", "Needs review" or "Failed" => "needsLook", _ => "adding"
+        "Placed" => "done",
+        "Cancelled" => "cancelled",
+        "Needs review" or "Failed" => "needsLook",
+        _ => "adding"
     };
 
     private static string Reason(string state) => state switch
     {
-        "waitingForApproval" => "Waiting for household approval.", "needsLook" => "Ask an administrator to review this addition.",
-        "done" => "Added to the library.", "declined" => "The library request was declined.",
-        "cancelled" => "Cancelled; any files already added stay in the library.", _ => "Adding to the library."
+        "waitingForApproval" => "Waiting for household approval.",
+        "needsLook" => "Ask an administrator to review this addition.",
+        "done" => "Added to the library.",
+        "declined" => "The library request was declined.",
+        "cancelled" => "Cancelled; any files already added stay in the library.",
+        _ => "Adding to the library."
     };
 }

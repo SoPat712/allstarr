@@ -66,9 +66,16 @@ public sealed class TasteWarmUpTests
             })
                 await SqliteTestDatabase.InsertHistoricalUserAsync(db, new()
                 {
-                    Id = id, BackendType = "jellyfin", BackendInstanceId = "main", BackendPrincipalId = id.ToString(),
-                    DisplayName = "Listener", LastSeenAt = at, CreatedAt = at, UpdatedAt = at,
-                    Enabled = enabled, IsSynthetic = synthetic
+                    Id = id,
+                    BackendType = "jellyfin",
+                    BackendInstanceId = "main",
+                    BackendPrincipalId = id.ToString(),
+                    DisplayName = "Listener",
+                    LastSeenAt = at,
+                    CreatedAt = at,
+                    UpdatedAt = at,
+                    Enabled = enabled,
+                    IsSynthetic = synthetic
                 });
         }
         var tags = new SharedTagStore(factory, clock);
