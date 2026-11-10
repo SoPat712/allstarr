@@ -157,6 +157,25 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
   });
 }
 
+test("Check again starts a release check and shows the results when it lands", async ({ page }) => {
+  const state = await mockReleases(page);
+  let checks = 0;
+  await page.route("**/api/admin/releases/check", route => {
+    checks++;
+    state.inbox.coverage = state.inbox.coverage.map(item => ({ ...item, status: item.status === "library-only" ? item.status : "known" }));
+    return route.fulfill({ json: { checking: true } });
+  });
+  await openReleases(page);
+  const unchecked = page.locator("details").filter({ hasText: "Couldn't check 3 artists." });
+  await expect(unchecked).toBeVisible();
+  const readsBefore = state.reads;
+  await page.getByRole("button", { name: "Check again", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Checking…", exact: true })).toBeDisabled();
+  await expect.poll(() => checks).toBe(1);
+  await expect(unchecked).toHaveCount(0, { timeout: 10_000 });
+  expect(state.reads).toBeGreaterThan(readsBefore);
+});
+
 test("Dismissing a release updates the inbox and keeps other releases", async ({ page }) => {
   const state = await mockReleases(page);
   await openReleases(page);

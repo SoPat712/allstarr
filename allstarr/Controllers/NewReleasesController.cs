@@ -43,6 +43,9 @@ public sealed class NewReleasesController(NewReleasesService releases, AdminProt
             return NoContent();
         });
 
+    [HttpPost("check")]
+    public Task<IActionResult> CheckNow(CancellationToken cancellationToken) => ExecuteAsync(async owner =>
+        Ok(new { checking = await releases.CheckNowAsync(owner, cancellationToken) }));
     [HttpPost("artists/from-hearts")]
     public Task<IActionResult> FollowHearted(CancellationToken cancellationToken) => ExecuteAsync(async owner =>
         Ok(new { followed = await releases.FollowHeartedArtistsAsync(owner, cancellationToken) }));

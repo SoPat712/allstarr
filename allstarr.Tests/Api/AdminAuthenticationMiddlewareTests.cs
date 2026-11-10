@@ -112,6 +112,7 @@ public class AdminAuthenticationMiddlewareTests
     [InlineData("/api/admin/releases/artists", "GET")]
     [InlineData("/api/admin/releases/artists", "PUT")]
     [InlineData("/api/admin/releases/artists/deezer/123", "DELETE")]
+    [InlineData("/api/admin/releases/check", "POST")]
     [InlineData("/api/admin/releases/artists/from-hearts", "POST")]
     [InlineData("/api/admin/releases/artists/from-history", "POST")]
     [InlineData("/api/admin/releases/artists/search", "GET")]

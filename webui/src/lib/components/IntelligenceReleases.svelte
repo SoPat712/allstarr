@@ -25,7 +25,7 @@
 
   let { initialRelease = "", administrator = false }: { initialRelease?: string; administrator?: boolean } = $props();
   let inbox = $state<ReleaseInbox | null>(null), artists = $state<FollowedReleaseArtist[]>([]);
-  let loading = $state(true), error = $state(""), pendingAction = $state("");
+  let loading = $state(true), error = $state(""), pendingAction = $state(""), checking = $state(false);
   let artistsOpen = $state(false), followOpen = $state(false), followError = $state("");
   let pending: Promise<void> | null = null, disposed = false;
   let type = $state("all"), sort = $state("newest");
@@ -65,6 +65,21 @@
       finally { if (!disposed) loading = false; pending = null; }
     })();
     return pending;
+  }
+  async function checkAgain() {
+    if (pendingAction || checking) return;
+    checking = true;
+    try {
+      if ((await releaseInbox.checkNow()).checking) {
+        // The check paces itself a couple of seconds per artist, so read the results as they land.
+        for (const wait of [3000, 10000, 20000]) {
+          await new Promise(resolve => setTimeout(resolve, wait));
+          if (disposed) return;
+          await load();
+        }
+      } else await load();
+    } catch { await load(); }
+    finally { if (!disposed) checking = false; }
   }
   async function follow() {
     if (pendingAction) return;
@@ -181,7 +196,7 @@
         <DropdownMenu.Root><DropdownMenu.Trigger class="icon-button release-card-menu" aria-label={`Actions for ${entry.title}`}><UiIcon name="more" /></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content preventScroll={false} class="bits-menu release-menu" align="end"><DropdownMenu.Item class="bits-menu-item destructive" disabled={Boolean(pendingAction)} onSelect={() => askDismiss(entry)}>Dismiss {entry.title}</DropdownMenu.Item></DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root>
       </article>
     {/each}</div>{/if}
-    {#if unchecked.length}<div class="checking-note"><AdvancedFold placement="flush" label={`Couldn't check ${countLabel(unchecked.length, "artist")}.`}><p>Some releases may be missing.</p><ul>{#each unchecked as item}<li>{item.artist.displayName}</li>{/each}</ul></AdvancedFold><Button variant="text" size="sm" disabled={Boolean(pendingAction)} onclick={() => void load()}>Check again</Button></div>{/if}
+    {#if unchecked.length}<div class="checking-note"><AdvancedFold placement="flush" label={`Couldn't check ${countLabel(unchecked.length, "artist")}.`}><p>Some releases may be missing.</p><ul>{#each unchecked as item}<li>{item.artist.displayName}</li>{/each}</ul></AdvancedFold><Button variant="text" size="sm" disabled={Boolean(pendingAction) || checking} onclick={() => void checkAgain()}>{checking ? "Checking…" : "Check again"}</Button></div>{/if}
     {#if hidden.length}<details class="release-disclosure"><summary class="disclosure-summary"><DisclosureLabel title={`Hidden: ${countLabel(hidden.length, "release")}`} /></summary><ul>{#each hidden as entry}<li><strong>{entry.title}</strong> · {entry.artist} · {hiddenReason(entry.exclusionReason)}</li>{/each}</ul></details>{/if}
   {/if}
 </div>

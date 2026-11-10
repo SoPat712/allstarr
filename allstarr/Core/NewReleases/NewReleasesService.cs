@@ -84,6 +84,27 @@ public sealed class NewReleasesService(IDbContextFactory<AllstarrDbContext> fact
         finally { Gate.Release(); }
     }
 
+    // Brings the listener's daily release check forward to now; the schedule engine starts it within a second.
+    public async Task<bool> CheckNowAsync(Guid owner, CancellationToken token = default)
+    {
+        await Gate.WaitAsync(token);
+        try
+        {
+            await using var db = await factory.CreateDbContextAsync(token);
+            var user = await UserAsync(db, owner, token);
+            if (!(await FollowsAsync(db, user, token)).Any()) return false;
+            await EnsureScheduleAsync(db, user, token);
+            var id = ScheduleId(user);
+            var schedule = db.JobSchedules.Local.SingleOrDefault(item => item.Id == id) ??
+                await db.JobSchedules.SingleAsync(item => item.Id == id, token);
+            schedule.NextRunAt = clock.UtcNow;
+            schedule.Revision++;
+            await db.SaveChangesAsync(token);
+            return true;
+        }
+        finally { Gate.Release(); }
+    }
+
     public async Task UnfollowAsync(Guid owner, string provider, string artistId, CancellationToken token = default,
         string? libraryArtistId = null)
     {

@@ -2531,6 +2531,7 @@ export const historyImports = {
 export const releaseInbox = {
   get: () => json<ReleaseInbox>("/api/admin/releases"),
   artists: () => json<FollowedReleaseArtist[]>("/api/admin/releases/artists"),
+  checkNow: () => json<{ checking: boolean }>("/api/admin/releases/check", { method: "POST" }),
   followFromHearts: () => json<{ followed: number }>("/api/admin/releases/artists/from-hearts", { method: "POST" }),
   followFromHistory: () => json<{ followed: number }>("/api/admin/releases/artists/from-history", { method: "POST" }),
   search: (query: string) => json<FollowedReleaseArtist[]>(`/api/admin/releases/artists/search?${new URLSearchParams({ query })}`),

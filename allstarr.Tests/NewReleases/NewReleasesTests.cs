@@ -111,6 +111,20 @@ public sealed partial class NewReleasesTests : IAsyncLifetime
                 "Track " + index, [new("Artist")], isrc: isrc, isExplicit: explicitValue)));
 
     [Fact]
+    public async Task Checking_again_brings_the_daily_release_check_forward_to_now()
+    {
+        Assert.False(await _service.CheckNowAsync(_first));
+        await Follow(_first);
+        _clock.UtcNow += TimeSpan.FromHours(3);
+        Assert.True(await _service.CheckNowAsync(_first));
+        await using var db = _factory.CreateDbContext();
+        var schedule = Assert.Single(await db.JobSchedules.Where(item => item.OwnerUserId == _first && item.JobType == NewReleasesService.JobType).ToArrayAsync());
+        Assert.True(schedule.Enabled);
+        Assert.Equal(_clock.UtcNow, schedule.NextRunAt);
+        Assert.Empty(await db.JobSchedules.Where(item => item.OwnerUserId == _second).ToArrayAsync());
+    }
+
+    [Fact]
     public async Task Shared_catalog_changes_publish_committed_inbox_counts_to_affected_listeners()
     {
         await Follow(_first);

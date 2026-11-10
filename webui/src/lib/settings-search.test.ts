@@ -10,7 +10,7 @@ const admin = { playback: "Playback", storage: "Storage", history: "History and 
 describe("Find a setting", () => {
   it("finds song.link settings in Sources by their plain names", () => {
     const matches = searchSettings("song.link", fields, admin);
-    expect(matches.map(match => match.label)).toEqual(expect.arrayContaining(["song.link API key", "Find the same song on other services"]));
+    expect(matches.map(match => match.label)).toEqual(expect.arrayContaining(["song.link API key", "Look up songs on your other services"]));
     expect(matches.every(match => match.href === "#/integrations/services")).toBe(true);
   });
 

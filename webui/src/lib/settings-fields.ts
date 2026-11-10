@@ -24,7 +24,7 @@ export function joinLibraryIds(ids: string[]): string {
 export const settingNames: Record<string, string> = {
   PLAYBACK_START_PREFERENCE: "Playback start for everyone", EXPLICIT_FILTER: "Explicit songs for everyone",
   STORAGE_MODE: "Cache played songs", CACHE_DURATION_HOURS: "Keep cached songs for (hours)",
-  BACKEND_MUSIC_LIBRARY_IDS: "Libraries to use", ODESLI_ENABLED: "Find the same song on other services",
+  BACKEND_MUSIC_LIBRARY_IDS: "Libraries to use", ODESLI_ENABLED: "Look up songs on your other services",
   ODESLI_API_KEY: "song.link API key", ODESLI_RATE_LIMIT_MS: "Wait between song.link lookups (milliseconds)",
   EXTENSIONS_ALLOW_REMOTE_INSTALL: "Install extensions from outside your home network",
   PLAYBACK_LASTFM_SIMILAR_ENABLED: "Similar songs from Last.fm when a service has none",
@@ -44,7 +44,7 @@ export const settingHelp: Record<string, string> = {
   PLAYBACK_LISTENBRAINZ_SIMILAR_ENABLED: "Use ListenBrainz when the service and Last.fm have no suggestions.",
   SCROBBLING_LOCAL_TRACKS_ENABLED: "Leave off when your server's own scrobbler (like Jellyfin's Last.fm plugin) sends them. Streamed songs always scrobble.",
   BACKEND_MUSIC_LIBRARY_IDS: "Choose libraries, or use every library your server allows.",
-  ODESLI_ENABLED: "Uses Deezer, Apple Music and your enabled sources",
+  ODESLI_ENABLED: "Asks the public song.link service where else each song lives, so playback and lyrics can fall back to your other enabled services",
   ODESLI_API_KEY: "Optional. With a key, the official API is tried first. Leave unchanged to keep it.",
   STORAGE_MODE: "Songs saved after streaming start faster next time. Hearts, Keep and retained playlists protect their copies in either mode.",
   CACHE_DURATION_HOURS: "After the last play. The size limit can remove cached songs sooner.",
