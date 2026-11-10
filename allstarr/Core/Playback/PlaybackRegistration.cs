@@ -23,8 +23,6 @@ public static class PlaybackRegistration
         services.AddSingleton<IPlaybackSignalPipeline, PlaybackSignalPipeline>();
         services.AddSingleton<ListeningStatsService>();
         services.AddSingleton<RecapArtworkReader>();
-        services.AddSingleton<RecapArtworkWarmUp>();
-        services.AddHostedService<RecapArtworkWarmUp>(provider => provider.GetRequiredService<RecapArtworkWarmUp>());
         services.AddSingleton<IPlaybackTrackResolver, PlaybackTrackResolver>();
         services.AddSingleton<IPlaybackLyricsPrefetch, PlaybackLyricsPrefetch>();
         services.AddSingleton<IScopedPlaybackScrobbleDelivery, ScopedPlaybackScrobbleDelivery>();
