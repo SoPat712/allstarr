@@ -1432,7 +1432,8 @@ export type MixRecipeEvidence = {
   primaryPlays: number; fallbackPlays: number; candidates: number; qualified: number; shown: number; fromMusic: number; fromServices: number;
   excluded: Record<string, number>; providerReads: number | null; providerFailures: number | null; shortfall: string | null; releaseInboxEntries?: number | null;
 };
-export type MixCard = { savedFrom?: string | null; source?: string | null; sourcePlaylistId?: string | null; songCount?: number | null; evidence?: MixRecipeEvidence | null; id: string; kind: string; name: string; description: string; section: "madeForYou" | "moods" | "custom" | "yourServices"; sortOrder: number; sourceLabel: string | null; recipeVersion: string | null; updatedAt: string | null; readiness: { ready: boolean; message: string }; inApps: boolean; appsAllowed: boolean; coverArtwork: string[] };
+export type MixPublicationStatus = { status: "healthy" | "updating" | "needsLook"; lastPublishedAt: string | null; reason: string | null };
+export type MixCard = { publication?: MixPublicationStatus | null; savedFrom?: string | null; source?: string | null; sourcePlaylistId?: string | null; songCount?: number | null; evidence?: MixRecipeEvidence | null; id: string; kind: string; name: string; description: string; section: "madeForYou" | "moods" | "custom" | "yourServices"; sortOrder: number; sourceLabel: string | null; recipeVersion: string | null; updatedAt: string | null; readiness: { ready: boolean; message: string }; inApps: boolean; appsAllowed: boolean; coverArtwork: string[] };
 export type MixDetail = { mix: MixCard; songs: MixSong[] };
 export type MixPreview = { previewId: string; songs: MixSong[]; readiness: MixCard["readiness"] };
 export type MixSeed = { id: string; title: string; artist: string; artworkUrl: string | null; kind: "song" | "artist" };

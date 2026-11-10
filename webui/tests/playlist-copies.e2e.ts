@@ -12,7 +12,7 @@ const virtualPlaylistId = `allstarr-vpl-${id.replaceAll("-", "")}`;
 const playlist = { id, virtualPlaylistId, name: "Evening mix", enabled: true, sourceProviderId: "spotify", sourcePlaylistId: "evening", targetProtocol: "jellyfin", targetBackendInstanceId: "home", targetPlaylistId: "33333333333343338333333333333333", mode: "virtual", importMode: "linked", projectionMode: "resolved", trackRetention: "onDemand", trackCount: 1, matchedCount: 1, unmatchedCount: 0, playableCount: 1, materializedCount: 0, routeCoverage: [], metrics: { total: 1, review: 0 } };
 const coverUrl = `/api/admin/mixes/${id}/cover?v=1`;
 const mixPlaylist = { ...playlist, name: "After hours mix", sourceProviderId: "lastfm", sourcePlaylistId: "loved", artworkUrl: coverUrl };
-const keptMix: MixCard = { id: "66666666-6666-4666-8666-666666666666", kind: "daily-1", name: "Blend 1", description: "Songs picked for you", section: "madeForYou", sortOrder: 0, sourceLabel: null, recipeVersion: "1", updatedAt: "2026-10-29T04:00:00Z", readiness: { ready: true, message: "Ready" }, inApps: true, appsAllowed: true, coverArtwork: [] };
+const keptMix: MixCard = { id: "66666666-6666-4666-8666-666666666666", kind: "daily-1", name: "Blend 1", description: "Songs picked for you", section: "madeForYou", sortOrder: 0, sourceLabel: null, recipeVersion: "1", updatedAt: "2026-10-29T04:00:00Z", readiness: { ready: true, message: "Ready" }, inApps: true, appsAllowed: true, coverArtwork: [], publication: { status: "healthy", lastPublishedAt: "2026-10-29T04:00:00Z", reason: null } };
 const builtInMixes: MixCard[] = [keptMix, { ...keptMix, id: "77777777-7777-4777-8777-777777777777", kind: "focus", name: "Focus", section: "moods" }, { ...keptMix, id: "88888888-8888-4888-8888-888888888888", kind: "custom", name: "Evening listening", section: "custom" }, { ...keptMix, id: "99999999-9999-4999-8999-999999999999", kind: "discover-weekly", name: "Uncharted", inApps: false, }, { ...keptMix, id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", kind: "release-radar", name: "Just Dropped", inApps: false, appsAllowed: false }];
 async function mockCopies(page: Page, copies = true, byTarget = false, items?: Array<typeof playlist & { artworkUrl?: string }>, cards: MixCard[] = []) {
   const reads: string[] = [];
@@ -173,7 +173,7 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     await page.getByRole("searchbox", { name: "Filter playlists" }).fill("");
     for (const status of ["Healthy", "Needs a look"]) {
       await page.getByRole("radio", { name: new RegExp(`^${status}`) }).click();
-      await expect(rows.getByText(/Mix · in your apps/)).toHaveCount(0);
+      await expect(rows.getByText(/Mix · in your apps/)).toHaveCount(status === "Healthy" ? 3 : 0);
     }
     await expect(page.getByRole("radio", { name: /^Paused/ })).toHaveCount(0);
     await page.getByRole("radio", { name: /^All/ }).click();

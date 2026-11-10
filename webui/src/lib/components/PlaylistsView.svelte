@@ -154,13 +154,13 @@
 
   const playlistCount = $derived(playlists.length + keptMixes.length);
   const allPlaylists = $derived([...playlists, ...keptMixes]);
-  const attentionCount = $derived(playlists.filter(needsLook).length);
-  const healthyCount = $derived(playlists.filter(item => item.enabled && !needsLook(item)).length);
+  const attentionCount = $derived(allPlaylists.filter(needsLook).length);
+  const healthyCount = $derived(playlists.filter(item => item.enabled && !needsLook(item)).length + keptMixes.filter(item => item.publication?.status === "healthy").length);
   const orderCount = $derived(playlists.filter(item => Boolean(jellyfinPlaylistWarning(item, providerName(item.sourceProviderId)))).length);
   const totalSongs = $derived(allPlaylists.reduce((sum, item) => sum + (item.trackCount ?? 0), 0));
   const visiblePlaylists = $derived(filterPlaylists<PlaylistLink | PlaylistMix>(allPlaylists, query, "all", sort).filter(item =>
     (!sourceFilter || (!isPlaylistMix(item) && item.sourceProviderId === sourceFilter)) &&
-    (stateFilter === "all" || (!isPlaylistMix(item) && (stateFilter === "attention" ? needsLook(item) : stateFilter === "paused" ? !item.enabled : item.enabled && !needsLook(item))))));
+    (stateFilter === "all" || (stateFilter === "attention" ? needsLook(item) : isPlaylistMix(item) ? stateFilter === "ready" && item.publication?.status === "healthy" : stateFilter === "paused" ? !item.enabled : item.enabled && !needsLook(item)))));
 
   // Only shown where a playlist differs from its group: a feed whose songs fill the library, or your own that doesn't.
   function libraryNote(item: PlaylistLink) {
@@ -168,10 +168,12 @@
     const counts = item.countsTowardLibrary ?? own;
     return own === counts ? "" : counts ? " · Songs in your library" : " · Playlist only";
   }
-  function needsLook(item: PlaylistLink) {
+  function needsLook(item: PlaylistLink | PlaylistMix) {
+    if (isPlaylistMix(item)) return !item.publication || item.publication.status === "needsLook";
     return !item.enabled || item.metrics.review > 0 || item.unmatchedCount > 0 || item.metrics.rejected > 0 || Boolean(jellyfinPlaylistWarning(item, providerName(item.sourceProviderId))) || item.lastRunCode === "backend_access_missing";
   }
-  function rowState(item: PlaylistLink) {
+  function rowState(item: PlaylistLink | PlaylistMix) {
+    if (isPlaylistMix(item)) return item.publication?.status === "updating" ? "Updating" : needsLook(item) ? "Needs a look" : "Healthy";
     if (!item.enabled) return "Paused";
     if (item.lastRunCode === "backend_access_missing") return "Access needed";
     if (jellyfinPlaylistWarning(item, providerName(item.sourceProviderId))) return consent?.granted && !consent.needsSignIn && item.lastRunCode?.split(",").some(code => code.trim() === "order") ? "Order fixing" : "Needs a look";
@@ -686,8 +688,9 @@
         {#snippet playlistRow(playlist: PlaylistLink | PlaylistMix)}
           <div class="playlist-row">
           {#if isPlaylistMix(playlist)}
-            <ItemRow title={playlist.name} subtitle={`Mix · in your apps · ${playlist.trackCount ?? "?"} ${playlist.trackCount === 1 ? "song" : "songs"}`} href={`#/for-you?mix=${encodeURIComponent(playlist.id)}`} actionLabel={`Open ${playlist.name} mix`}>
+            <ItemRow title={playlist.name} subtitle={`Mix · in your apps · ${playlist.trackCount ?? "?"} ${playlist.trackCount === 1 ? "song" : "songs"}`} href={`#/for-you?mix=${encodeURIComponent(playlist.id)}`} actionLabel={`Open ${playlist.name} mix`} attention={needsLook(playlist)}>
               {#snippet leading()}<MediaArtwork class="playlist-art" url={`/api/admin/mixes/${encodeURIComponent(playlist.id)}/cover?v=${encodeURIComponent(playlist.updatedAt ?? playlist.recipeVersion ?? "")}`} />{/snippet}
+              {#snippet pill()}<StatePill tone={needsLook(playlist) ? "warn" : playlist.publication?.status === "updating" ? "info" : "ok"} text={rowState(playlist)} />{/snippet}
               {#snippet menu()}<DropdownMenu.Root><DropdownMenu.Trigger class={buttonVariants({ variant: "text", size: "icon" })} aria-label={`More options for ${playlist.name}`}><MoreHorizontal size={18} /></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content preventScroll={false} class="bits-menu" align="end"><DropdownMenu.Item class="bits-menu-item library-danger" onSelect={() => { removeError = ""; removingMix = playlist; }}>Remove from my apps</DropdownMenu.Item></DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root>{/snippet}
             </ItemRow>
           {:else}

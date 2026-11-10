@@ -12,6 +12,7 @@
   import RowsSkeleton from "$lib/components/patterns/RowsSkeleton.svelte";
   import ErrorState from "$lib/components/patterns/ErrorState.svelte";
   import PageStatus from "$lib/components/patterns/PageStatus.svelte";
+  import StatePill from "$lib/components/patterns/StatePill.svelte";
   import AdvancedFold from "$lib/components/patterns/AdvancedFold.svelte";
   import { Switch } from "$lib/components/ui/switch";
   import { DropdownMenu } from "$lib/components/ui/dropdown-menu";
@@ -145,6 +146,12 @@
       {#if detail.mix.evidence}<p>{detail.mix.evidence.recipe.sentence}</p>{/if}
       <div class="apps-row"><label for="mix-show-apps"><strong>Show in my apps</strong>{#if detail.mix.inApps}<small id="mix-apps-description" class="added-state"><span>✓ In your apps</span><a class="touch-target" href="#/library/playlists">Manage in Playlists</a></small>{:else}<small id="mix-apps-description">Appears as a playlist in your music apps</small>{/if}</label><Switch id="mix-show-apps" aria-label="Show in my apps" aria-describedby="mix-apps-description" bind:checked={appsChecked} disabled={busy || !detail.mix.inApps && !detail.mix.appsAllowed} onchange={event => void showInApps(event.currentTarget.checked)} /></div>
       {#if !detail.mix.appsAllowed}<p class="muted">Your admin hasn't allowed adding mixes.</p>{/if}
+      {#if detail.mix.inApps && detail.mix.publication}
+        {@const publication = detail.mix.publication}
+        <StatePill tone={publication.status === "needsLook" ? "warn" : publication.status === "updating" ? "info" : "ok"} text={publication.status === "needsLook" ? "Needs a look" : publication.status === "updating" ? "Updating" : "Healthy"} />
+        {#if publication.status === "needsLook" && publication.reason}<p>{publication.reason}</p>{/if}
+        {#if publication.lastPublishedAt}<p>Published {formatLocalDateTime(publication.lastPublishedAt)}</p>{/if}
+      {/if}
     </div>
         {#if detail.mix.evidence}
           <AdvancedFold placement="flush" class="recipe" label="How this mix is made">

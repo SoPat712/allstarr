@@ -20,14 +20,18 @@ public sealed partial class MixesController(PersonalMixService mixes, IDurableRu
     public Task<IActionResult> List([FromQuery] string? timeZoneId = null, CancellationToken token = default) => ExecuteAsync(async user =>
     {
         var enabled = (bool)(await settings.GetAsync(PersonalMixService.PublishKey, token)).Value;
-        return (await mixes.ListCardsAsync(user.Id, timeZoneId, token)).Select(mix => Card(mix, enabled));
+        var cards = await mixes.ListCardsAsync(user.Id, timeZoneId, token);
+        var publication = await mixes.PublicationStatusAsync(user, cards, enabled, token);
+        return cards.Select(mix => Card(mix, enabled, publication: publication.GetValueOrDefault(mix.Id)));
     }, token);
 
     [HttpGet("{id:guid}")]
     public Task<IActionResult> Get(Guid id, CancellationToken token) => ExecuteAsync(async user =>
     {
         var mix = await mixes.GetAsync(user.Id, id, token);
-        return new { mix = Card(mix, (bool)(await settings.GetAsync(PersonalMixService.PublishKey, token)).Value), songs = mix.Songs };
+        var enabled = (bool)(await settings.GetAsync(PersonalMixService.PublishKey, token)).Value;
+        var publication = await mixes.PublicationStatusAsync(user, [mix], enabled, token);
+        return new { mix = Card(mix, enabled, publication: publication.GetValueOrDefault(id)), songs = mix.Songs };
     }, token);
 
     [HttpGet("{id:guid}/cover")]
@@ -118,7 +122,7 @@ public sealed partial class MixesController(PersonalMixService mixes, IDurableRu
             return new { jobId = job.JobId };
         }, token, true);
 
-    private static object Card(PersonalMix mix, bool enabled, Guid? initialJobId = null) => new
+    private static object Card(PersonalMix mix, bool enabled, Guid? initialJobId = null, MixPublicationStatus? publication = null) => new
     {
         mix.Id,
         mix.Kind,
@@ -135,6 +139,7 @@ public sealed partial class MixesController(PersonalMixService mixes, IDurableRu
         mix.Evidence,
         mix.UpdatedAt,
         mix.Readiness,
+        publication,
         inApps = mix.Added,
         appsAllowed = enabled,
         coverArtwork = mix.ArtworkUrl != null || mix.Kind != "external" && mix.Songs.Count > 0
