@@ -38,8 +38,8 @@ public sealed partial class ProtocolRouteFixtureTests
             ("/allstarr/v1/items/native-mix-song/appearances", ["match", "serialize"]),
             ($"/Items/{playlist}", ["build", "serialize"]),
             ($"/Playlists/{playlist}/Items", ["build", "serialize"]),
-            ($"/Items/{playlist}/Images/Primary", ["resolve", "fetch", "render", "store"]),
-            ($"/allstarr/v1/mixes/{mix.Id}/cover", ["build", "resolve", "fetch", "render", "store"])
+            ($"/Items/{playlist}/Images/Primary", ["resolve", "fetch", "render"]),
+            ($"/allstarr/v1/mixes/{mix.Id}/cover", ["build", "resolve", "fetch", "render"])
         })
         {
             using var response = await client.GetAsync(path);

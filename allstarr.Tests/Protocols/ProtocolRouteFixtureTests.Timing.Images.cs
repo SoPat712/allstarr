@@ -33,7 +33,8 @@ public sealed partial class ProtocolRouteFixtureTests
         var path = $"/Items/ext-deezer-{kind}-picture/Images/Primary?api_key=fixture-key&maxWidth=8&format=png";
         using var cold = await client.GetAsync(path);
         Assert.Equal(HttpStatusCode.OK, cold.StatusCode);
-        AssertTimingStages(cold, "resolve", "fetch", "render", "store", "lock");
+        // Disk writes and gate waits run off the request in the background writer, so a miss shows no store or lock stage.
+        AssertTimingStages(cold, "resolve", "fetch", "render");
         var bytes = await cold.Content.ReadAsByteArrayAsync();
         Assert.Equal(1, reads);
         var metadataReads = gateway.Invocations.Count;
