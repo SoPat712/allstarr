@@ -1481,12 +1481,14 @@ export type HistoryImport = {
   preview: ListeningHistoryImportPreview & { songs: number };
 };
 
-export type FollowedReleaseArtist = { providerId: string; artistId: string; displayName: string; musicBrainzArtistId?: string | null; libraryArtistId?: string | null; libraryImageTag?: string | null };
+export type FollowedReleaseArtist = { providerId: string; artistId: string; displayName: string; musicBrainzArtistId?: string | null; libraryArtistId?: string | null; libraryImageTag?: string | null; listenerConfirmed?: boolean; resolutionReason?: string | null };
+export type ReleaseArtistCandidate = { providerId: string; artistId: string; displayName: string; serviceName: string; imageUrl: string | null; hints: string[] };
+export type ReleaseArtistCandidates = { artist: FollowedReleaseArtist; candidates: ReleaseArtistCandidate[]; currentChoice?: ReleaseArtistCandidate | null };
 export type ReleaseSource = { providerId: string; albumId: string; title: string; artist: string; releaseDate: string | null; datePrecision: string; type: string; isExplicit: boolean | null; edition: string; upc: string | null; isrcs: string[]; aliases: string[]; exclusionReason: string | null };
 export type ReleaseInboxEntry = { id: string; title: string; artist: string; releaseDate: string | null; datePrecision: string; type: string; isExplicit: boolean | null; edition: string; exclusionReason: string | null; sources: ReleaseSource[]; artworkUrl: string };
 export type ReleaseTrack = { number: number; title: string; artists: string; durationMs: number | null; isExplicit: boolean };
 export type ReleaseTracks = { providerId: string | null; tracks: ReleaseTrack[] };
-export type ReleaseInbox = { entries: ReleaseInboxEntry[]; excluded: ReleaseInboxEntry[]; coverage: Array<{ artist: FollowedReleaseArtist; status: string; checkedAt: string | null }> };
+export type ReleaseInbox = { entries: ReleaseInboxEntry[]; excluded: ReleaseInboxEntry[]; coverage: Array<{ artist: FollowedReleaseArtist; status: string; checkedAt: string | null; reason?: string | null }> };
 
 export type ListeningHistoryStats = {
   completedListens: number;
@@ -2532,6 +2534,11 @@ export const historyImports = {
 export const releaseInbox = {
   get: () => json<ReleaseInbox>("/api/admin/releases"),
   artists: () => json<FollowedReleaseArtist[]>("/api/admin/releases/artists"),
+  artistCandidates: (libraryArtistId: string) => json<ReleaseArtistCandidates>(`/api/admin/releases/artists/candidates?${new URLSearchParams({ libraryArtistId })}`),
+  chooseArtist: (libraryArtistId: string, providerId: string | null, artistId: string | null) => json<FollowedReleaseArtist>("/api/admin/releases/artists/choice", {
+    method: "PUT", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ libraryArtistId, providerId, artistId }),
+  }),
   checkNow: () => json<{ checking: boolean }>("/api/admin/releases/check", { method: "POST" }),
   followFromHearts: () => json<{ followed: number }>("/api/admin/releases/artists/from-hearts", { method: "POST" }),
   followFromHistory: () => json<{ followed: number }>("/api/admin/releases/artists/from-history", { method: "POST" }),

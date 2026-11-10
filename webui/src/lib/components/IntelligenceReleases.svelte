@@ -22,6 +22,7 @@
   import DisclosureLabel from "$lib/components/DisclosureLabel.svelte";
   import MediaArtwork from "$lib/components/MediaArtwork.svelte";
   import SearchField from "$lib/components/SearchField.svelte";
+  import ReleaseArtistChoice from "$lib/components/ReleaseArtistChoice.svelte";
 
   let { initialRelease = "", administrator = false }: { initialRelease?: string; administrator?: boolean } = $props();
   let inbox = $state<ReleaseInbox | null>(null), artists = $state<FollowedReleaseArtist[]>([]);
@@ -31,7 +32,8 @@
   let type = $state("all"), sort = $state("newest");
   let ReleasePanel = $state<Component<any>>();
   let dismissTarget = $state<ReleaseInboxEntry | null>(null), unfollowTarget = $state<FollowedReleaseArtist | null>(null);
-  let dismissOpen = $state(false), unfollowOpen = $state(false);
+  let dismissOpen = $state(false), unfollowOpen = $state(false), choiceOpen = $state(false);
+  let choiceTarget = $state<FollowedReleaseArtist | null>(null);
   const selected = $derived(inbox?.entries.find(entry => entry.id === initialRelease) ?? inbox?.excluded?.find(entry => entry.id === initialRelease));
   const entries = $derived((inbox?.entries ?? []).filter(entry => type === "all" || entry.type.toLowerCase() === type).slice().sort((a, b) => (a.releaseDate ?? "").localeCompare(b.releaseDate ?? "") * (sort === "newest" ? -1 : 1)));
   const filters = $derived([{ id: "all", label: "All", count: inbox?.entries.length ?? 0 }, ...[{ id: "album", label: "Albums" }, { id: "single", label: "Singles" }, { id: "ep", label: "EPs" }].map(option => ({ ...option, count: inbox?.entries.filter(entry => entry.type.toLowerCase() === option.id).length ?? 0 }))]);
@@ -39,6 +41,23 @@
   const openRelease = (entry: ReleaseInboxEntry) => { void goto(`#/for-you?section=releases&release=${encodeURIComponent(entry.id)}`, { keepFocus: true, noScroll: true }); };
   function askDismiss(entry: ReleaseInboxEntry) { dismissTarget = entry; dismissOpen = true; }
   function askUnfollow(artist: FollowedReleaseArtist) { unfollowTarget = artist; unfollowOpen = true; }
+  function artistReason(artist: FollowedReleaseArtist) {
+    return artist.resolutionReason || (artist.libraryArtistId ? inbox?.coverage.find(item => item.artist.libraryArtistId === artist.libraryArtistId)?.reason : "") || "";
+  }
+  const needsArtistChoice = (artist: FollowedReleaseArtist) => Boolean(artist.resolutionReason) || (artist.providerId === "jellyfin" && !artist.listenerConfirmed);
+  function askArtistChoice(artist: FollowedReleaseArtist) { choiceTarget = artist; choiceOpen = true; }
+  async function chooseArtist(artist: FollowedReleaseArtist, providerId: string | null, artistId: string | null) {
+    if (pendingAction || !artist.libraryArtistId) return;
+    pendingAction = `choice:${artist.libraryArtistId}`;
+    try {
+      await pending;
+      const saved = await releaseInbox.chooseArtist(artist.libraryArtistId, providerId, artistId);
+      if (disposed) return;
+      artists = artists.map(item => item.libraryArtistId === artist.libraryArtistId ? saved : item);
+      await load();
+      if (!disposed) toast.success(`Artist choice saved for ${artist.displayName}`);
+    } finally { if (!disposed) pendingAction = ""; }
+  }
   async function loadReleasePanel() {
     try { ReleasePanel = (await import("$lib/components/ReleaseDetailPanel.svelte")).default; }
     catch { error = "The release panel could not be loaded. Try again."; }
@@ -196,7 +215,7 @@
         <DropdownMenu.Root><DropdownMenu.Trigger class="icon-button release-card-menu" aria-label={`Actions for ${entry.title}`}><UiIcon name="more" /></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content preventScroll={false} class="bits-menu release-menu" align="end"><DropdownMenu.Item class="bits-menu-item destructive" disabled={Boolean(pendingAction)} onSelect={() => askDismiss(entry)}>Dismiss {entry.title}</DropdownMenu.Item></DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root>
       </article>
     {/each}</div>{/if}
-    {#if unchecked.length}<div class="checking-note"><AdvancedFold placement="flush" label={`Couldn't check ${countLabel(unchecked.length, "artist")}.`}><p>Some releases may be missing.</p><ul>{#each unchecked as item}<li>{item.artist.displayName}</li>{/each}</ul></AdvancedFold><Button variant="text" size="sm" disabled={Boolean(pendingAction) || checking} onclick={() => void checkAgain()}>{checking ? "Checking…" : "Check again"}</Button></div>{/if}
+    {#if unchecked.length}<div class="checking-note"><AdvancedFold placement="flush" label={`Couldn't check ${countLabel(unchecked.length, "artist")}.`}><p>Some releases may be missing.</p><ul>{#each unchecked as item}<li>{item.artist.displayName}{#if item.reason} · {item.reason}{/if}</li>{/each}</ul></AdvancedFold><Button variant="text" size="sm" disabled={Boolean(pendingAction) || checking} onclick={() => void checkAgain()}>{checking ? "Checking…" : "Check again"}</Button></div>{/if}
     {#if hidden.length}<details class="release-disclosure"><summary class="disclosure-summary"><DisclosureLabel title={`Hidden: ${countLabel(hidden.length, "release")}`} /></summary><ul>{#each hidden as entry}<li><strong>{entry.title}</strong> · {entry.artist} · {hiddenReason(entry.exclusionReason)}</li>{/each}</ul></details>{/if}
   {/if}
 </div>
@@ -226,7 +245,16 @@
         {/if}
         {#if artists.length}
           <ul class="followed-artists">{#each artists as artist, index (`${index}:${artist.providerId}:${artist.artistId}`)}
-            <li><strong>{artist.displayName}</strong><Button variant="text" class="destructive" disabled={Boolean(pendingAction)} aria-label={`Unfollow ${artist.displayName}`} onclick={() => askUnfollow(artist)}>Unfollow</Button></li>
+            <li class="followed-artist">
+              <div class="artist-copy"><strong>{artist.displayName}</strong>
+                {#if artist.libraryArtistId && needsArtistChoice(artist)}<p>{artistReason(artist) || "Choose an artist to check releases from a music service."}</p>
+                {:else if artist.libraryArtistId && artist.providerId === "jellyfin" && artist.listenerConfirmed}<p>No service artist selected.</p>{/if}
+              </div>
+              <div class="artist-controls">
+                {#if artist.libraryArtistId}<Button variant={needsArtistChoice(artist) ? "outline" : "text"} disabled={Boolean(pendingAction)} aria-label={`${needsArtistChoice(artist) ? "Choose the right artist" : "Change artist"} for ${artist.displayName}`} onclick={() => askArtistChoice(artist)}>{needsArtistChoice(artist) ? "Choose the right artist" : "Change artist"}</Button>{/if}
+                <Button variant="text" class="destructive" disabled={Boolean(pendingAction)} aria-label={`Unfollow ${artist.displayName}`} onclick={() => askUnfollow(artist)}>Unfollow</Button>
+              </div>
+            </li>
           {/each}</ul>
         {:else}<p>You aren't following any artists yet.</p>{/if}
       </div>
@@ -234,6 +262,7 @@
     </Dialog.Content>
   </Dialog.Portal>
 </Dialog.Root>
+{#if choiceOpen && choiceTarget}<ReleaseArtistChoice bind:open={choiceOpen} artist={choiceTarget} reason={artistReason(choiceTarget)} onsave={(providerId, artistId) => chooseArtist(choiceTarget!, providerId, artistId)} />{/if}
 <ConfirmDialog bind:open={followOpen} title="Follow artists from your hearts" description="Follow up to 200 artists from songs you've hearted?" confirmLabel="Follow artists from my hearts" confirmVariant="default" disabled={Boolean(pendingAction)} closeOnConfirm={false} error={followError} onConfirm={follow} />
 
 <style>
@@ -262,11 +291,16 @@
   .followed-artists { display: grid; gap: var(--space-3); list-style: none; padding: 0; margin: 0; }
   .followed-artists li { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
   .followed-artists strong { overflow-wrap: anywhere; min-width: 0; }
+  .followed-artists .followed-artist { flex-wrap: wrap; align-items: flex-start; }
+  .artist-copy { flex: 1 1 9rem; min-width: 0; padding-top: var(--space-2); }
+  .artist-copy p { margin-top: var(--space-1); color: var(--color-ink-muted); font-size: var(--text-xs); line-height: 1.5; overflow-wrap: anywhere; }
+  .artist-controls { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+  .artist-controls :global(button) { min-height: 44px; }
   .found-artists { margin-bottom: var(--space-4); padding-bottom: var(--space-4); border-bottom: 1px solid var(--color-edge); }
   .found-artists strong { flex: 1; }
   .found-artists :global(.found-art) { flex: none; width: 40px; height: 40px; border-radius: 50%; overflow: hidden; }
   :global(.release-menu .bits-menu-item) { min-height: 44px; }
   :global(.release-menu .destructive), .followed-artists :global(.destructive) { color: var(--danger); }
   @media (max-width: 1100px) { .release-cards { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
-  @media (max-width: 599px) { .release-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); } .artist-faces { order: 1; flex-basis: 100%; } }
+  @media (max-width: 599px) { .release-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); } .artist-faces { order: 1; flex-basis: 100%; } .artist-controls { width: 100%; justify-content: space-between; } }
 </style>

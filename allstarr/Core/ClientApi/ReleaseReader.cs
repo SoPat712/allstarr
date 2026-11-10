@@ -87,14 +87,23 @@ public sealed class ReleaseReader(NewReleasesService releases, IProtocolProvider
         var nativeId = id.GetString()!;
         var nativeName = name.GetString()!;
         var tag = root.TryGetProperty("ImageTags", out var tags) && tags.TryGetProperty("Primary", out var primary) ? primary.GetString() : null;
-        if (follows.FirstOrDefault(item => SameNativeId(item.LibraryArtistId, nativeId)) is { } libraryFollow)
+        var mbid = root.TryGetProperty("ProviderIds", out var ids) && ids.ValueKind == JsonValueKind.Object ? ids.EnumerateObject()
+            .FirstOrDefault(item => item.Name.Equals("MusicBrainzArtist", StringComparison.OrdinalIgnoreCase)).Value : default;
+        var libraryMbid = mbid.ValueKind == JsonValueKind.String ? mbid.GetString() : null;
+        var libraryFollow = follows.FirstOrDefault(item => SameNativeId(item.LibraryArtistId, nativeId));
+        var identifierChanged = !string.Equals(libraryFollow?.LibraryMusicBrainzArtistId, libraryMbid, StringComparison.OrdinalIgnoreCase);
+        if (libraryFollow?.ListenerConfirmed == true)
+            return libraryFollow with { LibraryArtistId = nativeId, DisplayName = nativeName, LibraryImageTag = tag, LibraryMusicBrainzArtistId = libraryMbid };
+        if (followed && await releases.ResolveIndexedLibraryArtistAsync(owner, nativeName, execution.CancellationToken, libraryMbid) is { } indexed)
+            return indexed with { LibraryArtistId = nativeId, DisplayName = nativeName, LibraryImageTag = tag, LibraryMusicBrainzArtistId = libraryMbid };
+        if (libraryFollow != null && !identifierChanged)
             return libraryFollow with { LibraryArtistId = nativeId, DisplayName = nativeName, LibraryImageTag = tag };
-        var unresolved = new FollowedReleaseArtist("jellyfin", nativeId, nativeName, LibraryArtistId: nativeId, LibraryImageTag: tag);
+        var unresolved = new FollowedReleaseArtist("jellyfin", nativeId, nativeName, MusicBrainzArtistId: libraryMbid,
+            LibraryArtistId: nativeId, LibraryImageTag: tag, ResolutionReason: libraryMbid == null ? null :
+                "The library artist ID is not supported by this artist's songs. Choose the right artist.", LibraryMusicBrainzArtistId: libraryMbid);
         if (!followed) return unresolved;
         try
         {
-            var mbid = root.TryGetProperty("ProviderIds", out var ids) ? ids.EnumerateObject()
-                .FirstOrDefault(item => item.Name.Equals("MusicBrainzArtist", StringComparison.OrdinalIgnoreCase)).Value : default;
             var (catalog, catalogStatus) = await jellyfin.GetJsonAsync(
                 $"Users/{Uri.EscapeDataString(execution.VerifiedBackendPrincipalId)}/Items",
                 new() { ["ArtistIds"] = nativeId, ["IncludeItemTypes"] = "MusicAlbum,Audio", ["Recursive"] = "true", ["Limit"] = "200" },
@@ -112,8 +121,14 @@ public sealed class ReleaseReader(NewReleasesService releases, IProtocolProvider
                         else if (kind.GetString() == "Audio") songs.Add(title.GetString()!);
                     }
                 var service = await releases.ResolveLibraryArtistAsync(owner, nativeName,
-                    mbid.ValueKind == JsonValueKind.String ? mbid.GetString() : null, albums, songs, execution.CancellationToken);
-                return service == null ? unresolved : service with { DisplayName = nativeName, LibraryArtistId = nativeId, LibraryImageTag = tag };
+                    libraryMbid, albums, songs, execution.CancellationToken);
+                return service == null ? unresolved : service with
+                {
+                    DisplayName = nativeName,
+                    LibraryArtistId = nativeId,
+                    LibraryImageTag = tag,
+                    LibraryMusicBrainzArtistId = libraryMbid
+                };
             }
         }
         catch (Exception exception) when (exception is not OperationCanceledException) { return unresolved; }
@@ -136,6 +151,17 @@ public sealed class ReleaseReader(NewReleasesService releases, IProtocolProvider
             FavoritesChecked[owner] = now;
             try
             {
+                foreach (var library in (await releases.ListAsync(owner, execution.CancellationToken)).Where(item => item.LibraryArtistId != null))
+                {
+                    try
+                    {
+                        var refreshed = await ResolveArtistAsync(http, execution, library.LibraryArtistId!, true);
+                        if (refreshed != null && (refreshed.DisplayName != library.DisplayName || refreshed.LibraryImageTag != library.LibraryImageTag ||
+                            refreshed.LibraryMusicBrainzArtistId != library.LibraryMusicBrainzArtistId))
+                            await releases.FollowAsync(owner, refreshed, execution.CancellationToken);
+                    }
+                    catch (Exception exception) when (exception is not OperationCanceledException) { }
+                }
                 await releases.FollowFavoriteArtistsAsync(owner, execution.CancellationToken);
                 var legacy = (await releases.ListAsync(owner, execution.CancellationToken))
                     .Where(item => item.LibraryArtistId == null && item.IsDirectFollow == null).ToArray();

@@ -13,6 +13,50 @@ namespace allstarr.Tests;
 
 public sealed partial class TrackIdentityServiceTests
 {
+    [Fact]
+    public async Task LibraryIndex_artist_backfill_uses_verified_recording_links_for_previously_unlinked_songs()
+    {
+        foreach (var title in new[] { "Song One", "Song Two" })
+            await SeedLinkLibraryTrackAsync("FLO", null, 180000, title: title, createRecording: false);
+        var (_, context) = LinkLibraryIndex();
+        var access = new Mock<IBackendLibraryAccessResolver>();
+        access.Setup(item => item.ResolveUserAsync(_userA, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new BackendLibraryAccessContext(context, new(true, ["music"])));
+        var gateway = new Mock<IProtocolProviderGateway>();
+        gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming)).Returns(["deezer"]);
+        var songs = new[] { "Song One", "Song Two" }.Select(title => new Song
+        {
+            Title = title,
+            Artist = "FLO",
+            Duration = 180,
+            ExternalProvider = "deezer",
+            ExternalId = title,
+            ArtistId = "ext-deezer-artist-flo"
+        }).ToArray();
+        gateway.Setup(item => item.SearchAutomaticProviderSongsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", It.IsAny<string>(), 15))
+            .ReturnsAsync((ProtocolExecutionContext _, string provider, string query, int _) =>
+                ProviderOutcome<IReadOnlyList<Song>>.Success(songs.Where(song => query.Contains(song.Title, StringComparison.Ordinal)).ToArray()));
+        gateway.Setup(item => item.RememberTrackAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>()))
+            .Returns(async (ProtocolExecutionContext _, string publicId) =>
+            {
+                var song = songs.Single(item => publicId == $"ext-deezer-song-{item.ExternalId}");
+                var execution = Context(Actor(_userA), "deezer");
+                var track = Track("deezer", song.ExternalId!);
+                await _service.RememberSourceAsync(execution, track, publicId, ProviderIdentityScope.Catalog);
+                await _service.RememberPlaybackMetadataAsync(execution, track, song);
+            });
+        var index = new LibraryArtistIndex(_factory, access.Object, _clock,
+            new(gateway.Object, new(), Microsoft.Extensions.Logging.Abstractions.NullLogger<TrackMatchPlayableSearch>.Instance), gateway.Object, _service);
+
+        Assert.Empty(await index.ReadAsync(_userA, "FLO"));
+        Assert.Equal(2, await index.BackfillAsync(_userA, "FLO", Guid.CreateVersion7(), default));
+
+        Assert.Equal(new LibraryArtistLink("deezer", "flo"), Assert.Single(await index.ReadAsync(_userA, "FLO")));
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.All(await db.LibraryTracks.ToArrayAsync(), song => Assert.NotNull(song.CanonicalRecordingId));
+        Assert.Equal(2, await db.ProviderTrackIdentities.CountAsync(item => item.Verification == ProviderIdentityVerification.Verified));
+    }
+
     [Theory]
     [InlineData(false, false)]
     [InlineData(false, true)]

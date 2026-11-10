@@ -95,6 +95,16 @@ public sealed partial class NewReleasesTests
     }
 
     [Fact]
+    public async Task Library_artist_identifier_alone_does_not_follow_a_namesake_with_different_songs()
+    {
+        var wrong = Guid.NewGuid().ToString();
+        ConfigureLibraryArtists(LibraryArtist("namesake", mbid: wrong, songs: ["Other song"]));
+
+        Assert.Null(await _service.ResolveLibraryArtistAsync(_first, "FLO", wrong, [], ["Side Effects", "Cry Ugly"]));
+        Assert.Null(await _service.ResolveLibraryArtistAsync(_first, "FLO", wrong, [], []));
+    }
+
+    [Fact]
     public async Task Library_artist_with_the_same_name_and_no_title_overlap_is_rejected()
     {
         ConfigureLibraryArtists(LibraryArtist("different", albums: ["Other album"], songs: ["Other song"]));
@@ -110,7 +120,7 @@ public sealed partial class NewReleasesTests
         var mbid = Guid.NewGuid().ToString();
         ConfigureLibraryArtists(
             LibraryArtist("titles", albums: ["First album", "Second album"], songs: ["Song"]),
-            LibraryArtist("identity", mbid: mbid.ToUpperInvariant(), identifierKey: "mUsIcBrAiNzArTiSt"));
+            LibraryArtist("identity", mbid: mbid.ToUpperInvariant(), identifierKey: "mUsIcBrAiNzArTiSt", songs: ["Song"]));
 
         var resolved = await _service.ResolveLibraryArtistAsync(_first, "Artist", mbid,
             ["First album", "Second album"], ["Song"]);
@@ -122,13 +132,13 @@ public sealed partial class NewReleasesTests
     public async Task Library_artist_can_match_an_identifier_supplied_by_artist_details()
     {
         var mbid = Guid.NewGuid().ToString();
-        var sample = LibraryArtist("details");
+        var sample = LibraryArtist("details", songs: ["Song"]);
         ConfigureLibraryArtists(sample with
         {
             Details = new(sample.Artist.Id, "Artist", providerIds: new Dictionary<string, string> { ["MusicBrainzArtist"] = mbid })
         });
 
-        var resolved = await _service.ResolveLibraryArtistAsync(_first, "Artist", mbid, [], []);
+        var resolved = await _service.ResolveLibraryArtistAsync(_first, "Artist", mbid, [], ["Song"]);
 
         Assert.Equal("details", resolved?.ArtistId);
         _metadata.Verify(value => value.GetArtistAsync(It.IsAny<ProviderExecutionContext>(),
@@ -181,7 +191,7 @@ public sealed partial class NewReleasesTests
     }
 
     [Fact]
-    public async Task Library_artist_with_a_conflicting_known_identifier_is_rejected_despite_title_overlap()
+    public async Task Library_artist_uses_song_evidence_when_the_library_identifier_is_contradicted()
     {
         ConfigureLibraryArtists(LibraryArtist("conflict", mbid: Guid.NewGuid().ToString(),
             albums: ["Library album"], songs: ["Library song"]));
@@ -189,17 +199,18 @@ public sealed partial class NewReleasesTests
         var resolved = await _service.ResolveLibraryArtistAsync(_first, "Artist", Guid.NewGuid().ToString(),
             ["Library album"], ["Library song"]);
 
-        Assert.Null(resolved);
+        Assert.Equal("conflict", resolved?.ArtistId);
+        Assert.Contains("library artist ID", resolved?.ResolutionReason);
     }
 
     [Fact]
     public async Task Library_artist_can_use_a_stored_identifier_from_the_same_listener()
     {
         var mbid = Guid.NewGuid().ToString();
-        ConfigureLibraryArtists(LibraryArtist("stored"));
+        ConfigureLibraryArtists(LibraryArtist("stored", songs: ["Song"]), LibraryArtist("other", songs: ["Song"]));
         await StoreLibraryArtistIdentifier(_first, "stored", mbid);
 
-        var resolved = await _service.ResolveLibraryArtistAsync(_first, "Artist", mbid, [], []);
+        var resolved = await _service.ResolveLibraryArtistAsync(_first, "Artist", mbid, [], ["Song"]);
 
         Assert.Equal("stored", resolved?.ArtistId);
     }
@@ -208,10 +219,10 @@ public sealed partial class NewReleasesTests
     public async Task Library_artist_does_not_use_another_listeners_stored_identifier()
     {
         var mbid = Guid.NewGuid().ToString();
-        ConfigureLibraryArtists(LibraryArtist("stored"));
+        ConfigureLibraryArtists(LibraryArtist("stored", songs: ["Song"]), LibraryArtist("other", songs: ["Song"]));
         await StoreLibraryArtistIdentifier(_second, "stored", mbid);
 
-        var resolved = await _service.ResolveLibraryArtistAsync(_first, "Artist", mbid, [], []);
+        var resolved = await _service.ResolveLibraryArtistAsync(_first, "Artist", mbid, [], ["Song"]);
 
         Assert.Null(resolved);
     }

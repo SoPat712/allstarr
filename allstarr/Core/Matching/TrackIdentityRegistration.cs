@@ -11,6 +11,7 @@ public static class TrackIdentityRegistration
         services.TryAddSingleton<ILibraryIndexService, LibraryIndexService>();
         services.TryAddSingleton<TrackMatchDecisionEngine>();
         services.TryAddSingleton<TrackMatchPlayableSearch>();
+        services.TryAddSingleton<LibraryArtistIndex>();
         services.AddHttpClient(JellyfinMatchLibraryClient.HttpClientName);
         services.TryAddSingleton<IMatchLibraryClient, JellyfinMatchLibraryClient>();
         services.TryAddSingleton<MatchLibrarySearch>();

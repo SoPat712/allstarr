@@ -1,7 +1,19 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { activityWork, matchReview, mixes, playlistLinks, taste } from "./api";
+import { activityWork, matchReview, mixes, playlistLinks, releaseInbox, taste } from "./api";
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 describe("mix requests", () => {
+  it("keeps native artist identity when reading candidates and saving a service or no service", async () => {
+    const fetch = vi.fn(async (_path: string, _options?: RequestInit) => Response.json({}));
+    vi.stubGlobal("fetch", fetch);
+    await releaseInbox.artistCandidates("native/artist");
+    await releaseInbox.chooseArtist("native/artist", "deezer", "service-artist");
+    await releaseInbox.chooseArtist("native/artist", null, null);
+    expect(fetch.mock.calls).toEqual([
+      ["/api/admin/releases/artists/candidates?libraryArtistId=native%2Fartist", expect.any(Object)],
+      ["/api/admin/releases/artists/choice", expect.objectContaining({ method: "PUT", body: JSON.stringify({ libraryArtistId: "native/artist", providerId: "deezer", artistId: "service-artist" }) })],
+      ["/api/admin/releases/artists/choice", expect.objectContaining({ method: "PUT", body: JSON.stringify({ libraryArtistId: "native/artist", providerId: null, artistId: null }) })],
+    ]);
+  });
   it("times out a stalled mix detail and allows a fresh retry", async () => {
     const controller = new AbortController();
     const timeout = vi.spyOn(AbortSignal, "timeout").mockReturnValueOnce(new AbortController().signal).mockReturnValueOnce(controller.signal);

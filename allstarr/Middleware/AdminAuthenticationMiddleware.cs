@@ -94,6 +94,8 @@ public class AdminAuthenticationMiddleware
                 releaseSegments.Length == 4 && releaseSegments[3] == "check" && HttpMethods.IsPost(method) ||
                 releaseSegments.Length == 5 && releaseSegments[3] == "artists" && releaseSegments[4] is "from-hearts" or "from-history" && HttpMethods.IsPost(method) ||
                 releaseSegments.Length == 5 && releaseSegments[3] == "artists" && releaseSegments[4] == "search" && HttpMethods.IsGet(method) ||
+                releaseSegments.Length == 5 && releaseSegments[3] == "artists" && releaseSegments[4] == "candidates" && HttpMethods.IsGet(method) ||
+                releaseSegments.Length == 5 && releaseSegments[3] == "artists" && releaseSegments[4] == "choice" && HttpMethods.IsPut(method) ||
                 releaseSegments.Length == 6 && releaseSegments[3] == "artists" && HttpMethods.IsDelete(method) ||
                 releaseSegments.Length == 6 && releaseSegments[3] == "artwork" && HttpMethods.IsGet(method);
 

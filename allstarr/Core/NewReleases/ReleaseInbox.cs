@@ -8,7 +8,8 @@ namespace allstarr.Core.Releases;
 
 public sealed record FollowedReleaseArtist(string ProviderId, string ArtistId, string DisplayName,
     string? MusicBrainzArtistId = null, string? LibraryArtistId = null, string? LibraryImageTag = null,
-    bool? IsDirectFollow = null);
+    bool? IsDirectFollow = null, bool FromSongLinks = false, bool FromCatalogEvidence = false,
+    bool ListenerConfirmed = false, string? ResolutionReason = null, string? LibraryMusicBrainzArtistId = null);
 public sealed record ReleaseSource(string ProviderId, string AlbumId, string Title, string Artist,
     string? ReleaseDate, string DatePrecision, string Type, bool? IsExplicit, string Edition,
     string? Upc, string[] Isrcs, string[] Aliases, string? ExclusionReason)
@@ -20,7 +21,7 @@ public sealed record ReleaseSource(string ProviderId, string AlbumId, string Tit
 public sealed record ReleaseInboxEntry(string Id, string Title, string Artist, string? ReleaseDate,
     string DatePrecision, string Type, bool? IsExplicit, string Edition, string? ExclusionReason,
     IReadOnlyList<ReleaseSource> Sources, string ArtworkUrl);
-public sealed record ReleaseCoverage(FollowedReleaseArtist Artist, string Status, DateTimeOffset? CheckedAt);
+public sealed record ReleaseCoverage(FollowedReleaseArtist Artist, string Status, DateTimeOffset? CheckedAt, string? Reason = null);
 public sealed record ReleaseInbox(IReadOnlyList<ReleaseInboxEntry> Entries,
     IReadOnlyList<ReleaseInboxEntry> Excluded, IReadOnlyList<ReleaseCoverage> Coverage);
 internal sealed record ReleaseCatalog(string Status, DateTimeOffset CheckedAt, DateTimeOffset NextCheckAt,

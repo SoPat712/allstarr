@@ -54,6 +54,14 @@ public sealed class NewReleasesController(NewReleasesService releases, AdminProt
     public Task<IActionResult> Search([FromQuery] string? query, CancellationToken cancellationToken) => ExecuteAsync(async owner =>
         Ok(await releases.SearchArtistsAsync(owner, query ?? "", cancellationToken)));
 
+    [HttpGet("artists/candidates")]
+    public Task<IActionResult> Candidates([FromQuery] string libraryArtistId, CancellationToken cancellationToken) => ExecuteAsync(async owner =>
+        Ok(await releases.ArtistCandidatesAsync(owner, libraryArtistId, cancellationToken)));
+
+    [HttpPut("artists/choice")]
+    public Task<IActionResult> Choose([FromBody] ChooseReleaseArtistRequest request, CancellationToken cancellationToken) => ExecuteAsync(async owner =>
+        Ok(await releases.ChooseArtistAsync(owner, request.LibraryArtistId, request.ProviderId, request.ArtistId, cancellationToken)));
+
     [HttpPost("artists/from-history")]
     public Task<IActionResult> FollowFromHistory(CancellationToken cancellationToken) => ExecuteAsync(async owner =>
         Ok(new { followed = await releases.FollowTopArtistsAsync(owner, cancellationToken) }));
@@ -200,3 +208,4 @@ public sealed class NewReleasesController(NewReleasesService releases, AdminProt
 }
 
 public sealed record FollowReleaseArtistRequest(string ProviderId, string ArtistId, string DisplayName);
+public sealed record ChooseReleaseArtistRequest(string LibraryArtistId, string? ProviderId, string? ArtistId);

@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
 using allstarr.Core.Capabilities;
+using allstarr.Core.Matching;
 using allstarr.Core.Music;
 using allstarr.Core.Protocols;
 using allstarr.Core.Settings;
@@ -13,7 +14,7 @@ namespace allstarr.Core.ClientApi;
 
 // Albums by the artists a source relates to an album's artist, from the library when it has one of theirs.
 public sealed class SimilarAlbumsReader(IProtocolProviderGateway providers, SavedLibraryReader saved,
-    JellyfinProxyService jellyfin, IProviderRegistry registry, LibraryProviderResolver libraryProvider)
+    JellyfinProxyService jellyfin, IProviderRegistry registry, LibraryProviderResolver libraryProvider, LibraryArtistIndex? artistIndex = null)
 {
     private const int RelatedArtists = 24;
     private const string RelatedArtistsSource = "deezer";
@@ -142,6 +143,9 @@ public sealed class SimilarAlbumsReader(IProtocolProviderGateway providers, Save
     private async Task<IReadOnlyList<string>> ArtistCandidatesAsync(ProtocolExecutionContext execution, Seed seed, string source)
     {
         if (seed.ArtistIds.GetValueOrDefault(source) is { } known) return [known];
+        if (artistIndex != null && execution.Actor?.EffectiveUserId is { } owner &&
+            (await artistIndex.ReadAsync(owner, seed.Artist, execution.CancellationToken)).FirstOrDefault(item => item.ProviderId == source) is { } indexed)
+            return [indexed.ArtistId];
         var candidates = new List<string>();
         if (!string.IsNullOrWhiteSpace(seed.Title))
         {
