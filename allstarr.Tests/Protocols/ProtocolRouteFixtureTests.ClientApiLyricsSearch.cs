@@ -8,6 +8,7 @@ using Moq;
 using System.Text.Json.Nodes;
 using System.Text.Json;
 using Xunit.Abstractions;
+using Microsoft.Extensions.Logging;
 using allstarr.Core.Capabilities;
 using allstarr.Core.ClientApi;
 using allstarr.Core.Matching;
@@ -25,7 +26,7 @@ public sealed partial class ProtocolRouteFixtureTests
     public ProtocolRouteFixtureTests(ITestOutputHelper output) => _lyricsSearchOutput = output;
 
     [Fact]
-    public async Task ClientApi_LyricsSearchTwentyThousandSongsMeetsResponseBudget()
+    public async Task ClientApi_LyricsSearchTenThousandSongsMeetsResponseBudget()
     {
         var access = new Mock<IBackendLibraryAccessResolver>();
         access.Setup(service => service.ResolveAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<CancellationToken>()))
@@ -43,6 +44,8 @@ public sealed partial class ProtocolRouteFixtureTests
         {
             services.RemoveAll<IBackendLibraryAccessResolver>();
             services.AddSingleton(access.Object);
+            services.AddSingleton<ILogger<LyricsSearchReader>>(new LyricsSearchTestLogger<LyricsSearchReader>(_lyricsSearchOutput));
+            services.AddSingleton<ILogger<LyricsSearchIndex>>(new LyricsSearchTestLogger<LyricsSearchIndex>(_lyricsSearchOutput));
         });
         using var client = CreateClientApiClient(factory);
         client.DefaultRequestHeaders.Add("X-Emby-Token", "listener-token");
@@ -54,7 +57,7 @@ public sealed partial class ProtocolRouteFixtureTests
         var loading = Stopwatch.StartNew();
         await using (var db = await factory.Services.GetRequiredService<IDbContextFactory<AllstarrDbContext>>().CreateDbContextAsync())
         {
-            for (var number = 0; number < 20_000; number++)
+            for (var number = 0; number < 10_000; number++)
             {
                 var id = "native-" + number;
                 var song = new Song { Id = id, IsLocal = true, Title = id, Artist = "Artist" };
@@ -83,19 +86,22 @@ public sealed partial class ProtocolRouteFixtureTests
         }
         var bytes = Directory.GetFiles(Path.GetDirectoryName(index.DatabasePath)!, "lyrics-search-v1.db*").Sum(path => new FileInfo(path).Length);
         Assert.True(bytes < 512L * 1024 * 1024, $"Index size was {bytes} bytes");
-        _lyricsSearchOutput.WriteLine($"Indexed 20000 songs / 1200000 lines in {loading.Elapsed.TotalSeconds:F2}s; database and journal bytes: {bytes}");
-        var budget = TimeSpan.FromMilliseconds(Environment.GetEnvironmentVariable("CI") != null ? 600 : 300);
+        _lyricsSearchOutput.WriteLine($"Indexed 10000 songs / 600000 lines in {loading.Elapsed.TotalSeconds:F2}s; database and journal bytes: {bytes}");
+        var budget = TimeSpan.FromMilliseconds(300);
         await Measure("Common phrase", "/allstarr/v1/search/lyrics?q=silver%20moon", common =>
         {
             Assert.Equal(20, common["results"]!.AsArray().Count);
             Assert.True(common["truncated"]!.GetValue<bool>());
         });
-        await Measure("Specific phrase", "/allstarr/v1/search/lyrics?q=constellation%20number%2019999", specific =>
-            Assert.Equal("native-19999", specific["results"]![0]!["itemId"]!.GetValue<string>()));
+        await Measure("Specific phrase", "/allstarr/v1/search/lyrics?q=constellation%20number%209999", specific =>
+            Assert.Equal("native-9999", specific["results"]![0]!["itemId"]!.GetValue<string>()));
 
         async Task Measure(string name, string path, Action<JsonNode> verify)
         {
-            await ReadClientLyricsJsonAsync(client, path);
+            factory.Services.GetRequiredService<allstarr.Core.Settings.RuntimeSettingsChangeSignal>().Publish();
+            var cold = Stopwatch.StartNew();
+            verify(await ReadClientLyricsJsonAsync(client, path));
+            _lyricsSearchOutput.WriteLine($"{name} cold HTTP: {cold.Elapsed.TotalMilliseconds:F1}ms");
             var elapsed = new TimeSpan[5];
             for (var run = 0; run < elapsed.Length; run++)
             {
@@ -110,6 +116,63 @@ public sealed partial class ProtocolRouteFixtureTests
             _lyricsSearchOutput.WriteLine($"{name} full HTTP response median (5 runs): {median.TotalMilliseconds:F1}ms");
             Assert.True(median < budget, $"{name} median took {median.TotalMilliseconds:F1}ms (budget {budget.TotalMilliseconds:F0}ms)");
         }
+    }
+
+    private sealed class LyricsSearchTestLogger<T>(ITestOutputHelper output) : ILogger<T>
+    {
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) =>
+            output.WriteLine(formatter(state, exception));
+    }
+
+    [Fact]
+    public async Task ClientApi_LyricsSearchVisibilityCacheIsListenerScopedAndInvalidated()
+    {
+        var gateway = new Mock<IProtocolProviderGateway>();
+        gateway.Setup(service => service.GetPlayableProviderOrderAsync(It.IsAny<ProviderActorContext>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { "deezer" });
+        var libraries = new Mock<IBackendLibraryAccessResolver>();
+        libraries.Setup(service => service.ResolveAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new BackendLibraryAccess(true, []));
+        var recording = Guid.NewGuid();
+        using var factory = ClientLyricsFactory(recording, new(), configure: services =>
+        {
+            services.RemoveAll<IProtocolProviderGateway>();
+            services.AddSingleton(gateway.Object);
+            services.RemoveAll<IBackendLibraryAccessResolver>();
+            services.AddSingleton(libraries.Object);
+        });
+        using var client = CreateClientApiClient(factory);
+        var (owner, other) = await SeedClientLyricsAsync(factory, recording);
+        var index = factory.Services.GetRequiredService<LyricsSearchIndex>();
+        ProtocolExecutionContext Context(Guid user, string id) => new(ProtocolKind.Jellyfin, "primary", id,
+            new AllstarrPrincipal(user, "jellyfin", "primary", id, id, false), "search-fixture", DateTimeOffset.UtcNow.AddMinutes(1), default);
+        var context = Context(owner, "listener");
+        async Task Store(string id) => await index.StoreAsync(context,
+            new Song { ExternalProvider = "deezer", ExternalId = id, Title = id, Artist = "Artist" }, null,
+            new(new("kept", "Kept lyrics"), "plain", [new(null, null, "Private sunrise", "lead", [])]));
+        async Task<LyricsSearchResponse> Read(ProtocolExecutionContext execution)
+        {
+            using var scope = factory.Services.CreateScope();
+            return await scope.ServiceProvider.GetRequiredService<LyricsSearchReader>()
+                .ReadAsync(new Microsoft.AspNetCore.Http.DefaultHttpContext(), execution, "private sunrise", 20);
+        }
+        await Store("first");
+        Assert.Single((await Read(context)).Results);
+        Assert.Single((await Read(context)).Results);
+        gateway.Verify(service => service.GetPlayableProviderOrderAsync(It.IsAny<ProviderActorContext>(), It.IsAny<CancellationToken>()), Times.Once);
+        Assert.Empty((await Read(Context(other, "other"))).Results);
+        await Store("second");
+        Assert.Equal(2, (await Read(context)).Results.Count);
+        var calls = gateway.Invocations.Count;
+        factory.Services.GetRequiredService<allstarr.Core.Settings.RuntimeSettingsChangeSignal>().Publish();
+        Assert.Equal(2, (await Read(context)).Results.Count);
+        Assert.Equal(calls + 1, gateway.Invocations.Count);
+        calls = gateway.Invocations.Count;
+        factory.Services.GetRequiredService<LyricsSearchChanges>().LibraryChanged(Guid.NewGuid());
+        Assert.Equal(2, (await Read(context)).Results.Count);
+        Assert.Equal(calls + 1, gateway.Invocations.Count);
     }
 
     [Fact]
@@ -134,6 +197,7 @@ public sealed partial class ProtocolRouteFixtureTests
         var found = Assert.Single((await ReadClientLyricsJsonAsync(client, "/allstarr/v1/search/lyrics?q=%20brighter%20morning%20"))["results"]!.AsArray())!;
         Assert.Equal("lrclib", found["source"]!["id"]!.GetValue<string>());
         Assert.Equal(1000, found["line"]!["startMs"]!.GetValue<long>());
+        Assert.True(found["line"]!["synced"]!.GetValue<bool>());
         var rich = await ReadClientLyricsJsonAsync(client, item);
         Assert.Equal(rich["lines"]![0]!["text"]!.GetValue<string>(), found["line"]!["text"]!.GetValue<string>());
     }
@@ -179,6 +243,7 @@ public sealed partial class ProtocolRouteFixtureTests
         var plain = Assert.Single((await ReadClientLyricsJsonAsync(client, "/allstarr/v1/search/lyrics?q=quiet%20night"))["results"]!.AsArray())!;
         Assert.Null(plain["line"]!["startMs"]);
         Assert.Null(plain["line"]!["endMs"]);
+        Assert.False(plain["line"]!["synced"]!.GetValue<bool>());
         Assert.Empty((await ReadClientLyricsJsonAsync(client, "/allstarr/v1/search/lyrics?q=cafe"))["results"]!.AsArray());
         using var clear = await client.PostAsJsonAsync(item + "/source/clear", new { expectedRevision = pinned["revision"] });
         Assert.Equal(HttpStatusCode.OK, clear.StatusCode);

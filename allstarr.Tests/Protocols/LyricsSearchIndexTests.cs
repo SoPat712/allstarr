@@ -135,6 +135,101 @@ public sealed class LyricsSearchIndexTests
         finally { Directory.Delete(root, recursive: true); }
     }
 
+    [Fact]
+    public async Task LyricsSearch_PlainSelectedSourceBorrowsNearestVisibleMatchingTiming()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "lyrics-timing-" + Guid.NewGuid().ToString("N"));
+        var context = Context();
+        var recording = Guid.NewGuid();
+        try
+        {
+            using var index = new LyricsSearchIndex(new StorageOptions { DataDirectory = root });
+            await index.StoreAsync(context, Song(1), recording, Lyrics("Intro\nSecond\nFloating, again!\nFinal"));
+            await index.StoreAsync(context, Song(2), recording, new(new("lrclib", "Timed lyrics"), "line",
+                [new(1000, 2000, "floating again", "lead", []), new(null, null, "Other", "lead", []),
+                    new(null, null, "More", "lead", []), new(10000, 12000, "FLOATING—again!", "lead", [])]));
+            var result = await index.SearchAsync(context, "floating again", 20, await index.SnapshotAsync(context), Policy(),
+                new Dictionary<Guid, string> { [recording] = "backend" });
+            var hit = Assert.Single(result.Results);
+            Assert.Equal("song-1", hit.ItemId);
+            Assert.Equal("backend", hit.Source.Id);
+            Assert.Equal("Floating, again!", hit.Line.Text);
+            Assert.Equal(10000, hit.Line.StartMs);
+            Assert.Equal(12000, hit.Line.EndMs);
+            Assert.Equal("Second", hit.Line.Before);
+            Assert.True(hit.Line.Synced);
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public async Task LyricsSearch_TimingFallbackDoesNotUseAnotherListenersPrivateLyrics()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "lyrics-private-timing-" + Guid.NewGuid().ToString("N"));
+        var context = Context();
+        var foreign = Context();
+        var recording = Guid.NewGuid();
+        try
+        {
+            using var index = new LyricsSearchIndex(new StorageOptions { DataDirectory = root });
+            await index.StoreAsync(context, Song(1), recording, Lyrics("Private moon"));
+            await index.StoreAsync(foreign, Song(1), recording, new(new("kept", "Kept lyrics"), "line",
+                [new(1000, 2000, "Private moon", "lead", [])]));
+            Assert.Single(await index.SnapshotAsync(foreign));
+            var hit = Assert.Single((await Search(index, context, "private moon")).Results);
+            Assert.Null(hit.Line.StartMs);
+            Assert.Null(hit.Line.EndMs);
+            Assert.False(hit.Line.Synced);
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(500)]
+    public async Task LyricsSearch_ExistingTimingWinsAndUnmatchedLinesStayUnsynced(long start)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "lyrics-line-sync-" + Guid.NewGuid().ToString("N"));
+        var context = Context();
+        var recording = Guid.NewGuid();
+        try
+        {
+            using var index = new LyricsSearchIndex(new StorageOptions { DataDirectory = root });
+            await index.StoreAsync(context, Song(1), recording, new(new("backend", "Library"), "line",
+                [new(start, 900, "Existing sunrise", "lead", []), new(null, null, "Unmatched moon", "lead", [])]));
+            await index.StoreAsync(context, Song(1), recording, new(new("lrclib", "Timed lyrics"), "line",
+                [new(1000, 2000, "Existing sunrise", "lead", []), new(3000, 4000, "Different text", "lead", [])]));
+            async Task<LyricsSearchResult> SearchLine(string query) => Assert.Single((await index.SearchAsync(context, query, 20,
+                await index.SnapshotAsync(context), Policy(), new Dictionary<Guid, string> { [recording] = "backend" })).Results);
+            var existing = await SearchLine("existing sunrise");
+            Assert.Equal(start, existing.Line.StartMs);
+            Assert.Equal(900, existing.Line.EndMs);
+            Assert.True(existing.Line.Synced);
+            var unmatched = await SearchLine("unmatched moon");
+            Assert.Null(unmatched.Line.StartMs);
+            Assert.Null(unmatched.Line.EndMs);
+            Assert.False(unmatched.Line.Synced);
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public async Task LyricsSearch_StaleVisibilityDoesNotReadReplacedContent()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "lyrics-replacement-" + Guid.NewGuid().ToString("N"));
+        var context = Context();
+        try
+        {
+            using var index = new LyricsSearchIndex(new StorageOptions { DataDirectory = root });
+            await index.StoreAsync(context, Song(1), null, Lyrics("Original sunrise"));
+            var visible = await index.SnapshotAsync(context);
+            await index.StoreAsync(context, Song(1), null, Lyrics("Replacement moon"));
+            Assert.Empty((await index.SearchAsync(context, "replacement moon", 20, visible, Policy(), new Dictionary<Guid, string>())).Results);
+            Assert.Single((await Search(index, context, "replacement moon")).Results);
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+    }
+
     private static async Task<LyricsSearchResponse> Search(LyricsSearchIndex index, ProtocolExecutionContext context, string query) =>
         await index.SearchAsync(context, query, 20, await index.SnapshotAsync(context), Policy(), new Dictionary<Guid, string>());
 

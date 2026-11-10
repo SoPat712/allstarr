@@ -28,11 +28,18 @@ public sealed class LyricsSearchChanges(TimeProvider? timeProvider = null) : IAp
 {
     private readonly Channel<LyricsSearchChange> _changes = Channel.CreateBounded<LyricsSearchChange>(new BoundedChannelOptions(256)
     { SingleReader = true, FullMode = BoundedChannelFullMode.Wait });
-    public void LibraryChanged(Guid id) => _changes.Writer.TryWrite(new(id));
+    private long _version;
+    public long Version => Interlocked.Read(ref _version);
+    public void LibraryChanged(Guid id)
+    {
+        Interlocked.Increment(ref _version);
+        _changes.Writer.TryWrite(new(id));
+    }
     private readonly ConcurrentDictionary<(Guid User, Guid Recording), long> _recordings = new();
     private int _refreshAll = 1;
     public void RecordingChanged(Guid user, Guid recording)
     {
+        Interlocked.Increment(ref _version);
         if (_recordings.Count < 100_000) _recordings[(user, recording)] = (timeProvider ?? TimeProvider.System).GetUtcNow().UtcTicks;
         else Interlocked.Exchange(ref _refreshAll, 1);
         _changes.Writer.TryWrite(new(default));
@@ -57,6 +64,7 @@ public sealed class LyricsSearchChanges(TimeProvider? timeProvider = null) : IAp
     private int _watchBindings;
     public void SongChanged(Guid user, string item)
     {
+        Interlocked.Increment(ref _version);
         if (_songs.Count < 100_000) _songs[(user, item)] = (timeProvider ?? TimeProvider.System).GetUtcNow().UtcTicks;
         else Interlocked.Exchange(ref _refreshAll, 1);
         _changes.Writer.TryWrite(new(default));

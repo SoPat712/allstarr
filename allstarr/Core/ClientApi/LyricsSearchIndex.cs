@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Diagnostics;
 using System.IO.Compression;
 using System.Text;
 using allstarr.Core.Capabilities;
@@ -10,17 +11,21 @@ using allstarr.Core.Settings;
 using allstarr.Core.Storage;
 using allstarr.Models.Domain;
 using Microsoft.Data.Sqlite;
+using Microsoft.Extensions.Caching.Memory;
 
 namespace allstarr.Core.ClientApi;
 
 public sealed record IndexedLyricsDocument(long Id, Guid Owner, string Backend, string ItemId, Guid? RecordingId,
     string Source, string Format, Song Song, string Provenance = "public", bool PublicCatalog = false, bool SharedSource = false, long UpdatedAt = 0);
 
-public sealed class LyricsSearchIndex(StorageOptions options, IProviderRouter? router = null, IProviderRegistry? registry = null) : IDisposable
+public sealed class LyricsSearchIndex(StorageOptions options, IProviderRouter? router = null, IProviderRegistry? registry = null, ILogger<LyricsSearchIndex>? logger = null) : IDisposable
 {
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly Dictionary<long, IndexedLyricsDocument> _documents = [];
     private readonly Dictionary<Guid, long> _libraryStamps = [];
+    private long _revision;
+    private long Revision => Interlocked.Read(ref _revision);
+    internal MemoryCache ListenerCache { get; } = new(new MemoryCacheOptions { SizeLimit = 500_000 });
     private SqliteConnection? _connection;
     private SqliteTransaction? _transaction;
     public string DatabasePath => Path.Combine(options.DataDirectory, "lyrics-search-v1.db");
@@ -88,6 +93,7 @@ public sealed class LyricsSearchIndex(StorageOptions options, IProviderRouter? r
             _transaction = null;
             _documents[id] = new(id, owner, context.BackendInstanceId, itemId, recordingId, rich.Source.Id, rich.Format,
                 JsonSerializer.Deserialize<Song>(songJson, ClientApiContract.JsonOptions)!, provenance, publicCatalog, sharedSource, updatedAt);
+            Interlocked.Increment(ref _revision);
         }
         finally { _transaction = null; _gate.Release(); }
     }
@@ -98,9 +104,17 @@ public sealed class LyricsSearchIndex(StorageOptions options, IProviderRouter? r
         try
         {
             Open();
-            return _documents.Values.Where(document => document.Backend == context.BackendInstanceId &&
+            var key = (nameof(SnapshotAsync), context.BackendInstanceId, context.Principal?.UserId, Revision);
+            if (ListenerCache.Get<IndexedLyricsDocument[]>(key) is { } cached) return cached;
+            var documents = _documents.Values.Where(document => document.Backend == context.BackendInstanceId &&
                 (document.Owner == Guid.Empty || document.Owner == context.Principal?.UserId ||
                     document.SharedSource && !document.Source.Contains(':') && document.Source is not ("backend" or "kept") && (document.Song.IsLocal || document.PublicCatalog))).ToArray();
+            ListenerCache.Set(key, documents, new MemoryCacheEntryOptions
+            {
+                Size = Math.Max(1, documents.Length),
+                AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(5)
+            });
+            return documents;
         }
         finally { _transaction = null; _gate.Release(); }
     }
@@ -127,6 +141,12 @@ public sealed class LyricsSearchIndex(StorageOptions options, IProviderRouter? r
         IReadOnlyList<IndexedLyricsDocument> visible, EffectiveProviderPolicySnapshot policy,
         IReadOnlyDictionary<Guid, string> choices)
     {
+        var stage = Stopwatch.StartNew();
+        void Timed(string name)
+        {
+            logger?.LogDebug("Lyrics index stage {Stage}: {ElapsedMs:F2} ms", name, stage.Elapsed.TotalMilliseconds);
+            stage.Restart();
+        }
         var normalized = LyricsSearchMatcher.Normalize(query);
         if (normalized.Length == 0) return new([], false);
         var order = policy.ApplyProviderAvailability(ProviderCapabilityKind.Lyrics,
@@ -166,11 +186,13 @@ public sealed class LyricsSearchIndex(StorageOptions options, IProviderRouter? r
             .Select(group => group.Count() == 1 ? group.First() : group.OrderByDescending(document => document.Song.IsLocal)
                 .ThenByDescending(document => document.Song.ExternalProvider == "allstarr").ThenBy(document => document.ItemId, StringComparer.Ordinal).First())
             .ToDictionary(document => document.Id);
+        Timed("selection");
         if (selected.Count == 0) return new([], false);
         await _gate.WaitAsync(context.CancellationToken);
         try
         {
             Open();
+            Timed("lock-and-open");
             var scorer = new LyricsSearchMatcher.PreparedQuery(normalized);
             _connection!.CreateFunction<string, double>("lyrics_score", text =>
             {
@@ -183,16 +205,23 @@ public sealed class LyricsSearchIndex(StorageOptions options, IProviderRouter? r
                 _transaction = transaction;
                 Execute("DELETE FROM eligible");
                 using var insert = Command("INSERT INTO eligible(id) VALUES($id)", ("$id", 0L));
-                foreach (var id in selected.Keys) { insert.Parameters["$id"].Value = id; insert.ExecuteNonQuery(); }
+                foreach (var document in selected.Values)
+                {
+                    if (!_documents.TryGetValue(document.Id, out var current) || current.UpdatedAt != document.UpdatedAt) continue;
+                    insert.Parameters["$id"].Value = document.Id;
+                    insert.ExecuteNonQuery();
+                }
                 transaction.Commit();
                 _transaction = null;
             }
+            Timed("eligible");
             var fts = string.Join(" OR ", normalized.Split(' ', StringSplitOptions.RemoveEmptyEntries).Distinct(StringComparer.Ordinal).Select(word => "\"" + word + "\"*"));
             var matches = new List<(long Id, int Ordinal)>();
+            // At most 2,000 lines per document still allows limit + 1 distinct matches.
             using (var exact = Command("""
                 SELECT doc, ordinal FROM lines JOIN eligible ON eligible.id=lines.doc
-                WHERE lines MATCH $phrase AND lyrics_score(text)=1 ORDER BY lines.rowid
-                """, ("$phrase", "\"" + normalized + "\"")))
+                WHERE lines MATCH $phrase AND lyrics_score(text)=1 ORDER BY lines.rowid LIMIT $take
+                """, ("$phrase", "\"" + normalized + "\""), ("$take", (limit + 1) * 2000)))
             using (var reader = exact.ExecuteReader())
             {
                 var seen = new HashSet<long>();
@@ -215,16 +244,36 @@ public sealed class LyricsSearchIndex(StorageOptions options, IProviderRouter? r
                 using var reader = search.ExecuteReader();
                 while (reader.Read()) matches.Add((reader.GetInt64(0), reader.GetInt32(1)));
             }
+            Timed("fts");
+            var hydrated = new Dictionary<long, RichLyrics>();
+            RichLyrics Read(long id)
+            {
+                if (hydrated.TryGetValue(id, out var cached)) return cached;
+                using var read = Command("SELECT lyrics FROM documents WHERE id=$id", ("$id", id));
+                using var payload = new MemoryStream((byte[])read.ExecuteScalar()!);
+                using var decompressed = new BrotliStream(payload, CompressionMode.Decompress);
+                return hydrated[id] = JsonSerializer.Deserialize<RichLyrics>(decompressed, ClientApiContract.JsonOptions)!;
+            }
             var results = new List<LyricsSearchResult>();
             foreach (var match in matches.Take(limit))
             {
                 var document = selected[match.Id];
-                using var read = Command("SELECT lyrics FROM documents WHERE id=$id", ("$id", match.Id));
-                using var payload = new MemoryStream((byte[])read.ExecuteScalar()!);
-                using var decompressed = new BrotliStream(payload, CompressionMode.Decompress);
-                var rich = JsonSerializer.Deserialize<RichLyrics>(decompressed, ClientApiContract.JsonOptions)!;
+                var rich = Read(match.Id);
                 var index = match.Ordinal;
                 var line = rich.Lines[index];
+                var timing = line;
+                if (line.StartMs == null)
+                {
+                    var text = LyricsSearchMatcher.Normalize(line.Text);
+                    timing = visible.Where(candidate => candidate.Source != document.Source && candidate.Format is "line" or "word" &&
+                            enabledSources.Contains(LyricsVersions.ProviderId(candidate.Source)) &&
+                            (candidate.ItemId == document.ItemId || document.RecordingId.HasValue && candidate.RecordingId == document.RecordingId) &&
+                            (policy.Preferences.ExplicitFilter != "CleanOnly" || CleanRecordingPolicy.IsVerifiedClean(candidate.Song) && candidate.Source is "backend" or "kept") &&
+                            _documents.TryGetValue(candidate.Id, out var current) && current.UpdatedAt == candidate.UpdatedAt)
+                        .SelectMany(candidate => Read(candidate.Id).Lines.Select((value, ordinal) => new { Line = value, Ordinal = ordinal }))
+                        .Where(candidate => candidate.Line.StartMs.HasValue && LyricsSearchMatcher.Normalize(candidate.Line.Text) == text)
+                        .OrderBy(candidate => Math.Abs(candidate.Ordinal - index)).Select(candidate => candidate.Line).FirstOrDefault() ?? line;
+                }
                 var before = index > 0 ? rich.Lines[index - 1].Text : null;
                 var after = index + 1 < rich.Lines.Count ? rich.Lines[index + 1].Text : null;
                 var found = LyricsSearchMatcher.Match(line.Text, after, query);
@@ -233,8 +282,9 @@ public sealed class LyricsSearchIndex(StorageOptions options, IProviderRouter? r
                 if (!song.IsLocal && !string.IsNullOrWhiteSpace(albumId) && !albumId.StartsWith("ext-", StringComparison.Ordinal))
                     albumId = $"ext-{song.ExternalProvider}-album-{albumId}";
                 results.Add(new(document.ItemId, song.Title, song.Artist, song.Album, albumId, !song.IsLocal,
-                    new(line.Text, line.StartMs, line.EndMs, before, after), found.Highlights, found.Score, rich.Source));
+                    new(line.Text, timing.StartMs, timing.EndMs, before, after), found.Highlights, found.Score, rich.Source));
             }
+            Timed("hydrate");
             return new(results, matches.Count > limit);
         }
         finally { _transaction = null; _gate.Release(); }
@@ -272,6 +322,7 @@ public sealed class LyricsSearchIndex(StorageOptions options, IProviderRouter? r
                 _documents.Remove(id);
             }
             transaction.Commit();
+            if (ids.Length > 0) Interlocked.Increment(ref _revision);
         }
         finally { _transaction = null; _gate.Release(); }
     }
@@ -294,6 +345,7 @@ public sealed class LyricsSearchIndex(StorageOptions options, IProviderRouter? r
                 _documents.Remove(id);
             }
             transaction.Commit();
+            if (ids.Length > 0) Interlocked.Increment(ref _revision);
             _transaction = null;
         }
         finally { _transaction = null; _gate.Release(); }
@@ -397,5 +449,5 @@ public sealed class LyricsSearchIndex(StorageOptions options, IProviderRouter? r
         command.ExecuteNonQuery();
     }
 
-    public void Dispose() { _connection?.Dispose(); _gate.Dispose(); }
+    public void Dispose() { ListenerCache.Dispose(); _connection?.Dispose(); _gate.Dispose(); }
 }

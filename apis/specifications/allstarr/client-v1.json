@@ -6138,6 +6138,9 @@
               "null",
               "string"
             ]
+          },
+          "synced": {
+            "type": "boolean"
           }
         }
       },

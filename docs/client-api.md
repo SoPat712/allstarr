@@ -638,10 +638,16 @@ by Allstarr. Trimmed queries must contain 2–200 characters; `limit` is 1–50
 The capability flag is `features.lyricsSearch`.
 
 Each result has `itemId`, `title`, `artist`, `album`, `albumId`, `isExternal`,
-`line` (`text`, `startMs`, `endMs`, `before`, `after`), `highlights` (each with
+`line` (`text`, `startMs`, `endMs`, `synced`, `before`, `after`), `highlights` (each with
 `start` and `length`), `score`, and `source` (`id`, `name`). IDs use the same
 native and external IDs as Jellyfin Items. Unknown album IDs, neighbouring
-lines at the edges, and untimed lyric timestamps are null. Highlights use
+lines at the edges, and untimed lyric timestamps are null. `line.synced` is true
+when `startMs` is available, including zero; clients can offer playback from that
+line. If the selected source has no timing, search borrows `startMs` and `endMs`
+from a visible synced source for the same item or canonical recording. It matches
+normalized line text and uses the occurrence nearest the selected line's position.
+The selected source, text, highlights, and ranking stay the same. Without a
+matching timed line, `synced` is false and timestamps remain null. Highlights use
 UTF-16 offsets within `line.text`; they never extend into neighbouring lines.
 Scores range from zero to one. The response contains one best line per song,
 ordered by score, and `truncated` indicates additional matching songs.
@@ -652,6 +658,13 @@ Exact phrases rank above all query words in one line, followed by partial
 query-word and word-prefix matches. Search applies the listener's effective
 lyrics pin, automatic source order, and timing preference, just like the lyrics
 route.
+
+Search caches listener visibility and source availability for up to five seconds.
+Lyrics-index, library-change, and settings-change versions invalidate that cache;
+current library permissions remain part of its key, and native hits still pass the
+caller's batched Items check. Kept-copy availability checks are batched and cached
+for up to five seconds. Debug logs record stage durations and result counts without
+query text or listener data.
 
 Search reads a separate, rebuildable SQLite FTS index. It makes no lyric search
 or metadata requests to music services. Completed fetches, lyrics reads, and
