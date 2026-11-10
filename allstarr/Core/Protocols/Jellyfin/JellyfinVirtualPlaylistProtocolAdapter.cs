@@ -1,7 +1,9 @@
 using allstarr.Core.Operations;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using allstarr.Core.ClientApi;
 using allstarr.Core.Matching;
+using allstarr.Core.Operations;
 using allstarr.Core.Music;
 using allstarr.Core.Playlists;
 using allstarr.Core.Playlists.Targets;
@@ -88,31 +90,23 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
     IDbContextFactory<AllstarrDbContext>? readContexts = null,
     IApplicationCache? readCache = null,
     ApplicationCacheRequestCoalescer? readCoalescer = null,
-    IBackendLibraryAccessResolver? readAccess = null)
+    IBackendLibraryAccessResolver? readAccess = null,
+    IPlatformClock? readClock = null)
 {
     private readonly ApplicationCacheRequestCoalescer _readCoalescer = readCoalescer ?? new(new());
     private sealed record PlaylistSongCacheEntry(Song Song, long? DurationTicks);
     private sealed record PlaylistFolderCacheEntry(string? Id);
 
-    private async Task<T?> CachedReadAsync<T>(ProtocolExecutionContext context, string scope, Func<Task<T?>> read,
+    private async Task<T?> CachedReadAsync<T>(ProtocolExecutionContext context, string scope, Func<ProtocolExecutionContext, CancellationToken, Task<T?>> read,
         CancellationToken token) where T : class
     {
         using var building = RequestTiming.Current?.Stage("build");
-        if (readContexts == null || readCache == null) return await read();
+        if (readContexts == null || readCache == null) return await read(context, token);
         var access = readAccess != null && context.Actor != null && !scope.StartsWith("playlist-song:", StringComparison.Ordinal)
             ? await readAccess.ResolveAsync(context, token) : null;
-        scope += ":" + JsonSerializer.Serialize(access);
-        await using var db = await readContexts.CreateDbContextAsync(token);
-        var key = db.FeedReadKey(context, scope);
-        if (await readCache.GetAsync<T>(key) is { } cached) return cached;
-        return await _readCoalescer.RunAsync(key, async () =>
-        {
-            if (await readCache.GetAsync<T>(key) is { } existing) return existing;
-            var result = await read();
-            if (result != null && access?.Succeeded != false && key == db.FeedReadKey(context, scope))
-                await readCache.SetAsync(key, result, TimeSpan.FromSeconds(30));
-            return result;
-        }, token);
+        return await FeedReadCache.ReadAsync(readContexts, readCache, _readCoalescer, readClock ?? new SystemPlatformClock(),
+            context, scope, access, httpContexts?.HttpContext, (_, execution) =>
+                read(execution, ReferenceEquals(execution, context) ? token : execution.CancellationToken)).WaitAsync(token);
     }
 
     private const string FullItemFields =
@@ -204,7 +198,7 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
     public async Task<IReadOnlyList<VirtualPlaylistReadModel>> ListAsync(
         ProtocolExecutionContext context, CancellationToken cancellationToken, IReadOnlySet<string>? visibleTargetIds = null) =>
         await CachedReadAsync<IReadOnlyList<VirtualPlaylistReadModel>>(context, "playlist-summaries:" + (visibleTargetIds == null ? "*" : JsonSerializer.Serialize(visibleTargetIds.Order(StringComparer.Ordinal))),
-            async () => await ListCoreAsync(context, cancellationToken, visibleTargetIds), cancellationToken) ?? [];
+            async (execution, readToken) => await ListCoreAsync(execution, readToken, visibleTargetIds), cancellationToken) ?? [];
 
     private async Task<IReadOnlyList<VirtualPlaylistReadModel>> ListCoreAsync(
         ProtocolExecutionContext context, CancellationToken cancellationToken, IReadOnlySet<string>? visibleTargetIds = null)
@@ -412,18 +406,18 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
     {
         if (CachedPlaylistsFolderId(context) is { } cached) return cached;
         if (proxyService == null) return null;
-        var folder = await CachedReadAsync<PlaylistFolderCacheEntry>(context, "playlist-folder", async () =>
+        var folder = await CachedReadAsync<PlaylistFolderCacheEntry>(context, "playlist-folder", async (execution, readToken) =>
         {
             var (body, status) = await proxyService.GetJsonAsync(
-                $"Users/{Uri.EscapeDataString(context.VerifiedBackendPrincipalId)}/Items?IncludeItemTypes=Playlist&Recursive=true&Limit=1&Fields=ParentId",
-                clientHeaders: httpContexts?.HttpContext?.Request.Headers, cancellationToken: token);
+                $"Users/{Uri.EscapeDataString(execution.VerifiedBackendPrincipalId)}/Items?IncludeItemTypes=Playlist&Recursive=true&Limit=1&Fields=ParentId",
+                clientHeaders: httpContexts?.HttpContext?.Request.Headers, cancellationToken: readToken);
             using (body)
             {
                 if (status == 200 && body?.RootElement.TryGetProperty("Items", out var items) == true)
                     foreach (var item in items.EnumerateArray())
                         if (item.TryGetProperty("ParentId", out var parent))
                         {
-                            RememberPlaylistsFolderId(context, parent.GetString());
+                            RememberPlaylistsFolderId(execution, parent.GetString());
                             return new(parent.GetString());
                         }
                 return status == 200 ? new(Id: null) : null;
@@ -462,14 +456,14 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
         IQueryCollection? clientQuery,
         CancellationToken cancellationToken)
     {
-        async Task<VirtualPlaylistReadModel?> Read()
+        async Task<VirtualPlaylistReadModel?> Read(ProtocolExecutionContext execution, CancellationToken readToken)
         {
-            var view = await ReadViewAsync(context, id, cancellationToken);
-            return view == null ? null : await ProjectAsync(view, context);
+            var view = await ReadViewAsync(execution, id, readToken);
+            return view == null ? null : await ProjectAsync(view, execution);
         }
         var playlist = IsVirtualPlaylistId(id)
             ? await CachedReadAsync(context, "playlist-tracks:" + id, Read, cancellationToken)
-            : await Read();
+            : await Read(context, cancellationToken);
         if (playlist == null) return null;
         return await CreateItemsResponseAsync(
             context, playlist, id, clientHeaders, clientQuery);
@@ -667,7 +661,7 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
                 {
                     var cached = await CachedReadAsync<PlaylistSongCacheEntry>(context,
                         "playlist-song:" + track.RouteProviderId + ":" + track.RouteExternalId,
-                        async () => await providerGateway.GetSongAsync(context, track.RouteProviderId!, track.RouteExternalId!) is { } song
+                        async (execution, _) => await providerGateway.GetSongAsync(execution, track.RouteProviderId!, track.RouteExternalId!) is { } song
                             ? new(song, song.PreciseDuration?.Ticks) : null, context.CancellationToken);
                     if (cached != null) cached.Song.PreciseDuration = cached.DurationTicks is { } ticks ? TimeSpan.FromTicks(ticks) : null;
                     return (track.BackendItemId, Song: cached?.Song);

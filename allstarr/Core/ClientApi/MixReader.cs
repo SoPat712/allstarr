@@ -3,6 +3,7 @@ using System.Text.Json;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Matching;
 using allstarr.Core.Music;
+using allstarr.Core.Operations;
 using allstarr.Core.Playlists;
 using allstarr.Core.Protocols;
 using allstarr.Core.Settings;
@@ -18,24 +19,15 @@ namespace allstarr.Core.ClientApi;
 public sealed class MixReader(PersonalMixService mixes, IDbContextFactory<AllstarrDbContext> factory,
     IBackendLibraryAccessResolver libraryAccess, IDurableRuntimeSettings settings, IProviderRegistry registry,
     IProtocolProviderGateway providers, JellyfinProxyService jellyfin, LibraryProviderResolver libraryProvider,
-    IApplicationCache cache, ApplicationCacheRequestCoalescer readCoalescer)
+    IApplicationCache cache, ApplicationCacheRequestCoalescer readCoalescer, IPlatformClock clock)
 {
     public async Task<ClientMixes> ListAsync(HttpContext http, ProtocolExecutionContext execution, string? timeZoneId)
     {
         using var building = RequestTiming.Current?.Stage("build");
-        await using var db = await factory.CreateDbContextAsync(execution.CancellationToken);
         var access = await libraryAccess.ResolveAsync(execution, execution.CancellationToken);
-        var scope = "mixes:" + timeZoneId + ":" + JsonSerializer.Serialize(access);
-        var key = db.FeedReadKey(execution, scope);
-        if (await cache.GetAsync<ClientMixes>(key) is { } cached) return cached;
-        return await readCoalescer.RunAsync(key, async () =>
-        {
-            if (await cache.GetAsync<ClientMixes>(key) is { } existing) return existing;
-            var result = await ListCoreAsync(http, execution, timeZoneId);
-            if (access.Succeeded && key == db.FeedReadKey(execution, scope))
-                await cache.SetAsync(key, result, TimeSpan.FromSeconds(30));
-            return result;
-        }, execution.CancellationToken);
+        return (await FeedReadCache.ReadAsync<ClientMixes>(factory, cache, readCoalescer, clock, execution,
+            "mixes:" + timeZoneId, access, http, async (request, context) =>
+                await request!.RequestServices.GetRequiredService<MixReader>().ListCoreAsync(request!, context, timeZoneId)))!;
     }
 
     private async Task<ClientMixes> ListCoreAsync(HttpContext http, ProtocolExecutionContext execution, string? timeZoneId)
@@ -84,19 +76,10 @@ public sealed class MixReader(PersonalMixService mixes, IDbContextFactory<Allsta
     public async Task<ClientMixItems> ItemsAsync(HttpContext http, ProtocolExecutionContext execution, Guid mixId)
     {
         using var building = RequestTiming.Current?.Stage("build");
-        await using var db = await factory.CreateDbContextAsync(execution.CancellationToken);
         var access = await libraryAccess.ResolveAsync(execution, execution.CancellationToken);
-        var scope = "mix-items:" + mixId + ":" + JsonSerializer.Serialize(access);
-        var key = db.FeedReadKey(execution, scope);
-        if (await cache.GetAsync<ClientMixItems>(key) is { } cached) return cached;
-        return await readCoalescer.RunAsync(key, async () =>
-        {
-            if (await cache.GetAsync<ClientMixItems>(key) is { } existing) return existing;
-            var result = await ItemsCoreAsync(http, execution, mixId);
-            if (access.Succeeded && key == db.FeedReadKey(execution, scope))
-                await cache.SetAsync(key, result, TimeSpan.FromSeconds(30));
-            return result;
-        }, execution.CancellationToken);
+        return (await FeedReadCache.ReadAsync<ClientMixItems>(factory, cache, readCoalescer, clock, execution,
+            "mix-items:" + mixId, access, http, async (request, context) =>
+                await request!.RequestServices.GetRequiredService<MixReader>().ItemsCoreAsync(request!, context, mixId)))!;
     }
 
     private async Task<ClientMixItems> ItemsCoreAsync(HttpContext http, ProtocolExecutionContext execution, Guid mixId)

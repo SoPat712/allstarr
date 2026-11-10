@@ -2,6 +2,7 @@ using allstarr.Core.Operations;
 using System.Text.Json;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Identity;
+using allstarr.Core.Operations;
 using allstarr.Core.Protocols;
 using allstarr.Core.Releases;
 using allstarr.Core.Storage;
@@ -15,24 +16,15 @@ namespace allstarr.Core.ClientApi;
 public sealed class ReleaseReader(NewReleasesService releases, IProtocolProviderGateway providers,
     IProviderRegistry registry, JellyfinProxyService jellyfin, IDbContextFactory<AllstarrDbContext> factory,
     IBackendLibraryPermissionSource permissions, IApplicationCache cache, ApplicationCacheRequestCoalescer readCoalescer,
-    IBackendLibraryAccessResolver libraryAccess)
+    IBackendLibraryAccessResolver libraryAccess, IPlatformClock clock)
 {
     public async Task<ClientReleases> ListAsync(HttpContext http, ProtocolExecutionContext execution)
     {
         using var merging = RequestTiming.Current?.Stage("merge");
-        await using var db = await factory.CreateDbContextAsync(execution.CancellationToken);
         var access = await libraryAccess.ResolveAsync(execution, execution.CancellationToken);
-        var scope = "releases:" + JsonSerializer.Serialize(access);
-        var key = db.FeedReadKey(execution, scope);
-        if (await cache.GetAsync<ClientReleases>(key) is { } cached) return cached;
-        return await readCoalescer.RunAsync(key, async () =>
-        {
-            if (await cache.GetAsync<ClientReleases>(key) is { } existing) return existing;
-            var result = await ListCoreAsync(execution);
-            if (access.Succeeded && key == db.FeedReadKey(execution, scope))
-                await cache.SetAsync(key, result, TimeSpan.FromSeconds(30));
-            return result;
-        }, execution.CancellationToken);
+        return (await FeedReadCache.ReadAsync<ClientReleases>(factory, cache, readCoalescer, clock, execution,
+            "releases", access, http, async (request, context) =>
+                await request!.RequestServices.GetRequiredService<ReleaseReader>().ListCoreAsync(context)))!;
     }
 
     private async Task<ClientReleases> ListCoreAsync(ProtocolExecutionContext execution)

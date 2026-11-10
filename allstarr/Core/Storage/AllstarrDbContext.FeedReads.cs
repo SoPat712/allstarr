@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Data.Common;
 using System.Security.Cryptography;
 using System.Text.Json;
+using allstarr.Core.Capabilities;
 using allstarr.Core.Protocols;
 using allstarr.Core.Settings;
 using Microsoft.EntityFrameworkCore;
@@ -11,41 +12,159 @@ namespace allstarr.Core.Storage;
 
 public sealed partial class AllstarrDbContext
 {
-    private static readonly ConcurrentDictionary<string, long> FeedReadVersions = new(StringComparer.Ordinal);
-    private bool _feedReadsChanged;
-    internal long FeedReadRevision => FeedReadVersions.GetValueOrDefault(Database.GetConnectionString() ?? "");
+    private static readonly ConcurrentDictionary<(string Database, Guid? Owner, string Model), long> FeedReadVersions = new();
+    private readonly HashSet<(Guid? Owner, string Model)> _pendingFeedReads = [];
+    private Guid? _feedReadTransaction;
+    internal long FeedReadLibraryRevision => FeedReadVersion(null, "library");
+    internal long FeedReadLibraryRevisionFor(Guid? owner) => FeedReadLibraryRevision + (owner == null ? 0 : FeedReadVersion(owner, "library"));
 
-    internal string FeedReadKey(ProtocolExecutionContext context, string scope) => "feed:read:v1:" +
-        Convert.ToHexStringLower(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(new
+    private long FeedReadVersion(Guid? owner, string model) =>
+        FeedReadVersions.GetValueOrDefault((Database.GetConnectionString() ?? "", owner, model));
+
+    private static string FeedReadModel(string scope) => scope.StartsWith("mix", StringComparison.Ordinal) ? "mixes" :
+        scope.StartsWith("releases", StringComparison.Ordinal) ? "releases" : "playlists";
+
+    internal string FeedReadKey(ProtocolExecutionContext context, string scope, BackendLibraryAccess? access = null)
+    {
+        var owner = context.Actor?.EffectiveUserId;
+        var model = FeedReadModel(scope);
+        var policy = context.Policy;
+        return "feed:read:v1:" + Convert.ToHexStringLower(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(new
         {
             Database = Database.GetConnectionString(),
-            Revision = FeedReadRevision,
+            Revision = FeedReadVersion(owner, model),
+            SharedRevision = owner == null ? 0 : FeedReadVersion(null, model),
             scope,
             context.Protocol,
             context.BackendInstanceId,
             context.VerifiedBackendPrincipalId,
-            context.Actor,
-            context.Policy
+            Listener = owner,
+            ActorKind = context.Actor?.Kind,
+            Policy = policy == null ? null : new
+            {
+                policy.AudioQuality,
+                policy.LocalPreferenceWindow,
+                policy.Preferences.ExplicitFilter,
+                Labels = model == "playlists" ? new { policy.Preferences.ShowExternalLabel, policy.Preferences.ShowExplicitLabel } : null,
+                Orders = policy.ProviderOrders.Where(item => item.Key != ProviderCapabilityKind.Lyrics)
+                    .OrderBy(item => item.Key).Select(item => new { item.Key, item.Value }),
+                Disabled = policy.DisabledProviders.Order(StringComparer.Ordinal),
+                Modes = policy.ProviderModes.OrderBy(item => item.Key, StringComparer.Ordinal)
+            },
+            Access = access == null ? null : new { access.Succeeded, Libraries = access.LibraryIds.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal) }
         })));
-
-    private bool ChangesFeedReads() => ChangeTracker.Entries().Any(entry =>
-        (entry.State is EntityState.Added or EntityState.Modified or EntityState.Deleted) &&
-        (entry.Entity is UserRecord && (entry.State != EntityState.Modified || entry.Properties.Any(property => property.IsModified &&
-             property.Metadata.Name is not (nameof(UserRecord.LastSeenAt) or nameof(UserRecord.UpdatedAt)))) ||
-         entry.Entity is ProviderAccountRecord or RuntimeSettingRecord or TasteProfileRecord or
-            SharedTagProfileRecord or LibraryTrackRecord or ProviderTrackIdentityRecord or CanonicalRecordingRecord or
-            ExternalMetadataSnapshotRecord or PlaylistLinkRecord or PlaylistSourceSnapshotRecord or
-            PlaylistSourceEntryRecord or PlaylistSyncRunRecord or PlaylistSyncEntryResultRecord or
-            TrackMatchRecord or ManualTrackOverrideRecord or PlaylistTargetMembershipRecord));
-
-    private void FeedReadsSaved(bool changed)
-    {
-        if (!changed) return;
-        if (Database.CurrentTransaction != null) _feedReadsChanged = true;
-        else InvalidateFeedReads();
     }
 
-    internal void InvalidateFeedReads() => FeedReadVersions.AddOrUpdate(Database.GetConnectionString() ?? "", 1, (_, revision) => revision + 1);
+    private HashSet<(Guid? Owner, string Model)> ChangesFeedReads()
+    {
+        HashSet<(Guid? Owner, string Model)> changed = [];
+        void All(Guid? owner) { changed.Add((owner, "mixes")); changed.Add((owner, "releases")); changed.Add((owner, "playlists")); }
+        void MixesAndPlaylists(Guid? owner) { changed.Add((owner, "mixes")); changed.Add((owner, "playlists")); }
+        var snapshotOwners = new Dictionary<Guid, Guid?>();
+        var linkOwners = new Dictionary<Guid, Guid?>();
+        var runOwners = new Dictionary<Guid, Guid?>();
+        Guid? SnapshotOwner(Guid id)
+        {
+            if (!snapshotOwners.TryGetValue(id, out var owner))
+                snapshotOwners[id] = owner = PlaylistSourceSnapshots.Local.FirstOrDefault(item => item.Id == id)?.OwnerUserId ??
+                    PlaylistSourceSnapshots.AsNoTracking().Where(item => item.Id == id).Select(item => (Guid?)item.OwnerUserId).SingleOrDefault();
+            return owner;
+        }
+        Guid? LinkOwner(Guid id)
+        {
+            if (!linkOwners.TryGetValue(id, out var owner))
+                linkOwners[id] = owner = PlaylistLinks.Local.FirstOrDefault(item => item.Id == id)?.OwnerUserId ??
+                    PlaylistLinks.AsNoTracking().Where(item => item.Id == id).Select(item => (Guid?)item.OwnerUserId).SingleOrDefault();
+            return owner;
+        }
+        Guid? RunOwner(Guid id)
+        {
+            if (!runOwners.TryGetValue(id, out var owner))
+                runOwners[id] = owner = PlaylistSyncRuns.Local.FirstOrDefault(item => item.Id == id)?.OwnerUserId ??
+                    PlaylistSyncRuns.AsNoTracking().Where(item => item.Id == id).Select(item => (Guid?)item.OwnerUserId).SingleOrDefault();
+            return owner;
+        }
+        foreach (var entry in ChangeTracker.Entries().Where(entry => entry.State is EntityState.Added or EntityState.Modified or EntityState.Deleted).ToArray())
+        {
+            switch (entry.Entity)
+            {
+                case UserRecord user when entry.State != EntityState.Modified || entry.Properties.Any(property => property.IsModified &&
+                    property.Metadata.Name is not (nameof(UserRecord.LastSeenAt) or nameof(UserRecord.UpdatedAt))):
+                    All(user.Id);
+                    break;
+                case ProviderAccountRecord account:
+                    All(account.OwnerUserId);
+                    break;
+                case RuntimeSettingRecord setting:
+                    var owner = setting.OwnerUserId;
+                    if (owner == null && CleanOnlyLockKeys.IsLockKey(setting.Key))
+                        owner = Guid.ParseExact(setting.Key[^32..], "N");
+                    if (setting.Key == "Mixes:PublishToApps") MixesAndPlaylists(owner);
+                    else if (setting.Key is ListeningPreferenceKeys.ShowExternalLabel or ListeningPreferenceKeys.ShowExplicitLabel)
+                        changed.Add((owner, "playlists"));
+                    else if (setting.Key is not (ListeningPreferenceKeys.LyricsOrder or ListeningPreferenceKeys.PlaybackStart or ListeningPreferenceKeys.HeartAction))
+                        All(owner);
+                    break;
+                case TasteProfileRecord taste:
+                    MixesAndPlaylists(taste.OwnerUserId);
+                    break;
+                case ExternalMetadataSnapshotRecord snapshot:
+                    switch (snapshot.ResourceKind)
+                    {
+                        case "personal-mixes":
+                        case "service-feeds":
+                        case "service-feed-songs":
+                        case "service-feed-prepared":
+                            MixesAndPlaylists(snapshot.OwnerUserId);
+                            break;
+                        case "release-follows":
+                        case "release-dismissal":
+                            changed.Add((snapshot.OwnerUserId, "releases"));
+                            break;
+                        case "release-catalog":
+                            // Catalogs are shared by artist and provider account, regardless of who polled them.
+                            changed.Add((null, "releases"));
+                            break;
+                        case "personal-mixes-preview":
+                        case "release-rate":
+                            break;
+                        default:
+                            changed.Add((snapshot.OwnerUserId, "library"));
+                            break;
+                    }
+                    break;
+                case PlaylistLinkRecord link: MixesAndPlaylists(link.OwnerUserId); break;
+                case PlaylistSourceSnapshotRecord playlistSnapshot: MixesAndPlaylists(playlistSnapshot.OwnerUserId); break;
+                case PlaylistSourceEntryRecord source: MixesAndPlaylists(SnapshotOwner(source.PlaylistSourceSnapshotId)); break;
+                case PlaylistSyncRunRecord run: MixesAndPlaylists(run.OwnerUserId); break;
+                case PlaylistSyncEntryResultRecord result: MixesAndPlaylists(RunOwner(result.PlaylistSyncRunId)); break;
+                case PlaylistTargetMembershipRecord member: MixesAndPlaylists(LinkOwner(member.PlaylistLinkId)); break;
+                case ManualTrackOverrideRecord manual: MixesAndPlaylists(manual.OwnerUserId); break;
+                case SharedTagProfileRecord or LibraryTrackRecord or ProviderTrackIdentityRecord or CanonicalRecordingRecord or TrackMatchRecord:
+                    changed.Add((null, "library"));
+                    break;
+            }
+        }
+        return changed;
+    }
+
+    private void FeedReadsSaved(HashSet<(Guid? Owner, string Model)> changed)
+    {
+        var transaction = Database.CurrentTransaction?.TransactionId;
+        if (_feedReadTransaction != transaction) _pendingFeedReads.Clear();
+        _feedReadTransaction = transaction;
+        if (transaction != null) _pendingFeedReads.UnionWith(changed);
+        else BumpFeedReads(changed);
+    }
+
+    private void BumpFeedReads(IEnumerable<(Guid? Owner, string Model)> changed)
+    {
+        var database = Database.GetConnectionString() ?? "";
+        foreach (var (owner, model) in changed)
+            FeedReadVersions.AddOrUpdate((database, owner, model), 1, (_, revision) => revision + 1);
+    }
+
+    internal void InvalidateFeedReads(Guid owner) => BumpFeedReads([(owner, "mixes"), (owner, "playlists")]);
 
     private sealed class FeedReadTransactions : DbTransactionInterceptor
     {
@@ -53,9 +172,10 @@ public sealed partial class AllstarrDbContext
 
         private static void Complete(TransactionEndEventData data, bool committed)
         {
-            if (data.Context is not AllstarrDbContext db || !db._feedReadsChanged) return;
-            if (committed) db.InvalidateFeedReads();
-            db._feedReadsChanged = false;
+            if (data.Context is not AllstarrDbContext db || db._feedReadTransaction != data.TransactionId) return;
+            if (committed) db.BumpFeedReads(db._pendingFeedReads);
+            db._pendingFeedReads.Clear();
+            db._feedReadTransaction = null;
         }
 
         public override void TransactionCommitted(DbTransaction transaction, TransactionEndEventData eventData) => Complete(eventData, true);

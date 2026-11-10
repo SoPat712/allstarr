@@ -845,7 +845,7 @@ public sealed partial class PlaylistOrchestrationService : IPlaylistOrchestratio
                     .SetProperty(item => item.SourceOwnerId, collected.SourceOwnerId)
                     .SetProperty(item => item.SourceKind, collected.SourceKind), cancellationToken);
                 await transaction.CommitAsync(cancellationToken);
-                db.InvalidateFeedReads();
+                db.InvalidateFeedReads(link.OwnerUserId);
                 existing.SourceOwnerId = collected.SourceOwnerId;
                 existing.SourceKind = collected.SourceKind;
             }
