@@ -1024,6 +1024,7 @@ public class ExtensionSandbox
         ProviderOutcome<ProviderHealthProbeResult> outcome)
     {
         if (outcome.Error?.Kind is ProviderErrorKind.Canceled or ProviderErrorKind.NotSupported) return;
+        if (ProviderRuntimeStatus.IsNeutralReason(outcome.IsSuccess ? outcome.RequireValue().SafeCode : outcome.Error?.Code)) return;
         var failing = !outcome.IsSuccess || outcome.RequireValue().Status != ProviderProbeStatus.Healthy;
         var reason = SafeFailureReason(outcome.IsSuccess ? outcome.RequireValue().SafeCode : outcome.Error?.Code);
         var now = _timeProvider.GetUtcNow();

@@ -846,13 +846,13 @@ public class ProviderStatusManager
     {
         if (!IsCapabilitySupported(Normalize(provider), Normalize(capability))) return;
         reasonCode = NormalizeTryReason(reasonCode);
-        if (ProviderRuntimeStatus.IsNeutralReason(reasonCode)) return;
+        var neutral = ProviderRuntimeStatus.IsNeutralReason(reasonCode);
         if (!succeeded && reasonCode is "not-found" or "incompatible-media" or "not-supported" or
             "canceled" or "busy" or "temporary-storage-full" or "invalid-input" or "needs-artist") return;
         var key = accountId.HasValue ? ProviderRuntimeStatusKey.CreateManaged(provider, capability, accountId.Value) :
             ProviderRuntimeStatusKey.CreateAccountFree(provider, capability);
         _health.Record(key, revision, succeeded, elapsedMilliseconds, reasonCode, recordAttempt: true);
-        if (_recordedChecks.ContainsKey(key))
+        if (!neutral && _recordedChecks.ContainsKey(key))
             RestoreCheckResult(key, revision, BuildBaselineStatus(key) with
             {
                 Health = succeeded ? ProviderHealthState.Healthy : ProviderHealthState.Degraded,
@@ -889,6 +889,10 @@ public class ProviderStatusManager
             "unreachable" => "unreachable",
             "downloadnotverified" => "download-not-verified",
             "probenotavailable" => "probe_not_available",
+            "sampleunavailable" => "sample-unavailable",
+            "playlistsampleunavailable" => "playlist-sample-unavailable",
+            "probelimitexceeded" => "probe-limit-exceeded",
+            "serviceunavailable" => "service_unavailable",
             _ => "probe_failed"
         };
 

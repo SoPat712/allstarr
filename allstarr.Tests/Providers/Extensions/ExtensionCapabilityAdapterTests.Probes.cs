@@ -10,8 +10,8 @@ namespace allstarr.Tests;
 public sealed partial class ExtensionCapabilityAdapterTests
 {
     [Theory]
-    [InlineData(false, 200, ProviderProbeStatus.Degraded, "download-not-verified")]
-    [InlineData(true, 200, ProviderProbeStatus.Degraded, "download-not-verified")]
+    [InlineData(false, 200, ProviderProbeStatus.Healthy, "download-not-verified")]
+    [InlineData(true, 200, ProviderProbeStatus.Healthy, "download-not-verified")]
     [InlineData(true, 429, ProviderProbeStatus.Unavailable, "rate-limited")]
     [InlineData(true, 503, ProviderProbeStatus.Unavailable, "service_unavailable")]
     public async Task DownloadProbe_DistinguishesServiceHealthFromVerifiedDownloads(bool hasEndpoint, int status,
@@ -145,7 +145,7 @@ public sealed partial class ExtensionCapabilityAdapterTests
     [InlineData(ProviderCapabilityKind.Metadata, 200, ProviderProbeStatus.Healthy)]
     [InlineData(ProviderCapabilityKind.Streaming, 200, ProviderProbeStatus.Healthy)]
     [InlineData(ProviderCapabilityKind.Download, 502, ProviderProbeStatus.Unavailable)]
-    [InlineData(ProviderCapabilityKind.Download, 200, ProviderProbeStatus.Degraded)]
+    [InlineData(ProviderCapabilityKind.Download, 200, ProviderProbeStatus.Healthy)]
     public async Task DeclaredServiceHealth_ProbesSoundCloudHomepageWithoutParsingHtml(
         ProviderCapabilityKind capability, int status, ProviderProbeStatus expected)
     {

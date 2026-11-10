@@ -12,6 +12,48 @@ namespace allstarr.Tests;
 public sealed class ProviderRuntimeHealthTests
 {
     [Theory]
+    [InlineData("download-not-verified", true)]
+    [InlineData("sample-unavailable", true)]
+    [InlineData("playlist-sample-unavailable", true)]
+    [InlineData("probe-limit-exceeded", true)]
+    [InlineData("probe_not_available", true)]
+    [InlineData("timeout", false)]
+    [InlineData("service_unavailable", false)]
+    public void CheckReasonsControlFailureEvidenceAndPauses(string reason, bool neutral)
+    {
+        var store = Store();
+        var key = Key(capability: "download");
+        for (var index = 0; index < 3; index++)
+            store.Record(key, 1, false, 10, reason, recordAttempt: true);
+        var attempts = store.Recent(key, 1);
+        Assert.Equal(3, attempts.Count);
+        Assert.All(attempts, item =>
+        {
+            Assert.Equal(reason, item.Status.ReasonCode);
+            Assert.Equal(!neutral, item.Status.HasCheckResult);
+            Assert.Equal(neutral ? HealthState.Unknown : HealthState.Degraded, item.Status.Health);
+        });
+        Assert.Equal(!neutral, store.GetRouteStatus("deezer", _account, ProviderCapabilityKind.Download).CircuitOpen);
+        if (neutral)
+        {
+            Assert.Null(store.Get(key, 1));
+            Assert.Empty(store.AlertSamples(key, 1));
+            store.Record(key, 1, true, 7, null);
+            var healthy = store.Get(key, 1);
+            store.Record(key, 1, false, 10, reason, authenticationFailure: true, retryAfter: TimeSpan.FromMinutes(1));
+            Assert.Same(healthy, store.Get(key, 1));
+            Assert.Single(store.AlertSamples(key, 1));
+        }
+        else
+        {
+            Assert.Equal(3, store.Get(key, 1)!.ConsecutiveFailures);
+            Assert.Equal(HealthState.Degraded, store.Get(key, 1)!.Health);
+            Assert.NotNull(store.Get(key, 1)!.PausedAt);
+            Assert.Equal(3, store.AlertSamples(key, 1).Count);
+        }
+    }
+
+    [Theory]
     [InlineData(ProviderErrorKind.Forbidden)]
     [InlineData(ProviderErrorKind.NotFound)]
     public void TrackRefusal_CoolsOnlyTheTrackWithoutPausingStreaming(ProviderErrorKind kind)

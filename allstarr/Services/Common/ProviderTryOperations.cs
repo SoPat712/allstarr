@@ -181,7 +181,7 @@ public sealed class ProviderTryOperations(IProviderRegistry providers, SpicyLyri
             var probe = await health!.ProbeAsync(context, new(capability));
             if (!probe.IsSuccess) return Failure(probe.Error!);
             var healthResult = probe.RequireValue();
-            return healthResult.Status == ProviderProbeStatus.Healthy ? new() { Succeeded = true } :
+            return healthResult.Status == ProviderProbeStatus.Healthy ? new() { Succeeded = true, ReasonCode = healthResult.SafeCode } :
                 ProviderTryResult.Failure(healthResult.SafeCode ?? (healthResult.Status == ProviderProbeStatus.Unauthorized ? "unauthorized" : "service_unavailable"));
         }
         bool Has(ProviderCapabilityKind kind, string hook) => descriptor.Capabilities.Any(item => item.Capability == kind &&

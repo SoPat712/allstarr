@@ -83,6 +83,8 @@ public sealed partial class ProviderStatusManagerTests
     [InlineData("download-not-verified")]
     [InlineData("probe_not_available")]
     [InlineData("sample-unavailable")]
+    [InlineData("playlist-sample-unavailable")]
+    [InlineData("probe-limit-exceeded")]
     [InlineData("not-found")]
     [InlineData("playlist-not-found")]
     public async Task NeutralProbeDoesNotRecordAFailure(string reason)
@@ -398,6 +400,7 @@ public sealed partial class ProviderStatusManagerTests
     [InlineData("transient-failure", "transient-failure")]
     [InlineData("TransientFailure", "transient-failure")]
     [InlineData("permanent_failure", "permanent-failure")]
+    [InlineData("service_unavailable", "service_unavailable")]
     [InlineData("timeout", "timeout")]
     [InlineData("Unauthorized", "unauthorized")]
     [InlineData("RateLimited", "rate-limited")]

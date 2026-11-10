@@ -215,6 +215,20 @@ public sealed class ProblemAlertTests : IAsyncLifetime
         Assert.Null(ProblemAlertMonitor.ProviderEvidence("fixture", _owner, status));
     }
 
+    [Theory]
+    [InlineData("download-not-verified")]
+    [InlineData("sample-unavailable")]
+    [InlineData("playlist-sample-unavailable")]
+    [InlineData("probe-limit-exceeded")]
+    [InlineData("probe_not_available")]
+    public void UncheckedProviderEvidenceDoesNotOpenOrRecoverAnIncident(string reason)
+    {
+        Assert.Equal(reason, ProblemReportText.Reason(reason));
+        var sample = new ProviderHealthObservation(1, ProviderHealthState.Degraded, _now, null, reason, 3, _now.AddMinutes(1));
+        Assert.Null(ProblemAlertMonitor.ProviderEvidence("fixture", _owner, sample));
+        Assert.Null(ProblemAlertMonitor.ProviderEvidence("fixture", _owner, sample with { Health = ProviderHealthState.Healthy }));
+    }
+
     [Fact]
     public void ExplicitAuthenticationEvidenceOpensImmediatelyAndTimeoutNeedsThreeSamples()
     {
@@ -222,6 +236,7 @@ public sealed class ProblemAlertTests : IAsyncLifetime
         Assert.Equal("provider-login", ProblemAlertMonitor.ProviderEvidence("fixture", _owner, auth)!.Kind);
         var timeout = auth with { ReasonCode = "timeout" };
         Assert.Equal(3, ProblemAlertMonitor.ProviderEvidence("fixture", _owner, timeout)!.OpenAfter);
+        Assert.Equal(3, ProblemAlertMonitor.ProviderEvidence("fixture", _owner, timeout with { ReasonCode = "service_unavailable" })!.OpenAfter);
     }
 
     [Fact]

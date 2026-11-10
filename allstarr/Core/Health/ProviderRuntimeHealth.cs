@@ -252,38 +252,42 @@ public sealed class ProviderRuntimeHealth : IProviderOutcomeObserver, ILyricsOut
             if (configuration.HasValue && previous?.AccountRevision == revision &&
                 previous?.LyricsConfiguration is { } previousConfiguration && previousConfiguration.Revision > configuration.Value.Revision) return;
             var now = observedAt ?? _clock.UtcNow;
-            var comparable = previous != null && previous.AccountRevision == revision &&
-                (!configuration.HasValue || previous.LyricsConfiguration == configuration);
-            var withinWindow = comparable && previous!.FailureWindowStartedAt?.AddSeconds(_options.SampleTtlSeconds) > now;
-            var failures = success ? 0 : withinWindow
-                ? Math.Min(previous!.ConsecutiveFailures + 1, _options.FailureThreshold) : 1;
-            var media = key.Capability is ProviderCapabilities.Streaming or ProviderCapabilities.Download;
-            authenticationFailure |= media && reason is ("unauthorized" or "account-needs-reauthentication" or
-                "account-needs-configuration" or "authentication-required" or "sign_in_needed");
-            var opens = !success && (authenticationFailure || retryAfter.HasValue || failures >= _options.FailureThreshold);
-            var cooldown = TimeSpan.FromSeconds(_options.CircuitOpenSeconds);
-            if (retryAfter > cooldown) cooldown = TimeSpan.FromSeconds(Math.Min(retryAfter.Value.TotalSeconds, 86400));
-            var priorHealth = comparable ? previous!.HealthBeforeProbe ?? previous.Health : ProviderHealthState.Unknown;
-            if (media && !withinWindow && priorHealth == ProviderHealthState.Degraded) priorHealth = ProviderHealthState.Unknown;
-            var health = success ? ProviderHealthState.Healthy : !passive && !media || opens ? ProviderHealthState.Degraded : priorHealth;
-            MakeRoom(key);
-            _observations[key] = new(revision, health,
-                now, latency, SafeReason(reason), failures, opens ? now.Add(cooldown) : null)
+            var neutral = ProviderRuntimeStatus.IsNeutralReason(reason);
+            if (!neutral)
             {
-                IsRecordedCheck = observedAt.HasValue,
-                TryHealth = recordAttempt ? success ? ProviderHealthState.Healthy : ProviderHealthState.Degraded : null,
-                ReauthenticationRequired = loginExpired || reason is "unauthorized" or "account-needs-reauthentication" or "authentication-required",
-                LyricsConfiguration = configuration,
-                FailureWindowStartedAt = success ? null : withinWindow ? previous!.FailureWindowStartedAt : now,
-                PausedAt = opens ? comparable && IsCircuitOpen(previous!) ? previous!.PausedAt ?? now : now : null
-            };
-            if (key.Capability == ProviderCapabilities.Lyrics && success && previous != null &&
-                (previous.ConsecutiveFailures > 0 || previous.HealthBeforeProbe == ProviderHealthState.Degraded || previous.Health == ProviderHealthState.Degraded))
-                LyricsRecovered?.Invoke(key.Provider, key.ProviderAccountId);
-            if (!_alertSamples.TryGetValue(key, out var alertSamples)) _alertSamples[key] = alertSamples = [];
-            if (alertSamples.Count >= 20) alertSamples.RemoveAt(0);
-            alertSamples.Add(!success && health != ProviderHealthState.Degraded
-                ? _observations[key] with { Health = ProviderHealthState.Degraded } : _observations[key]);
+                var comparable = previous != null && previous.AccountRevision == revision &&
+                    (!configuration.HasValue || previous.LyricsConfiguration == configuration);
+                var withinWindow = comparable && previous!.FailureWindowStartedAt?.AddSeconds(_options.SampleTtlSeconds) > now;
+                var failures = success ? 0 : withinWindow
+                    ? Math.Min(previous!.ConsecutiveFailures + 1, _options.FailureThreshold) : 1;
+                var media = key.Capability is ProviderCapabilities.Streaming or ProviderCapabilities.Download;
+                authenticationFailure |= media && reason is ("unauthorized" or "account-needs-reauthentication" or
+                    "account-needs-configuration" or "authentication-required" or "sign_in_needed");
+                var opens = !success && (authenticationFailure || retryAfter.HasValue || failures >= _options.FailureThreshold);
+                var cooldown = TimeSpan.FromSeconds(_options.CircuitOpenSeconds);
+                if (retryAfter > cooldown) cooldown = TimeSpan.FromSeconds(Math.Min(retryAfter.Value.TotalSeconds, 86400));
+                var priorHealth = comparable ? previous!.HealthBeforeProbe ?? previous.Health : ProviderHealthState.Unknown;
+                if (media && !withinWindow && priorHealth == ProviderHealthState.Degraded) priorHealth = ProviderHealthState.Unknown;
+                var health = success ? ProviderHealthState.Healthy : !passive && !media || opens ? ProviderHealthState.Degraded : priorHealth;
+                MakeRoom(key);
+                _observations[key] = new(revision, health,
+                    now, latency, SafeReason(reason), failures, opens ? now.Add(cooldown) : null)
+                {
+                    IsRecordedCheck = observedAt.HasValue,
+                    TryHealth = recordAttempt ? success ? ProviderHealthState.Healthy : ProviderHealthState.Degraded : null,
+                    ReauthenticationRequired = loginExpired || reason is "unauthorized" or "account-needs-reauthentication" or "authentication-required",
+                    LyricsConfiguration = configuration,
+                    FailureWindowStartedAt = success ? null : withinWindow ? previous!.FailureWindowStartedAt : now,
+                    PausedAt = opens ? comparable && IsCircuitOpen(previous!) ? previous!.PausedAt ?? now : now : null
+                };
+                if (key.Capability == ProviderCapabilities.Lyrics && success && previous != null &&
+                    (previous.ConsecutiveFailures > 0 || previous.HealthBeforeProbe == ProviderHealthState.Degraded || previous.Health == ProviderHealthState.Degraded))
+                    LyricsRecovered?.Invoke(key.Provider, key.ProviderAccountId);
+                if (!_alertSamples.TryGetValue(key, out var alertSamples)) _alertSamples[key] = alertSamples = [];
+                if (alertSamples.Count >= 20) alertSamples.RemoveAt(0);
+                alertSamples.Add(!success && health != ProviderHealthState.Degraded
+                    ? _observations[key] with { Health = ProviderHealthState.Degraded } : _observations[key]);
+            }
             if (!passive && !recordAttempt) return;
             if (!_recent.TryGetValue(key, out var recent)) _recent[key] = recent = [];
             if (recent.Count >= 20) recent.RemoveAt(0);
@@ -294,7 +298,7 @@ public sealed class ProviderRuntimeHealth : IProviderOutcomeObserver, ILyricsOut
                 IsSupported = true,
                 IsEnabled = true,
                 Configuration = ProviderConfigurationState.Configured,
-                Health = success ? ProviderHealthState.Healthy : ProviderHealthState.Degraded,
+                Health = neutral ? ProviderHealthState.Unknown : success ? ProviderHealthState.Healthy : ProviderHealthState.Degraded,
                 TestedAt = now,
                 LatencyMilliseconds = latency,
                 ReasonCode = SafeReason(reason)

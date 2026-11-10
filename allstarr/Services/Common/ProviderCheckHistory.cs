@@ -185,7 +185,7 @@ public sealed class ProviderCheckHistory(IDbContextFactory<AllstarrDbContext> fa
         var wasHealthy = last?.CurrentHealth is { } previousCurrent
             ? previousCurrent == ProviderHealthState.Healthy
             : last?.Status.Health == ProviderHealthState.Healthy || previousHealth == ProviderHealthState.Healthy;
-        if (wasHealthy && (result.CurrentHealth ?? result.Status.Health) == ProviderHealthState.Degraded)
+        if (wasHealthy && result.Status.HasCheckResult && (result.CurrentHealth ?? result.Status.Health) == ProviderHealthState.Degraded)
             db.AuditEvents.Add(new()
             {
                 Id = Guid.CreateVersion7(),

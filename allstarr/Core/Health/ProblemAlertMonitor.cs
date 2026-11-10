@@ -101,7 +101,7 @@ public sealed class ProblemAlertMonitor(IDbContextFactory<AllstarrDbContext> fac
             if (ProviderEvidence(resource, owner, sample, currentTime) is { } evidence &&
                 (evidence.Active || statuses.CanProveAccountAuthentication(key)))
                 await alerts.ObserveAsync(evidence, token);
-            if (sample.Health == ProviderHealthState.Healthy && !recoveryBlocked.Contains(resource))
+            if (sample.Health == ProviderHealthState.Healthy && !ProviderRuntimeStatus.IsNeutralReason(sample.ReasonCode) && !recoveryBlocked.Contains(resource))
                 await alerts.ObserveAsync(new("source-failure", resource, owner, false, "warning", sample.ObservedAt, RecoverAfter: 2), token);
         }
         if (health.AppleDownloadSnapshot is { } apple && health.AppleDownloadObservedAt is { } appleAt &&
@@ -131,6 +131,7 @@ public sealed class ProblemAlertMonitor(IDbContextFactory<AllstarrDbContext> fac
 
     public static ProblemAlertEvidence? ProviderEvidence(string resource, Guid? owner, ProviderHealthObservation sample, DateTimeOffset? now = null)
     {
+        if (ProviderRuntimeStatus.IsNeutralReason(sample.ReasonCode)) return null;
         if (sample.Health == ProviderHealthState.Healthy)
             return new("provider-login", resource, owner, false, "warning", sample.ObservedAt);
         if (sample.Health != ProviderHealthState.Degraded) return null;

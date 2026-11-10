@@ -975,7 +975,7 @@ public static class SpotiFlacExtensionCompatibility
         function _sfProbeDownload() {
           var result = _sfProbeServiceHealth();
           if (result.status === 'Healthy' || !(_sfManifest.serviceHealth || []).length) {
-            result.status = 'Degraded';
+            result.status = 'Healthy';
             result.safeCode = 'download-not-verified';
           }
           return result;

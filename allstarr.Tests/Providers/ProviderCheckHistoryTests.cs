@@ -8,6 +8,33 @@ namespace allstarr.Tests;
 
 public sealed class ProviderCheckHistoryTests
 {
+    [Theory]
+    [InlineData("download-not-verified", true)]
+    [InlineData("sample-unavailable", true)]
+    [InlineData("playlist-sample-unavailable", true)]
+    [InlineData("probe-limit-exceeded", true)]
+    [InlineData("probe_not_available", true)]
+    [InlineData("timeout", false)]
+    [InlineData("service_unavailable", false)]
+    public async Task UncheckedResultsRetainReasonsWithoutRecordingDegradation(string reason, bool neutral)
+    {
+        await using var database = await SqliteTestDatabase.CreateAsync();
+        var factory = new ProviderCheckServiceTests.Factory(database.Options);
+        var time = new ManualTimeProvider();
+        var history = new ProviderCheckHistory(factory, time);
+        var key = ProviderRuntimeStatusKey.CreateAccountFree("deezer", "playlist");
+        await history.RecordAsync(new(key, null, Status(key, ProviderHealthState.Healthy, time.GetUtcNow(), null)), "fixture", default);
+        time.Advance(TimeSpan.FromSeconds(1));
+        await history.RecordAsync(new(key, null, Status(key, ProviderHealthState.Degraded, time.GetUtcNow(), reason)), "fixture", default);
+
+        var rows = await history.ReadRecentAsync([new(key, null, "Public", "public")], 24, default);
+        Assert.Equal(reason, ProviderCheckHistory.SafeReasonCode(rows[0].Result.Status.ReasonCode));
+        Assert.Equal(!neutral, rows[0].Result.Status.HasCheckResult);
+        Assert.Equal(!neutral, (await history.ReadLatestAsync(default)).Single().Status.HasCheckResult);
+        await using var db = factory.CreateDbContext();
+        Assert.Equal(neutral ? 0 : 1, await db.AuditEvents.CountAsync(row => row.Action == "provider-degraded"));
+    }
+
     [Fact]
     public async Task ReadRecentUsesCurrentSubjectsAndRevisionBoundsWithoutWriting()
     {

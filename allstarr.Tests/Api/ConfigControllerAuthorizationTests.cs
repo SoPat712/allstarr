@@ -511,8 +511,13 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
         Assert.IsType<BadRequestObjectResult>(await controller.ResumeProvider(provider, capability, Guid.Empty));
     }
 
-    [Fact]
-    public async Task ProviderHealthHistoryIsAdministratorOnlyAndReturnsBoundedCurrentDiagnosticRows()
+    [Theory]
+    [InlineData("download-not-verified")]
+    [InlineData("sample-unavailable")]
+    [InlineData("playlist-sample-unavailable")]
+    [InlineData("probe-limit-exceeded")]
+    [InlineData("probe_not_available")]
+    public async Task ProviderHealthHistoryIsAdministratorOnlyAndReturnsBoundedCurrentDiagnosticRows(string neutralReason)
     {
         var nonAdministrator = CreateController(CreateHttpContextWithSession(isAdmin: false));
         AssertForbidden(await Diagnostics(nonAdministrator).GetProviderHealthHistory("deezer", 100));
@@ -563,9 +568,9 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
                     IsSupported = true,
                     IsEnabled = true,
                     Configuration = ProviderConfigurationState.NotRequired,
-                    Health = ProviderHealthState.Unknown,
+                    Health = ProviderHealthState.Degraded,
                     TestedAt = now.AddMinutes(-3),
-                    ReasonCode = "sample-unavailable"
+                    ReasonCode = neutralReason
                 }, now.AddMinutes(-3)),
                 HistoryEvent(managedKey, account.Revision + 1, new ProviderRuntimeStatus
                 {
@@ -627,7 +632,9 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
         Assert.Contains(checks, item => item.GetProperty("accountScope").GetString() == "public" &&
             item.GetProperty("outcome").GetString() == "passed");
         Assert.Contains(checks, item => item.GetProperty("accountScope").GetString() == "public" &&
-            item.GetProperty("outcome").GetString() == "neutral");
+            item.GetProperty("outcome").GetString() == "neutral" &&
+            item.GetProperty("reasonCode").GetString() == neutralReason &&
+            item.GetProperty("latencyMs").ValueKind == JsonValueKind.Null);
         Assert.All(checks, item => Assert.False(item.TryGetProperty("providerAccountId", out _)));
         clientFactory.Verify(item => item.CreateClient(It.IsAny<string>()), Times.Never);
     }

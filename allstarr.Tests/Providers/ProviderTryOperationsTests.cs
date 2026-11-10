@@ -7,6 +7,33 @@ namespace allstarr.Tests;
 
 public sealed partial class ProviderTryOperationsTests
 {
+    [Theory]
+    [InlineData(ProviderProbeStatus.Healthy, "download-not-verified", true)]
+    [InlineData(ProviderProbeStatus.Unavailable, "timeout", false)]
+    [InlineData(ProviderProbeStatus.Unavailable, "service_unavailable", false)]
+    public async Task DownloadHealthProbeRetainsTheOutcomeAndReason(ProviderProbeStatus status, string reason, bool succeeded)
+    {
+        var probe = new Mock<IProviderHealthProbeCapability>();
+        probe.SetupGet(item => item.ProviderId).Returns("fixture");
+        probe.SetupGet(item => item.Capability).Returns(ProviderCapabilityKind.Health);
+        probe.Setup(item => item.ProbeAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderHealthProbeRequest>()))
+            .ReturnsAsync(ProviderOutcome<ProviderHealthProbeResult>.Success(new(status,
+                DateTimeOffset.UtcNow, TimeSpan.Zero, reason)));
+        var download = new Mock<IProviderDownloadCapability>();
+        download.SetupGet(item => item.ProviderId).Returns("fixture");
+        download.SetupGet(item => item.Capability).Returns(ProviderCapabilityKind.Download);
+        var descriptor = new ProviderDescriptor("fixture", "Fixture", "Fixture", ProviderOrigin.Extension, "1", "1",
+            [new(ProviderCapabilityKind.Download, ProviderCapabilitySupportState.Supported, ProviderAccountRequirement.None,
+                "1", ["download", "checkAvailability"]), new(ProviderCapabilityKind.Health, ProviderCapabilitySupportState.Supported,
+                ProviderAccountRequirement.None, "1", ["probeDownload"])], new(), entryPoint: "index.js", healthProbe: true);
+        var registry = new ProviderRegistry([new(descriptor, [download.Object, probe.Object])]);
+
+        var result = await new ProviderTryOperations(registry).ProbeAsync(Context(), descriptor, ProviderCapabilityKind.Download);
+
+        Assert.Equal(succeeded, result.Succeeded);
+        Assert.Equal(reason, result.ReasonCode);
+    }
+
     [Fact]
     public async Task MetadataSearchProjectsBestVersionFlag()
     {

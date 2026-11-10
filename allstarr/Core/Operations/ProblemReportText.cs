@@ -11,6 +11,7 @@ internal static partial class ProblemReportText
         "unauthorized", "forbidden", "not-found", "not_found", "provider_account_required", "account_needs_reauthentication",
         "account_needs_configuration", "circuit_open", "blocked-by-challenge", "invalid-response", "network-error",
         "incompatible-media", "download-not-verified", "probe_not_available", "sample-unavailable", "unsupported_api_version",
+        "playlist-sample-unavailable", "probe-limit-exceeded",
         "apple_download_sign_in_required", "apple_download_gateway_update_required", "source-cooldown",
         "no_indexed_candidate", "manual_override_target_not_visible", "manual_override_pinned", "manual_override_rejected_all",
         "ambiguous_top_candidates", "below_accept_threshold_review", "semantic_version_mismatch_review",

@@ -7,6 +7,41 @@ namespace allstarr.Tests;
 
 public sealed partial class ExtensionCapabilityAdapterTests
 {
+    [Theory]
+    [InlineData("download-not-verified")]
+    [InlineData("sample-unavailable")]
+    [InlineData("playlist-sample-unavailable")]
+    [InlineData("probe-limit-exceeded")]
+    [InlineData("probe_not_available")]
+    public async Task ExtensionHealthLogging_NeutralChecksDoNotFailOrRecover(string reason)
+    {
+        var logger = new ProbeLogger();
+        var manifest = Manifest(ProviderCapabilityKind.Health, "probeDownload");
+        var sandbox = new ExtensionSandbox(Path.GetTempPath(), """{"id":"probe-neutral"}""", """
+            var status = 'Degraded', reason = null;
+            registerExtension({
+              configure:function(request){status=request.status;reason=request.reason;},
+              probeDownload:function(){return {status:status,observedAt:'2030-01-01T00:00:00Z',safeCode:reason};}
+            });
+            """, new HttpClientFactory(), logger);
+        var adapter = new ExtensionHealthCapabilityAdapter(sandbox, manifest);
+        async Task Check(string status, string? code)
+        {
+            sandbox.InvokeJson("configure", System.Text.Json.JsonSerializer.Serialize(new { status, reason = code }));
+            await adapter.ProbeAsync(Context(), new(ProviderCapabilityKind.Download));
+        }
+
+        await Check("Degraded", reason);
+        await Check("Healthy", reason);
+        Assert.Empty(logger.Events);
+        await Check("Unavailable", "service_unavailable");
+        await Check("Degraded", reason);
+        await Check("Healthy", reason);
+        Assert.Equal(LogLevel.Warning, Assert.Single(logger.Events).Level);
+        await Check("Healthy", null);
+        Assert.Equal([LogLevel.Warning, LogLevel.Information], logger.Events.Select(item => item.Level));
+    }
+
     [Fact]
     public async Task ExtensionHealthLogging_ReportsTransitionsAndHourlySummary()
     {
