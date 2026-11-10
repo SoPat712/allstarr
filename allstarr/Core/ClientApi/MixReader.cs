@@ -3,7 +3,6 @@ using System.Text.Json;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Matching;
 using allstarr.Core.Music;
-using allstarr.Core.Operations;
 using allstarr.Core.Playlists;
 using allstarr.Core.Protocols;
 using allstarr.Core.Settings;
