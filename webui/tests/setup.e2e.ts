@@ -187,10 +187,13 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
     await page.goto("#/settings/network");
     const access = page.getByRole("article", { name: "Single sign-on" });
     await expect(access.getByLabel("Client secret", { exact: true })).toHaveValue("");
-    await expect(access.getByText(/A secret is saved/)).toBeVisible();
+    await expect(access.getByText(/Saved\. Leave blank/)).toBeVisible();
     await access.getByLabel("Sign-in button name", { exact: true }).fill("New sign-in");
     await access.getByLabel("Sign-in button name", { exact: true }).blur();
-    await page.getByRole("alertdialog").getByRole("button", { name: "Restart and apply", exact: true }).click();
+    await expect(page.getByRole("alertdialog")).toHaveCount(0);
+    expect(attempted).toBe(false);
+    await access.getByRole("button", { name: "Save and restart", exact: true }).click();
+    await page.getByRole("alertdialog").getByRole("button", { name: "Save and restart", exact: true }).click();
     await expect(access.getByRole("alert")).toContainText("Reload and try again"); expect(attempted).toBe(true);
     await page.getByRole("alertdialog").getByRole("button", { name: "Cancel", exact: true }).click();
     await access.getByRole("button", { name: "Try again", exact: true }).click();

@@ -13,7 +13,8 @@
   import { Button } from "$lib/components/ui/button";
   import { Copy } from "@lucide/svelte";
   import { toast } from "$lib/toasts";
-  import { oidcRedirectUri } from "$lib/oidc-settings";
+  import { oidcDraftDirty, oidcRedirectUri, validateOidcDraft } from "$lib/oidc-settings";
+  import { adminUrl } from "$lib/admin-url";
   let { kind }: { kind: "oidc" | "backend" } = $props();
   let snapshot = $state<OidcAccess | BackendAccess | null>(null), csrf = $state("");
   let enabled = $state(false), authority = $state(""), clientId = $state(""), publicUrl = $state(""), displayName = $state("Single sign-on");
@@ -21,9 +22,15 @@
   let busy = $state(false), error = $state(""), saved = $state(false), editing = $state(false), restored = $state(false);
   let confirmOpen = $state(false), form = $state<HTMLFormElement>();
   let confirming = $state(false);
+  let validationAttempted = $state(false);
   let playlistListeners = $state<{ playlistEditingAllowed?: boolean }[] | null>(null);
   let redirectText = $state<HTMLSpanElement>();
+  const oidc = $derived(kind === "oidc" ? snapshot as OidcAccess | null : null);
+  const backend = $derived(kind === "backend" ? snapshot as BackendAccess | null : null);
   const redirectUri = $derived(oidcRedirectUri(publicUrl));
+  const draft = $derived({ enabled, authority, clientId, publicUrl, displayName, clientSecret: secret, removeClientSecret: removeSecret });
+  const dirty = $derived(!!oidc && oidcDraftDirty(draft, oidc));
+  const fieldErrors = $derived(validationAttempted && oidc ? validateOidcDraft(draft, oidc, adminUrl("/").replace(/\/+$/, "")) : {});
   const abort = new AbortController();
   async function copyRedirectUri() {
     if (!redirectUri) return;
@@ -43,20 +50,29 @@
     }
   }
   function requestSave() {
-    if (busy || !snapshot || !form?.checkValidity()) return;
+    if (busy || !snapshot) return;
+    if (oidc) {
+      validationAttempted = true;
+      if (!dirty || Object.keys(fieldErrors).length) return;
+    } else if (!form?.checkValidity()) return;
     confirming = true; confirmOpen = true;
   }
   $effect(() => {
     if (confirming && !confirmOpen && !busy && !saved) {
       confirming = false;
-      if (oidc) { enabled = oidc.enabled; authority = oidc.authority; clientId = oidc.clientId; publicUrl = oidc.publicUrl; displayName = oidc.displayName || "Single sign-on"; }
-      else enabled = backend?.configured ?? false;
-      secret = ""; password = ""; removeSecret = false;
+      if (kind === "backend") {
+        enabled = backend?.configured ?? false;
+        secret = ""; password = ""; removeSecret = false;
+      }
     }
   });
-  const oidc = $derived(kind === "oidc" ? snapshot as OidcAccess | null : null);
-  const backend = $derived(kind === "backend" ? snapshot as BackendAccess | null : null);
   const connected = $derived(!!backend?.configured && !backend.needsReview);
+  function cancelOidcDraft() {
+    if (!oidc) return;
+    enabled = oidc.enabled; authority = oidc.authority; clientId = oidc.clientId;
+    publicUrl = oidc.publicUrl; displayName = oidc.displayName || "Single sign-on";
+    secret = ""; removeSecret = false; validationAttempted = false; error = "";
+  }
   async function load() {
     error = ""; editing = false;
     try {
@@ -115,21 +131,22 @@
       {#if backend.credentialKind === "api-key"}<small>Administrator access enables playlist order and removal sync.</small>{/if}
     </div><div class="connection-actions"><Badge tone="success">Connected</Badge><Button variant="outline" onclick={() => { editing = true; restored = false; }}>Change access</Button></div></div>
   {:else if snapshot && !saved}
-    <form bind:this={form} class="access-form" onchange={() => requestSave()} onsubmit={event => { event.preventDefault(); requestSave(); }}>
+    <form bind:this={form} class="access-form" novalidate={kind === "oidc"} onchange={() => { if (kind === "backend") requestSave(); }} onsubmit={event => { event.preventDefault(); requestSave(); }}>
       <div class="settings-row"><div><strong>{kind === "oidc" ? "Sign in with your identity provider" : "Allow playlist sync and library scans"}</strong><small>{kind === "oidc" ? "OpenID Connect. Connection fields appear when switched on. Media-server sign-in stays available." : "Verify an administrator sign-in. The password is discarded after verification."}</small><small class="restart-note">{settingRestartNote("")}</small></div><span class="settings-toggle"><Switch aria-label={kind === "oidc" ? "Enable single sign-on" : "Allow playlist sync and library scans"} bind:checked={enabled} disabled={busy} /></span></div>
-      {#if kind === "oidc" && enabled}
+      {#if kind === "oidc" && (enabled || Object.keys(fieldErrors).length)}
         {#if snapshot.needsReview}<p class="settings-impact notice-error">The saved connection needs attention. Enter fresh credentials or turn it off.</p>{/if}
-        <label class="settings-row"><div><strong>Issuer address</strong></div><input type="url" aria-label="Issuer address" bind:value={authority} disabled={busy} required /></label>
-        <label class="settings-row"><div><strong>Client ID</strong></div><input aria-label="Client ID" bind:value={clientId} disabled={busy} required /></label>
-        <label class="settings-row"><div><strong>Public Allstarr address</strong><small>HTTP is allowed for private or local addresses. Public addresses need HTTPS.</small></div><input type="url" aria-label="Public Allstarr address" bind:value={publicUrl} disabled={busy} required /></label>
+        <label class="settings-row"><div><strong>Issuer address</strong>{#if fieldErrors.authority}<small class="field-error" id="oidc-authority-error" role="alert">{fieldErrors.authority}</small>{/if}</div><input type="url" aria-label="Issuer address" aria-invalid={!!fieldErrors.authority} aria-describedby={fieldErrors.authority ? "oidc-authority-error" : undefined} bind:value={authority} disabled={busy} required /></label>
+        <label class="settings-row"><div><strong>Client ID</strong>{#if fieldErrors.clientId}<small class="field-error" id="oidc-client-error" role="alert">{fieldErrors.clientId}</small>{/if}</div><input aria-label="Client ID" aria-invalid={!!fieldErrors.clientId} aria-describedby={fieldErrors.clientId ? "oidc-client-error" : undefined} bind:value={clientId} disabled={busy} required /></label>
+        <label class="settings-row"><div><strong>Public Allstarr address</strong><small>HTTP is allowed for private or local addresses. Public addresses need HTTPS.</small>{#if fieldErrors.publicUrl}<small class="field-error" id="oidc-address-error" role="alert">{fieldErrors.publicUrl}</small>{/if}</div><input type="url" aria-label="Public Allstarr address" aria-invalid={!!fieldErrors.publicUrl} aria-describedby={fieldErrors.publicUrl ? "oidc-address-error" : undefined} bind:value={publicUrl} disabled={busy} required /></label>
         <div class="settings-row"><div><p class="redirect-uri" aria-label="Redirect URI">Redirect URI: <span bind:this={redirectText}>{redirectUri || "Enter the Public Allstarr address above."}</span></p></div><Button variant="secondary" aria-label="Copy redirect URI" disabled={!redirectUri} onpointerdown={event => event.preventDefault()} onclick={() => void copyRedirectUri()}><Copy size={16} aria-hidden="true" />Copy</Button></div>
-        <label class="settings-row"><div><strong>Sign-in button name</strong></div><input aria-label="Sign-in button name" bind:value={displayName} disabled={busy} /></label>
-        <label class="settings-row"><div><strong>Client secret</strong><small>{oidc?.hasClientSecret ? "A secret is saved. Leave blank to keep it for the same issuer and client." : "No secret is saved."}</small></div><input type="password" aria-label="Client secret" autocomplete="new-password" bind:value={secret} disabled={busy || removeSecret} /></label>
+        <label class="settings-row"><div><strong>Sign-in button name</strong>{#if fieldErrors.displayName}<small class="field-error" id="oidc-name-error" role="alert">{fieldErrors.displayName}</small>{/if}</div><input aria-label="Sign-in button name" aria-invalid={!!fieldErrors.displayName} aria-describedby={fieldErrors.displayName ? "oidc-name-error" : undefined} bind:value={displayName} disabled={busy} /></label>
+        <label class="settings-row"><div><strong>Client secret</strong><small>{oidc?.hasClientSecret ? "Saved. Leave blank to keep it for the same issuer and client." : "No secret is saved."}</small>{#if fieldErrors.clientSecret}<small class="field-error" id="oidc-secret-error" role="alert">{fieldErrors.clientSecret}</small>{/if}</div><input type="password" aria-label="Client secret" aria-invalid={!!fieldErrors.clientSecret} aria-describedby={fieldErrors.clientSecret ? "oidc-secret-error" : undefined} autocomplete="new-password" bind:value={secret} disabled={busy || removeSecret} /></label>
         {#if oidc?.hasClientSecret}<label class="settings-row"><div><strong>Remove saved client secret</strong></div><span class="settings-toggle"><Switch aria-label="Remove saved client secret" bind:checked={removeSecret} disabled={busy} /></span></label>{/if}
       {:else if kind === "backend" && enabled}
         <label class="settings-row"><div><strong>Jellyfin administrator username</strong></div><input aria-label="Jellyfin administrator username" autocomplete="username" bind:value={username} required disabled={busy} /></label>
         <label class="settings-row"><div><strong>Jellyfin administrator password</strong></div><input aria-label="Jellyfin administrator password" type="password" autocomplete="current-password" bind:value={password} required disabled={busy} /></label>
       {:else if kind === "backend" && connected}<p class="settings-impact notice-error">Turning this off stops playlist sync and library scans until access is restored.</p>{/if}
+      {#if kind === "oidc" && dirty}<footer><Button type="submit" disabled={busy}>Save and restart</Button><Button variant="text" type="button" disabled={busy} onclick={cancelOidcDraft}>Cancel</Button></footer>{/if}
       {#if kind === "backend"}<footer><Button variant="outline" type="submit" disabled={busy}>Verify access</Button>{#if editing}<Button variant="text" type="button" disabled={busy} onclick={cancelEdit}>Cancel</Button>{/if}</footer>{/if}
     </form>
   {/if}
@@ -143,9 +160,10 @@
     <div class="settings-row"><div><strong>Household fallback</strong><small>An administrator sign-in used when a listener hasn’t allowed it.</small></div><Button variant="outline" disabled={!backend?.supported || !backend.connectionSaved} onclick={() => { editing = true; enabled = true; restored = false; }}>{connected ? "Change…" : "Set up…"}</Button></div>
   </section>
 {/if}
-<ConfirmDialog bind:open={confirmOpen} title="Restart Allstarr to apply?" description="Changing sign-in or media-server access needs a restart. Music that is playing pauses briefly. This page reconnects when Allstarr is ready." confirmLabel={busy ? "Applying…" : "Restart and apply"} confirmVariant="default" disabled={busy} closeOnConfirm={false} {error} onConfirm={save} />
+<ConfirmDialog bind:open={confirmOpen} title={kind === "oidc" ? "Save single sign-on and restart Allstarr?" : "Restart Allstarr to apply?"} description={kind === "oidc" ? "Signed-in pages reconnect after about 20 seconds." : "Changing sign-in or media-server access needs a restart. Music that is playing pauses briefly. This page reconnects when Allstarr is ready."} confirmLabel={busy ? "Applying…" : kind === "oidc" ? "Save and restart" : "Restart and apply"} confirmVariant="default" disabled={busy} closeOnConfirm={false} {error} onConfirm={save} />
 <style>
   .access-form { min-width: 0; }
+  .access-form .field-error { color: var(--color-danger); }
   .restart-note { color: var(--on-warning-container); }
   .redirect-uri { margin: 0; color: var(--color-ink-muted); font-size: var(--text-sm); overflow-wrap: anywhere; }
   .connection-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: end; gap: var(--space-2); }
