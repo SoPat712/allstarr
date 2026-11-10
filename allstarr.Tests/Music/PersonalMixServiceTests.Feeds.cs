@@ -5,6 +5,7 @@ using allstarr.Core.Matching;
 using allstarr.Core.Protocols;
 using allstarr.Core.Playlists;
 using allstarr.Core.Storage;
+using allstarr.Core.Providers.Spotify;
 using allstarr.Models.Domain;
 using Microsoft.EntityFrameworkCore;
 using Moq;
@@ -13,6 +14,54 @@ namespace allstarr.Tests;
 
 public sealed partial class PersonalMixServiceTests
 {
+    [Fact]
+    public async Task SpotifyHomeFeedsUseTheExistingSixHourSnapshotAndPreparationQueue()
+    {
+        var (_, account) = await FeedAccount();
+        await using (var db = factory.CreateDbContext())
+        {
+            var row = await db.ProviderAccounts.SingleAsync(item => item.Id == account);
+            row.SecretReferenceId = Guid.NewGuid();
+            db.SecretReferences.Add(new() { Id = row.SecretReferenceId.Value, UserId = owner, Purpose = $"provider-account:spotify:{account:N}", ActiveVersion = 1 });
+            await db.SaveChangesAsync();
+        }
+        var handler = new SpotifyHomeFixtureHandler();
+        using var http = new HttpClient(handler);
+        IProviderPlaylistCapability? adapter = new SpotifyPlaylistCapabilityAdapter(http, new HomeFeedSecrets());
+        var registry = new Mock<IProviderRegistry>();
+        registry.Setup(item => item.TryGetCapability("spotify", ProviderCapabilityKind.Playlist, out adapter)).Returns(true);
+        var options = new DurableJobOptions();
+        var queue = new DurableJobQueue(factory, options, new(options), clock);
+        service = new(factory, clock, tags, taste, new(gateway.Object, timeProvider: clock), gateway.Object,
+            NewReleaseService(), settings.Object, policies.Object, access.Object, registry: registry.Object, jobQueue: queue);
+        var cards = (await service.ListCardsAsync(owner)).Where(item => item.Kind == "external").ToArray();
+        Assert.Equal(11, cards.Length);
+        Assert.All(cards, card =>
+        {
+            Assert.Equal("yourServices", card.Section);
+            Assert.Equal(account, card.ProviderAccountId);
+            Assert.Empty(card.Songs);
+            Assert.False(card.Added);
+        });
+        clock.UtcNow = clock.UtcNow.AddHours(6).AddTicks(-1);
+        await service.ListCardsAsync(owner);
+        Assert.Equal(1, handler.HomeRequests);
+        Assert.Equal(1, handler.LibraryRequests);
+        clock.UtcNow = clock.UtcNow.AddTicks(1);
+        await service.ListCardsAsync(owner);
+        Assert.Equal(2, handler.HomeRequests);
+        Assert.Equal(2, handler.LibraryRequests);
+        await using var read = factory.CreateDbContext();
+        Assert.Empty(await read.PlaylistLinks.ToArrayAsync());
+        Assert.Contains(await read.Jobs.ToArrayAsync(), item => item.Type == PersonalMixService.FeedPrepareJobType);
+    }
+
+    private sealed class HomeFeedSecrets : IProviderAccountSecretAccessor
+    {
+        public Task<T> UseAsync<T>(ProviderAccountContext account, Func<ReadOnlyMemory<byte>, Task<T>> operation, CancellationToken cancellationToken) =>
+            operation(System.Text.Encoding.UTF8.GetBytes("fixture-cookie"));
+    }
+
     private async Task<(Mock<IProviderPlaylistCapability> Capability, Guid Account)> FeedAccount(string provider = "spotify", Guid? listener = null,
         ILibraryIndexService? local = null, ITrackIdentityService? identities = null, IPlaylistPersistenceService? store = null, DurableJobQueue? queue = null)
     {

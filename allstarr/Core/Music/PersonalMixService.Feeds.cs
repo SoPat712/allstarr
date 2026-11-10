@@ -7,6 +7,7 @@ using allstarr.Core.Matching;
 using allstarr.Core.Playlists;
 using allstarr.Core.Providers.AppleMusicKit;
 using allstarr.Core.Providers.ListenBrainz;
+using allstarr.Core.Providers.Spotify;
 using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
 using allstarr.Models.Domain;
@@ -64,7 +65,9 @@ public sealed partial class PersonalMixService
                                 ? await apple.GetServiceFeedsAsync(execution, page)
                                 : capability is ListenBrainzPlaylistCapabilityAdapter listenBrainz
                                     ? await listenBrainz.GetServiceFeedsAsync(execution, page)
-                                    : await capability!.GetUserPlaylistsAsync(execution, new(page));
+                                    : capability is SpotifyPlaylistCapabilityAdapter spotify
+                                        ? await spotify.GetServiceFeedsAsync(execution, page)
+                                        : await capability!.GetUserPlaylistsAsync(execution, new(page));
                             if (!outcome.IsSuccess) break;
                             var value = outcome.RequireValue();
                             foreach (var item in value.Items.Where(item => item.Id.ProviderId == account.ProviderId &&

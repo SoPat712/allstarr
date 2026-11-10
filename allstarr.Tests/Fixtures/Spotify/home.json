@@ -1,0 +1,462 @@
+{
+  "data": {
+    "home": {
+      "__typename": "Home",
+      "sectionContainer": {
+        "sections": {
+          "items": [
+            {
+              "data": {
+                "title": {
+                  "text": "Made for you"
+                }
+              },
+              "sectionItems": {
+                "items": [
+                  {
+                    "content": {
+                      "data": {
+                        "__typename": "Playlist",
+                        "uri": "spotify:playlist:37i9dQZ1Efixture0000001",
+                        "name": "Daily Mix 1",
+                        "images": {
+                          "items": [
+                            {
+                              "sources": [
+                                {
+                                  "url": "https://i.scdn.co/image/37i9dQZ1Efixture0000001",
+                                  "width": 640,
+                                  "height": 640
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        "ownerV2": {
+                          "data": {
+                            "name": "Spotify"
+                          }
+                        },
+                        "unknownField": true
+                      }
+                    }
+                  },
+                  {
+                    "content": {
+                      "data": {
+                        "__typename": "Playlist",
+                        "uri": "spotify:playlist:37i9dQZ1Efixture0000002",
+                        "name": "Daily Mix 2",
+                        "images": {
+                          "items": [
+                            {
+                              "sources": [
+                                {
+                                  "url": "https://i.scdn.co/image/37i9dQZ1Efixture0000002",
+                                  "width": 640,
+                                  "height": 640
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        "ownerV2": {
+                          "data": {
+                            "name": "Spotify"
+                          }
+                        },
+                        "unknownField": true
+                      }
+                    }
+                  },
+                  {
+                    "content": {
+                      "data": {
+                        "__typename": "Playlist",
+                        "uri": "spotify:playlist:37i9dQZ1Efixture0000003",
+                        "name": "Daily Mix 3",
+                        "images": {
+                          "items": [
+                            {
+                              "sources": [
+                                {
+                                  "url": "https://i.scdn.co/image/37i9dQZ1Efixture0000003",
+                                  "width": 640,
+                                  "height": 640
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        "ownerV2": {
+                          "data": {
+                            "name": "Spotify"
+                          }
+                        },
+                        "unknownField": true
+                      }
+                    }
+                  },
+                  {
+                    "content": {
+                      "data": {
+                        "__typename": "Playlist",
+                        "uri": "spotify:playlist:37i9dQZ1Efixture0000004",
+                        "name": "Daily Mix 4",
+                        "images": {
+                          "items": [
+                            {
+                              "sources": [
+                                {
+                                  "url": "https://i.scdn.co/image/37i9dQZ1Efixture0000004",
+                                  "width": 640,
+                                  "height": 640
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        "ownerV2": {
+                          "data": {
+                            "name": "Spotify"
+                          }
+                        },
+                        "unknownField": true
+                      }
+                    }
+                  },
+                  {
+                    "content": {
+                      "data": {
+                        "__typename": "Playlist",
+                        "uri": "spotify:playlist:37i9dQZ1Efixture0000005",
+                        "name": "Daily Mix 5",
+                        "images": {
+                          "items": [
+                            {
+                              "sources": [
+                                {
+                                  "url": "https://i.scdn.co/image/37i9dQZ1Efixture0000005",
+                                  "width": 640,
+                                  "height": 640
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        "ownerV2": {
+                          "data": {
+                            "name": "Spotify"
+                          }
+                        },
+                        "unknownField": true
+                      }
+                    }
+                  },
+                  {
+                    "content": {
+                      "data": {
+                        "__typename": "Playlist",
+                        "uri": "spotify:playlist:37i9dQZ1Efixture0000006",
+                        "name": "Daily Mix 6",
+                        "images": {
+                          "items": [
+                            {
+                              "sources": [
+                                {
+                                  "url": "https://i.scdn.co/image/37i9dQZ1Efixture0000006",
+                                  "width": 640,
+                                  "height": 640
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        "ownerV2": {
+                          "data": {
+                            "name": "Unknown"
+                          }
+                        },
+                        "unknownField": true
+                      }
+                    }
+                  },
+                  {
+                    "content": {
+                      "data": {
+                        "__typename": "Playlist",
+                        "uri": "spotify:playlist:37i9dQZ1Efixture0000007",
+                        "name": "daylist",
+                        "images": {
+                          "items": [
+                            {
+                              "sources": [
+                                {
+                                  "url": "https://i.scdn.co/image/37i9dQZ1Efixture0000007",
+                                  "width": 640,
+                                  "height": 640
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        "ownerV2": {
+                          "data": {
+                            "name": "Spotify"
+                          }
+                        },
+                        "unknownField": true
+                      }
+                    }
+                  },
+                  {
+                    "content": {
+                      "data": {
+                        "__typename": "Playlist",
+                        "uri": "spotify:playlist:37i9dQZ1Efixture0000008",
+                        "name": "Repeat Rewind",
+                        "images": {
+                          "items": [
+                            {
+                              "sources": [
+                                {
+                                  "url": "https://i.scdn.co/image/37i9dQZ1Efixture0000008",
+                                  "width": 640,
+                                  "height": 640
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        "ownerV2": {
+                          "data": {
+                            "name": "Spotify"
+                          }
+                        },
+                        "unknownField": true
+                      }
+                    }
+                  },
+                  {
+                    "content": {
+                      "data": {
+                        "__typename": "Playlist",
+                        "uri": "spotify:playlist:37i9dQZ1Efixture0000009",
+                        "name": "Discover Weekly",
+                        "images": {
+                          "items": [
+                            {
+                              "sources": [
+                                {
+                                  "url": "https://i.scdn.co/image/37i9dQZ1Efixture0000009",
+                                  "width": 640,
+                                  "height": 640
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        "ownerV2": {
+                          "data": {
+                            "name": "Spotify"
+                          }
+                        },
+                        "unknownField": true
+                      }
+                    }
+                  },
+                  {
+                    "content": {
+                      "data": {
+                        "__typename": "Playlist",
+                        "uri": "spotify:playlist:37i9dQZ1Efixture0000010",
+                        "name": "Release Radar",
+                        "images": {
+                          "items": [
+                            {
+                              "sources": [
+                                {
+                                  "url": "https://i.scdn.co/image/37i9dQZ1Efixture0000010",
+                                  "width": 640,
+                                  "height": 640
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        "ownerV2": {
+                          "data": {
+                            "name": "Spotify"
+                          }
+                        },
+                        "unknownField": true
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "data": {
+                "title": {
+                  "transformedLabel": "Your top mixes"
+                }
+              },
+              "sectionItems": {
+                "items": [
+                  {
+                    "content": {
+                      "data": {
+                        "__typename": "Playlist",
+                        "uri": "spotify:playlist:62U2t2VrRycoqlyf8ZT4T6",
+                        "name": "Your rock mix",
+                        "images": {
+                          "items": [
+                            {
+                              "sources": [
+                                {
+                                  "url": "https://i.scdn.co/image/62U2t2VrRycoqlyf8ZT4T6",
+                                  "width": 640,
+                                  "height": 640
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        "ownerV2": {
+                          "data": {
+                            "name": "sPoTiFy"
+                          }
+                        },
+                        "unknownField": true
+                      }
+                    }
+                  },
+                  {
+                    "content": {
+                      "data": {
+                        "__typename": "Playlist",
+                        "uri": "spotify:playlist:37i9dQZ1Efixture0000001",
+                        "name": "Daily Mix 1",
+                        "images": {
+                          "items": [
+                            {
+                              "sources": [
+                                {
+                                  "url": "https://i.scdn.co/image/37i9dQZ1Efixture0000001",
+                                  "width": 640,
+                                  "height": 640
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        "ownerV2": {
+                          "data": {
+                            "name": "Spotify"
+                          }
+                        },
+                        "unknownField": true
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "data": {
+                "title": {
+                  "text": "More for you"
+                }
+              },
+              "sectionItems": {
+                "items": [
+                  {
+                    "content": {
+                      "data": {
+                        "__typename": "Playlist",
+                        "uri": "spotify:playlist:3fCEBvwpzqBGeSiRq7yTs3",
+                        "name": "My favorites",
+                        "images": {
+                          "items": [
+                            {
+                              "sources": [
+                                {
+                                  "url": "https://i.scdn.co/image/3fCEBvwpzqBGeSiRq7yTs3",
+                                  "width": 640,
+                                  "height": 640
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        "ownerV2": {
+                          "data": {
+                            "name": "Listener"
+                          }
+                        },
+                        "unknownField": true
+                      }
+                    }
+                  },
+                  {
+                    "content": {
+                      "data": {
+                        "__typename": "Playlist",
+                        "uri": "spotify:playlist:6TpGxGXKm0DKTDdFoRWV3R",
+                        "name": "Shared playlist",
+                        "images": {
+                          "items": [
+                            {
+                              "sources": [
+                                {
+                                  "url": "https://i.scdn.co/image/6TpGxGXKm0DKTDdFoRWV3R",
+                                  "width": 640,
+                                  "height": 640
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        "ownerV2": {
+                          "data": {
+                            "name": "Someone else"
+                          }
+                        },
+                        "unknownField": true
+                      }
+                    }
+                  },
+                  {
+                    "content": {
+                      "data": {
+                        "__typename": "Episode",
+                        "uri": "spotify:episode:fixture"
+                      }
+                    }
+                  },
+                  {
+                    "content": {
+                      "data": {
+                        "__typename": "Album",
+                        "uri": "spotify:album:fixture"
+                      }
+                    }
+                  },
+                  {
+                    "content": {
+                      "data": {
+                        "__typename": "NotFound"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "unknownField": {}
+    }
+  }
+}

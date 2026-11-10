@@ -10,6 +10,10 @@ public sealed class SpotifyApiSettings
     public string PlaylistQueryHash { get; set; } = DefaultPlaylistQueryHash;
     public const string DefaultLikedSongsQueryHash = "087278b20b743578a6262c2b0b4bcd20d879c503cc359a2285baf083ef944240";
     public string LikedSongsQueryHash { get; set; } = DefaultLikedSongsQueryHash;
+    public const string DefaultHomeQueryHash = "5fb7da7a03ee2776c0670856609cb85a189a3cecc36cc160b91cde79063b9cf1";
+    public string HomeQueryHash { get; set; } = DefaultHomeQueryHash;
+    public const string DefaultHomeEndUserIntegration = "INTEGRATION_WEB_PLAYER";
+    public string HomeEndUserIntegration { get; set; } = DefaultHomeEndUserIntegration;
     public const string DefaultTotpSecretsUrl = "https://raw.githubusercontent.com/xyloflake/spot-secrets-go/refs/heads/main/secrets/secretBytes.json";
     public string TotpSecretsUrl { get; set; } = DefaultTotpSecretsUrl;
     public const string DefaultTokenEndpoint = "https://open.spotify.com/api/token";

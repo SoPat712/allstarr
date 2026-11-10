@@ -560,10 +560,14 @@ public sealed class DurableRuntimeSettingsTests : IAsyncLifetime
         var hash = new string('d', 64);
         await service.ApplyBatchAsync([
             new("SpotifyApi:LibraryQueryHash", hash),
+            new("SpotifyApi:HomeQueryHash", hash),
+            new("SpotifyApi:HomeEndUserIntegration", "INTEGRATION_MOBILE_WEB_PLAYER"),
             new("SpotifyApi:PathfinderEndpoint", "https://api-partner.spotify.com/pathfinder/v2/query"),
             new("SpotifyApi:TokenEndpoint", "https://api-partner.spotify.com/api/token")
         ], "webui", _userId);
         Assert.Equal(hash, spotify.LibraryQueryHash);
+        Assert.Equal(hash, spotify.HomeQueryHash);
+        Assert.Equal("INTEGRATION_MOBILE_WEB_PLAYER", spotify.HomeEndUserIntegration);
         Assert.Equal("https://api-partner.spotify.com/pathfinder/v2/query", spotify.PathfinderEndpoint);
         Assert.Equal("https://api-partner.spotify.com/api/token", spotify.TokenEndpoint);
     }
@@ -573,20 +577,28 @@ public sealed class DurableRuntimeSettingsTests : IAsyncLifetime
     {
         var service = CreateService([]);
         Assert.Equal("https://api-partner.spotify.com/pathfinder/v1/query", (await service.GetAsync("SpotifyApi:PathfinderEndpoint")).Value);
+        Assert.Equal(SpotifyApiSettings.DefaultHomeQueryHash, (await service.GetAsync("SpotifyApi:HomeQueryHash")).Value);
+        Assert.Equal(SpotifyApiSettings.DefaultHomeEndUserIntegration, (await service.GetAsync("SpotifyApi:HomeEndUserIntegration")).Value);
         var hash = new string('a', 64);
         await service.ApplyBatchAsync([
             new("SpotifyApi:PathfinderEndpoint", "https://api-partner.spotify.com/pathfinder/v2/query"),
             new("SpotifyApi:LibraryQueryHash", hash),
             new("SpotifyApi:LikedSongsQueryHash", hash),
+            new("SpotifyApi:HomeQueryHash", hash),
+            new("SpotifyApi:HomeEndUserIntegration", "INTEGRATION_MOBILE_WEB_PLAYER"),
             new("SpotifyApi:TotpSecretsUrl", "https://example.test/public-secrets.json")
         ], "webui", _userId);
         var restarted = CreateService([]);
         Assert.Equal(hash, (await restarted.GetAsync("SpotifyApi:LibraryQueryHash")).Value);
+        Assert.Equal(hash, (await restarted.GetAsync("SpotifyApi:HomeQueryHash")).Value);
+        Assert.Equal("INTEGRATION_MOBILE_WEB_PLAYER", (await restarted.GetAsync("SpotifyApi:HomeEndUserIntegration")).Value);
         Assert.Equal("https://api-partner.spotify.com/pathfinder/v2/query", (await restarted.GetAsync("SpotifyApi:PathfinderEndpoint")).Value);
         await Assert.ThrowsAsync<ArgumentException>(() => service.ApplyBatchAsync(
             [new("SpotifyApi:PathfinderEndpoint", "https://example.test/query", 1)], "webui", _userId));
         await Assert.ThrowsAsync<ArgumentException>(() => service.ApplyBatchAsync(
             [new("SpotifyApi:PlaylistQueryHash", "invalid")], "webui", _userId));
+        await Assert.ThrowsAsync<ArgumentException>(() => service.ApplyBatchAsync(
+            [new("SpotifyApi:HomeQueryHash", "invalid")], "webui", _userId));
         await Assert.ThrowsAsync<ArgumentException>(() => service.ApplyBatchAsync(
             [new("SpotifyApi:TotpSecretsUrl", "http://example.test/secrets", 1)], "webui", _userId));
     }

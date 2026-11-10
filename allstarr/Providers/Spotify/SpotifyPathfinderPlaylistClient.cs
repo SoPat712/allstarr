@@ -530,7 +530,7 @@ public sealed partial class SpotifyPathfinderPlaylistClient
         _ => new(ProviderErrorKind.PermanentFailure)
     };
 
-    private ProviderError? GraphQlFailure(JsonElement root, string operation)
+    private ProviderError? GraphQlFailure(JsonElement root, string operation, bool logFailure = true)
     {
         var errors = Array(root, "errors");
         if (errors.Count == 0)
@@ -539,11 +539,12 @@ public sealed partial class SpotifyPathfinderPlaylistClient
             String(error, "message")?.Contains("persisted", StringComparison.OrdinalIgnoreCase) == true ||
             (TryPath(error, out var extensions, "extensions") &&
              String(extensions, "code")?.Contains("persisted", StringComparison.OrdinalIgnoreCase) == true));
-        logger?.LogWarning(
-            "Spotify Pathfinder operation {Operation} returned {ErrorCount} GraphQL errors. ReasonCode: {ReasonCode}",
-            operation,
-            errors.Count,
-            staleHash ? "persisted_query_changed" : "graphql_error");
+        if (logFailure)
+            logger?.LogWarning(
+                "Spotify Pathfinder operation {Operation} returned {ErrorCount} GraphQL errors. ReasonCode: {ReasonCode}",
+                operation,
+                errors.Count,
+                staleHash ? "persisted_query_changed" : "graphql_error");
         return staleHash
             ? ProviderError.CompatibilityContractChanged()
             : new ProviderError(ProviderErrorKind.PermanentFailure);

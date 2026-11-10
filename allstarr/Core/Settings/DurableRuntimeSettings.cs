@@ -225,6 +225,8 @@ public static class RuntimeSettingCatalog
         items.Add(new("SpotifyApi:LibraryQueryHash", RuntimeSettingValueType.String, "SpotifyApi:LibraryQueryHash", DefaultValue: SpotifyApiSettings.DefaultLibraryQueryHash));
         items.Add(new("SpotifyApi:PlaylistQueryHash", RuntimeSettingValueType.String, "SpotifyApi:PlaylistQueryHash", DefaultValue: SpotifyApiSettings.DefaultPlaylistQueryHash));
         items.Add(new("SpotifyApi:LikedSongsQueryHash", RuntimeSettingValueType.String, "SpotifyApi:LikedSongsQueryHash", DefaultValue: SpotifyApiSettings.DefaultLikedSongsQueryHash));
+        items.Add(new("SpotifyApi:HomeQueryHash", RuntimeSettingValueType.String, "SpotifyApi:HomeQueryHash", DefaultValue: SpotifyApiSettings.DefaultHomeQueryHash));
+        items.Add(new("SpotifyApi:HomeEndUserIntegration", RuntimeSettingValueType.String, "SpotifyApi:HomeEndUserIntegration", DefaultValue: SpotifyApiSettings.DefaultHomeEndUserIntegration));
         items.Add(new("SpotifyApi:TotpSecretsUrl", RuntimeSettingValueType.String, "SpotifyApi:TotpSecretsUrl", DefaultValue: SpotifyApiSettings.DefaultTotpSecretsUrl));
         items.Add(new("SpotifyApi:TokenEndpoint", RuntimeSettingValueType.String, "SpotifyApi:TokenEndpoint", DefaultValue: SpotifyApiSettings.DefaultTokenEndpoint, Choices: new HashSet<string>([SpotifyApiSettings.DefaultTokenEndpoint, "https://api-partner.spotify.com/api/token"], Comparer)));
         Bool("SpotifyApi:PreferIsrcMatching"); Bool("SpotifyImport:Enabled");
@@ -961,6 +963,8 @@ public sealed class RuntimeSettingsLiveOptions
             case "SpotifyApi:LibraryQueryHash": _spotifyApi.LibraryQueryHash = (string)value; break;
             case "SpotifyApi:PlaylistQueryHash": _spotifyApi.PlaylistQueryHash = (string)value; break;
             case "SpotifyApi:LikedSongsQueryHash": _spotifyApi.LikedSongsQueryHash = (string)value; break;
+            case "SpotifyApi:HomeQueryHash": _spotifyApi.HomeQueryHash = (string)value; break;
+            case "SpotifyApi:HomeEndUserIntegration": _spotifyApi.HomeEndUserIntegration = (string)value; break;
             case "SpotifyApi:TotpSecretsUrl": _spotifyApi.TotpSecretsUrl = (string)value; break;
             case "SpotifyApi:TokenEndpoint": _spotifyApi.TokenEndpoint = (string)value; break;
             case "SpotifyApi:CacheDurationMinutes": _spotifyApi.CacheDurationMinutes = (int)value; break;
