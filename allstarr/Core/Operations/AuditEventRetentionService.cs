@@ -217,10 +217,14 @@ public sealed class AuditEventRetentionService(
             !database.AuditEvents.Any(item => item.SubjectType == "job" &&
                 (item.SubjectId == job.Id.ToString().ToLower() || item.SubjectId == job.Id.ToString().ToUpper())));
 
-    private static IQueryable<AuditEventRecord> Deletable(AllstarrDbContext database) =>
-        database.AuditEvents.Where(audit =>
+    private IQueryable<AuditEventRecord> Deletable(AllstarrDbContext database)
+    {
+        var retryCutoff = timeProvider.GetUtcNow().AddHours(-24);
+        return database.AuditEvents.Where(audit =>
+            (audit.Action != "library-addition.accepted" || audit.CreatedAt <= retryCutoff) &&
             (audit.Category != CatalogIdentityMaintenance.Category ||
              audit.Action != CatalogIdentityMaintenance.CompletionAction && audit.Action != CatalogIdentityMaintenance.LegacyCompletionAction) &&
             audit.Action != LibraryRecordingLinkQueue.CompletionAction &&
             !database.LegacyEnvImports.Any(importRecord => importRecord.AuditEventId == audit.Id));
+    }
 }

@@ -36,8 +36,18 @@ public sealed partial class LibraryPromotionTests
     [Fact]
     public async Task PromotionRefresh_ImmediatelyIndexesAndConfirmsTheNativeRecording()
     {
+        using var hub = new allstarr.Core.ClientEvents.ClientEventHub(new() { CoalesceWindow = TimeSpan.Zero });
+        using var subscription = hub.Subscribe(owner, "listener")!;
+        var batch = RequestService(clientEvents: hub);
+        var additions = ClientAdditions(batch);
+        var request = new allstarr.Core.ClientApi.AddClientLibraryItem("ext-deezer-song-track", "song");
+        var addition = (await additions.AddIdempotentAsync(Context, request, "placement")).Addition;
+        Assert.Null(addition.LibraryItemId);
+        using var createdTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        Assert.DoesNotContain("libraryItemId", (await subscription.ReadAsync(createdTimeout.Token))!.Json);
         await using (var db = factory.CreateDbContext())
         {
+            (await db.Set<PromotionRunRecord>().SingleAsync(item => item.Id == addition.Id)).Outcome = "Placed";
             db.RecordingIdentifiers.Add(new()
             {
                 Id = Guid.NewGuid(),
@@ -49,6 +59,7 @@ public sealed partial class LibraryPromotionTests
             (await db.ProviderTrackIdentities.SingleAsync()).ExternalIdHash = CanonicalCatalogKeys.Hash("track");
             await db.SaveChangesAsync();
         }
+        Assert.Null(Assert.Single(await additions.ListAsync(Context)).LibraryItemId);
         var clock = new SystemPlatformClock();
         var state = new DurableStorageState(database.StorageOptions);
         state.Set(DurableStorageReadiness.Ready);
@@ -67,11 +78,17 @@ public sealed partial class LibraryPromotionTests
         var refresher = new BackendLibraryRefreshJobHandler(factory, new([backend.Object]), clock, access, queue);
         await queue.CompleteAsync(refresh, await refresher.ExecuteAsync(new(refresh, services), default));
         var link = (await queue.ClaimNextAsync("promotion-test", [LibraryRecordingLinkQueue.JobType]))!;
-        var handler = new LibraryRecordingLinkJobHandler(identities, factory, clock, libraryAccess: access, scanners: new([scanner]));
+        var handler = new LibraryRecordingLinkJobHandler(identities, factory, clock, libraryAccess: access, scanners: new([scanner]), promotions: batch);
 
         var result = await handler.ExecuteAsync(new(link, services), default);
 
         Assert.Equal(DurableJobCompletionKind.Succeeded, result.Kind);
+        Assert.Equal("native-track", Assert.Single(await additions.ListAsync(Context)).LibraryItemId);
+        Assert.Equal("native-track", (await additions.AddIdempotentAsync(Context, request, "placement")).Addition.LibraryItemId);
+        using var updateTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var update = (await subscription.ReadAsync(updateTimeout.Token))!;
+        Assert.Equal("libraryAddition.updated", update.Type);
+        Assert.Equal("native-track", JsonSerializer.Deserialize<JsonElement>(update.Json).GetProperty("libraryItemId").GetString());
         await using var verify = factory.CreateDbContext();
         var track = await verify.LibraryTracks.SingleAsync();
         Assert.Equal("native-track", track.BackendItemId);

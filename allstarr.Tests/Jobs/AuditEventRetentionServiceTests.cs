@@ -29,6 +29,29 @@ public sealed class AuditEventRetentionServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task LibraryAddition_KeysSurviveOverflowUntilTheirRetryWindowExpires()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var recent = Event(now.AddHours(-23), "library-addition.accepted", "library-promotion");
+        var expired = Event(now.AddHours(-25), "library-addition.accepted", "library-promotion");
+        await using (var scope = provider.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AllstarrDbContext>();
+            db.AuditEvents.AddRange(recent, expired);
+            db.AuditEvents.AddRange(Enumerable.Range(0, 1000).Select(index => Event(now.AddSeconds(index), $"event-{index}")));
+            await db.SaveChangesAsync();
+        }
+
+        await Worker(retentionDays: 30, maximumRows: 1000).PruneNowAsync();
+
+        await using var verification = provider.CreateAsyncScope();
+        var remaining = verification.ServiceProvider.GetRequiredService<AllstarrDbContext>();
+        Assert.True(await remaining.AuditEvents.AnyAsync(item => item.Id == recent.Id));
+        Assert.False(await remaining.AuditEvents.AnyAsync(item => item.Id == expired.Id));
+        Assert.Equal(1000, await remaining.AuditEvents.CountAsync());
+    }
+
+    [Fact]
     public async Task PruneNowAsync_RemovesExpiredEventsAndKeepsRecentEvents()
     {
         var now = DateTimeOffset.UtcNow;

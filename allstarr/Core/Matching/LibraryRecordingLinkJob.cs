@@ -47,7 +47,8 @@ public sealed class LibraryRecordingLinkQueue(IDbContextFactory<AllstarrDbContex
 public sealed partial class LibraryRecordingLinkJobHandler(ITrackIdentityService identities,
     IDbContextFactory<AllstarrDbContext> factory, IPlatformClock clock, RecordingKeptFiles? kept = null,
     IBackendLibraryAccessResolver? libraryAccess = null, BackendLibraryCatalogScannerResolver? scanners = null,
-    allstarr.Core.Playlists.IBackendPlaylistTargetResolver? targets = null) : IDurableJobHandler
+    allstarr.Core.Playlists.IBackendPlaylistTargetResolver? targets = null,
+    allstarr.Core.Enrichment.LibraryPromotionService? promotions = null) : IDurableJobHandler
 {
     public string JobType => LibraryRecordingLinkQueue.JobType;
 
@@ -115,6 +116,7 @@ public sealed partial class LibraryRecordingLinkJobHandler(ITrackIdentityService
                         CreatedAt = clock.UtcNow
                     });
                     await db.SaveChangesAsync(cancellationToken);
+                    if (promotions != null) await promotions.PublishLinkedAdditionsAsync(user, recordingId, cancellationToken);
                 }
                 if (!await HandoverAsync(recording.Id, listener, payload.BackendLibraryId, execution, payload.RemoveKeptCopy, favorites, cancellationToken))
                 { pending = true; continue; }

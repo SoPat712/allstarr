@@ -1,4 +1,7 @@
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using allstarr.Core.Enrichment;
 using allstarr.Core.Jobs;
 using allstarr.Core.Matching;
@@ -10,13 +13,64 @@ using Microsoft.EntityFrameworkCore;
 namespace allstarr.Core.ClientApi;
 
 public sealed record AddClientLibraryItem(string ItemId, string Unit);
-public sealed record ClientLibraryAddition(Guid Id, string ItemId, string Unit, string State, string Reason);
+public sealed record ClientLibraryAddition(Guid Id, string ItemId, string Unit, string State, string Reason)
+{
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? LibraryItemId { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? RequestedItemId { get; init; }
+}
 public sealed record ClientLibraryAdditionCapabilities(bool CanAddDirectly, bool RequiresApproval, string DefaultUnit);
 
 public sealed class ClientLibraryAdditions(IDbContextFactory<AllstarrDbContext> factory, LibraryPromotionService promotions,
     PromotionProfiles profiles, PromotionRoots roots, ITrackIdentityService identities, IBackendLibraryAccessResolver access,
     IProtocolProviderGateway providers)
 {
+    private static readonly SemaphoreSlim additionGate = new(1, 1);
+
+    public async Task<(ClientLibraryAddition Addition, bool Replayed)> AddIdempotentAsync(ProtocolExecutionContext context,
+        AddClientLibraryItem request, string? key, CancellationToken token = default)
+    {
+        if (key == null) return (await AddAsync(context, request, token), false);
+        if (string.IsNullOrWhiteSpace(key) || key.Length > 300) throw new ArgumentException("Choose a valid request key.");
+        var hash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(key)));
+        await additionGate.WaitAsync(token);
+        try
+        {
+            await using var db = await factory.CreateDbContextAsync(token);
+            var owner = (await PromotionProfiles.RequireUserAsync(db, context, token)).Id;
+            var receipts = await db.AuditEvents.AsNoTracking().Where(item => item.ActorUserId == owner &&
+                item.Action == "library-addition.accepted" && item.CorrelationId == hash).ToArrayAsync(token);
+            var previous = receipts.Where(item => item.CreatedAt > DateTimeOffset.UtcNow.AddHours(-24))
+                .OrderByDescending(item => item.CreatedAt).FirstOrDefault();
+            if (previous != null)
+            {
+                if (JsonSerializer.Deserialize<AddClientLibraryItem>(previous.DetailsJson) != request)
+                    throw new PromotionException(PromotionFailure.PromotionChanged);
+                var id = Guid.Parse(previous.SubjectId!);
+                var pending = await db.PromotionRequests.AsNoTracking().SingleOrDefaultAsync(item => item.Id == id && item.RequesterUserId == owner, token);
+                if (pending != null) pending = await promotions.GetRequestAsync(context, id, token);
+                var run = pending == null ? await promotions.GetAsync(context, id, token) : pending.RunId is { } runId
+                    ? await db.Set<PromotionRunRecord>().AsNoTracking().SingleAsync(item => item.Id == runId, token) : null;
+                var value = pending == null ? From(run!) : From(pending, run);
+                return ((await ResolveLibraryItemsAsync(context, [(value, ReadLibrary(pending?.RequestJson ?? run!.RequestJson))], token)).Single(), true);
+            }
+            var receipt = new AuditEventRecord
+            {
+                Id = Guid.CreateVersion7(),
+                ActorUserId = owner,
+                Category = "library-promotion",
+                Action = "library-addition.accepted",
+                Outcome = "succeeded",
+                CorrelationId = hash,
+                SubjectType = "library-addition",
+                DetailsJson = JsonSerializer.Serialize(request)
+            };
+            return (await AddAsync(context, request, token, clientReceipt: receipt), false);
+        }
+        finally { additionGate.Release(); }
+    }
+
     public async Task<ClientLibraryAdditionCapabilities> CapabilitiesAsync(ProtocolExecutionContext context, CancellationToken token = default)
     {
         var direct = await promotions.CanAddDirectlyAsync(context, token);
@@ -24,7 +78,7 @@ public sealed class ClientLibraryAdditions(IDbContextFactory<AllstarrDbContext> 
     }
 
     public async Task<ClientLibraryAddition> AddAsync(ProtocolExecutionContext context, AddClientLibraryItem request,
-        CancellationToken token = default, string? requestKey = null)
+        CancellationToken token = default, string? requestKey = null, AuditEventRecord? clientReceipt = null)
     {
         if (string.IsNullOrWhiteSpace(request.ItemId) || request.ItemId.Length > 500 || request.Unit is not ("song" or "album"))
             throw new ArgumentException("Choose a song or album.");
@@ -38,7 +92,7 @@ public sealed class ClientLibraryAdditions(IDbContextFactory<AllstarrDbContext> 
             {
                 var current = await promotions.GetRequestAsync(context, previous.Id, token);
                 var run = current.RunId is { } id ? await db.Set<PromotionRunRecord>().AsNoTracking().SingleAsync(item => item.Id == id, token) : null;
-                return From(current, run);
+                return (await ResolveLibraryItemsAsync(context, [(From(current, run), ReadLibrary(current.RequestJson))], token)).Single();
             }
         }
         var itemId = request.ItemId;
@@ -55,8 +109,10 @@ public sealed class ClientLibraryAdditions(IDbContextFactory<AllstarrDbContext> 
         if (string.IsNullOrWhiteSpace(root.BackendLibraryId) || !(await access.ResolveAsync(context, token)).Allows(root.BackendLibraryId))
             throw new UnauthorizedAccessException();
         var result = await promotions.StartOrRequestAsync(context,
-            new(recording.Id, Guid.Empty, root.Id, root.BackendLibraryId, requestKey ?? $"client:{Guid.CreateVersion7():N}") { Unit = request.Unit }, token);
-        return result.Request is { } pending ? From(pending, result.Run) : From(result.Run!);
+            new(recording.Id, Guid.Empty, root.Id, root.BackendLibraryId, requestKey ?? $"client:{Guid.CreateVersion7():N}")
+            { Unit = request.Unit, RequestedItemId = request.ItemId }, token, clientReceipt: clientReceipt);
+        var value = result.Request is { } pending ? From(pending, result.Run) : From(result.Run!);
+        return (await ResolveLibraryItemsAsync(context, [(value, root.BackendLibraryId)], token)).Single();
     }
 
     public async Task<ClientLibraryAddition[]> ListAsync(ProtocolExecutionContext context, CancellationToken token = default)
@@ -68,14 +124,50 @@ public sealed class ClientLibraryAdditions(IDbContextFactory<AllstarrDbContext> 
         requests = await db.PromotionRequests.AsNoTracking().Where(item => item.RequesterUserId == owner).ToArrayAsync(token);
         var runIds = requests.Where(item => item.RunId != null).Select(item => item.RunId!.Value).ToArray();
         var runs = await db.Set<PromotionRunRecord>().AsNoTracking().Where(item => item.OwnerUserId == owner || runIds.Contains(item.Id)).ToArrayAsync(token);
+        var representedRunIds = requests.Where(item => item.RunId != null && runs.Any(run => run.Id == item.RunId &&
+                From(run).RequestedItemId == From(item).RequestedItemId)).Select(item => item.RunId!.Value).ToArray();
         var jobIds = runs.Select(run => run.JobId).ToArray();
         var jobs = await db.Jobs.AsNoTracking().Where(item => jobIds.Contains(item.Id)).ToArrayAsync(token);
         foreach (var run in runs)
             if (run.Outcome is "Queued" or "Running" && jobs.Single(item => item.Id == run.JobId).State is DurableJobState.Failed or DurableJobState.Cancelled)
                 run.Outcome = jobs.Single(item => item.Id == run.JobId).State == DurableJobState.Cancelled ? "Cancelled" : "Failed";
-        return requests.Select(item => (item.CreatedAt, Value: From(item, runs.SingleOrDefault(run => run.Id == item.RunId))))
-            .Concat(runs.Where(item => item.OwnerUserId == owner && !runIds.Contains(item.Id)).Select(item => (item.CreatedAt, Value: From(item))))
-            .OrderByDescending(item => item.CreatedAt).Select(item => item.Value).ToArray();
+        var values = requests.Select(item => (item.CreatedAt, Value: From(item, runs.SingleOrDefault(run => run.Id == item.RunId)), Library: ReadLibrary(item.RequestJson)))
+            .Concat(runs.Where(item => item.OwnerUserId == owner && !representedRunIds.Contains(item.Id)).Select(item => (item.CreatedAt, Value: From(item), Library: ReadLibrary(item.RequestJson))))
+            .OrderByDescending(item => item.CreatedAt).Select(item => (item.Value, item.Library)).ToArray();
+        return await ResolveLibraryItemsAsync(context, values, token);
+    }
+
+    private async Task<ClientLibraryAddition[]> ResolveLibraryItemsAsync(ProtocolExecutionContext context,
+        (ClientLibraryAddition Value, string Library)[] values, CancellationToken token)
+    {
+        if (values.All(item => item.Value.State != "done")) return values.Select(item => item.Value).ToArray();
+        await using var db = await factory.CreateDbContextAsync(token);
+        return await ResolveLibraryItemsAsync(db, new(context, await access.ResolveAsync(context, token)), values, token);
+    }
+
+    internal static string ReadLibrary(string json) => JsonSerializer.Deserialize<PromoteSongRequest>(json)!.BackendLibraryId;
+
+    internal static async Task<ClientLibraryAddition[]> ResolveLibraryItemsAsync(AllstarrDbContext db,
+        BackendLibraryAccessContext access, (ClientLibraryAddition Value, string Library)[] values, CancellationToken token)
+    {
+        var recordingIds = values.Where(item => item.Value.State == "done")
+            .Select(item => Guid.Parse(item.Value.ItemId["ext-allstarr-song-".Length..])).Distinct().ToArray();
+        if (recordingIds.Length == 0 || access.Context == null) return values.Select(item => item.Value).ToArray();
+        var owner = access.Context?.Principal?.UserId;
+        var linked = await db.AuditEvents.AsNoTracking().Where(item => item.ActorUserId == owner &&
+            item.Action == "promotion.library-linked").OrderByDescending(item => item.CreatedAt).ToArrayAsync(token);
+        var matches = linked.Select(item => (RecordingId: JsonSerializer.Deserialize<Dictionary<string, Guid>>(item.DetailsJson)!["RecordingId"],
+            TrackId: Guid.Parse(item.SubjectId!))).Where(item => recordingIds.Contains(item.RecordingId)).ToArray();
+        var trackIds = matches.Select(item => item.TrackId).ToArray();
+        var tracks = await LibraryTrackAccess.Query(db, access).Where(item => item.CanonicalRecordingId != null &&
+            recordingIds.Contains(item.CanonicalRecordingId.Value) || trackIds.Contains(item.Id)).OrderBy(item => item.BackendItemId).ToArrayAsync(token);
+        return values.Select(item => item.Value.State != "done" ? item.Value : item.Value with
+        {
+            LibraryItemId = matches.Where(match => item.Value.ItemId == $"ext-allstarr-song-{match.RecordingId:D}")
+                .Select(match => tracks.FirstOrDefault(track => track.Id == match.TrackId && track.BackendLibraryId == item.Library))
+                .FirstOrDefault(track => track != null)?.BackendItemId ?? tracks.FirstOrDefault(track => track.BackendLibraryId == item.Library &&
+                item.Value.ItemId == $"ext-allstarr-song-{track.CanonicalRecordingId:D}")?.BackendItemId
+        }).ToArray();
     }
 
     public async Task<ClientLibraryAddition> CancelAsync(ProtocolExecutionContext context, Guid id, CancellationToken token = default)
@@ -100,7 +192,8 @@ public sealed class ClientLibraryAdditions(IDbContextFactory<AllstarrDbContext> 
     {
         var request = JsonSerializer.Deserialize<PromoteSongRequest>(run.RequestJson)!;
         return new(run.Id, $"ext-allstarr-song-{request.RecordingId:D}",
-            request.Unit ?? LibraryPromotionService.ReadAlbum(run)?.Profile.DefaultUnit ?? "song", RunState(run), Reason(RunState(run)));
+            request.Unit ?? LibraryPromotionService.ReadAlbum(run)?.Profile.DefaultUnit ?? "song", RunState(run), Reason(RunState(run)))
+        { RequestedItemId = request.RequestedItemId };
     }
 
     internal static ClientLibraryAddition From(PromotionRequestRecord request, PromotionRunRecord? run = null)
@@ -115,7 +208,8 @@ public sealed class ClientLibraryAdditions(IDbContextFactory<AllstarrDbContext> 
             _ => run == null ? "adding" : RunState(run)
         };
         return new(request.Id, $"ext-allstarr-song-{request.RecordingId:D}", request.Unit, state,
-            request.State == "declined" && request.DeclineNote is { Length: > 0 } note ? note : Reason(state));
+            request.State == "declined" && request.DeclineNote is { Length: > 0 } note ? note : Reason(state))
+        { RequestedItemId = JsonSerializer.Deserialize<PromoteSongRequest>(request.RequestJson)!.RequestedItemId };
     }
 
     private static string RunState(PromotionRunRecord run) => run.Outcome switch

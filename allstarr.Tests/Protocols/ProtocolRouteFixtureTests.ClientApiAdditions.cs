@@ -11,6 +11,65 @@ namespace allstarr.Tests;
 public sealed partial class ProtocolRouteFixtureTests
 {
     [Fact]
+    public async Task ClientApi_AdditionRetryHeaderIsAllowedByCors()
+    {
+        using var factory = ClientApiFactory(_ => throw new InvalidOperationException("Unexpected upstream request"));
+        using var client = CreateClientApiClient(factory);
+        using var request = new HttpRequestMessage(HttpMethod.Options, "/allstarr/v1/library/additions");
+        request.Headers.Add("Origin", "https://client.example");
+        request.Headers.Add("Access-Control-Request-Method", "POST");
+        request.Headers.Add("Access-Control-Request-Headers", "Content-Type,Idempotency-Key");
+        using var response = await client.SendAsync(request);
+        Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+        Assert.Contains("idempotency-key", string.Join(",", response.Headers.GetValues("Access-Control-Allow-Headers")), StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task ClientApi_AdditionPostBindsTheRetryHeaderAndReturnsTheSavedAddition()
+    {
+        using var factory = ClientMeFactory();
+        using var client = CreateClientApiClient(factory);
+        var (owner, _) = await SeedClientMeAsync(factory, false);
+        var id = Guid.CreateVersion7();
+        const string itemId = "ext-spotify-song-track";
+        await using (var db = await factory.Services.GetRequiredService<IDbContextFactory<AllstarrDbContext>>().CreateDbContextAsync())
+        {
+            db.PromotionRequests.Add(new()
+            {
+                Id = id,
+                RequesterUserId = owner,
+                RecordingId = Guid.NewGuid(),
+                IdentityKey = "retry",
+                RequestJson = JsonSerializer.Serialize(new PromoteSongRequest(Guid.NewGuid(), Guid.Empty, Guid.Empty, "music", "retry")
+                { Unit = "song", RequestedItemId = itemId }),
+                Unit = "song",
+                CreatedAt = DateTimeOffset.UtcNow
+            });
+            db.AuditEvents.Add(new()
+            {
+                Id = Guid.CreateVersion7(),
+                ActorUserId = owner,
+                Action = "library-addition.accepted",
+                CorrelationId = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes("tap"))),
+                SubjectId = id.ToString("D"),
+                DetailsJson = JsonSerializer.Serialize(new allstarr.Core.ClientApi.AddClientLibraryItem(itemId, "song")),
+                CreatedAt = DateTimeOffset.UtcNow
+            });
+            await db.SaveChangesAsync();
+        }
+        client.DefaultRequestHeaders.Add("X-Emby-Token", "listener-token");
+        client.DefaultRequestHeaders.Add("Idempotency-Key", "tap");
+        using var response = await client.PostAsJsonAsync("/allstarr/v1/library/additions", new { itemId, unit = "song" });
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(id, body.GetProperty("id").GetGuid());
+        Assert.Equal(itemId, body.GetProperty("requestedItemId").GetString());
+        Assert.False(body.TryGetProperty("libraryItemId", out _));
+        using var changed = await client.PostAsJsonAsync("/allstarr/v1/library/additions", new { itemId, unit = "album" });
+        await AssertClientApiError(changed, 409, "conflict");
+    }
+
+    [Fact]
     public async Task ClientApi_PreferencesArePersonalPersistAndValidate()
     {
         using var factory = ClientMeFactory(administrator: true);

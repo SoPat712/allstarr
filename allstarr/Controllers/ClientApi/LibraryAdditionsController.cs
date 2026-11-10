@@ -15,8 +15,20 @@ public sealed class LibraryAdditionsController(ClientLibraryAdditions additions)
     [HttpPost]
     [EndpointName("addLibraryItem")]
     [ProducesResponseType<ClientLibraryAddition>(202)]
-    public Task<ActionResult<ClientLibraryAddition>> Add([FromBody] AddClientLibraryItem request, CancellationToken token) =>
-        ExecuteAsync(() => additions.AddAsync(Execution, request, token), accepted: true);
+    [ProducesResponseType<ClientLibraryAddition>(200)]
+    public async Task<ActionResult<ClientLibraryAddition>> Add([FromBody] AddClientLibraryItem request,
+        [FromHeader(Name = "Idempotency-Key")] string? idempotencyKey, CancellationToken token)
+    {
+        var replayed = false;
+        var response = await ExecuteAsync(async () =>
+        {
+            var result = await additions.AddIdempotentAsync(Execution, request,
+                idempotencyKey ?? Request.Headers["Idempotency-Key"].FirstOrDefault(), token);
+            replayed = result.Replayed;
+            return result.Addition;
+        }, accepted: true);
+        return replayed && response.Result is AcceptedResult accepted ? Ok(accepted.Value) : response;
+    }
 
     [HttpPost("{id:guid}/cancel")]
     [EndpointName("cancelLibraryAddition")]

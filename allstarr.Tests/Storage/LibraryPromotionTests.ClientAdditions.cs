@@ -8,11 +8,116 @@ using Microsoft.EntityFrameworkCore;
 using Moq;
 using allstarr.Core.ClientEvents;
 using allstarr.Core.Favorites;
+using allstarr.Controllers.ClientApi;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
 
 namespace allstarr.Tests;
 
 public sealed partial class LibraryPromotionTests
 {
+    [Theory]
+    [InlineData("ext-spotify-song-track", "song", true)]
+    [InlineData("ext-source-album-release", "album", false)]
+    public async Task ClientApi_AdditionsRetainTheRequestedItemInResponsesAndEvents(string itemId, string unit, bool direct)
+    {
+        await SetPromotionRoleAsync(false, direct);
+        using var hub = new ClientEventHub(new() { CoalesceWindow = TimeSpan.Zero });
+        using var listener = hub.Subscribe(owner, "listener")!;
+        var gateway = new Mock<IProtocolProviderGateway>();
+        gateway.Setup(item => item.GetAlbumAsync(It.IsAny<ProtocolExecutionContext>(), "source", "release"))
+            .ReturnsAsync(new allstarr.Models.Domain.Album { Songs = [new() { Id = recordingId.ToString() }] });
+        var additions = ClientAdditions(RequestService(clientEvents: hub), gateway.Object);
+
+        var added = await additions.AddAsync(Context, new(itemId, unit));
+
+        Assert.Equal(itemId, added.RequestedItemId);
+        Assert.Null(added.LibraryItemId);
+        Assert.Equal(itemId, Assert.Single(await ClientAdditions(RequestService()).ListAsync(Context)).RequestedItemId);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var update = JsonSerializer.Deserialize<JsonElement>((await listener.ReadAsync(timeout.Token))!.Json);
+        Assert.Equal(itemId, update.GetProperty("requestedItemId").GetString());
+        Assert.False(update.TryGetProperty("libraryItemId", out _));
+    }
+
+    [Fact]
+    public async Task ClientApi_AdditionKeysReplayCurrentStateArePersonalAndExpire()
+    {
+        await SetPromotionRoleAsync(false, false);
+        var additions = ClientAdditions(RequestService());
+        var request = new AddClientLibraryItem("ext-spotify-song-track", "song");
+        var first = await additions.AddIdempotentAsync(Context, request, "tap");
+        Assert.False(first.Replayed);
+        await additions.CancelAsync(Context, first.Addition.Id);
+        var replay = await ClientAdditions(RequestService()).AddIdempotentAsync(Context, request, "tap");
+        Assert.True(replay.Replayed);
+        Assert.Equal(first.Addition.Id, replay.Addition.Id);
+        Assert.Equal("cancelled", replay.Addition.State);
+        var other = await AddPromotionUserAsync(false);
+        Assert.NotEqual(first.Addition.Id, (await additions.AddIdempotentAsync(other, request, "tap")).Addition.Id);
+        await Assert.ThrowsAsync<PromotionException>(() => additions.AddIdempotentAsync(Context, request with { Unit = "album" }, "tap"));
+        await Assert.ThrowsAsync<PromotionException>(() => additions.AddIdempotentAsync(Context, request with { ItemId = "ext-other-song-track" }, "tap"));
+        await using (var db = factory.CreateDbContext())
+        {
+            foreach (var receipt in await db.AuditEvents.Where(item => item.Action == "library-addition.accepted").ToArrayAsync())
+                receipt.CreatedAt = DateTimeOffset.UtcNow.AddHours(-25);
+            await db.SaveChangesAsync();
+        }
+        var expired = await additions.AddIdempotentAsync(Context, request with { Unit = "album" }, "tap");
+        Assert.False(expired.Replayed);
+        Assert.NotEqual(first.Addition.Id, expired.Addition.Id);
+    }
+
+    [Fact]
+    public async Task ClientApi_AdditionKeyIsSavedWithAcceptanceBeforePublishing()
+    {
+        var events = new Mock<IClientEventPublisher>();
+        events.Setup(item => item.Publish(owner, It.IsAny<ClientEvent>(), null)).Throws(new IOException("Connection closed."));
+        var request = new AddClientLibraryItem("ext-spotify-song-track", "song");
+        await Assert.ThrowsAsync<IOException>(() => ClientAdditions(RequestService(clientEvents: events.Object))
+            .AddIdempotentAsync(Context, request, "tap"));
+
+        var replay = await ClientAdditions(RequestService()).AddIdempotentAsync(Context, request, "tap");
+
+        Assert.True(replay.Replayed);
+        await using var db = factory.CreateDbContext();
+        Assert.Equal((await db.Set<PromotionRunRecord>().SingleAsync()).Id, replay.Addition.Id);
+    }
+
+    [Fact]
+    public async Task ClientApi_AdditionPostReturnsAcceptedThenOkAndConflictsForChangedBody()
+    {
+        await SetPromotionRoleAsync(false, false);
+        var http = new DefaultHttpContext();
+        http.Items[ProtocolExecutionContextFactory.HttpContextItemKey] = Context;
+        var controller = new LibraryAdditionsController(ClientAdditions(RequestService()))
+        { ControllerContext = new() { HttpContext = http } };
+        var request = new AddClientLibraryItem(recordingId.ToString(), "song");
+        var first = Assert.IsType<AcceptedResult>((await controller.Add(request, "tap", default)).Result);
+        var replay = Assert.IsType<OkObjectResult>((await controller.Add(request, "tap", default)).Result);
+        Assert.Equal(Assert.IsType<ClientLibraryAddition>(first.Value).Id, Assert.IsType<ClientLibraryAddition>(replay.Value).Id);
+        Assert.Equal(409, Assert.IsType<ObjectResult>((await controller.Add(request with { Unit = "album" }, "tap", default)).Result).StatusCode);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ClientApi_AdditionsKeepDistinctRequestedRowsWhenAcquisitionIsShared(bool direct)
+    {
+        await SetPromotionRoleAsync(false, direct);
+        var additions = ClientAdditions(RequestService());
+        var first = await additions.AddAsync(Context, new("ext-spotify-song-track", "song"));
+        var second = await additions.AddAsync(Context, new($"ext-allstarr-song-{recordingId:D}", "song"));
+        Assert.NotEqual(first.Id, second.Id);
+        Assert.Equal("ext-spotify-song-track", first.RequestedItemId);
+        Assert.Equal($"ext-allstarr-song-{recordingId:D}", second.RequestedItemId);
+        var saved = await additions.ListAsync(Context);
+        Assert.Contains(saved, item => item.RequestedItemId == first.RequestedItemId);
+        Assert.Contains(saved, item => item.RequestedItemId == second.RequestedItemId);
+        await using var db = factory.CreateDbContext();
+        Assert.Equal(direct ? 1 : 0, await db.Set<PromotionRunRecord>().CountAsync());
+    }
+
     [Theory]
     [InlineData(true, "song")]
     [InlineData(false, "album")]

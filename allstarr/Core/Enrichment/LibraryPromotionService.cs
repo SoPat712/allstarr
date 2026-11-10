@@ -18,6 +18,8 @@ public sealed record PromoteSongRequest(Guid RecordingId, Guid ArtifactId, Guid 
     string RequestKey, Guid? CredentialReferenceId = null)
 {
     public string? Unit { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public string? RequestedItemId { get; init; }
 }
 public sealed record PromotionPreview(string DestinationPath, string[] Steps, long Size)
 {
@@ -90,9 +92,10 @@ public sealed partial class LibraryPromotionService(IDbContextFactory<AllstarrDb
     }
 
     private async Task<PromotionRunRecord> StartRunAsync(ProtocolExecutionContext context, PromoteSongRequest request,
-        CancellationToken token, IReadOnlyList<Song>? savedSongs = null, Guid? requestId = null, Guid? approver = null)
+        CancellationToken token, IReadOnlyList<Song>? savedSongs = null, Guid? requestId = null, Guid? approver = null,
+        AuditEventRecord? clientReceipt = null)
     {
-        if (promotionCatalog != null) return await StartAlbumAsync(context, request, token, savedSongs, requestId, approver);
+        if (promotionCatalog != null) return await StartAlbumAsync(context, request, token, savedSongs, requestId, approver, clientReceipt);
         if (string.IsNullOrWhiteSpace(request.RequestKey) || request.RequestKey.Length > 100 ||
             request.RecordingId == Guid.Empty || request.ArtifactId == Guid.Empty || string.IsNullOrWhiteSpace(request.BackendLibraryId))
             throw new ArgumentException("A song, complete original, library and request key are required.");
@@ -134,6 +137,7 @@ public sealed partial class LibraryPromotionService(IDbContextFactory<AllstarrDb
                 CreatedAt = DateTimeOffset.UtcNow
             };
             db.Set<PromotionRunRecord>().Add(run);
+            AttachClientReceipt(db, clientReceipt, run.Id);
             if (requestId is { } approvalId) await LinkApprovedRequestAsync(db, approvalId, run, approver!.Value, token);
             await db.SaveChangesAsync(token);
             await transaction.CommitAsync(token);

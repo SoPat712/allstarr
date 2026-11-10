@@ -1439,6 +1439,15 @@
           "LibraryAdditions"
         ],
         "operationId": "addLibraryItem",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -1522,6 +1531,16 @@
           },
           "202": {
             "description": "Accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientLibraryAddition"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
             "content": {
               "application/json": {
                 "schema": {
@@ -4389,6 +4408,18 @@
           },
           "reason": {
             "type": "string"
+          },
+          "libraryItemId": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "requestedItemId": {
+            "type": [
+              "null",
+              "string"
+            ]
           }
         }
       },

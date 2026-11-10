@@ -15,7 +15,8 @@ public sealed class AllstarrCorsPolicyProvider(IOptions<CorsOptions> options, Cl
         var builder = new CorsPolicyBuilder(policy).WithExposedHeaders("X-Allstarr-Playback-Request");
         if (policy.AllowAnyHeader) return builder.Build();
         var headers = context.Request.Headers.AccessControlRequestHeaders.ToString().Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
-            .Where(header => header.StartsWith("X-Allstarr-", StringComparison.OrdinalIgnoreCase)).ToArray();
+            .Where(header => header.StartsWith("X-Allstarr-", StringComparison.OrdinalIgnoreCase) ||
+                header.Equals("Idempotency-Key", StringComparison.OrdinalIgnoreCase)).ToArray();
         return builder.WithHeaders(headers.Except(policy.Headers, StringComparer.OrdinalIgnoreCase).ToArray()).Build();
     }
 }

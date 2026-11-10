@@ -86,7 +86,7 @@ stored role; `defaultUnit` is the listener's promotion profile default (`song` o
 `album`). An administrator using the client API still sees only their own work.
 
 `POST /allstarr/v1/library/additions` accepts `{itemId,unit}` and returns 202 with
-`{id,itemId,unit,state,reason}`. `unit` must be `song` or `album`. A song addition
+`{id,itemId,requestedItemId,unit,state,reason,libraryItemId?}`. `unit` must be `song` or `album`. A song addition
 adds just that song, tagged with its real album. An album addition uses the
 existing promotion service to add the release. External album IDs are accepted
 with `unit: "album"`; song IDs may also anchor an album addition. Library roots,
@@ -94,14 +94,31 @@ quality checks, acquisition, approval, and duplicate handling use the existing
 promotion settings. A listener who needs approval files a request instead of
 starting acquisition. Missing library setup returns a plain setup error.
 
+An optional `Idempotency-Key` header (1–300 characters, not blank) identifies a
+submission for that listener for 24 hours. Repeating the key with the same
+`{itemId,unit}` returns the existing addition in its current state with 200.
+Reusing it with a different item or unit returns 409. Another listener's key is
+independent. After 24 hours the key can be reused; normal promotion duplicate
+handling still applies.
+
 `GET /allstarr/v1/library/additions` returns an array of the listener's additions
 and requests using that same shape. `itemId` is the representative recording's
 canonical `ext-allstarr-song-...` ID. An approved request keeps its request `id`;
-its linked run is not duplicated in the list. States are `adding`,
+its linked run is not duplicated in the list. `requestedItemId` preserves the
+exact submitted ID, including provider song and album IDs; older additions may
+omit it. Different submitted rows can share acquisition while retaining their
+own addition receipts. States are `adding`,
 `waitingForApproval`, `needsLook`, `done`, `declined`, and `cancelled`. `reason`
 is plain text; a declined request includes the household reviewer's note when
 provided. `done` means the promotion placed the music and queued a backend scan;
 the scan may still be running.
+
+`libraryItemId` is omitted until the addition is `done` and the local library
+index has matched its representative recording to a native media-server item
+in the target library. It identifies that song, including for an album addition
+anchored by a representative song. Apps can use it for queue, heart, and playlist
+handover. The scan match publishes another update with the native ID. Responses
+and events currently omit `progress`.
 
 `POST /allstarr/v1/library/additions/{id}/cancel` cancels a pending request or
 the listener's own promotion, including a run linked to an approved request.
@@ -211,7 +228,7 @@ unchanged. Upload, confirm, delete, unmatch and all other writes are unavailable
 All `/me` reads are personal, including for administrator tokens, and use
 `Cache-Control: private, no-store` for JSON responses.
 
-Browser clients may send `X-Allstarr-*` headers. Responses expose
+Browser clients may send `X-Allstarr-*` and `Idempotency-Key` headers. Responses expose
 `X-Allstarr-Playback-Request` through CORS.
 
 `GET /allstarr/v1/playback/{requestId}` describes a provider stream. Use the
@@ -679,8 +696,8 @@ sources revision before a write.
 | Event | Data |
 | --- | --- |
 | `keep.updated` | `{itemId,state,progress?}`. State is `none`, `inProgress`, `kept`, or `failed`; progress is 0–1 when measured. |
-| `libraryAddition.updated` | `{id,itemId,unit,state,reason}` for a change to the listener's promotion. Refresh the additions list. |
-| `libraryRequest.updated` | `{id,itemId,unit,state,reason}` for the listener's request, including approval, decline, cancellation, and linked promotion progress. Refresh the additions list. |
+| `libraryAddition.updated` | `{id,itemId,requestedItemId?,unit,state,reason,libraryItemId?}` for a change to the listener's promotion, including a native library match after placement. Refresh the additions list. |
+| `libraryRequest.updated` | `{id,itemId,requestedItemId?,unit,state,reason,libraryItemId?}` for the listener's request, including approval, decline, cancellation, and linked promotion progress. Refresh the additions list. |
 | `match.updated` | `{itemId,state}` with the effective match state used by the match route. Effective personal choices hide unrelated household and automatic changes. |
 | `lyrics.updated` | `{itemId,revision}` after a pin/clear or an effective lyrics change. |
 | `mix.updated` | `{mixId,playlistId}` after regeneration, saving, deletion, or another saved mix change; `playlistId` is the mix's Jellyfin playlist id. |

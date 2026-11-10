@@ -34,7 +34,7 @@ public sealed partial class LibraryPromotionService
     }
 
     public async Task<PromotionStartResult> StartOrRequestAsync(ProtocolExecutionContext context, PromoteSongRequest request,
-        CancellationToken token = default, bool requestApproval = false)
+        CancellationToken token = default, bool requestApproval = false, AuditEventRecord? clientReceipt = null)
     {
         if (request.RecordingId == Guid.Empty || string.IsNullOrWhiteSpace(request.BackendLibraryId) ||
             string.IsNullOrWhiteSpace(request.RequestKey) || request.RequestKey.Length > 100)
@@ -50,6 +50,8 @@ public sealed partial class LibraryPromotionService
             {
                 if (previous.RequestJson != JsonSerializer.Serialize(request))
                     throw new PromotionException(PromotionFailure.PromotionChanged);
+                AttachClientReceipt(db, clientReceipt, previous.Id);
+                await db.SaveChangesAsync(token);
                 return new(await GetAsync(context, previous.Id, token), null);
             }
             if (!(await libraryAccess.ResolveAsync(context, token)).Allows(request.BackendLibraryId)) throw new UnauthorizedAccessException();
@@ -63,9 +65,12 @@ public sealed partial class LibraryPromotionService
             await SynchronizeRequestsAsync(db, user.Id, token);
             var open = await db.PromotionRequests.Where(item => item.RequesterUserId == user.Id &&
                 (item.State == "pending" || item.State == "approved")).OrderBy(item => item.CreatedAt).ToArrayAsync(token);
-            var existing = open.FirstOrDefault(item => item.IdentityKey == identity || Covers(item, request, unit, songs));
+            var existing = open.FirstOrDefault(item => (item.IdentityKey == identity || Covers(item, request, unit, songs)) &&
+                (request.RequestedItemId == null || JsonSerializer.Deserialize<PromoteSongRequest>(item.RequestJson)!.RequestedItemId == request.RequestedItemId));
             if (existing != null)
             {
+                AttachClientReceipt(db, clientReceipt, existing.Id);
+                await db.SaveChangesAsync(token);
                 if (direct && existing.State == "approved" && existing.RunId is { } runId)
                 {
                     var run = await db.Set<PromotionRunRecord>().AsNoTracking().SingleAsync(item => item.Id == runId, token);
@@ -74,8 +79,16 @@ public sealed partial class LibraryPromotionService
                 return new(null, existing);
             }
             var covering = await CoveringRunAsync(db, context, request, unit, songs, token);
-            if (direct && (covering == null || covering.OwnerUserId == user.Id || user.IsAdmin))
-                return new(covering ?? await StartRunAsync(context, request, token, songs), null);
+            if (direct && (covering == null || (covering.OwnerUserId == user.Id || user.IsAdmin) &&
+                (request.RequestedItemId == null || JsonSerializer.Deserialize<PromoteSongRequest>(covering.RequestJson)!.RequestedItemId == request.RequestedItemId)))
+            {
+                if (covering != null)
+                {
+                    AttachClientReceipt(db, clientReceipt, covering.Id);
+                    await db.SaveChangesAsync(token);
+                }
+                return new(covering ?? await StartRunAsync(context, request, token, songs, clientReceipt: clientReceipt), null);
+            }
 
             var first = songs[0];
             var pending = new PromotionRequestRecord
@@ -101,6 +114,7 @@ public sealed partial class LibraryPromotionService
                 pending.State = "approved";
             }
             db.PromotionRequests.Add(pending);
+            AttachClientReceipt(db, clientReceipt, pending.Id);
             await db.SaveChangesAsync(token);
             await PublishRequestAsync(pending, token);
             if (direct && covering != null)
@@ -111,6 +125,14 @@ public sealed partial class LibraryPromotionService
             return new(direct && covering != null ? SharedRunReceipt(covering) : null, pending);
         }
         finally { requestGate.Release(); }
+    }
+
+    private static void AttachClientReceipt(AllstarrDbContext db, AuditEventRecord? receipt, Guid additionId)
+    {
+        if (receipt == null) return;
+        receipt.SubjectId = additionId.ToString("D");
+        receipt.CreatedAt = DateTimeOffset.UtcNow;
+        db.AuditEvents.Add(receipt);
     }
 
     private static PromotionRunRecord SharedRunReceipt(PromotionRunRecord run) => new()
@@ -246,6 +268,7 @@ public sealed partial class LibraryPromotionService
     {
         var identity = unit == "song" ? request.RecordingId.ToString("N") : ReleaseIdentity(songs[0]) ??
             string.Join(',', songs.Select(song => song.CanonicalRecordingId!.Value).Order().Select(id => id.ToString("N")));
+        if (request.RequestedItemId != null) identity = JsonSerializer.Serialize(new { identity, request.RequestedItemId });
         return Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(
             JsonSerializer.Serialize(new { context.BackendInstanceId, request.BackendLibraryId, unit, identity }))));
     }

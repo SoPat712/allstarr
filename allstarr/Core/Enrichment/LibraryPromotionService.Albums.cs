@@ -140,7 +140,8 @@ public sealed partial class LibraryPromotionService
     };
 
     private async Task<PromotionRunRecord> StartAlbumAsync(ProtocolExecutionContext context, PromoteSongRequest request, CancellationToken token,
-        IReadOnlyList<allstarr.Models.Domain.Song>? savedSongs = null, Guid? requestId = null, Guid? approver = null)
+        IReadOnlyList<allstarr.Models.Domain.Song>? savedSongs = null, Guid? requestId = null, Guid? approver = null,
+        AuditEventRecord? clientReceipt = null)
     {
         if (request.RecordingId == Guid.Empty || string.IsNullOrWhiteSpace(request.BackendLibraryId) ||
             string.IsNullOrWhiteSpace(request.RequestKey) || request.RequestKey.Length > 100)
@@ -199,6 +200,7 @@ public sealed partial class LibraryPromotionService
                 Tracks = tracks
             };
             db.Add(run);
+            AttachClientReceipt(db, clientReceipt, run.Id);
             if (requestId is { } approvalId) await LinkApprovedRequestAsync(db, approvalId, run, approver!.Value, token);
             await db.SaveChangesAsync(token);
             await transaction.CommitAsync(token);
