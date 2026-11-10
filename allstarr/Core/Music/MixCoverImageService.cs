@@ -14,6 +14,7 @@ public sealed class MixCoverImageService
     private readonly Dictionary<string, Task<(byte[] Bytes, string ContentType, bool Complete)>> _pending = new(StringComparer.Ordinal);
     private readonly Func<MixCoverInput, byte[]> _render;
     private readonly Func<string, CancellationToken, Task<byte[]?>>? _loadArt;
+    private readonly Func<MixCoverInput, Guid, CancellationToken, Task<ResolvedMediaAsset?>>? _serviceArt;
     private readonly int _maxEntries;
     private readonly long _maxBytes;
     private long _bytes;
@@ -22,10 +23,15 @@ public sealed class MixCoverImageService
 
     public MixCoverImageService(MixCoverArtLoader art) : this(MixCoverRenderer.Render, art.LoadAsync) { }
 
+    public MixCoverImageService(MixCoverArtLoader art, PersonalMixService mixes, IMediaAssetResolver assets)
+        : this(MixCoverRenderer.Render, art.LoadAsync, serviceArt: (input, owner, token) => mixes.LoadServiceArtworkAsync(input, owner, assets, token)) { }
+
     internal MixCoverImageService(Func<MixCoverInput, byte[]> render, Func<string, CancellationToken, Task<byte[]?>>? loadArt = null,
-        int maxEntries = 96, long maxBytes = 24 * 1024 * 1024)
+        int maxEntries = 96, long maxBytes = 24 * 1024 * 1024,
+        Func<MixCoverInput, Guid, CancellationToken, Task<ResolvedMediaAsset?>>? serviceArt = null)
     {
         _render = render;
+        _serviceArt = serviceArt;
         _loadArt = loadArt;
         _maxEntries = maxEntries;
         _maxBytes = maxBytes;
@@ -38,10 +44,24 @@ public sealed class MixCoverImageService
     // A short form of the tag that apps can put in the cover URL.
     public static string Version(MixCoverInput input) => GetTag(input)[..16].ToLowerInvariant();
 
-    // The mix's song covers when it has some, otherwise its gradient. A collage missing a picture has no validator,
+    // Service covers stay intact. Otherwise show song covers or a gradient. A collage missing a picture has no validator,
     // so apps ask again later instead of keeping it.
-    public async Task<IActionResult> CreateResponseAsync(MixCoverInput input, HttpContext context, string? version = null)
+    public async Task<IActionResult> CreateResponseAsync(MixCoverInput input, HttpContext context, string? version = null, Guid? owner = null)
     {
+        if (input.ServiceArtwork != null)
+        {
+            var asset = owner.HasValue && _serviceArt != null ? await _serviceArt(input, owner.Value, context.RequestAborted) : null;
+            if (asset == null)
+            {
+                context.Response.Headers.CacheControl = "private, no-store";
+                return new NotFoundResult();
+            }
+            var serviceTag = ImageConditionalRequestHelper.ComputeStrongETag(asset.Bytes);
+            context.Response.Headers.CacheControl = "private, max-age=300";
+            context.Response.Headers.ETag = serviceTag;
+            return ImageConditionalRequestHelper.MatchesIfNoneMatch(context.Request.Headers, serviceTag)
+                ? new StatusCodeResult(StatusCodes.Status304NotModified) : new FileContentResult(asset.Bytes, asset.ContentType);
+        }
         var tag = GetTag(input);
         var etag = $"\"{tag}\"";
         var versioned = version == Version(input);

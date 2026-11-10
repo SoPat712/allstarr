@@ -83,7 +83,7 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.Equal(synced, card.GetProperty("inApps").GetBoolean());
         Assert.Equal(synced ? PlaylistVirtualizationService.CreateProtocolId(linkedId) : null, card.GetProperty("playlistId").GetString());
         Assert.Equal(links, await db.PlaylistLinks.CountAsync());
-        Assert.Equal(jobs, await db.Jobs.CountAsync());
+        Assert.Equal(jobs + 1, await db.Jobs.CountAsync());
 
         static string Hash(string value) => Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
     }

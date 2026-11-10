@@ -34,6 +34,7 @@
   let refreshJob = $state(""), refreshToast: number | undefined;
   let checkingJob = false, checkAgain = false;
   let throttleTimer: ReturnType<typeof setTimeout> | undefined;
+  const preparing = $derived(detail?.mix.readiness.message.startsWith("Preparing songs") ?? false);
   const nextStep = $derived(mixNextStep(detail?.mix.kind ?? "", detail?.mix.readiness.message ?? "", administrator));
   const close = () => { const query = new URLSearchParams(location.hash.split("?")[1] ?? ""); query.delete("mix"); void goto(`#/for-you${query.size ? `?${query}` : ""}`, { keepFocus: true, noScroll: true }); };
   async function load() {
@@ -135,12 +136,12 @@
 </script>
 <SidePanel open={true} largeArtwork title={mixName(detail?.mix.name ?? "Your mix")} description={detail?.mix.sourceLabel ? `From ${detail.mix.sourceLabel} · kept in sync` : detail ? mixDescription(detail.mix.description, detail.mix.kind) : "Songs picked for you"} onclose={close}>
   {#snippet artwork()}{#if detail}<MixCover mix={detail.mix} songs={detail.songs} />{/if}{/snippet}
-  {#snippet header()}{#if detail}{detail.mix.updatedAt ? `Refreshed ${formatLocalDateTime(detail.mix.updatedAt)} · ` : ""}{countLabel(detail.songs.length, "song")}{/if}{/snippet}
+  {#snippet header()}{#if detail}{#if preparing}Preparing songs…{:else}{detail.mix.updatedAt ? `Refreshed ${formatLocalDateTime(detail.mix.updatedAt)} · ` : ""}{countLabel(detail.songs.length, "song")}{/if}{/if}{/snippet}
   {#snippet menu()}{#if detail?.mix.kind === "custom"}<DropdownMenu.Root><DropdownMenu.Trigger class="icon-button" aria-label="Mix actions"><UiIcon name="more" /></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content preventScroll={false} class="bits-menu mix-menu" align="end"><DropdownMenu.Item class="bits-menu-item destructive" onSelect={() => deleteOpen = true}>Delete mix</DropdownMenu.Item></DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root>{/if}{/snippet}
   {#if error}<ErrorState title="Couldn't load this mix" detail={error} onretry={load} />{/if}
   {#if !detail && !error}<RowsSkeleton />{:else if detail}
     <div class="mix-summary">
-      <PageStatus items={detail.mix.evidence ? [{ label: `${detail.mix.evidence.fromMusic} from your library` }, { label: `${detail.mix.evidence.fromServices} from services when made` }] : [{ label: `${countLabel(detail.songs.length, "song")} picked for you` }]} />
+      <PageStatus items={detail.mix.evidence ? [{ label: `${detail.mix.evidence.fromMusic} from your library` }, { label: `${detail.mix.evidence.fromServices} from services when made` }] : [{ label: preparing ? "Preparing songs…" : `${countLabel(detail.songs.length, "song")} picked for you` }]} />
       {#if detail.mix.evidence}<p>{detail.mix.evidence.recipe.sentence}</p>{/if}
       <div class="apps-row"><label for="mix-show-apps"><strong>Show in my apps</strong>{#if detail.mix.inApps}<small id="mix-apps-description" class="added-state"><span>✓ In your apps</span><a class="touch-target" href="#/library/playlists">Manage in Playlists</a></small>{:else}<small id="mix-apps-description">Appears as a playlist in your music apps</small>{/if}</label><Switch id="mix-show-apps" aria-label="Show in my apps" aria-describedby="mix-apps-description" bind:checked={appsChecked} disabled={busy || !detail.mix.inApps && !detail.mix.appsAllowed} onchange={event => void showInApps(event.currentTarget.checked)} /></div>
       {#if !detail.mix.appsAllowed}<p class="muted">Your admin hasn't allowed adding mixes.</p>{/if}
@@ -166,7 +167,7 @@
           </AdvancedFold>
         {/if}
 
-    {#if !detail.mix.readiness.ready}<div class="explanation"><p>{detail.mix.readiness.message}</p><Button variant="outline" href={nextStep.href}>{nextStep.label}</Button></div>{/if}
+    {#if !detail.mix.readiness.ready}<div class="explanation"><p>{detail.mix.readiness.message}</p>{#if !preparing && !detail.mix.readiness.message.startsWith("Your service playlist is unavailable")}<Button variant="outline" href={nextStep.href}>{nextStep.label}</Button>{/if}</div>{/if}
     {#if detail.songs.length}<div class="songs-heading"><h3>Songs</h3><span>Plays from</span></div><MixTrackRows songs={detail.songs} {busy} onfeedback={detail.mix.kind === "external" ? undefined : feedback} />{/if}
   {/if}
   {#snippet footer()}{#if detail}<div class="mix-footer">

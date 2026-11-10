@@ -2,7 +2,7 @@ namespace allstarr.Core.Music;
 
 public sealed record MixCoverInput(string Id, int Generation, string Kind, string Tag = "", string Artists = "",
     string Seed = "", string Source = "", string SourcePlaylistId = "", string Name = "", int Count = 0,
-    IReadOnlyList<string>? Art = null)
+    IReadOnlyList<string>? Art = null, string? ServiceArtwork = null, Guid? ProviderAccountId = null)
 {
     internal static MixCoverInput From(PersonalMix mix)
     {
@@ -13,6 +13,8 @@ public sealed record MixCoverInput(string Id, int Generation, string Kind, strin
             !daily ? "" : parts.Length > 2 ? parts[2] : string.Join(", ", mix.Songs.GroupBy(item => item.Song.Artist)
                 .OrderByDescending(group => group.Count()).ThenBy(group => group.Key, StringComparer.Ordinal).Take(3).Select(group => group.Key)),
             mix.SeedName ?? mix.Name, Source: mix.Source ?? "", SourcePlaylistId: mix.SourcePlaylistId ?? "", Name: mix.Name, Count: mix.SongCount ?? mix.Songs.Count,
-            Art: mix.ArtworkUrl is { } artwork ? [artwork] : MixCoverArt.Pick(mix.Songs.Select(item => item.Song)).Select(song => MixCoverArt.Reference(song)!).ToArray());
+            Art: mix.ArtworkUrl is { } artwork ? mix.Kind == "external" ? [] : [artwork]
+                : MixCoverArt.Pick(mix.Songs.Select(item => item.Song)).Select(song => MixCoverArt.Reference(song)!).ToArray(),
+            ServiceArtwork: mix.Kind == "external" ? mix.ArtworkUrl : null, ProviderAccountId: mix.ProviderAccountId);
     }
 }

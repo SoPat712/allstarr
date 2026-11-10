@@ -393,6 +393,7 @@ internal static class ActivityJobPresentation
         "track-match.rematch" => "Refresh matches",
         "library.index" => "Refresh library index",
         Core.Music.PersonalMixService.JobType => "Refresh your mixes",
+        Core.Music.PersonalMixService.FeedPrepareJobType => "Prepare service playlists",
         Core.Music.LyricsRefreshService.Type => "Look for better lyrics",
         _ => "Background task"
     };

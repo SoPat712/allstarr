@@ -75,7 +75,7 @@ public sealed partial class PersonalMixServiceTests
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public async Task ListenerHttp_LibraryMixCoverOverridesProviderArtworkAndNormalPlaylistStaysUnchanged(bool providerArtwork)
+    public async Task ListenerHttp_LibraryMixUsesSourceCoverWhenSuppliedAndNormalPlaylistStaysUnchanged(bool providerArtwork)
     {
         var artwork = providerArtwork ? "provider-artwork" : null;
         var mix = await ExternalLink(listener: other, artwork: artwork);
@@ -95,6 +95,7 @@ public sealed partial class PersonalMixServiceTests
         using var image = await client.GetAsync(coverUrl);
         Assert.Equal(HttpStatusCode.OK, image.StatusCode);
         Assert.Equal("image/png", image.Content.Headers.ContentType?.MediaType);
+        if (providerArtwork) Assert.Equal(new byte[] { 1, 2, 3 }, await image.Content.ReadAsByteArrayAsync());
 
         await using (var db = factory.CreateDbContext())
         {
@@ -405,7 +406,11 @@ public sealed partial class PersonalMixServiceTests
             services.AddSingleton<IPlatformClock>(clock);
             services.AddSingleton(settings.Object);
             services.AddSingleton(service);
-            services.AddSingleton<MixCoverImageService>();
+            services.AddSingleton(new MixCoverImageService(MixCoverRenderer.Render, serviceArt: (_, listener, _) =>
+            {
+                Assert.Equal(other, listener);
+                return Task.FromResult<ResolvedMediaAsset?>(new([1, 2, 3], "image/png", "fixture", null, null, true));
+            }));
             services.AddSingleton(taste);
             services.AddSingleton(releases);
             services.AddSingleton(queue);

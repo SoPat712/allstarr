@@ -32,7 +32,7 @@ public sealed partial class PersonalMixServiceTests
         capability.SetupGet(item => item.ProviderId).Returns(provider);
         capability.Setup(item => item.GetUserPlaylistsAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderUserPlaylistsRequest>()))
             .ReturnsAsync(ProviderOutcome<ProviderPage<ProviderPlaylistSummary>>.Success(new(provider,
-                [new(new(provider, ProviderResourceKind.Playlist, "37i9dQZweekly"), "Discover Weekly", new("spotify"), "revision", trackCount: 30),
+                [new(new(provider, ProviderResourceKind.Playlist, "37i9dQZweekly"), "Discover Weekly", new("spotify"), "revision", artwork: new(new(provider, ProviderResourceKind.Playlist, "37i9dQZweekly"), revision: "cover-revision"), trackCount: 30),
                  new(new(provider, ProviderResourceKind.Playlist, "own-list"), "My songs", new("selected-user"), "revision")])));
         var registry = new Mock<IProviderRegistry>();
         IProviderPlaylistCapability? implementation = capability.Object;
@@ -52,6 +52,10 @@ public sealed partial class PersonalMixServiceTests
         Assert.Equal("spotify", first.Source);
         Assert.Equal("37i9dQZweekly", first.SourcePlaylistId);
         Assert.Equal(30, first.SongCount);
+        Assert.Equal($"/api/admin/playlist-sources/{account}/playlists/37i9dQZweekly/artwork?revision=cover-revision", first.ArtworkUrl);
+        var input = MixCoverInput.From(first);
+        Assert.Equal(first.ArtworkUrl, input.ServiceArtwork);
+        Assert.Empty(input.Art!);
         Assert.False(first.Added);
         Assert.Equal("yourServices", first.Section);
         clock.UtcNow = clock.UtcNow.AddHours(6).AddTicks(-1);
@@ -64,6 +68,30 @@ public sealed partial class PersonalMixServiceTests
         await using var db = factory.CreateDbContext();
         Assert.Empty(await db.PlaylistLinks.ToArrayAsync());
         Assert.Empty(await db.Jobs.ToArrayAsync());
+    }
+
+    [Fact]
+    public async Task ServiceFeeds_RefreshOlderCoverSnapshotsWithoutLosingCardsOnFailure()
+    {
+        var (capability, _) = await FeedAccount();
+        var first = Assert.Single(await service.ListCardsAsync(owner), item => item.Kind == "external");
+        await using (var db = factory.CreateDbContext())
+        {
+            var saved = await db.ExternalMetadataSnapshots.AsNoTracking().SingleAsync(item => item.ResourceKind == "service-feeds");
+            saved.Id = Guid.NewGuid();
+            saved.SnapshotVersion++;
+            saved.ProviderRevision = "1";
+            db.ExternalMetadataSnapshots.Add(saved);
+            await db.SaveChangesAsync();
+        }
+        capability.Setup(item => item.GetUserPlaylistsAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderUserPlaylistsRequest>()))
+            .ReturnsAsync(ProviderOutcome<ProviderPage<ProviderPlaylistSummary>>.Failure(new(ProviderErrorKind.TransientFailure)));
+        var retained = Assert.Single(await service.ListCardsAsync(owner), item => item.Kind == "external");
+        Assert.Equal(first.Id, retained.Id);
+        Assert.Equal(first.ArtworkUrl, retained.ArtworkUrl);
+        Assert.Equal(first.SongCount, retained.SongCount);
+        await service.ListCardsAsync(owner);
+        capability.Verify(item => item.GetUserPlaylistsAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderUserPlaylistsRequest>()), Times.Exactly(2));
     }
 
     [Theory]
@@ -111,6 +139,12 @@ public sealed partial class PersonalMixServiceTests
         var card = Assert.Single(await service.ListCardsAsync(owner), item => item.Kind == "external");
         Assert.Equal(link.Id, card.Id);
         Assert.True(card.Added);
+        Assert.Equal($"/api/admin/playlist-sources/{account}/playlists/37i9dQZweekly/artwork?revision=cover-revision", card.ArtworkUrl);
+        Assert.Equal(30, card.SongCount);
+        var response = Assert.IsType<Microsoft.AspNetCore.Mvc.OkObjectResult>(await Controller(owner, true).List());
+        var payload = System.Text.Json.JsonSerializer.SerializeToElement(response.Value).EnumerateArray().Single(item => item.GetProperty("Id").GetGuid() == card.Id);
+        Assert.Equal($"/api/admin/mixes/{card.Id}/cover?v={MixCoverImageService.Version(MixCoverInput.From(card))}",
+            Assert.Single(payload.GetProperty("coverArtwork").EnumerateArray()).GetString());
         Assert.DoesNotContain(await service.ListCardsAsync(other), item => item.Kind == "external");
         await using (var db = factory.CreateDbContext())
         {
@@ -118,6 +152,34 @@ public sealed partial class PersonalMixServiceTests
             await db.SaveChangesAsync();
         }
         Assert.DoesNotContain(await service.ListCardsAsync(owner), item => item.Kind == "external");
+    }
+
+    [Fact]
+    public async Task ServiceFeeds_KeepTheSyncedSourceCoverWhenDiscoveryHasNoCoverOrCount()
+    {
+        var (capability, account) = await FeedAccount();
+        capability.Setup(item => item.GetUserPlaylistsAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderUserPlaylistsRequest>()))
+            .ReturnsAsync(ProviderOutcome<ProviderPage<ProviderPlaylistSummary>>.Success(new("spotify",
+                [new(new("spotify", ProviderResourceKind.Playlist, "37i9dQZweekly"), "Discover Weekly", new("spotify"), "revision")])));
+        var unsynced = Assert.Single(await service.ListCardsAsync(owner), item => item.Kind == "external");
+        Assert.Null(unsynced.SongCount);
+        var link = await ExternalLink("spotify", "37i9dQZweekly", artwork: "stored-cover");
+        await using (var db = factory.CreateDbContext())
+        {
+            (await db.PlaylistLinks.SingleAsync(item => item.Id == link.Id)).ProviderAccountId = account;
+            var snapshot = await db.PlaylistSourceSnapshots.AsNoTracking().SingleAsync(item => item.PlaylistLinkId == link.Id);
+            snapshot.Id = Guid.NewGuid();
+            snapshot.SnapshotVersion++;
+            snapshot.ProviderAccountId = account;
+            db.PlaylistSourceSnapshots.Add(snapshot);
+            (await db.ProviderAccounts.SingleAsync(item => item.Id == link.ProviderAccountId)).Enabled = false;
+            await db.SaveChangesAsync();
+        }
+        var card = Assert.Single(await service.ListCardsAsync(owner), item => item.Kind == "external");
+        Assert.Equal(link.Id, card.Id);
+        Assert.Equal($"/api/admin/playlist-sources/{account}/playlists/37i9dQZweekly/artwork?revision=stored-cover", card.ArtworkUrl);
+        Assert.Equal(card.ArtworkUrl, MixCoverInput.From(card).ServiceArtwork);
+        Assert.Null(card.SongCount);
     }
 
     [Fact]
@@ -153,24 +215,32 @@ public sealed partial class PersonalMixServiceTests
     }
 
     [Fact]
-    public async Task ServiceFeeds_OpenThroughTheSelectedAccountAndCacheSongs()
+    public async Task ServiceFeeds_OpenPreparedSongsWithoutReadingTheService()
     {
         var (capability, account) = await FeedAccount();
         var resource = new ProviderExternalResourceId("spotify", ProviderResourceKind.Track, "song");
         var metadata = new ProviderTrackMetadata(resource, "A song", [new("An artist")], albumTitle: "An album");
         capability.Setup(item => item.GetPlaylistTracksAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderPlaylistTracksRequest>()))
             .ReturnsAsync(ProviderOutcome<ProviderPlaylistTrackPage>.Success(new(
-                new(new("spotify", ProviderResourceKind.Playlist, "37i9dQZweekly"), "Discover Weekly", new("spotify"), "revision"),
+                new(new("spotify", ProviderResourceKind.Playlist, "37i9dQZweekly"), "Discover Weekly", new("spotify"), "revision", trackCount: 1),
                 new("spotify", [new(0, resource, metadata: metadata)]))));
         var card = Assert.Single(await service.ListCardsAsync(owner), item => item.Kind == "external");
+        var pending = await service.GetAsync(owner, card.Id);
+        Assert.Empty(pending.Songs);
+        Assert.StartsWith("Preparing", pending.Readiness.Message);
+        capability.Verify(item => item.GetPlaylistTracksAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderPlaylistTracksRequest>()), Times.Never);
+        await service.PrepareServiceFeedsAsync(owner, new(account, 0), default);
         var detail = await service.GetAsync(owner, card.Id);
         Assert.Equal("A song", Assert.Single(detail.Songs).Song.Title);
         Assert.False(detail.Added);
+        Assert.Equal(1, detail.SongCount);
         await service.GetAsync(owner, card.Id);
         capability.Verify(item => item.GetPlaylistTracksAsync(It.Is<ProviderExecutionContext>(context => context.Account!.AccountId == account),
             It.IsAny<ProviderPlaylistTracksRequest>()), Times.Once);
         clock.UtcNow = clock.UtcNow.AddHours(6);
         await service.GetAsync(owner, card.Id);
+        capability.Verify(item => item.GetPlaylistTracksAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderPlaylistTracksRequest>()), Times.Once);
+        await service.PrepareServiceFeedsAsync(owner, new(account, 0), default);
         capability.Verify(item => item.GetPlaylistTracksAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderPlaylistTracksRequest>()), Times.Exactly(2));
     }
 
@@ -183,13 +253,20 @@ public sealed partial class PersonalMixServiceTests
             .ReturnsAsync(new Dictionary<string, CanonicalRecordingIdentity?>());
         local.Setup(item => item.FindKnownRecordingTracksAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<IReadOnlyList<LibraryRecordingLookup>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new Dictionary<string, string> { ["ext-spotify-song-song"] = "local-song" });
-        var (capability, _) = await FeedAccount(local: local.Object, identities: identities.Object);
+        var (capability, account) = await FeedAccount(local: local.Object, identities: identities.Object);
         var resource = new ProviderExternalResourceId("spotify", ProviderResourceKind.Track, "song");
         capability.Setup(item => item.GetPlaylistTracksAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderPlaylistTracksRequest>()))
             .ReturnsAsync(ProviderOutcome<ProviderPlaylistTrackPage>.Success(new(
                 new(new("spotify", ProviderResourceKind.Playlist, "37i9dQZweekly"), "Discover Weekly", new("spotify"), "revision"),
                 new("spotify", [new(0, resource, metadata: new(resource, "A song", [new("Artist")]))]))));
+        access.Setup(item => item.ResolveAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<CancellationToken>())).ReturnsAsync(new BackendLibraryAccess(true, ["music"]));
+        await using (var db = factory.CreateDbContext())
+        {
+            db.LibraryTracks.Add(new() { Id = Guid.NewGuid(), OwnerUserId = owner, Protocol = protocol, BackendInstanceId = "main", BackendLibraryId = "music", BackendItemId = "local-song" });
+            await db.SaveChangesAsync();
+        }
         var card = Assert.Single(await service.ListCardsAsync(owner), item => item.Kind == "external");
+        await service.PrepareServiceFeedsAsync(owner, new(account, 0), default);
         var song = Assert.Single((await service.GetAsync(owner, card.Id)).Songs).Song;
         Assert.True(song.IsLocal);
         Assert.Equal("local-song", song.Id);
@@ -235,11 +312,11 @@ public sealed partial class PersonalMixServiceTests
         var link = await read.PlaylistLinks.SingleAsync();
         Assert.True(link.Enabled);
         Assert.True((await read.JobSchedules.SingleAsync()).Enabled);
-        Assert.Equal("playlist.materialize", (await read.Jobs.SingleAsync()).Type);
+        Assert.Equal("playlist.materialize", (await read.Jobs.SingleAsync(item => item.Type == "playlist.materialize")).Type);
         await service.SetInAppsAsync(owner, card.Id, false, default);
         await read.Entry(link).ReloadAsync();
         Assert.False(link.Enabled);
-        Assert.Equal(1, await read.Jobs.CountAsync());
+        Assert.Equal(1, await read.Jobs.CountAsync(item => item.Type == "playlist.materialize"));
     }
 
     [Fact]

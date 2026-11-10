@@ -15,7 +15,7 @@
   import RowsSkeleton from "$lib/components/patterns/RowsSkeleton.svelte";
   import ErrorState from "$lib/components/patterns/ErrorState.svelte";
   import EmptyState from "$lib/components/patterns/EmptyState.svelte";
-  import { serviceCards } from "$lib/for-you";
+  import { serviceCards, allServiceCards } from "$lib/for-you";
   import MixShelf from "$lib/components/MixShelf.svelte";
   import IntelligenceHistoryImports from "$lib/components/IntelligenceHistoryImports.svelte";
   let { administrator = false, listenerId = "", listenerName = "", initialImport = false }: { initialImport?: boolean; administrator?: boolean; listenerId?: string; listenerName?: string } = $props();
@@ -27,6 +27,7 @@
   }
   let cards = $state<MixCard[]>([]), releases = $state<MixCard[]>([]), accounts = $state<PlaylistSourceAccount[]>([]), links = $state<PlaylistLink[]>([]);
   let status = $state<AudioMuseStatus | null>(null), loading = $state(true), error = $state("");
+  let servicesExpanded = $state(false);
   let hidden = $state(false), importOpen = $state(false), busy = $state("");
   let addedSuggestions = $state<string[]>([]), imported = $state(false);
   let pending: Promise<void> | null = null, disposed = false;
@@ -159,7 +160,7 @@
     <MixShelf title="Made for you" cards={made} onaddall={() => void addAll(made)} onopen={openMix} {busy} onadd={card => void add(card)} />
     <MixShelf title="Moods" cards={moods} onaddall={() => void addAll(moods)} onopen={openMix} {busy} onadd={card => void add(card)} />
     {#if custom.length}<MixShelf title="Your mixes" cards={custom} onaddall={() => void addAll(custom)} onopen={openMix} {busy} onadd={card => void add(card)} />{/if}
-    {#if services.length}<MixShelf title="From your services" columns={5} cards={services} onaddall={() => void addAll(services)} additions={suggestions.map(item => item.id)} onopen={openMix} {busy} onadd={card => void add(card)} />{/if}
+    {#if services.length}<MixShelf title="From your services" columns={5} cards={servicesExpanded ? allServiceCards(services) : services} expanded={servicesExpanded} onseeall={() => servicesExpanded = !servicesExpanded} onaddall={() => void addAll(services)} additions={suggestions.map(item => item.id)} onopen={openMix} {busy} onadd={card => void add(card)} />{/if}
     {#if releases.length}<MixShelf title="New releases" columns={6} cards={releases} albumArt seeAll="#/for-you?section=releases" onopen={card => { void goto(`#/for-you?section=releases&release=${encodeURIComponent(card.id)}`, { keepFocus: true, noScroll: true }); }} />{/if}
     {#if cards.length && !cards.some(card => card.appsAllowed)}<p class="muted apps-hint">Your admin hasn't allowed adding mixes.</p>{/if}
   {/if}

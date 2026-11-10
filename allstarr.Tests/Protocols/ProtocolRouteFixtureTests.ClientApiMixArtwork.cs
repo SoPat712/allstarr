@@ -1,6 +1,10 @@
 using System.Net;
 using System.Text.Json;
 using allstarr.Core.Music;
+using allstarr.Core.Capabilities;
+using allstarr.Core.Identity;
+using allstarr.Core.Playlists;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
 using allstarr.Models.Domain;
@@ -13,6 +17,102 @@ namespace allstarr.Tests;
 
 public sealed partial class ProtocolRouteFixtureTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ClientApi_ServiceMixArtworkUsesOnlyTheSourceCoverAndCachesIt(bool synced)
+    {
+        var capability = new Mock<IProviderPlaylistCapability>(MockBehavior.Strict);
+        var playlist = new ProviderExternalResourceId("spotify", ProviderResourceKind.Playlist, "37i9dQZweekly");
+        capability.Setup(item => item.GetUserPlaylistsAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderUserPlaylistsRequest>()))
+            .ReturnsAsync(ProviderOutcome<ProviderPage<ProviderPlaylistSummary>>.Success(new("spotify",
+                [new(playlist, "Discover Weekly", new("spotify"), "revision", artwork: new(playlist, revision: "cover"), trackCount: 30)])));
+        var picture = MixPicture();
+        Guid owner = default, account = default;
+        capability.Setup(item => item.ResolveArtworkAsync(It.Is<ProviderExecutionContext>(context => context.Actor.EffectiveUserId == owner && context.Account!.AccountId == account),
+                It.Is<ProviderPlaylistArtworkRequest>(request => request.Artwork.ResourceId == playlist && request.Artwork.Revision == "cover" && request.MaximumBytes == 4 * 1024 * 1024)))
+            .ReturnsAsync(ProviderOutcome<ProviderPlaylistArtwork>.Success(new(picture, "image/png")));
+        var registry = new Mock<IProviderRegistry>();
+        IProviderPlaylistCapability? implementation = capability.Object;
+        registry.Setup(item => item.TryGetCapability("spotify", ProviderCapabilityKind.Playlist, out implementation)).Returns(true);
+        ProviderDescriptor? descriptor = new("spotify", "Spotify", "Playlist fixture", ProviderOrigin.BuiltIn, "1", "1",
+            [new(ProviderCapabilityKind.Playlist, ProviderCapabilitySupportState.Supported, ProviderAccountRequirement.Required,
+                "1", ["getUserPlaylists"], [ProviderAccountScope.Personal])], new());
+        registry.Setup(item => item.TryGet("spotify", out descriptor)).Returns(true);
+        var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        gateway.Setup(item => item.GetPlayableProviderOrderAsync(It.IsAny<ProviderActorContext>(), It.IsAny<CancellationToken>())).ReturnsAsync(["deezer"]);
+        using var factory = ClientMixFactory(gateway, configure: services =>
+        {
+            services.RemoveAll<IProviderRegistry>();
+            services.AddSingleton(registry.Object);
+        });
+        using var client = CreateClientApiClient(factory);
+        client.DefaultRequestHeaders.Add("X-Emby-Token", "listener-token");
+        owner = (await factory.Services.GetRequiredService<BackendIdentityResolver>().ResolveAsync(new("Jellyfin", "listener")))!.UserId;
+        account = Guid.NewGuid();
+        var linkId = Guid.NewGuid();
+        await using (var db = await factory.Services.GetRequiredService<IDbContextFactory<AllstarrDbContext>>().CreateDbContextAsync())
+        {
+            db.ProviderAccounts.Add(new() { Id = account, OwnerUserId = owner, ProviderId = "spotify", Enabled = true, Revision = 1 });
+            if (synced)
+            {
+                db.PlaylistLinks.Add(new()
+                {
+                    Id = linkId,
+                    OwnerUserId = owner,
+                    ProviderAccountId = account,
+                    Enabled = true,
+                    SourceProviderId = "spotify",
+                    SourcePlaylistId = playlist.Value,
+                    SourcePlaylistIdHash = new('a', 64),
+                    TargetProtocol = "jellyfin",
+                    TargetBackendInstanceId = "primary",
+                    Mode = PlaylistLinkMode.Virtual,
+                    RuleVersion = "1",
+                    PolicyVersion = "1"
+                });
+                db.PlaylistSourceSnapshots.Add(new()
+                {
+                    Id = Guid.NewGuid(),
+                    OwnerUserId = owner,
+                    PlaylistLinkId = linkId,
+                    ProviderAccountId = account,
+                    SnapshotVersion = 1,
+                    ProviderRevision = "revision",
+                    Name = "Discover Weekly",
+                    SourceKind = PlaylistSourceKinds.Feed,
+                    ArtworkReferenceKey = "source-cover",
+                    PayloadSha256 = new('b', 64),
+                    CorrelationId = "fixture",
+                    PublishedAt = DateTimeOffset.UtcNow
+                });
+            }
+            await db.SaveChangesAsync();
+        }
+        using var response = await client.GetAsync("/allstarr/v1/mixes");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var card = Assert.Single(body.RootElement.GetProperty("mixes").EnumerateArray(), item => item.GetProperty("kind").GetString() == "external");
+        Assert.Equal(synced, card.GetProperty("inApps").GetBoolean());
+        if (!synced) Assert.Equal("building", card.GetProperty("state").GetString());
+        Assert.Equal(30, card.GetProperty("itemCount").GetInt32());
+        var cover = card.GetProperty("coverUrl").GetString()!;
+        Assert.StartsWith("/allstarr/v1/mixes/", cover);
+        Assert.Equal(cover, Assert.Single(card.GetProperty("artworkUrls").EnumerateArray()).GetString());
+        using var image = await client.GetAsync(cover);
+        Assert.Equal(HttpStatusCode.OK, image.StatusCode);
+        Assert.Equal("image/png", image.Content.Headers.ContentType!.MediaType);
+        Assert.Equal(picture, await image.Content.ReadAsByteArrayAsync());
+        using var conditional = new HttpRequestMessage(HttpMethod.Get, cover);
+        conditional.Headers.IfNoneMatch.Add(image.Headers.ETag!);
+        using var cached = await client.SendAsync(conditional);
+        Assert.Equal(HttpStatusCode.NotModified, cached.StatusCode);
+        capability.Verify(item => item.ResolveArtworkAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderPlaylistArtworkRequest>()), Times.Once);
+        capability.Verify(item => item.GetPlaylistTracksAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderPlaylistTracksRequest>()), Times.Never);
+        gateway.Verify(item => item.GetPlayableProviderOrderAsync(It.IsAny<ProviderActorContext>(), It.IsAny<CancellationToken>()), synced ? Times.AtLeastOnce() : Times.Never());
+        gateway.VerifyNoOtherCalls();
+    }
+
     [Theory]
     [InlineData("\"ImageTags\":{\"Primary\":\"song art\"},\"AlbumPrimaryImageTag\":\"album-art\"", "/Items/native-mix-song/Images/Primary?tag=song%20art")]
     [InlineData("\"ImageTags\":{},\"AlbumPrimaryImageTag\":\"album-art\"", "/Items/native-album/Images/Primary?tag=album-art")]

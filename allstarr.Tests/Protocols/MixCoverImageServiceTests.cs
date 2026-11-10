@@ -99,6 +99,58 @@ public sealed class MixCoverImageServiceTests
         Assert.Equal("private, max-age=31536000, immutable", emptyContext.Response.Headers.CacheControl);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ServiceCoverWinsWithoutRenderingAndUsesImageValidators(bool synced)
+    {
+        var bytes = Picture(120);
+        var owner = Guid.NewGuid();
+        var input = MixCoverInput.From(new(Guid.NewGuid(), "external", "Discover Weekly", "", 1, null, new(true, "Ready"), synced,
+            [new(Guid.NewGuid(), 1, new() { Id = "native-song", IsLocal = true }, "library", "", 1)])
+        { Source = "spotify", SourcePlaylistId = "weekly", ArtworkUrl = "/api/admin/playlist-sources/source/playlists/weekly/artwork?revision=cover" });
+        var service = new MixCoverImageService(_ => throw new InvalidOperationException("Unexpected render"),
+            serviceArt: (selected, listener, _) =>
+            {
+                Assert.Equal(owner, listener);
+                Assert.Equal(input, selected);
+                return Task.FromResult<allstarr.Services.Common.ResolvedMediaAsset?>(new(bytes, "image/png", "hash", null, null, true));
+            });
+        var context = new DefaultHttpContext();
+        var result = Assert.IsType<FileContentResult>(await service.CreateResponseAsync(input, context, owner: owner));
+        Assert.Equal(bytes, result.FileContents);
+        Assert.Equal("image/png", result.ContentType);
+        Assert.Equal("private, max-age=300", context.Response.Headers.CacheControl);
+        var conditional = new DefaultHttpContext();
+        conditional.Request.Headers.IfNoneMatch = context.Response.Headers.ETag;
+        Assert.Equal(304, Assert.IsType<StatusCodeResult>(await service.CreateResponseAsync(input, conditional, owner: owner)).StatusCode);
+        var unavailable = new DefaultHttpContext();
+        Assert.IsType<NotFoundResult>(await service.CreateResponseAsync(input, unavailable));
+        Assert.Equal("private, no-store", unavailable.Response.Headers.CacheControl);
+    }
+
+    [Theory]
+    [InlineData("lastfm")]
+    [InlineData("listenbrainz")]
+    public async Task ServiceWithoutCoverUsesSongsThenAnEmptyGradient(string provider)
+    {
+        var renders = 0;
+        var service = new MixCoverImageService(_ => { renders++; return [9]; }, (_, _) => Task.FromResult<byte[]?>(Picture(80)));
+        var mix = new PersonalMix(Guid.NewGuid(), "external", "Your songs", "", 1, null, new(true, "Ready"), true,
+            Enumerable.Range(0, 4).Select(index => new PersonalMixItem(Guid.NewGuid(), 1,
+                new() { Id = "song-" + index, AlbumId = "album-" + index, IsLocal = true }, provider, "", 1)).ToArray())
+        { Source = provider };
+        var input = MixCoverInput.From(mix);
+        Assert.Null(input.ServiceArtwork);
+        Assert.Equal(4, input.Art!.Count);
+        var collage = Assert.IsType<FileContentResult>(await service.CreateResponseAsync(input, new DefaultHttpContext()));
+        Assert.Equal("image/jpeg", collage.ContentType);
+        Assert.Equal(0, renders);
+        var empty = Assert.IsType<FileContentResult>(await service.CreateResponseAsync(MixCoverInput.From(mix with { Songs = [] }), new DefaultHttpContext()));
+        Assert.Equal("image/png", empty.ContentType);
+        Assert.Equal(1, renders);
+    }
+
     private static byte[] Picture(int shade)
     {
         using var bitmap = new SKBitmap(40, 30);

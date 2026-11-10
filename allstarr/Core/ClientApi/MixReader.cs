@@ -35,7 +35,9 @@ public sealed class MixReader(PersonalMixService mixes, IDbContextFactory<Allsta
                 songs.Sum(item => item.Song.Duration * 1000L ?? 0), mix.UpdatedAt,
                 $"/allstarr/v1/mixes/{mix.Id}/cover?v={MixCoverImageService.Version(covers[mix.Id])}", inApps,
                 inApps ? PlaylistVirtualizationService.CreateProtocolId(mix.Id) : null,
-                songs.Select(item => ArtworkUrl(item.Song, native)).OfType<string>().Distinct(StringComparer.Ordinal).Take(4).ToArray(), mix.Section, mix.Source, mix.SourcePlaylistId);
+                mix.Kind == "external" && mix.ArtworkUrl != null
+                    ? [$"/allstarr/v1/mixes/{mix.Id}/cover?v={MixCoverImageService.Version(covers[mix.Id])}"]
+                    : songs.Select(item => ArtworkUrl(item.Song, native)).OfType<string>().Distinct(StringComparer.Ordinal).Take(4).ToArray(), mix.Section, mix.Source, mix.SourcePlaylistId);
         }).ToArray());
     }
 
@@ -187,7 +189,7 @@ public sealed class MixReader(PersonalMixService mixes, IDbContextFactory<Allsta
     {
         if (mix.Readiness.Ready) return ClientMixState.Ready;
         var message = mix.Readiness.Message;
-        if (message.StartsWith("Matching songs", StringComparison.OrdinalIgnoreCase)) return ClientMixState.Building;
+        if (message.StartsWith("Matching songs", StringComparison.OrdinalIgnoreCase) || message.StartsWith("Preparing songs", StringComparison.OrdinalIgnoreCase)) return ClientMixState.Building;
         if (message.StartsWith("No playable songs", StringComparison.OrdinalIgnoreCase) ||
             message.StartsWith("Refresh this mix", StringComparison.OrdinalIgnoreCase) ||
             message.StartsWith("Fewer than", StringComparison.OrdinalIgnoreCase)) return ClientMixState.Empty;

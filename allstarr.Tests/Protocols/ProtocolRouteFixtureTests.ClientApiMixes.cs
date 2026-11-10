@@ -429,7 +429,7 @@ public sealed partial class ProtocolRouteFixtureTests
     }
 
     private static ProtocolFactory ClientMixFactory(Mock<IProtocolProviderGateway> gateway, bool nativeVisible = true,
-        string nativeArtwork = "\"AlbumPrimaryImageTag\":\"native-album-art\"", bool duplicateAlbum = false) => ClientDetailsFactory(request =>
+        string nativeArtwork = "\"AlbumPrimaryImageTag\":\"native-album-art\"", bool duplicateAlbum = false, Action<IServiceCollection>? configure = null) => ClientDetailsFactory(request =>
     {
         var nativeItem = $$"""{"Id":"native-mix-song","Type":"Audio","Name":"Library song","AlbumId":"native-album","ArtistItems":[{"Id":"native-artist","Name":"Library artist"}],{{nativeArtwork}}}""";
         var nativeItems = nativeItem + (duplicateAlbum ? "," + nativeItem.Replace("native-mix-song", "native-second-song", StringComparison.Ordinal) : "");
@@ -454,6 +454,7 @@ public sealed partial class ProtocolRouteFixtureTests
         services.AddSingleton(gateway.Object);
         services.RemoveAll<IBackendLibraryAccessResolver>();
         services.AddSingleton<IBackendLibraryAccessResolver>(provider => new TestBackendLibraryAccess(provider.GetRequiredService<IDbContextFactory<AllstarrDbContext>>(), "library"));
+        configure?.Invoke(services);
     });
 
     private static byte[] MixPicture()

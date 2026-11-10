@@ -43,7 +43,7 @@ public sealed partial class MixesController(PersonalMixService mixes, IDurableRu
                 var link = await db.PlaylistLinks.AsNoTracking().SingleAsync(item => item.Id == id && item.OwnerUserId == user.Id, token);
                 input = input with { Source = link.SourceProviderId, SourcePlaylistId = link.SourcePlaylistId };
             }
-            return await covers.CreateResponseAsync(input, HttpContext);
+            return await covers.CreateResponseAsync(input, HttpContext, owner: user.Id);
         }, token);
         return result is OkObjectResult { Value: IActionResult response } ? response : result;
     }
@@ -130,16 +130,16 @@ public sealed partial class MixesController(PersonalMixService mixes, IDurableRu
         mix.Source,
         mix.SourcePlaylistId,
         mix.SongCount,
+        mix.SavedFrom,
         mix.RecipeVersion,
         mix.Evidence,
         mix.UpdatedAt,
         mix.Readiness,
         inApps = mix.Added,
         appsAllowed = enabled,
-        coverArtwork = mix.ArtworkUrl is { } artwork ? new[] { artwork }
-            : mix.Kind != "external" && mix.Songs.Count > 0
-                ? new[] { $"/api/admin/mixes/{mix.Id}/cover?v={MixCoverImageService.Version(MixCoverInput.From(mix))}" }
-                : MixCoverArt.Pick(mix.Songs.Select(item => item.Song)).Select(song => song.Id).ToArray(),
+        coverArtwork = mix.ArtworkUrl != null || mix.Kind != "external" && mix.Songs.Count > 0
+            ? new[] { $"/api/admin/mixes/{mix.Id}/cover?v={MixCoverImageService.Version(MixCoverInput.From(mix))}" }
+            : MixCoverArt.Pick(mix.Songs.Select(item => item.Song)).Select(song => song.Id).ToArray(),
         initialJobId
     };
 

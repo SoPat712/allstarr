@@ -1,11 +1,43 @@
 using System.Text.Json;
 using allstarr.Core.Playlists;
+using allstarr.Core.Capabilities;
+using allstarr.Services.Common;
+using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Core.Music;
 
 public sealed partial class PersonalMixService
 {
+    private static string ServiceArtworkUrl(Guid? account, string provider, string playlist, string revision) =>
+        (account.HasValue ? $"/api/admin/playlist-sources/{account}/playlists/{Uri.EscapeDataString(playlist)}/artwork"
+            : $"/api/admin/playlist-sources/public/{Uri.EscapeDataString(provider)}/playlists/{Uri.EscapeDataString(playlist)}/artwork") +
+        $"?revision={Uri.EscapeDataString(revision)}";
+
+    internal async Task<ResolvedMediaAsset?> LoadServiceArtworkAsync(MixCoverInput input, Guid owner,
+        IMediaAssetResolver assets, CancellationToken token)
+    {
+        if (registry == null || input.Kind != "external" || input.ServiceArtwork == null || input.SourcePlaylistId.Length == 0) return null;
+        await using var db = await factory.CreateDbContextAsync(token);
+        var user = await UserAsync(db, owner, token);
+        var context = await ContextAsync(user, token);
+        if (context.Policy?.IsEnabled(input.Source) == false ||
+            !registry.TryGetCapability<IProviderPlaylistCapability>(input.Source, ProviderCapabilityKind.Playlist, out var capability)) return null;
+        var account = await db.ProviderAccounts.AsNoTracking().Where(item => item.OwnerUserId == owner && item.Enabled &&
+                item.ProviderId == input.Source && (input.ProviderAccountId == null || item.Id == input.ProviderAccountId))
+            .OrderBy(item => item.CreatedAt).ThenBy(item => item.Id).FirstOrDefaultAsync(token);
+        if (account == null) return null;
+        var query = input.ServiceArtwork.IndexOf('?');
+        var revision = query < 0 ? null : QueryHelpers.ParseQuery(input.ServiceArtwork[query..])["revision"].ToString();
+        var reference = new ProviderArtworkReference(new(input.Source, ProviderResourceKind.Playlist, input.SourcePlaylistId), revision: revision);
+        return await assets.ResolveAsync(new(owner, account.Id, input.Source, "playlist", input.SourcePlaylistId, revision, Width: 512),
+            async cancellation =>
+            {
+                var outcome = await capability!.ResolveArtworkAsync(FeedContext(context, account, cancellation), new(reference, maximumBytes: 4 * 1024 * 1024));
+                return outcome.IsSuccess ? new MediaAssetSource(outcome.RequireValue().Bytes, outcome.RequireValue().ContentType) : null;
+            }, 4 * 1024 * 1024, token);
+    }
+
     // Image loaders may omit their player token. Resolve only already published artwork
     // from its stored owner; never load/migrate a listener document on this public path.
     public async Task<MixCoverInput?> PublishedCoverAsync(Guid id, CancellationToken token = default)

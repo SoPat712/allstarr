@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { MixCard } from "./api";
-import { artworkUrl, soundDifference, soundSummary, steeringNames, greeting, mixDescription, mosaicArtwork, reasonLabel, shortReadiness, tasteSummary, nudgeMarker, mixName, mixNextStep, serviceCards } from "./for-you";
+import { artworkUrl, soundDifference, soundSummary, steeringNames, greeting, mixDescription, mosaicArtwork, reasonLabel, shortReadiness, tasteSummary, nudgeMarker, mixName, mixNextStep, serviceCards, allServiceCards } from "./for-you";
 
 describe("personal mix presentation", () => {
   it("describes each mix without repeating its name", () => {
@@ -112,6 +112,30 @@ describe("Service feed cards", () => {
   it("keeps unsynced feeds and explains the synced state", () => {
     expect(serviceCards([feed])[0]).toMatchObject({ inApps: false, description: "From Spotify" });
     expect(serviceCards([{ ...feed, inApps: true }])[0]).toMatchObject({ inApps: true, description: "From Spotify · kept in sync" });
+  });
+  it("shows every feed with synced feeds first, then service and name", () => {
+    const rows = [
+      { ...feed, id: "spotify-z", name: "Z mix" },
+      { ...feed, id: "lastfm", sourceLabel: "Last.fm" },
+      { ...feed, id: "spotify-a", name: "A mix" },
+      { ...feed, id: "apple", sourceLabel: "Apple Music" },
+      { ...feed, id: "synced-spotify", inApps: true },
+      { ...feed, id: "synced-apple", sourceLabel: "Apple Music", inApps: true },
+    ];
+    expect(allServiceCards(rows).map(card => card.id)).toEqual(["synced-apple", "synced-spotify", "apple", "lastfm", "spotify-a", "spotify-z"]);
+    expect(rows[0].id).toBe("spotify-z");
+  });
+  it("shows only known song counts, including zero", () => {
+    expect(serviceCards([{ ...feed, songCount: 30 }])[0].description).toBe("From Spotify · 30 songs");
+    expect(serviceCards([{ ...feed, songCount: 0 }])[0].description).toBe("From Spotify · 0 songs");
+    expect(serviceCards([{ ...feed, songCount: null }])[0].description).toBe("From Spotify");
+  });
+  it("explains preparation and library counts without hiding saved service playlists", () => {
+    expect(serviceCards([{ ...feed, readiness: { ready: false, message: "Preparing songs from your service…" } }])[0].description).toBe("Preparing songs…");
+    expect(serviceCards([{ ...feed, evidence: { fromMusic: 12 } as MixCard["evidence"], savedFrom: "Riju Patra" }])[0]).toMatchObject({ description: "From Spotify · 12 from your library", savedFrom: "Riju Patra" });
+    expect(serviceCards([{ ...feed, evidence: { fromMusic: 1, shown: 2 } as MixCard["evidence"] }])[0].description).toBe("From Spotify · 1 from your library · 2 songs");
+    expect(shortReadiness("Preparing songs from your service…")).toBe("Preparing songs");
+    expect(serviceCards([{ ...feed, readiness: { ready: false, message: "Your service playlist is unavailable. We will try again later." } }])[0].description).toBe("Playlist unavailable");
   });
   it("omits a recipe already supplied by an automatic feed", () => {
     expect(serviceCards([feed], [{ ...feed, id: "add:spotify:weekly" }])).toHaveLength(1);

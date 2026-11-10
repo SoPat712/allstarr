@@ -92,8 +92,10 @@ public sealed partial class PersonalMixService
                 SourcePlaylistId = link.SourcePlaylistId,
                 ProviderAccountId = link.ProviderAccountId,
                 SourceLabel = ExternalSourceLabel(link),
+                ArtworkUrl = projection?.ArtworkReferenceKey == null ? null : ServiceArtworkUrl(link.ProviderAccountId,
+                    link.SourceProviderId, link.SourcePlaylistId, projection.ArtworkReferenceKey),
                 Evidence = new(MixRecipes.For("external"), 0, 0, null, null, null, 0, 0,
-                    projection?.SourceEntries.Count ?? items.Length, items.Length, items.Length, 0, items.Length,
+                    projection?.SourceEntries.Count ?? items.Length, items.Length, items.Length, items.Count(item => item.Song.IsLocal), items.Count(item => !item.Song.IsLocal),
                     new Dictionary<string, int>(), null, null, null)
             });
         }

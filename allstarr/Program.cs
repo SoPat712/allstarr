@@ -618,6 +618,7 @@ builder.Services.AddSingleton<allstarr.Core.Music.MixCoverArtLoader>();
 builder.Services.AddSingleton<allstarr.Core.Music.PublicArtworkWarmer>();
 builder.Services.AddSingleton<allstarr.Core.Music.MixCoverImageService>();
 builder.Services.AddSingleton<IDurableJobHandler, allstarr.Core.Music.PersonalMixJobHandler>();
+builder.Services.AddSingleton<IDurableJobHandler, allstarr.Core.Music.ServiceFeedPreparationJobHandler>();
 builder.Services.AddSingleton<allstarr.Core.Music.MusicMixService>();
 builder.Services.AddSingleton<allstarr.Core.Music.MusicCatalogMerge>();
 

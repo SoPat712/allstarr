@@ -32,6 +32,7 @@ public sealed record PersonalMix(Guid Id, string Kind, string Name, string Descr
     public Guid? ProviderAccountId { get; init; }
     public string? ArtworkUrl { get; init; }
     public int? SongCount { get; init; }
+    public string? SavedFrom { get; init; }
     public string? RecipeVersion { get; init; }
     public string? SeedName { get; init; }
     public string? CoverTag { get; init; }
@@ -58,7 +59,7 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
     IBackendLibraryAccessResolver libraryAccess, AudioMuseDiscovery? audioMuse = null, SharedTagSources? tagSources = null, IProviderRegistry? registry = null, LastFmSimilarTracks? similarTracks = null,
     ILogger<PersonalMixService>? logger = null, IClientEventPublisher? events = null,
     ILibraryIndexService? libraryIndex = null, ITrackIdentityService? identities = null, PublicArtworkWarmer? artwork = null,
-    IPlaylistPersistenceService? playlistStore = null, DurableJobQueue? jobQueue = null, IPlaylistOrchestrationService? playlistSync = null)
+    IPlaylistPersistenceService? playlistStore = null, DurableJobQueue? jobQueue = null, IPlaylistOrchestrationService? playlistSync = null, TrackMatchDecisionEngine? feedMatcher = null)
 {
     public const string PublishKey = "Mixes:PublishToApps", JobType = "mixes.refresh";
     // Saved songs carry dozens of empty fields; leaving them out keeps a listener's mixes well under the 1 MB a stored

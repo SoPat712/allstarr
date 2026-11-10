@@ -20,6 +20,7 @@ export function reasonLabel(reason: string) {
   return "Picked for you";
 }
 export function shortReadiness(message: string) {
+  if (/^Preparing songs/i.test(message)) return "Preparing songs";
   if (/^Refresh this mix/i.test(message)) return "Refresh to look for songs";
   const plays = message.match(/^Play about (\d+) more songs/i);
   if (plays) return `Play about ${countLabel(Number(plays[1]), "more song")}`;
@@ -118,6 +119,11 @@ export function soundDifference(value: number) {
 
 export function serviceCards(cards: MixCard[], suggestions: MixCard[] = []): MixCard[] {
   const feeds = cards.filter(card => card.section === "yourServices");
-  return [...feeds.map(card => ({ ...card, description: card.sourceLabel ? `From ${card.sourceLabel}${card.inApps ? " · kept in sync" : ""}` : "From your connected service" })),
+  return [...feeds.map(card => ({ ...card, description: card.readiness.message.startsWith("Preparing songs") ? "Preparing songs…" : card.readiness.message.startsWith("Your service playlist is unavailable") ? "Playlist unavailable" : card.sourceLabel ? `From ${card.sourceLabel}${card.evidence ? ` · ${card.evidence.fromMusic} from your library` : ""}${(card.songCount ?? card.evidence?.shown) != null ? ` · ${countLabel(card.songCount ?? card.evidence?.shown ?? 0, "song")}` : ""}${card.inApps ? " · kept in sync" : ""}` : "From your connected service" })),
     ...suggestions.filter(suggestion => !feeds.some(card => card.source && card.source === suggestion.source && card.sourcePlaylistId === suggestion.sourcePlaylistId))];
+}
+
+export function allServiceCards(cards: MixCard[]): MixCard[] {
+  return [...cards].sort((a, b) => Number(b.inApps) - Number(a.inApps) ||
+    (a.sourceLabel ?? "").localeCompare(b.sourceLabel ?? "") || a.name.localeCompare(b.name));
 }
