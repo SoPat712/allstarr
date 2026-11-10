@@ -158,6 +158,8 @@ public static class RuntimeSettingCatalog
         Int("Cache:SearchResultsMinutes", 1, 1440); Int("Cache:PlaylistImagesHours", 1, 8760);
         items.Add(new("Cache:SearchBudgetMilliseconds", RuntimeSettingValueType.Integer, "Cache:SearchBudgetMilliseconds",
             Minimum: 100, Maximum: 30000, DefaultValue: "3500"));
+        items.Add(new("Cache:SearchFirstAnswerMilliseconds", RuntimeSettingValueType.Integer, "Cache:SearchFirstAnswerMilliseconds",
+            Minimum: 100, Maximum: 30000, DefaultValue: "1200"));
         items.Add(new("Cache:SearchBackgroundSeconds", RuntimeSettingValueType.Integer, "Cache:SearchBackgroundSeconds",
             Minimum: 1, Maximum: 120, DefaultValue: "30"));
         items.Add(new("Cache:SearchFailureCooldownSeconds", RuntimeSettingValueType.Integer, "Cache:SearchFailureCooldownSeconds",
@@ -971,6 +973,7 @@ public sealed class RuntimeSettingsLiveOptions
             case ProviderAccountOptions.ListenerConnectionsKey: _providerAccounts.ListenersCanConnectOwnAccounts = (bool)value; break;
             case "Cache:SearchResultsMinutes": _cache.SearchResultsMinutes = (int)value; break;
             case "Cache:SearchBudgetMilliseconds": _cache.SearchBudgetMilliseconds = (int)value; break;
+            case "Cache:SearchFirstAnswerMilliseconds": _cache.SearchFirstAnswerMilliseconds = (int)value; break;
             case "Cache:SearchBackgroundSeconds": _cache.SearchBackgroundSeconds = (int)value; break;
             case "Cache:SearchFailureCooldownSeconds": _cache.SearchFailureCooldownSeconds = (int)value; break;
             case "Cache:PlaylistImagesHours": _cache.PlaylistImagesHours = (int)value; break;

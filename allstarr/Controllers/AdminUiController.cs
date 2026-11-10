@@ -2121,6 +2121,10 @@ public class AdminUiController : ControllerBase
         [
             Field("CACHE_DURATION_HOURS", "Track cache hours", "number", "library.cacheDurationHours", min: 1),
             Field("CACHE_SEARCH_RESULTS_MINUTES", "Search results minutes", "number", "cache.searchResultsMinutes", min: 1),
+            Field("CACHE_SEARCH_BUDGET_MILLISECONDS", "Search wait for music services (ms)", "number", "cache.searchBudgetMilliseconds", min: 100, max: 30000,
+                helpText: "How long searches from apps without streamed results wait for music services. Services that answer later still fill the cache for the next search. Default: 3500."),
+            Field("CACHE_SEARCH_FIRST_ANSWER_MILLISECONDS", "Answer early after (ms)", "number", "cache.searchFirstAnswerMilliseconds", min: 100, max: 30000,
+                helpText: "After this long, a search answers once your preferred service and two others have replied. Set it to the search wait or higher to always wait the full time. Default: 1200."),
             Field("CACHE_LYRICS_DAYS", "Lyrics days", "number", "cache.lyricsDays", min: 1),
             Field("CACHE_METADATA_DAYS", "Metadata days", "number", "cache.metadataDays", min: 1),
             Field("CACHE_PROXY_IMAGES_DAYS", "Proxy images days", "number", "cache.proxyImagesDays", min: 1),

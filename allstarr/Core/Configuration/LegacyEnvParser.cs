@@ -135,6 +135,7 @@ public static class LegacyEnvParser
             ["MULTI_PROVIDER_DISABLED_PROVIDERS"] = "Providers:Disabled",
             ["CACHE_SEARCH_RESULTS_MINUTES"] = "Cache:SearchResultsMinutes",
             ["CACHE_SEARCH_BUDGET_MILLISECONDS"] = "Cache:SearchBudgetMilliseconds",
+            ["CACHE_SEARCH_FIRST_ANSWER_MILLISECONDS"] = "Cache:SearchFirstAnswerMilliseconds",
             ["CACHE_SEARCH_BACKGROUND_SECONDS"] = "Cache:SearchBackgroundSeconds",
             ["CACHE_SEARCH_FAILURE_COOLDOWN_SECONDS"] = "Cache:SearchFailureCooldownSeconds",
             ["CACHE_PLAYLIST_IMAGES_HOURS"] = "Cache:PlaylistImagesHours",

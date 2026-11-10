@@ -281,6 +281,8 @@ public class ConfigController : ControllerBase
             {
                 audioMaximumGiB = RuntimeInt("Cache:AudioMaximumGiB", 2),
                 searchResultsMinutes = RuntimeInt("Cache:SearchResultsMinutes", _configuration.GetValue<int>("Cache:SearchResultsMinutes", 1)),
+                searchBudgetMilliseconds = RuntimeInt("Cache:SearchBudgetMilliseconds", _configuration.GetValue<int>("Cache:SearchBudgetMilliseconds", 3500)),
+                searchFirstAnswerMilliseconds = RuntimeInt("Cache:SearchFirstAnswerMilliseconds", _configuration.GetValue<int>("Cache:SearchFirstAnswerMilliseconds", 1200)),
                 playlistImagesHours = RuntimeInt("Cache:PlaylistImagesHours", _configuration.GetValue<int>("Cache:PlaylistImagesHours", 168)),
                 lyricsDays = RuntimeInt("Cache:LyricsDays", _configuration.GetValue<int>("Cache:LyricsDays", 14)),
                 genreDays = RuntimeInt("Cache:GenreDays", _configuration.GetValue<int>("Cache:GenreDays", 30)),
