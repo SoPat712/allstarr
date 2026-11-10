@@ -245,9 +245,9 @@ identity, name, type, and other fields, while allowing `AllstarrPlaylistKind`,
 Playlists without that marker still require exact full-object parity.
 Virtual cover warm-up is public: anonymous artwork must return 200 with an image
 body, and the long JPEG route must return JPEG content and signature.
-Native lyrics still require valid, present data. Richer word cues and metadata
-produce a labelled `DIFFERENCE` when ordered line text and start times match
-Jellyfin; this records the pending behavior choice without incrementing failures.
+Native lyrics still require valid, present data. Allstarr serves the best lyrics it
+has for library songs, so richer word cues and metadata pass when ordered line text
+and start times match Jellyfin.
 Missing lyrics, malformed cues, or changed lines and timing still fail.
 `BLOCKED` lines name qualification that was not performed rather than silently
 counting it as passed.

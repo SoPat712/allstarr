@@ -128,9 +128,10 @@ class RecordedContractTests(unittest.TestCase):
             self.assertEqual(0, result.returncode, result.stderr)
             return result.stdout
 
-    def test_richer_lyrics_report_difference_while_exact_lyrics_pass(self):
+    def test_richer_lyrics_pass_like_exact_lyrics(self):
         output = self.lyrics(RECORDED["wordLyrics"])
-        self.assertIn("DIFFERENCE native lyrics", output)
+        self.assertIn("PASS native lyrics richer word timing", output)
+        self.assertNotIn("DIFFERENCE", output)
         self.assertIn("RESULT 1 0", output)
         self.assertNotIn("FAIL", output)
         output = self.lyrics(RECORDED["lineLyrics"])

@@ -879,7 +879,7 @@ check_native_lyrics_parity() {
     case "$result" in
         exact) echo 'PASS native lyrics exact data' ;;
         fallback) echo 'lyrics structure skipped=direct:404 allstarr:200 (valid fallback lyrics)' ;;
-        richer) echo 'DIFFERENCE native lyrics richer word timing (Cues/Metadata); line text and start times match' ;;
+        richer) echo 'PASS native lyrics richer word timing (Cues/Metadata); line text and start times match' ;;
         *)
             printf 'FAIL native lyrics parity direct=%s allstarr=%s result=%s\n' \
                 "${direct_code:-000}" "${allstarr_code:-000}" "$result"
