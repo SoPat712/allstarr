@@ -5617,6 +5617,9 @@
               "null",
               "string"
             ]
+          },
+          "synced": {
+            "type": "boolean"
           }
         }
       },
@@ -6138,9 +6141,6 @@
               "null",
               "string"
             ]
-          },
-          "synced": {
-            "type": "boolean"
           }
         }
       },
