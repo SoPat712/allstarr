@@ -204,7 +204,7 @@ public sealed partial class PlaylistLinksControllerContractTests
     }
 
     [Theory]
-    [InlineData("virtual", "reconcile", "resolved", true, true)]
+    [InlineData("virtual", "recreate", "resolved", true, true)]
     [InlineData("hybrid", "recreate", "resolved", true, true)]
     [InlineData("hybrid", "reconcile", "source", true, true)]
     [InlineData("hybrid", "reconcile", "resolved", false, true)]

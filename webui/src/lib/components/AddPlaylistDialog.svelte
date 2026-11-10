@@ -774,11 +774,11 @@
         {/if}
         {#if step === 2}
           <section class="pl-section">
-            <div><h3 id="playlist-add-destination">Destination</h3><p class="pl-help">Listeners can find every source song through Allstarr, and playable songs are also kept in a {targetName} playlist.</p></div>
+            <div><h3 id="playlist-add-destination">Destination</h3><p class="pl-help">Find this playlist and its playable songs in your apps through Allstarr.</p></div>
             <div class="pl-options pl-options-two" role="radiogroup" aria-labelledby="playlist-add-destination">
               <label class="pl-option" class:active={targetMode === "new"}>
                 <input bind:group={targetMode} type="radio" name="playlist-target-mode" value="new" onchange={() => void chooseTargetMode("new")} />
-                <span class="pl-option-text"><strong>New playlist</strong><small>Create a new playlist in {targetName} using the source name.</small></span>
+                <span class="pl-option-text"><strong>New playlist</strong><small>Shows in your apps using the source name.</small></span>
               </label>
               <label class="pl-option" class:active={targetMode === "existing"}>
                 <input bind:group={targetMode} type="radio" name="playlist-target-mode" value="existing" disabled={chosenPlaylists.length > 1} onchange={() => void chooseTargetMode("existing")} />

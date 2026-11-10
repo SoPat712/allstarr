@@ -614,13 +614,7 @@ public sealed partial class PlaylistLinksController(
     });
 
     [HttpPost]
-    public Task<IActionResult> Create([FromBody] CreatePlaylistLinkRequest request, CancellationToken cancellationToken) =>
-        CreateLinkAsync(request, false, cancellationToken);
-
-    internal Task<IActionResult> CreateExternalMixAsync(CreatePlaylistLinkRequest request, CancellationToken cancellationToken) =>
-        CreateLinkAsync(request, true, cancellationToken);
-
-    private async Task<IActionResult> CreateLinkAsync(CreatePlaylistLinkRequest request, bool externalMix, CancellationToken cancellationToken)
+    public async Task<IActionResult> Create([FromBody] CreatePlaylistLinkRequest request, CancellationToken cancellationToken)
     {
         return await Execute(async session =>
         {
@@ -628,10 +622,18 @@ public sealed partial class PlaylistLinksController(
                 !TryProjectionMode(request.ProjectionMode, out var projectionMode, out error) ||
                 !TryPlaylistPolicies(request.ImportMode, request.TrackRetention, out var importMode, out var trackRetention, out error))
                 return BadRequest(new { error });
-            var virtualMix = externalMix && mode == PlaylistLinkMode.Virtual && materialization == PlaylistMaterializationMode.Reconcile &&
-                projectionMode == PlaylistProjectionMode.Resolved && importMode == PlaylistImportMode.Linked &&
-                request.ProviderAccountId.HasValue && (request.SourceProviderId is "listenbrainz" or "lastfm");
-            if (!virtualMix && !IsSupportedPlaylistWorkflow(mode, materialization, projectionMode,
+            var source = Required(request.SourcePlaylistId, nameof(request.SourcePlaylistId));
+            var sourceProvider = Required(request.SourceProviderId, nameof(request.SourceProviderId)).ToLowerInvariant();
+            if (sourceProvider == "spotify")
+            {
+                if (!allstarr.Core.Providers.Spotify.SpotifyPlaylistReference.TryNormalize(source, out var normalizedSource))
+                    return BadRequest(new { error = "Enter a Spotify playlist link, URI, or ID." });
+                source = normalizedSource;
+            }
+            if (PlaylistSourceKinds.Classify(sourceProvider, source, null, null) == PlaylistSourceKinds.Feed ||
+                request.FollowNewest && sourceProvider == "listenbrainz")
+                mode = PlaylistLinkMode.Virtual;
+            if (!IsSupportedPlaylistWorkflow(mode, materialization, projectionMode,
                     request.MirrorStaleEntries, request.PreserveManualEntries))
                 return BadRequest(new { error = "The playlist workflow requires a mapped backend playlist with preservation of manual songs and removal of stale synchronized songs." });
             if (importMode == PlaylistImportMode.OneTime && request.ScheduleId.HasValue)
@@ -658,14 +660,6 @@ public sealed partial class PlaylistLinksController(
                 return BadRequest(new { error = "The target backend identity is not linked to this user" });
             if (!await ScheduleAllowed(context, session.AllstarrUserId!.Value, request.ScheduleId, cancellationToken))
                 return BadRequest(new { error = "ScheduleId is unavailable for this owner" });
-            var source = Required(request.SourcePlaylistId, nameof(request.SourcePlaylistId));
-            var sourceProvider = Required(request.SourceProviderId, nameof(request.SourceProviderId)).ToLowerInvariant();
-            if (sourceProvider == "spotify")
-            {
-                if (!allstarr.Core.Providers.Spotify.SpotifyPlaylistReference.TryNormalize(source, out var normalizedSource))
-                    return BadRequest(new { error = "Enter a Spotify playlist link, URI, or ID." });
-                source = normalizedSource;
-            }
             if (sourceProvider == "listenbrainz")
             {
                 if (!ListenBrainzPlaylistCapabilityAdapter.TryNormalize(source, out var normalizedSource))
@@ -1334,8 +1328,8 @@ public sealed partial class PlaylistLinksController(
     private static bool IsSupportedPlaylistWorkflow(PlaylistLinkMode mode,
         PlaylistMaterializationMode materialization, PlaylistProjectionMode projection,
         bool mirrorStaleEntries, bool preserveManualEntries) =>
-        mode == PlaylistLinkMode.Hybrid && materialization == PlaylistMaterializationMode.Reconcile &&
-        projection == PlaylistProjectionMode.Resolved && mirrorStaleEntries && preserveManualEntries;
+        materialization == PlaylistMaterializationMode.Reconcile && projection == PlaylistProjectionMode.Resolved &&
+        (mode == PlaylistLinkMode.Virtual || mode == PlaylistLinkMode.Hybrid && mirrorStaleEntries && preserveManualEntries);
 
     private static bool TryEnums(string modeValue, string materializationValue, out PlaylistLinkMode mode, out PlaylistMaterializationMode materialization, out string? error)
     { error = null; if (!Enum.TryParse(modeValue, true, out mode) || !Enum.IsDefined(mode)) { materialization = default; error = "Mode must be virtual, materialized, or hybrid"; return false; } if (!Enum.TryParse(materializationValue, true, out materialization) || !Enum.IsDefined(materialization)) { error = "MaterializationMode must be reconcile or recreate"; return false; } return true; }

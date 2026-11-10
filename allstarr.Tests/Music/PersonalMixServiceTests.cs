@@ -28,6 +28,37 @@ namespace allstarr.Tests;
 
 public sealed partial class PersonalMixServiceTests : IAsyncLifetime
 {
+    [Theory]
+    [InlineData("jellyfin")]
+    [InlineData("subsonic")]
+    public async Task AddedPersonalAndCustomMixesAppearAsServedPlaylists(string backend)
+    {
+        protocol = backend;
+        publish = true;
+        await using (var db = factory.CreateDbContext())
+        {
+            (await db.Users.SingleAsync(item => item.Id == owner)).BackendType = backend;
+            await db.SaveChangesAsync();
+        }
+        await Seed();
+        var personal = (await service.GenerateAsync(owner)).Single(item => item.Kind == "on-repeat");
+        await service.SetInAppsAsync(owner, personal.Id, true, default);
+        var custom = await service.SaveListAsync(owner, Guid.NewGuid(), "My mix", "My songs",
+            personal.Songs.Select(item => item.Song).ToArray(), "Picked by you");
+        var playlists = new PlaylistVirtualizationService(factory, new(factory, access.Object), access.Object, personalMixes: service);
+        var visible = await playlists.ListAsync(Context(owner));
+        foreach (var id in new[] { personal.Id, custom.Id })
+        {
+            var playlist = Assert.Single(visible, item => item.LinkId == id);
+            Assert.Equal(PlaylistVirtualizationService.CreateProtocolId(id), playlist.ProtocolId);
+            Assert.Equal(PlaylistLinkMode.Virtual, playlist.Mode);
+            Assert.Null(playlist.TargetPlaylistId);
+        }
+        await using var read = factory.CreateDbContext();
+        Assert.Empty(await read.PlaylistLinks.ToArrayAsync());
+        Assert.Empty(await read.PlaylistSyncRuns.ToArrayAsync());
+    }
+
     private SqliteTestDatabase database = null!;
     private Factory factory = null!;
     private readonly Clock clock = new();

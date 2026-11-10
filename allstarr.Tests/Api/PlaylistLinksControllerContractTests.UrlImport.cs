@@ -18,8 +18,11 @@ namespace allstarr.Tests;
 
 public sealed partial class PlaylistLinksControllerContractTests
 {
-    [Fact]
-    public async Task FollowNewestCreationUsesTheScopedRouteAndPersistsAStableSubscription()
+    [Theory]
+    [InlineData("hybrid", "jellyfin")]
+    [InlineData("virtual", "jellyfin")]
+    [InlineData("hybrid", "subsonic")]
+    public async Task FollowNewestCreationUsesTheScopedRouteAndPersistsAStableSubscription(string mode, string backend)
     {
         await using var database = await SqliteTestDatabase.CreateAsync();
         var factory = new Factory(database.Options);
@@ -30,7 +33,7 @@ public sealed partial class PlaylistLinksControllerContractTests
             db.Users.Add(new()
             {
                 Id = user,
-                BackendType = "jellyfin",
+                BackendType = backend,
                 BackendInstanceId = "backend",
                 BackendPrincipalId = "owner",
                 DisplayName = "Owner",
@@ -88,17 +91,18 @@ public sealed partial class PlaylistLinksControllerContractTests
             SessionId = "session",
             UserId = "owner",
             UserName = "Owner",
-            BackendType = "jellyfin",
+            BackendType = backend,
             BackendInstanceId = "backend",
             JellyfinAccessToken = "fixture-token",
             AllstarrUserId = user,
             ExpiresAtUtc = DateTime.UtcNow.AddHours(1)
         };
         var response = Assert.IsType<CreatedAtActionResult>(await controller.Create(new(account, "listenbrainz",
-            "11111111-1111-4111-8111-111111111111", "jellyfin", "backend", "hybrid", "reconcile", FollowNewest: true), default));
+            "11111111-1111-4111-8111-111111111111", backend, "backend", mode, "reconcile", FollowNewest: true), default));
         Assert.Equal("createdfor:weekly-jams", captured!.SourcePlaylistId);
         Assert.True(JsonSerializer.SerializeToElement(response.Value).GetProperty("followNewest").GetBoolean());
         Assert.Equal(account, captured.ProviderAccountId);
+        Assert.Equal(PlaylistLinkMode.Virtual, captured.Mode);
     }
 
     private sealed class PlaylistImportSecrets : IProviderAccountSecretAccessor

@@ -44,6 +44,58 @@ public sealed partial class PlaylistPersistenceServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task NewFeedUsesServedDeliveryWhileRepeatedAddsKeepTheStoredLink()
+    {
+        var accountId = Guid.CreateVersion7();
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.ProviderAccounts.Add(new ProviderAccountRecord
+            {
+                Id = accountId,
+                OwnerUserId = _userA,
+                ProviderId = "spotify",
+                DisplayName = "Spotify",
+                Enabled = true,
+                CreatedAt = _now,
+                UpdatedAt = _now
+            });
+            await db.SaveChangesAsync();
+        }
+        var input = Link() with
+        {
+            ProviderAccountId = accountId,
+            SourceProviderId = "spotify",
+            SourcePlaylistId = "37i9dQZweekly",
+            SourcePlaylistIdHash = Hash("37i9dQZweekly"),
+            TargetPlaylistId = "unused-destination"
+        };
+        var context = Context(_userA, "principal-a");
+        var feed = await _playlists.CreateLinkAsync(context, input);
+        Assert.Equal(PlaylistLinkMode.Virtual, feed.Mode);
+        Assert.Null(feed.TargetPlaylistId);
+        Assert.Equal(feed.Id, (await _playlists.CreateLinkAsync(context, input)).Id);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var stored = await db.PlaylistLinks.SingleAsync();
+            stored.Mode = PlaylistLinkMode.Hybrid;
+            stored.TargetPlaylistId = "pinned-playlist";
+            await db.SaveChangesAsync();
+        }
+        var repeated = await _playlists.CreateLinkAsync(context, input with { TargetPlaylistId = null });
+        Assert.Equal(feed.Id, repeated.Id);
+        Assert.Equal(PlaylistLinkMode.Hybrid, repeated.Mode);
+        Assert.Equal("pinned-playlist", repeated.TargetPlaylistId);
+        var own = await _playlists.CreateLinkAsync(context, input with
+        {
+            SourcePlaylistId = "my-playlist",
+            SourcePlaylistIdHash = Hash("my-playlist"),
+            ImportMode = PlaylistImportMode.OneTime,
+            TargetPlaylistId = null
+        });
+        Assert.Equal(PlaylistLinkMode.Materialized, own.Mode);
+    }
+
+    [Fact]
     public async Task PublicSourcesStayOwnerAndProviderScopedWithoutSelectingAnAccount()
     {
         var registry = PublicPlaylistTestRegistry.Create("fixture", "other");

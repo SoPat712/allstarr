@@ -220,10 +220,20 @@ public sealed partial class PersonalMixServiceTests
         Assert.Equal(4, json.EnumerateArray().Count(item => item.GetProperty("Kind").GetString() == "external"));
     }
 
-    [Fact]
-    public async Task ExternalInApps_UpdatesLinkAndScheduleAndRejectsOtherListeners()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ExternalInApps_UpdatesLinkAndScheduleAndRejectsOtherListeners(bool stored)
     {
         var link = await ExternalLink();
+        if (stored)
+        {
+            await using var db = factory.CreateDbContext();
+            var current = await db.PlaylistLinks.SingleAsync(item => item.Id == link.Id);
+            current.Mode = PlaylistLinkMode.Hybrid;
+            current.TargetPlaylistId = "pinned-mix";
+            await db.SaveChangesAsync();
+        }
         await service.SetInAppsAsync(owner, link.Id, false, default);
         await using (var db = factory.CreateDbContext())
         {
@@ -236,7 +246,10 @@ public sealed partial class PersonalMixServiceTests
         await service.SetInAppsAsync(owner, link.Id, true, default);
         await using (var db = factory.CreateDbContext())
         {
-            Assert.True((await db.PlaylistLinks.SingleAsync(item => item.Id == link.Id)).Enabled);
+            var current = await db.PlaylistLinks.SingleAsync(item => item.Id == link.Id);
+            Assert.True(current.Enabled);
+            Assert.Equal(stored ? PlaylistLinkMode.Hybrid : PlaylistLinkMode.Virtual, current.Mode);
+            Assert.Equal(stored ? "pinned-mix" : null, current.TargetPlaylistId);
             Assert.NotNull((await db.JobSchedules.SingleAsync(item => item.Id == link.ScheduleId)).NextRunAt);
         }
         var unscheduled = await ExternalLink(schedule: false);

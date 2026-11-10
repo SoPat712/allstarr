@@ -333,6 +333,8 @@ public sealed partial class PersonalMixServiceTests
             .Returns(async (ProtocolExecutionContext _, PlaylistLinkInput input, CancellationToken token) =>
             {
                 Assert.Equal(account, input.ProviderAccountId);
+                Assert.Equal(PlaylistLinkMode.Virtual, input.Mode);
+                Assert.Null(input.TargetPlaylistId);
                 var link = new PlaylistLinkRecord
                 {
                     Id = Guid.NewGuid(),

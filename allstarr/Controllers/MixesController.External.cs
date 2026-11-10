@@ -32,7 +32,7 @@ public sealed partial class MixesController
             var links = HttpContext.RequestServices.GetService<PlaylistLinksController>() ??
                 ActivatorUtilities.CreateInstance<PlaylistLinksController>(HttpContext.RequestServices);
             links.ControllerContext = ControllerContext;
-            var created = await links.CreateExternalMixAsync(new(account.Id, source!, selection,
+            var created = await links.Create(new(account.Id, source!, selection,
                 user.BackendType, user.BackendInstanceId, "virtual", "reconcile"), token);
             if (created is not CreatedAtActionResult response) return created;
             var value = JsonSerializer.SerializeToElement(response.Value);

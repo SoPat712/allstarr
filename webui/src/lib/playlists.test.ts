@@ -248,7 +248,7 @@ describe("playlist presentation", () => {
     )).toContain("keep Morning mix in sync every day at 3:00 AM");
     expect(playlistBehaviorSummary(
       "linked", "existing", "Morning mix", "Jellyfin", "Road trip", "every day at 3:00 AM",
-    )).toContain("update Road trip in Jellyfin");
+    )).toContain("show its playable songs as a playlist in your apps");
     expect(playlistOutcomeLabel("skipped_wrong_backend_or_library", "Jellyfin playlist")).toBe(
       "Not added to Jellyfin playlist: belongs to a different library",
     );

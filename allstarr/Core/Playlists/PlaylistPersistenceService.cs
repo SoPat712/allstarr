@@ -169,6 +169,15 @@ public sealed class PlaylistPersistenceService : IPlaylistPersistenceService
         }
         await using var db = await _factory.CreateDbContextAsync(cancellationToken);
         var existing = await db.PlaylistLinks.AsNoTracking().SingleOrDefaultAsync(item => item.OwnerUserId == actor.EffectiveUserId && item.ProviderAccountId == input.ProviderAccountId && item.SourceProviderId == providerId && item.SourcePlaylistIdHash == input.SourcePlaylistIdHash && item.TargetProtocol == input.TargetProtocol && item.TargetBackendInstanceId == input.TargetBackendInstanceId, cancellationToken);
+        if (PlaylistSourceKinds.Classify(providerId, input.SourcePlaylistId, null, null) == PlaylistSourceKinds.Feed &&
+            (existing == null || existing.Mode == PlaylistLinkMode.Virtual && existing.TargetPlaylistId == null))
+            input = input with
+            {
+                Mode = PlaylistLinkMode.Virtual,
+                ProjectionMode = PlaylistProjectionMode.Resolved,
+                TargetPlaylistId = null,
+                TargetCredentialReferenceId = null
+            };
         if (existing != null)
         {
             if (existing.ImportMode == PlaylistImportMode.Linked && input.ImportMode == PlaylistImportMode.Linked &&

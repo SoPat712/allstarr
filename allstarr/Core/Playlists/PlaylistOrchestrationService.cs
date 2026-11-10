@@ -693,6 +693,20 @@ public sealed partial class PlaylistOrchestrationService : IPlaylistOrchestratio
         var access = _kept == null ? BackendLibraryAccessContext.Unavailable :
             await _libraryAccess.ResolveUserAsync(link.OwnerUserId, cancellationToken);
         await using var db = await _factory.CreateDbContextAsync(cancellationToken);
+        // Choose delivery before the first publication. Stored playlists keep their destination and refresh behavior.
+        if (link.Mode != PlaylistLinkMode.Virtual && link.TargetPlaylistId == null && snapshot.SourceKind == PlaylistSourceKinds.Feed &&
+            !await db.PlaylistSourceSnapshots.AnyAsync(item => item.PlaylistLinkId == link.Id && item.PublishedAt != null, cancellationToken) &&
+            !await db.PlaylistSyncRuns.AnyAsync(item => item.PlaylistLinkId == link.Id, cancellationToken))
+        {
+            db.PlaylistLinks.Attach(link);
+            link.Mode = PlaylistLinkMode.Virtual;
+            link.ProjectionMode = PlaylistProjectionMode.Resolved;
+            link.TargetCredentialReferenceId = null;
+            link.DestinationMode = PlaylistDestinationMode.New;
+            link.UpdatedAt = _clock.UtcNow;
+            link.Revision++;
+            await db.SaveChangesAsync(cancellationToken);
+        }
         var preparation = _kept == null ? null : await _kept.PreparePlaylistInterestsAsync(db,
             link.Id, link.Revision, link.OwnerUserId, access, cancellationToken, new(snapshot.Id, decisionIds));
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);

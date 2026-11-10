@@ -152,7 +152,7 @@
     try {
       const updated = await playlistLinks.update(playlist.id, {
         expectedRevision: revision,
-        mode: "hybrid",
+        mode: playlist.mode === "virtual" ? "virtual" : "hybrid",
         projectionMode: "resolved",
         materializationMode: "reconcile",
         importMode,

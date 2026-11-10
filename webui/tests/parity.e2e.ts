@@ -3427,6 +3427,8 @@ test("Import playlist separates source, import mode, destination, updates, and s
   await expect(page.getByRole("option", { name: "Daily at 3:00 AM" })).toHaveAttribute("aria-selected", "true");
   await page.getByRole("option", { name: "Daily at 3:00 AM" }).click();
   await expect(dialog.getByRole("button", { name: /^Import (?:\d+ songs|playlist)$/ })).toBeVisible();
+  await expect(dialog).toContainText("show its playable songs as a playlist in your apps");
+  await expect(dialog).toContainText("Shows in your apps using the source name.");
   await expect(dialog.getByRole("checkbox", { name: /Keep downloaded copies/ })).not.toBeChecked();
   await dialog.getByRole("checkbox", { name: /Keep downloaded copies/ }).check();
   await expect(dialog.getByRole("button", { name: /^Import (?:\d+ songs|playlist)$/ })).toBeInViewport();
@@ -3451,6 +3453,27 @@ test("Import playlist separates source, import mode, destination, updates, and s
   expect(input).not.toHaveProperty("libraryScopeId");
   expect((await scheduled).postDataJSON().cronExpression).toBe("0 3 * * *");
   await expect(dialog).toBeHidden();
+});
+
+test("Served playlist settings keep the playlist in apps", async ({ page }) => {
+  await mockApi(page);
+  await page.route("**/api/admin/playlist-links", route => {
+    if (route.request().method() !== "GET") return route.fallback();
+    const response = responses["/api/admin/playlist-links"] as { playlistLinks: Record<string, unknown>[] };
+    return route.fulfill({ json: { playlistLinks: response.playlistLinks.map(item => ({
+      ...item, mode: "virtual", targetPlaylistId: null,
+    })) } });
+  });
+  await page.goto("#/library/playlists");
+  await page.getByRole("button", { name: "Open Test playlist playlist details" }).click();
+  const details = page.getByRole("dialog", { name: "Test playlist" });
+  await details.getByRole("button", { name: "Actions" }).click();
+  await page.getByRole("menuitem", { name: "Edit settings" }).click();
+  const settings = page.getByRole("dialog", { name: "Edit playlist settings" });
+  const update = page.waitForRequest(request => request.method() === "PUT" && request.url().endsWith("/api/admin/playlist-links/playlist-link"));
+  await settings.getByRole("button", { name: "Save settings" }).click();
+  expect((await update).postDataJSON()).toMatchObject({ mode: "virtual", targetPlaylistId: null });
+  await expect(settings).toBeHidden();
 });
 
 test("Playlist views and revisioned settings stay keyboard-safe", async ({ page }) => {

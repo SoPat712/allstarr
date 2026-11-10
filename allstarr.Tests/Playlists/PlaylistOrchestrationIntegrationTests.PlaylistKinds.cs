@@ -1,5 +1,9 @@
 using System.Text.Json;
 using allstarr.Core.Playlists;
+using allstarr.Core.Protocols;
+using allstarr.Core.Identity;
+using allstarr.Core.Matching;
+using allstarr.Core.Storage;
 using allstarr.Services.Admin;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -8,6 +12,90 @@ namespace allstarr.Tests;
 
 public sealed partial class PlaylistOrchestrationIntegrationTests
 {
+    [Theory]
+    [InlineData("jellyfin", false)]
+    [InlineData("subsonic", false)]
+    [InlineData("jellyfin", true)]
+    public async Task NewFeedShowsInAppsWithoutWritingAStoredPlaylist(string backend, bool refreshFirst)
+    {
+        await using (var setup = await _factory.CreateDbContextAsync())
+        {
+            (await setup.Users.SingleAsync()).BackendType = backend;
+            (await setup.PlaylistLinks.SingleAsync()).TargetProtocol = backend;
+            await setup.LibraryTracks.ExecuteUpdateAsync(update => update.SetProperty(item => item.Protocol, backend));
+            await setup.SaveChangesAsync();
+        }
+        var context = new ProtocolExecutionContext(Enum.Parse<ProtocolKind>(backend, true), "backend", "principal",
+            new AllstarrPrincipal(_user, backend, "backend", "principal", "Owner", false),
+            "correlation", _now.AddMinutes(5), default);
+        _source.Snapshot = Snapshot("served-feed", Entry(0, "one", "source-1", "One")) with
+        {
+            SourceKind = PlaylistSourceKinds.Feed
+        };
+        if (refreshFirst) await _service.RefreshAsync(context, _link);
+        var result = await _service.RunAsync(context, new(_link, 9291));
+        Assert.False(result.BackendWriteAttempted);
+        Assert.Equal(PlaylistPlanMode.Virtual, result.Plan.Mode);
+        Assert.Equal(0, _target.TotalCalls);
+        var access = new TestBackendLibraryAccess(_factory, "music");
+        if (backend == "subsonic") access.Permissions[_user] = BackendLibraryAccess.Unavailable;
+        var playlists = new PlaylistVirtualizationService(_factory, new(_factory, access), access);
+        var playlist = Assert.Single(await playlists.ListAsync(context));
+        Assert.Equal(PlaylistVirtualizationService.CreateProtocolId(_link), playlist.ProtocolId);
+        if (backend == "subsonic") Assert.Equal(TrackRouteKind.External, Assert.Single(playlist.Tracks).RouteKind);
+        await using var db = await _factory.CreateDbContextAsync();
+        var link = await db.PlaylistLinks.SingleAsync();
+        Assert.Equal(PlaylistLinkMode.Virtual, link.Mode);
+        Assert.Null(link.TargetPlaylistId);
+        Assert.Empty(await db.PlaylistSyncRuns.ToArrayAsync());
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ExistingStoredFeedKeepsItsPlaylistIdAndRefreshWrites(bool recordedRun)
+    {
+        if (recordedRun)
+        {
+            _source.Snapshot = Snapshot("stored-before", Entry(0, "one", "source-1", "One"));
+            await _service.RunAsync(Context(), new(_link, 9292));
+        }
+        else
+        {
+            await using var setup = await _factory.CreateDbContextAsync();
+            (await setup.PlaylistLinks.SingleAsync()).TargetPlaylistId = "pinned-feed";
+            await setup.SaveChangesAsync();
+            _target.Seed("pinned-feed", ["local-1"]);
+        }
+        await using var db = await _factory.CreateDbContextAsync();
+        var before = await db.PlaylistLinks.AsNoTracking().SingleAsync();
+        Assert.NotNull(before.TargetPlaylistId);
+        _source.Snapshot = Snapshot("stored-after", Entry(0, "two", "source-2", "Two")) with
+        {
+            SourceKind = PlaylistSourceKinds.Feed
+        };
+        var result = await _service.RunAsync(Context(), new(_link, 9293));
+        var after = await db.PlaylistLinks.AsNoTracking().SingleAsync();
+        Assert.True(result.BackendWriteAttempted);
+        Assert.Equal(before.Mode, after.Mode);
+        Assert.Equal(before.TargetPlaylistId, after.TargetPlaylistId);
+    }
+
+    [Fact]
+    public async Task OwnPlaylistImportStillCreatesAStoredPlaylist()
+    {
+        _source.Snapshot = Snapshot("own-playlist", Entry(0, "one", "source-1", "One")) with
+        {
+            SourceKind = PlaylistSourceKinds.Own
+        };
+        var result = await _service.RunAsync(Context(), new(_link, 9294));
+        Assert.True(result.BackendWriteAttempted);
+        await using var db = await _factory.CreateDbContextAsync();
+        var link = await db.PlaylistLinks.SingleAsync();
+        Assert.NotNull(link.TargetPlaylistId);
+        Assert.Equal(PlaylistLinkMode.Materialized, link.Mode);
+    }
+
     [Fact]
     public async Task SyncRecordsWhoseThePlaylistIsAndKeepsItWhenALaterReadCannotTell()
     {

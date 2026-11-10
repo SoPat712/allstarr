@@ -85,7 +85,7 @@ export function playlistBehaviorSummary(
     return `Allstarr will import ${sourcePlaylistName} once, show it through Allstarr, and ${targetAction}. It will not check the source for later changes.${retention}`;
   }
   const timing = cadence ? ` ${cadence}` : " when you run an update";
-  return `Allstarr will keep ${sourcePlaylistName} in sync${timing} and ${targetAction}. It will also show every song from ${sourcePlaylistName} through Allstarr.${retention}`;
+  return `Allstarr will keep ${sourcePlaylistName} in sync${timing} and show its playable songs as a playlist in your apps. You can find every source song through Allstarr.${retention}`;
 }
 
 export function playlistOutcomeLabel(code?: string | null, targetName = "the media server playlist") {
