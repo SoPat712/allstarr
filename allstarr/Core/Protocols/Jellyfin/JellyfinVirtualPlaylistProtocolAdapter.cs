@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using allstarr.Core.ClientApi;
 using allstarr.Core.Matching;
+using allstarr.Core.Operations;
 using allstarr.Core.Music;
 using allstarr.Core.Playlists;
 using allstarr.Core.Playlists.Targets;
