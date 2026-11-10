@@ -188,10 +188,7 @@ public sealed partial class FileMediaApplicationCache : IApplicationCache, IDisp
         {
             if (!await _gate.WaitAsync(0)) return null;
         }
-        else
-        {
-            using (RequestTiming.Current?.Stage("lock")) await _gate.WaitAsync();
-        }
+        else await _gate.WaitAsync();
         try
         {
             var paths = PathsFor(key);
@@ -222,7 +219,7 @@ public sealed partial class FileMediaApplicationCache : IApplicationCache, IDisp
                 return null;
             }
             metadata = metadata with { LastAccessAt = _clock.UtcNow };
-            using (RequestTiming.Current?.Stage("store")) await WriteMetadataAsync(paths.Metadata, metadata);
+            await WriteMetadataAsync(paths.Metadata, metadata);
             Interlocked.Increment(ref _hits);
             return (value, (metadata.ExpiresAt ?? DateTimeOffset.MaxValue) - _clock.UtcNow);
         }
@@ -240,7 +237,6 @@ public sealed partial class FileMediaApplicationCache : IApplicationCache, IDisp
 
     public async Task<T?> GetAsync<T>(string key) where T : class
     {
-        using var serialization = RequestTiming.Current?.Stage("serialize");
         var value = await GetStringAsync(key);
         if (string.IsNullOrEmpty(value))
         {
@@ -282,10 +278,9 @@ public sealed partial class FileMediaApplicationCache : IApplicationCache, IDisp
             return false;
         }
 
-        using (RequestTiming.Current?.Stage("lock")) await _gate.WaitAsync();
+        await _gate.WaitAsync();
         try
         {
-            using var storing = RequestTiming.Current?.Stage("store");
             var paths = PathsFor(key);
             Directory.CreateDirectory(paths.Directory);
             await WritePayloadAsync(paths.Payload, value);
@@ -318,7 +313,6 @@ public sealed partial class FileMediaApplicationCache : IApplicationCache, IDisp
 
     public Task<bool> SetAsync<T>(string key, T value, TimeSpan? expiry = null) where T : class
     {
-        using var serialization = RequestTiming.Current?.Stage("serialize");
         try
         {
             return SetStringAsync(key, JsonSerializer.Serialize(value), expiry);

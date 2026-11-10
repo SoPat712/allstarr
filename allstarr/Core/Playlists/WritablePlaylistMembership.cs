@@ -111,7 +111,6 @@ public sealed partial class WritablePlaylistMembership(
                 item.ResourceKind == ResourceKind && item.ExternalIdHash == hash && item.Protocol == protocol &&
                 item.BackendInstanceId == context.BackendInstanceId && item.BackendPrincipalId == context.VerifiedBackendPrincipalId)
             .ExecuteDeleteAsync(cancellationToken);
-        db.InvalidateFeedReads(owner);
     }
 
     public async Task<IReadOnlyList<WritablePlaylistMember>> ResolveAsync(ProtocolExecutionContext context,

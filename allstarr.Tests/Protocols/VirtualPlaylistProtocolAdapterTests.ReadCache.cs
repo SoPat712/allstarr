@@ -61,14 +61,7 @@ public sealed partial class VirtualPlaylistProtocolAdapterTests
             responseBuilder: new JellyfinResponseBuilder(), providerGateway: gateway.Object, readContexts: factory, readCache: cache);
         var uncached = new JellyfinVirtualPlaylistProtocolAdapter(service.Object, new StubJellyfinMutationResolver(null),
             responseBuilder: new JellyfinResponseBuilder(), providerGateway: gateway.Object);
-        var user = FeedReadsTests.User("principal");
-        user.BackendInstanceId = "backend";
-        await using (var seed = factory.CreateDbContext())
-        {
-            seed.Users.Add(user);
-            await seed.SaveChangesAsync();
-        }
-        var context = FeedReadsTests.Context(user);
+        var context = Context(ProtocolKind.Jellyfin);
         var query = new QueryCollection(new Dictionary<string, Microsoft.Extensions.Primitives.StringValues> { ["Limit"] = "50" });
         var watch = Stopwatch.StartNew();
         var before = JsonSerializer.Serialize(Assert.IsType<JsonResult>(await uncached.ReadItemsAsync(context, ProtocolId, null, query, default)).Value);
@@ -98,7 +91,7 @@ public sealed partial class VirtualPlaylistProtocolAdapterTests
         await using var db = factory.CreateDbContext();
         await using (var transaction = await db.Database.BeginTransactionAsync())
         {
-            db.ExternalMetadataSnapshots.Add(FeedReadsTests.Snapshot(user.Id, "personal-mixes"));
+            db.Users.Add(new() { Id = Guid.NewGuid(), BackendType = "jellyfin", BackendInstanceId = "main", BackendPrincipalId = "new-listener" });
             await db.SaveChangesAsync();
             await transaction.CommitAsync();
         }
@@ -120,18 +113,14 @@ public sealed partial class VirtualPlaylistProtocolAdapterTests
         service.Setup(item => item.ListAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<CancellationToken>()))
             .Returns(() => { reads++; return Task.FromResult<IReadOnlyList<VirtualPlaylistReadModel>>(Enumerable.Range(0, 36).Select(_ => model).ToArray()); });
         var adapter = new JellyfinVirtualPlaylistProtocolAdapter(service.Object, new StubJellyfinMutationResolver(null), readContexts: factory, readCache: cache);
-        var user = FeedReadsTests.User("principal");
-        user.BackendInstanceId = "backend";
-        await using (var seed = factory.CreateDbContext())
-        {
-            seed.Users.Add(user);
-            await seed.SaveChangesAsync();
-        }
-        var context = FeedReadsTests.Context(user);
+        var context = Context(ProtocolKind.Jellyfin);
         var first = await adapter.ListAsync(context, default);
         Assert.Equal(JsonSerializer.Serialize(first), JsonSerializer.Serialize(await adapter.ListAsync(context, default)));
         Assert.Equal(1, reads);
         await using var db = factory.CreateDbContext();
+        var user = new UserRecord { Id = Guid.NewGuid(), BackendType = "jellyfin", BackendInstanceId = "backend", BackendPrincipalId = "principal" };
+        db.Users.Add(user);
+        await db.SaveChangesAsync();
         var link = new PlaylistLinkRecord
         {
             Id = Guid.NewGuid(),

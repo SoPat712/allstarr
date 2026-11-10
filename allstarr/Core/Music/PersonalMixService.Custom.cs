@@ -1,4 +1,3 @@
-using allstarr.Core.Operations;
 using allstarr.Core.Enrichment;
 using allstarr.Core.ClientEvents;
 using allstarr.Core.Favorites;
@@ -30,11 +29,9 @@ public sealed partial class PersonalMixService
 
     public async Task<PersonalMix> StartAsync(Guid owner, MixStartRequest request, CancellationToken token = default)
     {
-        using var building = RequestTiming.Current?.Stage("build");
         if (request.SeedKind is not ("song" or "artist") || string.IsNullOrWhiteSpace(request.SeedId) || request.SeedId.Length > 200 || request.Length is < 25 or > 50)
             throw new ArgumentException("Choose a song or artist and 25–50 songs.");
         using var diagnostics = new SeedMixDiagnostics(logger);
-        using (RequestTiming.Current?.Stage("lock"))
         using (diagnostics.Phase("queue")) await generations.WaitAsync(token);
         try
         {

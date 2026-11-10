@@ -1,4 +1,3 @@
-using allstarr.Core.Operations;
 using System.Collections.Concurrent;
 
 namespace allstarr.Services.Common;
@@ -23,7 +22,6 @@ public sealed class ApplicationCacheRequestCoalescer(
             metrics.RecordCoalesced();
         }
 
-        using var wait = ReferenceEquals(pending, created) ? null : RequestTiming.Current?.Stage("lock");
         try
         {
             return (T)(await pending.Value.WaitAsync(cancellationToken))!;

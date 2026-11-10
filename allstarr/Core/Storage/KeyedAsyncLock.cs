@@ -1,4 +1,3 @@
-using allstarr.Core.Operations;
 using System.Collections.Concurrent;
 
 namespace allstarr.Core.Storage;
@@ -10,7 +9,7 @@ public sealed class KeyedAsyncLock
     public async Task<IAsyncDisposable> AcquireAsync(string key, CancellationToken cancellationToken)
     {
         var gate = _locks.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));
-        using (RequestTiming.Current?.Stage("lock")) await gate.WaitAsync(cancellationToken);
+        await gate.WaitAsync(cancellationToken);
         return new Releaser(gate);
     }
 

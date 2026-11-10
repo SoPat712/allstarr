@@ -844,8 +844,8 @@ public sealed partial class PlaylistOrchestrationService : IPlaylistOrchestratio
                 await db.PlaylistSourceSnapshots.Where(item => item.Id == existing.Id).ExecuteUpdateAsync(setters => setters
                     .SetProperty(item => item.SourceOwnerId, collected.SourceOwnerId)
                     .SetProperty(item => item.SourceKind, collected.SourceKind), cancellationToken);
-                db.InvalidateFeedReads(link.OwnerUserId);
                 await transaction.CommitAsync(cancellationToken);
+                db.InvalidateFeedReads();
                 existing.SourceOwnerId = collected.SourceOwnerId;
                 existing.SourceKind = collected.SourceKind;
             }
@@ -1399,7 +1399,6 @@ public sealed partial class PlaylistOrchestrationService : IPlaylistOrchestratio
                 cancellationToken);
         var current = await db.PlaylistSyncRuns.AsNoTracking()
             .SingleAsync(item => item.Id == run.Id, cancellationToken);
-        if (claimed == 1) db.InvalidateFeedReads(current.OwnerUserId);
         return (current, claimed == 1);
     }
 
@@ -1650,16 +1649,13 @@ public sealed partial class PlaylistOrchestrationService : IPlaylistOrchestratio
         string code)
     {
         await using var db = await _factory.CreateDbContextAsync();
-        var updated = await db.PlaylistSyncRuns
+        await db.PlaylistSyncRuns
             .Where(item => item.Id == runId && item.State == PlaylistSyncState.Running)
             .ExecuteUpdateAsync(setters => setters
                 .SetProperty(item => item.State, state)
                 .SetProperty(item => item.ConflictCode, code)
                 .SetProperty(item => item.CompletedAt, _clock.UtcNow)
                 .SetProperty(item => item.Revision, item => item.Revision + 1));
-        if (updated > 0)
-            db.InvalidateFeedReads(await db.PlaylistSyncRuns.Where(item => item.Id == runId)
-                .Select(item => item.OwnerUserId).SingleAsync());
     }
 
     private PlaylistSyncRunRecord NewRun(PlaylistOrchestrationRequest request, PlaylistLinkRecord link,

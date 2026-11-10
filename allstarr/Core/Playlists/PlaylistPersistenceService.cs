@@ -329,7 +329,6 @@ public sealed class PlaylistPersistenceService : IPlaylistPersistenceService
         await db.PlaylistSourceSnapshots
             .Where(item => item.PlaylistLinkId == linkId)
             .ExecuteDeleteAsync(cancellationToken);
-        db.InvalidateFeedReads(record.OwnerUserId);
 
         if (record.ScheduleId is { } scheduleId &&
             !await db.PlaylistLinks.AnyAsync(item => item.Id != linkId &&
