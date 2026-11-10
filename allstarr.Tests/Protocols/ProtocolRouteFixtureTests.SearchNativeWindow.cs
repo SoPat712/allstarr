@@ -28,6 +28,7 @@ public sealed partial class ProtocolRouteFixtureTests
     [InlineData(0, 20, false, true, false, null)]
     public async Task SearchNativeWindow_MixedPlaylistSearchPreservesTheFullLibraryPage(int start, int limit, bool media, bool totalEnabled, bool countDespiteDisabled, string? sortOrder)
     {
+        var nativePage = !totalEnabled && sortOrder == null;
         var calls = new List<(string Path, Dictionary<string, string> Query)>();
         var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
         var clientFields = media ? "ChildCount,CumulativeRunTimeTicks,MediaSources" : "DateCreated,Etag,ParentId,Path,SortName,ProviderIds,ChildCount,Overview";
@@ -129,8 +130,8 @@ public sealed partial class ProtocolRouteFixtureTests
         if (media && start == 0 && limit == 40)
         {
             Assert.Equal(totalEnabled || countDespiteDisabled ? 11430 : 3670, previousScheduled);
-            Assert.Equal(470, scheduled);
-            _lyricsSearchOutput.WriteLine($"Native search replay: before {previousWatch.Elapsed.TotalMilliseconds:F1} ms / {previousCalls} calls / {previousRows.Count} media rows; after {currentWatch.Elapsed.TotalMilliseconds:F1} ms / 3 calls / 40 media rows (includes 150 ms verification). Native delay: {previousScheduled - 150} -> 320 ms; same-page direct delay 300 ms.");
+            Assert.Equal(nativePage ? 457 : 470, scheduled);
+            _lyricsSearchOutput.WriteLine($"Native search replay: before {previousWatch.Elapsed.TotalMilliseconds:F1} ms / {previousCalls} calls / {previousRows.Count} media rows; after {currentWatch.Elapsed.TotalMilliseconds:F1} ms / {calls.Count} calls (includes 150 ms verification). Native delay: {previousScheduled - 150} -> {scheduled - 150} ms; same-page direct delay 300 ms.");
         }
         var expected = new JsonObject
         {
@@ -146,23 +147,24 @@ public sealed partial class ProtocolRouteFixtureTests
                     }
                     return copy;
                 })),
-            ["TotalRecordCount"] = previousRows.Count,
+            ["TotalRecordCount"] = !totalEnabled ? (countDespiteDisabled ? rows.Length : 0) : previousRows.Count,
             ["StartIndex"] = start
         };
         Assert.Equal(expected.ToJsonString(), body);
-        Assert.Equal(media ? 3 : 2, calls.Count);
+        Assert.Equal(nativePage ? 2 : media ? 3 : 2, calls.Count);
         Assert.Equal("/Users/Me", calls[0].Path);
         var native = calls[1].Query;
-        Assert.Equal((totalEnabled ? start + limit + 1 : 500).ToString(), native["Limit"]);
+        Assert.Equal((totalEnabled || nativePage ? start + limit + 1 : 500).ToString(), native["Limit"]);
         Assert.Equal(totalEnabled.ToString().ToLowerInvariant(), native["EnableTotalRecordCount"]);
         Assert.Equal("0", native["StartIndex"]);
         Assert.Equal("Audio,MusicAlbum,MusicArtist,Playlist", native["IncludeItemTypes"]);
         Assert.Equal("a", native["SearchTerm"]);
         if (totalEnabled) Assert.Equal("SortName", native["SortBy"]);
         else Assert.False(native.ContainsKey("SortBy"));
-        Assert.DoesNotContain("MediaSources", native["Fields"]);
-        Assert.Equal(media ? "ChildCount,CumulativeRunTimeTicks,SortName,ParentId" : clientFields, native["Fields"]);
-        if (media)
+        Assert.Equal(nativePage, native["Fields"].Contains("MediaSources", StringComparison.Ordinal));
+        Assert.Equal(nativePage ? clientFields + ",DateCreated,Etag,ParentId,Path,SortName,ProviderIds,ChildCount,Overview" :
+            media ? "ChildCount,CumulativeRunTimeTicks,SortName,ParentId" : clientFields, native["Fields"]);
+        if (media && !nativePage)
         {
             var detail = calls[2].Query;
             Assert.Equal(limit.ToString(), detail["Limit"]);
@@ -179,8 +181,8 @@ public sealed partial class ProtocolRouteFixtureTests
             using var warm = await client.GetAsync(requestPath);
             Assert.Equal(body, await warm.Content.ReadAsStringAsync());
             warmWatch.Stop();
-            Assert.Equal(2, calls.Count);
-            Assert.Equal(320, scheduled);
+            Assert.Equal(nativePage ? 1 : 2, calls.Count);
+            Assert.Equal(nativePage ? 307 : 320, scheduled);
             calls.Clear();
             scheduled = 0;
             using var directRequest = new HttpRequestMessage(HttpMethod.Get,
@@ -191,8 +193,145 @@ public sealed partial class ProtocolRouteFixtureTests
             directWatch.Stop();
             Assert.Single(calls);
             Assert.Equal(300, scheduled);
-            _lyricsSearchOutput.WriteLine($"Warm native replay (totals={totalEnabled}, reported={countDespiteDisabled}): route {warmWatch.Elapsed.TotalMilliseconds:F1} ms / 2 calls; direct {directWatch.Elapsed.TotalMilliseconds:F1} ms / 1 call.");
+            _lyricsSearchOutput.WriteLine($"Warm native replay (totals={totalEnabled}, reported={countDespiteDisabled}): route {warmWatch.Elapsed.TotalMilliseconds:F1} ms / {(nativePage ? 1 : 2)} calls; direct {directWatch.Elapsed.TotalMilliseconds:F1} ms / 1 call.");
         }
+    }
+
+    [Theory]
+    [InlineData(false, 0, 0)]
+    [InlineData(true, 0, 0)]
+    [InlineData(false, 7, 27)]
+    [InlineData(true, 7, 27)]
+    public async Task SearchNativeWindow_DisabledTotalsKeepTheMergedPageAndBackendCount(bool matchingServed, int start, int backendTotal)
+    {
+        var calls = new List<Dictionary<string, string>>();
+        var rows = Enumerable.Range(0, 80).Select(index =>
+        {
+            var row = SearchWindowRow(index, true);
+            row["Name"] = $"a track {index:D4}";
+            row["SortName"] = $"a track {index:D4}";
+            row["ServerId"] = "fixture-server";
+            if (index % 4 == 0)
+            {
+                row["Type"] = "Playlist";
+                row["ParentId"] = "playlists-folder";
+            }
+            return row;
+        }).ToArray();
+        var id = Guid.Parse("0198a537-719c-7ea8-9e5a-17e1f2f963f0");
+        var served = new VirtualPlaylistReadModel(PlaylistVirtualizationService.CreateProtocolId(id), id, id,
+            matchingServed ? "a track 0003 served" : "Other", null, null, "listenbrainz", "weekly", "1", PlaylistLinkMode.Virtual, [])
+        { SummaryTrackCount = 2, SummaryDurationMilliseconds = 60000 };
+        var summaries = new Mock<IPlaylistVirtualizationService>();
+        summaries.Setup(service => service.ListAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { served });
+        using var factory = new ProtocolFactory("Jellyfin", request =>
+        {
+            if (request.RequestUri!.AbsolutePath == "/Users/Me") return Json(200, """{"Id":"user-1"}""");
+            var query = QueryHelpers.ParseQuery(request.RequestUri.Query)
+                .ToDictionary(pair => pair.Key, pair => pair.Value.ToString(), StringComparer.OrdinalIgnoreCase);
+            calls.Add(query);
+            var offset = int.Parse(query["StartIndex"]);
+            var selected = rows.AsEnumerable();
+            if (query.TryGetValue("Ids", out var ids)) selected = selected.Where(row => ids.Split(',').Contains(row["Id"]!.ToString()));
+            return Json(200, JsonSerializer.Serialize(new
+            {
+                Items = selected.Skip(offset).Take(int.Parse(query["Limit"])),
+                TotalRecordCount = query.GetValueOrDefault("EnableTotalRecordCount") == "false" ? backendTotal : rows.Length,
+                StartIndex = offset,
+                UnknownEnvelopeField = "keep"
+            }));
+        }, services =>
+        {
+            services.RemoveAll<IPlaylistVirtualizationService>();
+            services.AddSingleton(summaries.Object);
+        });
+        using var client = factory.CreateClient();
+        var path = $"/Items?api_key=fixture&searchTerm=a&limit=40&startIndex={start}&recursive=true&fields=MediaSources&includeItemTypes=Audio,MusicAlbum,MusicArtist,Playlist&enableTotalRecordCount=";
+        using var counted = await client.GetAsync(path + "true");
+        Assert.Equal(HttpStatusCode.OK, counted.StatusCode);
+        using var expected = JsonDocument.Parse(await counted.Content.ReadAsStringAsync());
+        calls.Clear();
+        using var response = await client.GetAsync(path + "false");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal(expected.RootElement.GetProperty("Items").GetRawText(), body.RootElement.GetProperty("Items").GetRawText());
+        Assert.Equal(backendTotal, body.RootElement.GetProperty("TotalRecordCount").GetInt32());
+        Assert.Equal(start, body.RootElement.GetProperty("StartIndex").GetInt32());
+        Assert.Equal("keep", body.RootElement.GetProperty("UnknownEnvelopeField").GetString());
+        Assert.Equal(start == 0 ? 1 : 2, calls.Count);
+        Assert.Equal(start.ToString(), calls[0]["StartIndex"]);
+        Assert.Equal("41", calls[0]["Limit"]);
+        Assert.All(calls, query => Assert.False(query.ContainsKey("Ids")));
+        if (start > 0)
+        {
+            Assert.Equal("0", calls[1]["StartIndex"]);
+            Assert.Equal((start + 41).ToString(), calls[1]["Limit"]);
+        }
+    }
+
+    [Fact]
+    public async Task SearchNativeWindow_DisabledTotalsRemoveTheLightweightReadAndHydrationRoundTrip()
+    {
+        var calls = new List<Dictionary<string, string>>();
+        var scheduled = 0;
+        var rows = Enumerable.Range(0, 600).Select(index => SearchWindowRow(index, true))
+            .OrderBy(row => row["SortName"]!.ToString(), StringComparer.OrdinalIgnoreCase).ToArray();
+        async Task<HttpResponseMessage> Send(HttpRequestMessage request)
+        {
+            var query = QueryHelpers.ParseQuery(request.RequestUri!.Query)
+                .ToDictionary(pair => pair.Key, pair => pair.Value.ToString(), StringComparer.OrdinalIgnoreCase);
+            var verification = request.RequestUri.AbsolutePath == "/Users/Me";
+            var delay = verification ? 150 : 300;
+            scheduled += delay;
+            await Task.Delay(delay);
+            if (verification) return Json(200, """{"Id":"user-1"}""");
+            calls.Add(query);
+            var selected = rows.AsEnumerable();
+            if (query.TryGetValue("Ids", out var ids)) selected = selected.Where(row => ids.Split(',').Contains(row["Id"]!.ToString()));
+            return Json(200, JsonSerializer.Serialize(new
+            {
+                Items = selected.Skip(int.Parse(query.GetValueOrDefault("StartIndex") ?? "0")).Take(int.Parse(query["Limit"])),
+                TotalRecordCount = 0,
+                StartIndex = 0
+            }));
+        }
+        foreach (var path in new[]
+        {
+            "Users/Me",
+            "Items?SearchTerm=a&StartIndex=0&Limit=500&Fields=SortName,ParentId&EnableTotalRecordCount=false",
+            "Items?StartIndex=0&Limit=40&Fields=MediaSources&Ids=" + string.Join(',', rows.Take(40).Select(row => row["Id"]!.ToString()))
+        })
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, "http://fixture/" + path);
+            using var response = await Send(request);
+        }
+        Assert.Equal(750, scheduled);
+        Assert.Equal(new[] { "500", "40" }, calls.Select(query => query["Limit"]));
+        calls.Clear();
+        scheduled = 0;
+        using var factory = new ProtocolFactory("Jellyfin", _ => throw new InvalidOperationException(), services =>
+        {
+            services.RemoveAll<IHttpClientFactory>();
+            services.AddSingleton<IHttpClientFactory>(new StubHttpClientFactory(new SearchWindowHttpHandler(Send)));
+        });
+        using var client = factory.CreateClient();
+        const string search = "/Items?api_key=fixture&searchTerm=a&limit=40&recursive=true&fields=MediaSources&includeItemTypes=Audio,MusicAlbum,MusicArtist,Playlist&enableTotalRecordCount=false";
+        using var cold = await client.GetAsync(search);
+        Assert.Equal(HttpStatusCode.OK, cold.StatusCode);
+        var content = await cold.Content.ReadAsStringAsync();
+        Assert.Single(calls);
+        Assert.Equal(450, scheduled);
+        calls.Clear();
+        scheduled = 0;
+        using var warm = await client.GetAsync(search);
+        Assert.Equal(content, await warm.Content.ReadAsStringAsync());
+        Assert.Single(calls);
+        Assert.Equal("41", calls[0]["Limit"]);
+        Assert.Contains("MediaSources", calls[0]["Fields"]);
+        Assert.False(calls[0].ContainsKey("Ids"));
+        Assert.Equal(300, scheduled);
+        _lyricsSearchOutput.WriteLine("Native page replay: cold 750 -> 450 ms / 3 -> 2 calls; warm 600 -> 300 ms / 2 -> 1 calls; direct floor 300 ms. Fake delays asserted without elapsed-time thresholds.");
     }
 
     [Theory]
@@ -245,8 +384,10 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.Equal(candidates.Length, body.RootElement.GetProperty("TotalRecordCount").GetInt32());
     }
 
-    [Fact]
-    public async Task SearchNativeWindow_ReadsNativeRowsAndServedSummariesTogether()
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task SearchNativeWindow_ReadsNativeRowsAndServedSummariesTogether(bool totalEnabled)
     {
         var nativeStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var summariesStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -300,14 +441,14 @@ public sealed partial class ProtocolRouteFixtureTests
         using var client = factory.CreateClient();
         summaryProxy = factory.Services.GetRequiredService<JellyfinProxyService>();
         using var warm = await client.GetAsync("/Users/user-1/Views?api_key=fixture");
-        var pending = client.GetAsync("/Items?api_key=fixture&SearchTerm=a&IncludeItemTypes=Audio,MusicAlbum,MusicArtist,Playlist&Limit=2&Fields=DateCreated,Etag,ParentId,Path,SortName,ProviderIds,ChildCount,Overview");
+        var pending = client.GetAsync("/Items?api_key=fixture&SearchTerm=a&IncludeItemTypes=Audio,MusicAlbum,MusicArtist,Playlist&Limit=2&Fields=DateCreated,Etag,ParentId,Path,SortName,ProviderIds,ChildCount,Overview&EnableTotalRecordCount=" + totalEnabled.ToString().ToLowerInvariant());
         try { await Task.WhenAll(nativeStarted.Task, summariesStarted.Task, viewsStarted.Task).WaitAsync(TimeSpan.FromSeconds(10)); }
         finally { release.TrySetResult(); }
         using var response = await pending;
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
         Assert.Equal(served.ProtocolId, body.RootElement.GetProperty("Items")[0].GetProperty("Id").GetString());
-        Assert.Equal(3, body.RootElement.GetProperty("TotalRecordCount").GetInt32());
+        Assert.Equal(totalEnabled ? 3 : 2, body.RootElement.GetProperty("TotalRecordCount").GetInt32());
         Assert.DoesNotContain(body.RootElement.GetProperty("Items").EnumerateArray(), row => row.GetProperty("Id").GetString() == "allstarr-vpl-unmatched");
         Assert.Equal(2, requests.Count);
         Assert.Single(requests, path => path.StartsWith("/UserViews", StringComparison.Ordinal));
@@ -315,8 +456,11 @@ public sealed partial class ProtocolRouteFixtureTests
         summaries.Verify(service => service.ListAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
-    [Fact]
-    public async Task SearchNativeWindow_TiedBoundaryKeepsTheExistingIdOrderAndRemembersEachAlbumOnce()
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    public async Task SearchNativeWindow_TiedBoundaryKeepsTheExistingIdOrderAndRemembersEachAlbumOnce(bool totalEnabled, bool pageCount)
     {
         var writes = new List<string>();
         var cache = new Mock<IApplicationCache>();
@@ -347,7 +491,7 @@ public sealed partial class ProtocolRouteFixtureTests
                     if (!query["Fields"].Contains("MediaSources", StringComparison.Ordinal)) copy.Remove("MediaSources");
                     return copy;
                 }),
-                TotalRecordCount = rows.Length,
+                TotalRecordCount = pageCount ? Math.Min(rows.Length, int.Parse(query["Limit"])) : rows.Length,
                 StartIndex = 0
             }));
         }, services =>
@@ -356,12 +500,13 @@ public sealed partial class ProtocolRouteFixtureTests
             services.AddSingleton(cache.Object);
         });
         using var client = factory.CreateClient();
-        using var response = await client.GetAsync("/Items?api_key=fixture&SearchTerm=a&IncludeItemTypes=MusicAlbum,Playlist&Limit=1&Fields=MediaSources&EnableTotalRecordCount=true");
+        using var response = await client.GetAsync("/Items?api_key=fixture&SearchTerm=a&IncludeItemTypes=MusicAlbum,Playlist&Limit=1&Fields=MediaSources&EnableTotalRecordCount=" + totalEnabled.ToString().ToLowerInvariant());
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-        Assert.Equal(rows[0].ToJsonString(), JsonNode.Parse(body.RootElement.GetProperty("Items")[0].GetRawText())!.ToJsonString());
-        Assert.Equal(new[] { "2", "10000", "1" }, calls.Select(call => call["Limit"]));
-        Assert.Equal(600, writes.Count(key => key.StartsWith("jellyfin:catalog-type:", StringComparison.Ordinal)));
+        Assert.Equal(rows[pageCount ? 100 : 0].ToJsonString(), JsonNode.Parse(body.RootElement.GetProperty("Items")[0].GetRawText())!.ToJsonString());
+        Assert.Equal(pageCount ? new[] { "2", "500" } : totalEnabled ? new[] { "2", "10000", "1" } : new[] { "2", "10000" }, calls.Select(call => call["Limit"]));
+        Assert.Equal(pageCount ? 2 : 600, body.RootElement.GetProperty("TotalRecordCount").GetInt32());
+        Assert.Equal(pageCount ? 500 : 600, writes.Count(key => key.StartsWith("jellyfin:catalog-type:", StringComparison.Ordinal)));
         Assert.Equal(writes.Count, writes.Distinct().Count());
     }
 
