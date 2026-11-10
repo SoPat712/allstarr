@@ -49,6 +49,9 @@ public sealed partial class PersonalMixServiceTests
         Assert.Equal(1, handler.LibraryRequests);
         clock.UtcNow = clock.UtcNow.AddTicks(1);
         await service.ListCardsAsync(owner);
+        Assert.Equal(1, handler.HomeRequests);
+        Assert.Equal(1, handler.LibraryRequests);
+        await service.PrepareServiceFeedsAsync(owner, new(account, cards.Length), default);
         Assert.Equal(2, handler.HomeRequests);
         Assert.Equal(2, handler.LibraryRequests);
         await using var read = factory.CreateDbContext();

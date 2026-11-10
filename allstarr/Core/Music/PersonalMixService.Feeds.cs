@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Globalization;
 using System.Text.Json;
 using allstarr.Core.Capabilities;
@@ -17,7 +18,8 @@ namespace allstarr.Core.Music;
 
 public sealed partial class PersonalMixService
 {
-    private readonly SemaphoreSlim feedReads = new(1, 1);
+    private readonly KeyedAsyncLock feedReads = new();
+    private readonly ConcurrentDictionary<Guid, SemaphoreSlim> feedAccounts = new();
     private static readonly TimeSpan FeedWindow = TimeSpan.FromHours(6);
 
     private ProviderExecutionContext FeedContext(ProtocolExecutionContext execution, ProviderAccountRecord account, CancellationToken token) =>
@@ -26,13 +28,11 @@ public sealed partial class PersonalMixService
             new(new(ProviderAudioQuality.Any, ProviderAudioQuality.HighResolution, true), ProviderExplicitContentPolicy.Allow,
                 false, false, false, [account.ProviderId]), "service-feeds", execution.CorrelationId, clock.UtcNow.AddMinutes(5), token);
 
-    private async Task<PersonalMix[]> ServiceFeedCardsAsync(UserRecord user, CancellationToken token, bool refresh = true, bool queuePreparation = true, bool background = false, bool coverOnly = false)
+    private async Task<PersonalMix[]> ServiceFeedCardsAsync(UserRecord user, CancellationToken token, bool refresh = true, bool queuePreparation = true)
     {
         if (registry == null) return [];
-        if (!background && !coverOnly) await feedReads.WaitAsync(token);
-        try
+        await using (var db = await factory.CreateDbContextAsync(token))
         {
-            await using var db = await factory.CreateDbContextAsync(token);
             var context = await ContextAsync(user, token);
             var accounts = await db.ProviderAccounts.AsNoTracking().Where(account => account.OwnerUserId == user.Id &&
                 account.Enabled &&
@@ -49,13 +49,31 @@ public sealed partial class PersonalMixService
                     item.ResourceKind == "service-feeds" && item.ExternalIdHash == key);
                 var saved = await rows.OrderByDescending(item => item.SnapshotVersion).FirstOrDefaultAsync(token);
                 var cards = saved == null ? [] : JsonSerializer.Deserialize<PersonalMix[]>(saved.PayloadJson)!;
-                if (refresh && (saved == null || saved.ProviderRevision != revision || clock.UtcNow - saved.RetrievedAt >= FeedWindow))
+                var due = refresh && (saved == null || saved.ProviderRevision != revision || clock.UtcNow - saved.RetrievedAt >= FeedWindow);
+                if (due && saved != null && queuePreparation && jobQueue != null)
                 {
+                    var generation = new DateTimeOffset(clock.UtcNow.UtcTicks / FeedWindow.Ticks * FeedWindow.Ticks, TimeSpan.Zero);
+                    await QueueServiceFeedPreparationAsync(user.Id, account, 0, generation, token);
+                    due = false;
+                }
+                if (due)
+                {
+                    await using var refreshLock = await feedReads.AcquireAsync("cards:" + account.Id, token);
+                    saved = await rows.AsNoTracking().OrderByDescending(item => item.SnapshotVersion).FirstOrDefaultAsync(token);
+                    cards = saved == null ? [] : JsonSerializer.Deserialize<PersonalMix[]>(saved.PayloadJson)!;
+                    if (saved != null && saved.ProviderRevision == revision && clock.UtcNow - saved.RetrievedAt < FeedWindow)
+                    {
+                        if (queuePreparation) await QueueServiceFeedPreparationAsync(user.Id, account, 0, saved.RetrievedAt, token);
+                        result.AddRange(cards);
+                        continue;
+                    }
                     var fetched = new List<PersonalMix>();
                     var seen = new HashSet<string>(StringComparer.Ordinal);
                     var execution = FeedContext(context, account, token);
                     string? cursor = null;
                     var complete = false;
+                    var requests = feedAccounts.GetOrAdd(account.Id, _ => new(2, 2));
+                    await requests.WaitAsync(token);
                     try
                     {
                         for (var pageNumber = 0; pageNumber < 100; pageNumber++)
@@ -94,6 +112,7 @@ public sealed partial class PersonalMixService
                     }
                     catch (Exception exception) when (exception is not OperationCanceledException)
                     { logger?.LogDebug("Service feeds could not refresh for {Provider}", account.ProviderId); }
+                    finally { requests.Release(); }
                     if (complete) cards = fetched.DistinctBy(item => item.SourcePlaylistId).ToArray();
                     var json = JsonSerializer.Serialize(cards, DocumentJson);
                     var version = (saved?.SnapshotVersion ?? 0) + 1;
@@ -126,13 +145,12 @@ public sealed partial class PersonalMixService
             }
             return result.ToArray();
         }
-        finally { if (!background && !coverOnly) feedReads.Release(); }
     }
 
     private async Task<IReadOnlyList<PersonalMix>> ServiceMixesAsync(UserRecord user, CancellationToken token, Guid? id = null, bool cardsOnly = false, bool background = false, bool coverOnly = false)
     {
         var cards = await ServiceFeedCardsAsync(user, token, refresh: !background && !coverOnly && id == null,
-            queuePreparation: !background && !coverOnly, background: background, coverOnly: coverOnly);
+            queuePreparation: !background && !coverOnly);
         var linked = await ExternalMixesAsync(user, token, id, cardsOnly, cards);
         await using var db = await factory.CreateDbContextAsync(token);
         var links = await ExternalLinks(db, user).AsNoTracking().OrderByDescending(link => link.Enabled).ThenBy(link => link.CreatedAt).ToArrayAsync(token);
@@ -186,7 +204,8 @@ public sealed partial class PersonalMixService
         var execution = FeedContext(context, account, token);
         var capability = registry!.GetRequiredCapability<IProviderPlaylistCapability>(account.ProviderId, ProviderCapabilityKind.Playlist);
         var key = Hash(Scope(user) + ":" + account.Revision + ":" + card.SourcePlaylistId);
-        await feedReads.WaitAsync(token);
+        var requests = feedAccounts.GetOrAdd(account.Id, _ => new(2, 2));
+        await requests.WaitAsync(token);
         Song[] songs;
         var sourceCount = card.SongCount;
         try
@@ -237,7 +256,7 @@ public sealed partial class PersonalMixService
                 await rows.Where(item => item.SnapshotVersion <= version - KeptDocuments).ExecuteDeleteAsync(token);
             }
         }
-        finally { feedReads.Release(); }
+        finally { requests.Release(); }
         foreach (var song in songs)
             if (identities != null && song.ExternalId is { } externalId)
             {

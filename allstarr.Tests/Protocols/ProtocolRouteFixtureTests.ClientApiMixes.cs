@@ -429,12 +429,15 @@ public sealed partial class ProtocolRouteFixtureTests
     }
 
     private static ProtocolFactory ClientMixFactory(Mock<IProtocolProviderGateway> gateway, bool nativeVisible = true,
-        string nativeArtwork = "\"AlbumPrimaryImageTag\":\"native-album-art\"", bool duplicateAlbum = false, Action<IServiceCollection>? configure = null) => ClientDetailsFactory(request =>
+        string nativeArtwork = "\"AlbumPrimaryImageTag\":\"native-album-art\"", bool duplicateAlbum = false, Action<IServiceCollection>? configure = null,
+        Action<HttpRequestMessage>? observe = null, Func<HttpRequestMessage, HttpResponseMessage?>? nativeResponse = null) => ClientDetailsFactory(request =>
     {
+        observe?.Invoke(request);
         var nativeItem = $$"""{"Id":"native-mix-song","Type":"Audio","Name":"Library song","AlbumId":"native-album","ArtistItems":[{"Id":"native-artist","Name":"Library artist"}],{{nativeArtwork}}}""";
         var nativeItems = nativeItem + (duplicateAlbum ? "," + nativeItem.Replace("native-mix-song", "native-second-song", StringComparison.Ordinal) : "");
         if (request.RequestUri!.AbsolutePath.StartsWith("/Users/", StringComparison.Ordinal))
             Assert.Contains(request.Headers.ToString().Contains("other-token", StringComparison.Ordinal) ? "other-token" : "listener-token", request.Headers.ToString());
+        if (nativeResponse?.Invoke(request) is { } response) return response;
         return request.RequestUri!.AbsolutePath switch
         {
             "/Users/Me" => Json(200, request.Headers.ToString().Contains("other-token", StringComparison.Ordinal) ? """{"Id":"other"}""" : """{"Id":"listener"}"""),

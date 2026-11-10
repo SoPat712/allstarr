@@ -1186,6 +1186,39 @@ public partial class JellyfinController
             parameters["IncludeItemTypes"] = "Playlist";
             parameters.TryAdd("Recursive", "true");
         }
+        if (limit == 0)
+        {
+            parameters["Limit"] = "0";
+            parameters["StartIndex"] = "0";
+            parameters["EnableTotalRecordCount"] = "true";
+            parameters.Remove("SortBy");
+            var path = Microsoft.AspNetCore.WebUtilities.QueryHelpers.AddQueryString(endpoint, parameters!);
+            var (body, status) = await _proxyService.GetJsonAsync(path, null, Request.Headers, cancellationToken: token);
+            using (body)
+            {
+                if (status != 200 || body == null) return HandleProxyResponse(body, status);
+                var summaries = await _virtualPlaylistProtocolAdapter.ListAsync(context, token, new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+                var mediaTypes = JellyfinProviderQuery.Values(Request.Query["MediaTypes"].ToString());
+                var parent = Request.Query["ParentId"].ToString();
+                var playlistFolder = parent.Length == 0 || summaries.Count == 0 ? null :
+                    await _virtualPlaylistProtocolAdapter.PlaylistsFolderIdAsync(context, token);
+                var query = new JellyfinProviderQuery(Request.Query);
+                var added = summaries.Count(playlist =>
+                {
+                    if (playlist.TargetPlaylistId != null || parent.Length > 0 && !musicLibraryParent &&
+                        !parent.Equals(playlistFolder, StringComparison.OrdinalIgnoreCase) ||
+                        mediaTypes.Length > 0 && !mediaTypes.Contains("Audio", StringComparer.OrdinalIgnoreCase)) return false;
+                    var row = _virtualPlaylistProtocolAdapter.ToItem(playlist);
+                    row["ParentId"] = playlistFolder;
+                    return query.Matches(row);
+                });
+                var count = JsonNode.Parse(body.RootElement.GetRawText())!.AsObject();
+                count["TotalRecordCount"] = Math.Min(10000, count["TotalRecordCount"]?.GetValue<int>() ?? 0) + added;
+                count["Items"] = new JsonArray();
+                count["StartIndex"] = startIndex;
+                return Content(count.ToJsonString(), "application/json");
+            }
+        }
         parameters["Limit"] = "500";
         parameters["Fields"] = string.Join(',', new[] { parameters.GetValueOrDefault("Fields"), "DateCreated,Etag,ParentId,Path,SortName,ProviderIds,ChildCount,Overview" }.Where(value => !string.IsNullOrEmpty(value)));
         if (parameters.GetValueOrDefault("SortBy")?.Contains("DateLastContentAdded", StringComparison.OrdinalIgnoreCase) == true)

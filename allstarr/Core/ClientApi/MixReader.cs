@@ -16,15 +16,52 @@ namespace allstarr.Core.ClientApi;
 
 public sealed class MixReader(PersonalMixService mixes, IDbContextFactory<AllstarrDbContext> factory,
     IBackendLibraryAccessResolver libraryAccess, IDurableRuntimeSettings settings, IProviderRegistry registry,
-    IProtocolProviderGateway providers, JellyfinProxyService jellyfin, LibraryProviderResolver libraryProvider)
+    IProtocolProviderGateway providers, JellyfinProxyService jellyfin, LibraryProviderResolver libraryProvider,
+    IApplicationCache cache, ApplicationCacheRequestCoalescer readCoalescer)
 {
     public async Task<ClientMixes> ListAsync(HttpContext http, ProtocolExecutionContext execution, string? timeZoneId)
+    {
+        await using var db = await factory.CreateDbContextAsync(execution.CancellationToken);
+        var access = await libraryAccess.ResolveAsync(execution, execution.CancellationToken);
+        var scope = "mixes:" + timeZoneId + ":" + JsonSerializer.Serialize(access);
+        var key = db.FeedReadKey(execution, scope);
+        if (await cache.GetAsync<ClientMixes>(key) is { } cached) return cached;
+        return await readCoalescer.RunAsync(key, async () =>
+        {
+            if (await cache.GetAsync<ClientMixes>(key) is { } existing) return existing;
+            var result = await ListCoreAsync(http, execution, timeZoneId);
+            if (access.Succeeded && key == db.FeedReadKey(execution, scope))
+                await cache.SetAsync(key, result, TimeSpan.FromSeconds(30));
+            return result;
+        }, execution.CancellationToken);
+    }
+
+    private async Task<ClientMixes> ListCoreAsync(HttpContext http, ProtocolExecutionContext execution, string? timeZoneId)
     {
         var token = execution.CancellationToken;
         var stored = await mixes.ListAsync(execution, timeZoneId);
         var allowed = await AllowedLocalIdsAsync(execution, stored);
-        var native = await ReadNativeAsync(http, execution, stored.SelectMany(mix => Playable(mix, allowed))
-            .Where(item => item.Song.IsLocal).Select(item => item.Song.Id).Distinct().ToArray());
+        var artworkSongs = stored.Where(mix => mix.Kind != "external" || mix.ArtworkUrl == null)
+            .Select(mix => Playable(mix, allowed).Select(item => item.Song).ToArray()).ToArray();
+        var native = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+        var firstIds = artworkSongs.SelectMany(songs => songs.DistinctBy(song =>
+                (song.IsLocal, Id: song.IsLocal ? song.Id : ArtworkUrl(song, native))).Take(4))
+            .Where(song => song.IsLocal).Select(song => song.Id).Distinct().ToArray();
+        native = await ReadNativeAsync(http, execution, firstIds);
+        var attempted = firstIds.ToHashSet(StringComparer.Ordinal);
+        bool NeedsMore(Song[] songs)
+        {
+            var pictures = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var song in songs)
+            {
+                if (song.IsLocal && !attempted.Contains(song.Id)) return true;
+                if (ArtworkUrl(song, native) is { } url && pictures.Add(url) && pictures.Count == 4) return false;
+            }
+            return false;
+        }
+        var remainingIds = artworkSongs.Where(NeedsMore).SelectMany(songs => songs)
+            .Where(song => song.IsLocal && !attempted.Contains(song.Id)).Select(song => song.Id).Distinct().ToArray();
+        foreach (var item in await ReadNativeAsync(http, execution, remainingIds)) native[item.Key] = item.Value;
         var publish = (bool)(await settings.GetAsync(PersonalMixService.PublishKey, token)).Value;
         var covers = await CoverInputsAsync(execution, stored);
         return new(stored.Select(mix =>
@@ -43,6 +80,23 @@ public sealed class MixReader(PersonalMixService mixes, IDbContextFactory<Allsta
 
     public async Task<ClientMixItems> ItemsAsync(HttpContext http, ProtocolExecutionContext execution, Guid mixId)
     {
+        await using var db = await factory.CreateDbContextAsync(execution.CancellationToken);
+        var access = await libraryAccess.ResolveAsync(execution, execution.CancellationToken);
+        var scope = "mix-items:" + mixId + ":" + JsonSerializer.Serialize(access);
+        var key = db.FeedReadKey(execution, scope);
+        if (await cache.GetAsync<ClientMixItems>(key) is { } cached) return cached;
+        return await readCoalescer.RunAsync(key, async () =>
+        {
+            if (await cache.GetAsync<ClientMixItems>(key) is { } existing) return existing;
+            var result = await ItemsCoreAsync(http, execution, mixId);
+            if (access.Succeeded && key == db.FeedReadKey(execution, scope))
+                await cache.SetAsync(key, result, TimeSpan.FromSeconds(30));
+            return result;
+        }, execution.CancellationToken);
+    }
+
+    private async Task<ClientMixItems> ItemsCoreAsync(HttpContext http, ProtocolExecutionContext execution, Guid mixId)
+    {
         var mix = await mixes.GetAsync(execution.RequireActor().EffectiveUserId!.Value, mixId, execution.CancellationToken);
         var songs = Playable(mix, await AllowedLocalIdsAsync(execution, [mix]));
         var native = await ReadNativeAsync(http, execution, songs.Where(item => item.Song.IsLocal).Select(item => item.Song.Id).Distinct().ToArray());
@@ -51,6 +105,24 @@ public sealed class MixReader(PersonalMixService mixes, IDbContextFactory<Allsta
         var icons = (await ProviderArtworkResolver.ResolveIconsAsync(http.RequestServices, providerIds, execution.CancellationToken))
             .ToDictionary(item => item.Key, item => item.Value, StringComparer.Ordinal);
         var library = songs.Any(item => item.Song.IsLocal) ? await libraryProvider.ResolveAsync(http, execution) : null;
+        (string Provider, string? Id) MetadataKey(Song song)
+        {
+            var parsed = LocalLibraryService.ParseExternalResource(song.Id);
+            return parsed is { isExternal: true, provider: "allstarr", type: "song" }
+                ? (parsed.provider!, parsed.externalId) : (song.ExternalProvider!, song.ExternalId);
+        }
+        var metadata = new Dictionary<(string, string?), Song?>();
+        foreach (var batch in songs.Where(item => !item.Song.IsLocal && item.Song.ExternalProvider != null)
+            .Select(item => MetadataKey(item.Song)).Where(key => key.Id != null).Distinct().Chunk(4))
+            foreach (var entry in await Task.WhenAll(batch.Select(async key =>
+                (Key: key, Song: await providers.GetStoredSongAsync(execution, key.Provider, key.Id!)))))
+                metadata[entry.Key] = entry.Song;
+        var streaming = new Dictionary<string, string?>();
+        foreach (var batch in songs.Where(item => item.Song.ExternalProvider == "allstarr" && item.Song.ExternalId != null)
+            .Select(item => item.Song.ExternalId!).Distinct().Chunk(4))
+            foreach (var entry in await Task.WhenAll(batch.Select(async id =>
+                (Id: id, Provider: await providers.GetStreamingProviderAsync(execution, "allstarr", id)))))
+                streaming[entry.Id] = entry.Provider;
         var result = new List<ClientMixItem>(songs.Count);
         foreach (var item in songs)
         {
@@ -72,20 +144,15 @@ public sealed class MixReader(PersonalMixService mixes, IDbContextFactory<Allsta
             }
             else if (song.ExternalProvider is { } source)
             {
-                var parsed = LocalLibraryService.ParseExternalResource(song.Id);
-                var recording = parsed is { isExternal: true, provider: "allstarr", type: "song" };
-                var metadataProvider = recording ? parsed.provider! : source;
-                var metadataId = recording ? parsed.externalId : song.ExternalId;
-                if (metadataId is { } externalId &&
-                    await providers.GetStoredSongAsync(execution, metadataProvider, externalId) is { } metadata)
+                if (metadata.GetValueOrDefault(MetadataKey(song)) is { } stored)
                 {
-                    itemId = string.IsNullOrWhiteSpace(metadata.Id) ? song.Id : metadata.Id;
-                    albumId = ClientCatalogIds.Normalize(metadata.AlbumId) ?? albumId;
-                    artistId = metadata.ArtistId ?? metadata.ArtistIds.FirstOrDefault() ?? artistId;
-                    source = metadata.ExternalProvider ?? source;
+                    itemId = string.IsNullOrWhiteSpace(stored.Id) ? song.Id : stored.Id;
+                    albumId = ClientCatalogIds.Normalize(stored.AlbumId) ?? albumId;
+                    artistId = stored.ArtistId ?? stored.ArtistIds.FirstOrDefault() ?? artistId;
+                    source = stored.ExternalProvider ?? source;
                 }
                 if (song.ExternalProvider == "allstarr" && song.ExternalId is { } recordingId)
-                    source = await providers.GetStreamingProviderAsync(execution, "allstarr", recordingId) ?? "allstarr";
+                    source = streaming.GetValueOrDefault(recordingId) ?? "allstarr";
                 if (registry.TryGet(source, out var descriptor))
                 {
                     if (!icons.TryGetValue(source, out var icon))

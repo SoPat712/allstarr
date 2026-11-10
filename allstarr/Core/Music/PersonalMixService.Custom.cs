@@ -364,7 +364,7 @@ public sealed partial class PersonalMixService
 
     public async Task DeleteCustomAsync(Guid owner, Guid id, CancellationToken token = default)
     {
-        await writes.WaitAsync(token);
+        var write = await writes.AcquireAsync(owner.ToString(), token);
         try
         {
             await using var db = await factory.CreateDbContextAsync(token);
@@ -377,6 +377,6 @@ public sealed partial class PersonalMixService
             await SaveAsync(db, user, document, token);
             clientEvents?.Publish(owner, ClientEvent.Mix(id));
         }
-        finally { writes.Release(); }
+        finally { await write.DisposeAsync(); }
     }
 }

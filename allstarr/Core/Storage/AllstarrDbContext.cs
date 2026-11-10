@@ -16,6 +16,7 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
         optionsBuilder.AddInterceptors(BackupMigrationCleanupInterceptor.Instance);
         optionsBuilder.AddInterceptors(FavoriteLinkMigrationInterceptor.Instance);
         optionsBuilder.AddInterceptors(FavoriteLinkMigrationInterceptor.ConnectionLifecycle);
+        optionsBuilder.AddInterceptors(FeedReadTransactions.Instance);
     }
 
     public DbSet<UserRecord> Users => Set<UserRecord>();
@@ -60,16 +61,22 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
     {
         EnsureRecordingPublicIds();
         EnforceImmutableSnapshots();
-        return base.SaveChanges(acceptAllChangesOnSuccess);
+        var changed = ChangesFeedReads();
+        var result = base.SaveChanges(acceptAllChangesOnSuccess);
+        FeedReadsSaved(changed);
+        return result;
     }
 
-    public override Task<int> SaveChangesAsync(
+    public override async Task<int> SaveChangesAsync(
         bool acceptAllChangesOnSuccess,
         CancellationToken cancellationToken = default)
     {
         EnsureRecordingPublicIds();
         EnforceImmutableSnapshots();
-        return base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
+        var changed = ChangesFeedReads();
+        var result = await base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
+        FeedReadsSaved(changed);
+        return result;
     }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)

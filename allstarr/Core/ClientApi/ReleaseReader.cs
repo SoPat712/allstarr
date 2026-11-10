@@ -1,22 +1,44 @@
 using System.Text.Json;
 using allstarr.Core.Capabilities;
+using allstarr.Core.Identity;
 using allstarr.Core.Protocols;
 using allstarr.Core.Releases;
+using allstarr.Core.Storage;
 using allstarr.Services.Common;
 using allstarr.Services.Jellyfin;
 using allstarr.Services.Local;
+using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Core.ClientApi;
 
 public sealed class ReleaseReader(NewReleasesService releases, IProtocolProviderGateway providers,
-    IProviderRegistry registry, JellyfinProxyService jellyfin)
+    IProviderRegistry registry, JellyfinProxyService jellyfin, IDbContextFactory<AllstarrDbContext> factory,
+    IBackendLibraryPermissionSource permissions, IApplicationCache cache, ApplicationCacheRequestCoalescer readCoalescer,
+    IBackendLibraryAccessResolver libraryAccess)
 {
     public async Task<ClientReleases> ListAsync(HttpContext http, ProtocolExecutionContext execution)
     {
+        await using var db = await factory.CreateDbContextAsync(execution.CancellationToken);
+        var access = await libraryAccess.ResolveAsync(execution, execution.CancellationToken);
+        var scope = "releases:" + JsonSerializer.Serialize(access);
+        var key = db.FeedReadKey(execution, scope);
+        if (await cache.GetAsync<ClientReleases>(key) is { } cached) return cached;
+        return await readCoalescer.RunAsync(key, async () =>
+        {
+            if (await cache.GetAsync<ClientReleases>(key) is { } existing) return existing;
+            var result = await ListCoreAsync(execution);
+            if (access.Succeeded && key == db.FeedReadKey(execution, scope))
+                await cache.SetAsync(key, result, TimeSpan.FromSeconds(30));
+            return result;
+        }, execution.CancellationToken);
+    }
+
+    private async Task<ClientReleases> ListCoreAsync(ProtocolExecutionContext execution)
+    {
         var owner = execution.RequireActor().EffectiveUserId!.Value;
-        await FollowFavoriteArtistsAsync(http, execution);
+        await releases.EnsurePollingAsync(owner, execution.CancellationToken);
         var inbox = await releases.ReadAsync(owner, execution.CancellationToken);
-        var follows = await releases.ListAsync(owner, execution.CancellationToken);
+        var follows = inbox.Coverage.Select(item => item.Artist).ToArray();
         return new(inbox.Entries.Select(entry =>
         {
             var source = ReleaseInboxProjection.PrimarySource(entry.Sources);
@@ -137,8 +159,25 @@ public sealed class ReleaseReader(NewReleasesService releases, IProtocolProvider
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, DateTimeOffset> FavoritesChecked = new();
     private static readonly SemaphoreSlim FavoritesGate = new(1, 1);
 
-    // Artists favourited before favouriting meant following, or in an app that doesn't tell Allstarr, are followed when
-    // the listener next opens releases. Checked at most every ten minutes; legacy library follows are repaired a few at a time.
+    public async Task FollowFavoriteArtistsAsync(Guid owner, CancellationToken token)
+    {
+        await using var db = await factory.CreateDbContextAsync(token);
+        var user = await db.Users.AsNoTracking().SingleOrDefaultAsync(item => item.Id == owner && item.Enabled &&
+            item.BackendType == "jellyfin", token);
+        if (user == null) return;
+        var execution = new ProtocolExecutionContext(ProtocolKind.Jellyfin, user.BackendInstanceId, user.BackendPrincipalId,
+            new AllstarrPrincipal(owner, user.BackendType, user.BackendInstanceId, user.BackendPrincipalId, user.DisplayName, user.IsAdmin),
+            "release-favorites", DateTimeOffset.UtcNow.AddMinutes(10), token)
+        { UseStoredBackendCredentials = true };
+        using var authentication = await permissions.CreateRequestAsync(execution, token);
+        if (authentication == null) return;
+        var http = new DefaultHttpContext();
+        foreach (var header in authentication.Headers) http.Request.Headers[header.Key] = header.Value.ToArray();
+        await FollowFavoriteArtistsAsync(http, execution);
+    }
+
+    // The scheduled release check discovers favorites from other apps and repairs legacy library follows a few at a time.
+    // Continuations check at most every ten minutes.
     public async Task FollowFavoriteArtistsAsync(HttpContext http, ProtocolExecutionContext execution)
     {
         if (execution.Protocol != ProtocolKind.Jellyfin) return;

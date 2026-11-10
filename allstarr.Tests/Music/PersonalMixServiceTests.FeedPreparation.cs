@@ -12,6 +12,22 @@ namespace allstarr.Tests;
 public sealed partial class PersonalMixServiceTests
 {
     [Fact]
+    public async Task ServiceFeeds_ExpiredCardsAreReadWithoutProviderRefreshAndRefreshInTheExistingJob()
+    {
+        var options = new DurableJobOptions();
+        var queue = new DurableJobQueue(factory, options, new(options), clock);
+        var (capability, account) = await FeedAccount(queue: queue);
+        var first = (await service.ListCardsAsync(owner)).Where(item => item.Kind == "external").ToArray();
+        capability.Invocations.Clear();
+        clock.UtcNow += TimeSpan.FromHours(7);
+        var stored = (await service.ListCardsAsync(owner)).Where(item => item.Kind == "external").ToArray();
+        Assert.Equal(first.Select(item => item.Id), stored.Select(item => item.Id));
+        capability.Verify(item => item.GetUserPlaylistsAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderUserPlaylistsRequest>()), Times.Never);
+        await service.PrepareServiceFeedsAsync(owner, new(account, first.Length), default);
+        capability.Verify(item => item.GetUserPlaylistsAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderUserPlaylistsRequest>()), Times.Once);
+    }
+
+    [Fact]
     public async Task ServiceFeeds_PrepareThreeAtATimeWithoutCreatingLinksAndContinueOnSixHourCadence()
     {
         var options = new DurableJobOptions();

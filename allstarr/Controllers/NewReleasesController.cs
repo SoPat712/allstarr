@@ -1,5 +1,4 @@
 using allstarr.Core.Capabilities;
-using allstarr.Core.ClientApi;
 using allstarr.Core.ManagedFiles;
 using allstarr.Core.Music;
 using allstarr.Core.Protocols;
@@ -17,12 +16,12 @@ namespace allstarr.Controllers;
 [ServiceFilter(typeof(AdminPortFilter))]
 public sealed class NewReleasesController(NewReleasesService releases, AdminProtocolExecutionContextFactory? protocolContexts = null,
     IProtocolProviderGateway? providers = null, PersonalMixService? mixes = null, RecordingKeptFiles? kept = null,
-    IDurableRuntimeSettings? settings = null, ReleaseReader? reader = null) : ControllerBase
+    IDurableRuntimeSettings? settings = null) : ControllerBase
 {
     [HttpGet("artists")]
     public Task<IActionResult> List(CancellationToken cancellationToken) => ExecuteAsync(async owner =>
     {
-        await FollowFavoritesAsync(cancellationToken);
+        await releases.EnsurePollingAsync(owner, cancellationToken);
         return Ok(await releases.ListAsync(owner, cancellationToken));
     });
 
@@ -69,24 +68,9 @@ public sealed class NewReleasesController(NewReleasesService releases, AdminProt
     [HttpGet]
     public Task<IActionResult> Inbox(CancellationToken cancellationToken) => ExecuteAsync(async owner =>
     {
-        await FollowFavoritesAsync(cancellationToken);
+        await releases.EnsurePollingAsync(owner, cancellationToken);
         return Ok(await releases.ReadAsync(owner, cancellationToken));
     });
-
-    private async Task FollowFavoritesAsync(CancellationToken token)
-    {
-        if (reader == null || protocolContexts == null) return;
-        var session = (AdminAuthSession)HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey]!;
-        var execution = await protocolContexts.CreateAsync(session, HttpContext.TraceIdentifier, token);
-        var headers = HttpContext.Request.Headers;
-        var original = headers["X-Emby-Token"];
-        try
-        {
-            headers["X-Emby-Token"] = session.JellyfinAccessToken;
-            await reader.FollowFavoriteArtistsAsync(HttpContext, execution);
-        }
-        finally { headers["X-Emby-Token"] = original; }
-    }
 
     // The songs on a release, from the first source that can list them.
     [HttpGet("{entryId}/tracks")]

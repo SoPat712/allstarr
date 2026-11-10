@@ -53,6 +53,7 @@ public sealed partial class PersonalMixService
         foreach (var card in cards.Skip(request.Offset).Take(3).Where(item => !linked.Contains(item.SourcePlaylistId)))
         {
             var key = Hash(Scope(user) + ":" + account.Revision + ":" + card.SourcePlaylistId);
+            await using var preparation = await feedReads.AcquireAsync("songs:" + account.Id + ":" + key, token);
             var rows = db.ExternalMetadataSnapshots.Where(item => item.OwnerUserId == owner && item.ProviderAccountId == account.Id &&
                 item.ResourceKind == PreparedFeedKind && item.ExternalIdHash == key);
             var saved = await rows.AsNoTracking().OrderByDescending(item => item.SnapshotVersion).FirstOrDefaultAsync(token);

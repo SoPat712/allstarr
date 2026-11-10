@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using allstarr.Core.Capabilities;
+using allstarr.Core.ClientApi;
 using allstarr.Core.ClientEvents;
 using allstarr.Core.Favorites;
 using allstarr.Core.Intelligence;
@@ -38,6 +39,16 @@ public sealed partial class NewReleasesService(IDbContextFactory<AllstarrDbConte
         var result = new List<FollowedReleaseArtist>();
         foreach (var artist in follows) result.Add(await IndexedArtistAsync(owner, artist, token));
         return result;
+    }
+
+    public async Task EnsurePollingAsync(Guid owner, CancellationToken token = default)
+    {
+        await using var db = await factory.CreateDbContextAsync(token);
+        var user = await UserAsync(db, owner, token);
+        if (await db.JobSchedules.AnyAsync(item => item.Id == ScheduleId(user), token)) return;
+        await EnsureScheduleAsync(db, user, token);
+        try { await db.SaveChangesAsync(token); }
+        catch (DbUpdateException exception) when (DbErrors.IsUniqueViolation(exception)) { }
     }
 
     public async Task FollowAsync(Guid owner, FollowedReleaseArtist artist, CancellationToken token = default,
@@ -713,7 +724,16 @@ public sealed partial class NewReleasesService(IDbContextFactory<AllstarrDbConte
 public sealed class NewReleasesJobHandler(NewReleasesService releases) : IDurableJobHandler
 {
     public string JobType => NewReleasesService.JobType;
-    public Task<DurableJobCompletion> ExecuteAsync(DurableJobExecutionContext context, CancellationToken cancellationToken) =>
-        context.Claim.OwnerUserId is { } owner ? releases.PollAsync(owner, context.Claim.JobId, cancellationToken) :
-            Task.FromResult(DurableJobCompletion.Failure("releases-owner-missing", "A linked listener is required."));
+    public async Task<DurableJobCompletion> ExecuteAsync(DurableJobExecutionContext context, CancellationToken cancellationToken)
+    {
+        if (context.Claim.OwnerUserId is not { } owner)
+            return DurableJobCompletion.Failure("releases-owner-missing", "A linked listener is required.");
+        try
+        {
+            using var scope = context.Services.CreateScope();
+            await scope.ServiceProvider.GetRequiredService<ReleaseReader>().FollowFavoriteArtistsAsync(owner, cancellationToken);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException) { }
+        return await releases.PollAsync(owner, context.Claim.JobId, cancellationToken);
+    }
 }

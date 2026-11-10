@@ -326,11 +326,13 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.Equal("music-library", songQuery["ParentId"].ToString());
     }
 
-    private static ProtocolFactory PlaylistBrowseFactory(List<string>? requests = null)
+    private static ProtocolFactory PlaylistBrowseFactory(List<string>? requests = null, int virtualCount = 4,
+        int nativeDelay = 0, int summaryDelay = 0, Action? summariesRead = null, int nativeCount = 20,
+        string nativeFolderId = "playlists-folder")
     {
-        var playlists = Enumerable.Range(0, 4).Select(index =>
+        var playlists = Enumerable.Range(0, virtualCount).Select(index =>
         {
-            var id = Guid.Parse($"0198a537-719c-7ea8-9e5a-17e1f2f963f{index}");
+            var id = Guid.Parse($"0198a537-719c-7ea8-9e5a-{0x17e1f2f963f0L + index:x12}");
             return new VirtualPlaylistReadModel(PlaylistVirtualizationService.CreateProtocolId(id), id, id,
                 $"Added virtual {index}", null, null, "listenbrainz", "createdfor:weekly-jams", "1", PlaylistLinkMode.Virtual, [])
             { SummaryTrackCount = 2, SummaryDurationMilliseconds = 60000, MixCover = new(id.ToString(), 1, "external", Name: "Added virtual") };
@@ -338,24 +340,33 @@ public sealed partial class ProtocolRouteFixtureTests
         var service = new Mock<IPlaylistVirtualizationService>();
         service.Setup(item => item.ReadAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((ProtocolExecutionContext _, string id, CancellationToken _) => playlists.SingleOrDefault(item => item.ProtocolId == id));
-        service.Setup(item => item.ListAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<CancellationToken>())).ReturnsAsync(playlists);
+        service.Setup(item => item.ListAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<CancellationToken>())).Returns(async () =>
+        {
+            summariesRead?.Invoke();
+            if (summaryDelay > 0) await Task.Delay(summaryDelay);
+            return playlists;
+        });
         return new ProtocolFactory("Jellyfin", request =>
         {
             requests?.Add(request.RequestUri!.PathAndQuery);
             if (request.RequestUri!.AbsolutePath == "/Users/Me") return Json(200, """{"Id":"user-1"}""");
+            if (nativeCount == 0 && request.RequestUri.AbsolutePath == "/System/Info/Public") return Json(200, """{"Id":"fixture-server"}""");
             if (request.RequestUri.AbsolutePath is "/Users/user-1/Views" or "/UserViews")
                 return Json(200, """{"Items":[{"Id":"music-library","CollectionType":"music","Name":"Music"},{"Id":"playlists-folder","CollectionType":"playlists","Type":"PlaylistsFolder","Name":"Playlists"}],"TotalRecordCount":2}""");
+            if (nativeDelay > 0) Thread.Sleep(nativeDelay);
             var query = QueryHelpers.ParseQuery(request.RequestUri.Query);
+            if (nativeCount > 10000 && query.GetValueOrDefault("Limit") == "0")
+                return Json(200, JsonSerializer.Serialize(new { Items = Array.Empty<object>(), TotalRecordCount = nativeCount, StartIndex = 0 }));
             if (query.GetValueOrDefault("SortBy") == "Unrecognized") return Json(400, """{"Message":"Unknown sort"}""");
             var fixture = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Fixtures", "Jellyfin", "native-playlist-summary.json"));
-            var native = Enumerable.Range(0, 20).Select(index =>
+            var native = Enumerable.Range(0, nativeCount).Select(index =>
             {
                 var row = JsonSerializer.Deserialize<Dictionary<string, object?>>(fixture)!;
                 if (query.GetValueOrDefault("Fields").ToString().Contains("PrimaryImageAspectRatio", StringComparison.Ordinal)) row["PrimaryImageAspectRatio"] = 1d;
                 row["Id"] = $"native-{index:00}";
                 row["Name"] = $"Native {index:00}";
                 row["SortName"] = $"native {index:0000000000}";
-                row["ParentId"] = "playlists-folder";
+                row["ParentId"] = nativeFolderId;
                 row["Path"] = $"/var/lib/jellyfin/data/playlists/Native {index:00}";
                 if (query.GetValueOrDefault("Fields").ToString().Contains("Genres", StringComparison.Ordinal))
                 {

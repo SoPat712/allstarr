@@ -67,7 +67,7 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
     private static readonly JsonSerializerOptions DocumentJson = new() { DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull };
     private const string ResourceKind = "personal-mixes";
     private const int KeptDocuments = 3;
-    private readonly SemaphoreSlim writes = new(1, 1);
+    private readonly KeyedAsyncLock writes = new();
     private readonly SemaphoreSlim generations = new(1, 1);
     private readonly IClientEventPublisher? clientEvents = events;
     private static string Hash(string text) => Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(text)));
@@ -154,7 +154,7 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
 
     internal async Task RefreshAfterHistoryResolutionAsync(Guid owner, Guid resolutionId, DurableJobQueue queue, CancellationToken token = default)
     {
-        await writes.WaitAsync(token);
+        var write = await writes.AcquireAsync(owner.ToString(), token);
         try
         {
             await using var db = await factory.CreateDbContextAsync(token);
@@ -173,7 +173,7 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
                     $"history-resolution:{owner:N}:{clock.UtcNow.ToUnixTimeSeconds() / 900}", Guid.Empty, owner,
                     Priority: -100, AvailableAt: clock.UtcNow.AddMinutes(15)), token);
         }
-        finally { writes.Release(); }
+        finally { await write.DisposeAsync(); }
     }
 
     private async Task SaveAsync(AllstarrDbContext db, UserRecord user, PersonalMixDocument document, CancellationToken token, bool preview = false)
@@ -218,7 +218,7 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
     private async Task<(UserRecord User, PersonalMixDocument Document, int Version)> SnapshotAsync(
         Guid owner, CancellationToken token, string? timeZoneId = null)
     {
-        await writes.WaitAsync(token);
+        var write = await writes.AcquireAsync(owner.ToString(), token);
         try
         {
             await using var db = await factory.CreateDbContextAsync(token);
@@ -235,7 +235,7 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
             }
             return (user, document, (await RowAsync(db, user, token))?.SnapshotVersion ?? 0);
         }
-        finally { writes.Release(); }
+        finally { await write.DisposeAsync(); }
     }
 
     private async Task<(ListeningEventRecord[] Events, string Stamp)> HistoryAsync(AllstarrDbContext db, UserRecord user, CancellationToken token)
@@ -298,7 +298,7 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
     private async Task<bool> TrySaveAsync(UserRecord capturedUser, PersonalMixDocument document, int version, string revision,
         string history, CancellationToken token, bool preview = false)
     {
-        await writes.WaitAsync(token);
+        var write = await writes.AcquireAsync(capturedUser.Id.ToString(), token);
         try
         {
             await using var db = await factory.CreateDbContextAsync(token);
@@ -323,7 +323,7 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
             await transaction.CommitAsync(token);
             return true;
         }
-        finally { writes.Release(); }
+        finally { await write.DisposeAsync(); }
     }
 
     public Task<IReadOnlyList<PersonalMix>> ListAsync(Guid owner, string? timeZoneId = null, CancellationToken token = default) =>
@@ -485,7 +485,7 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
     private async Task SaveFillAsync(UserRecord capturedUser, IReadOnlyList<MixCandidate>? rows, IEnumerable<string> readKinds, CancellationToken token,
         IReadOnlySet<string>? fresh = null)
     {
-        await writes.WaitAsync(token);
+        var write = await writes.AcquireAsync(capturedUser.Id.ToString(), token);
         try
         {
             await using var db = await factory.CreateDbContextAsync(token);
@@ -505,7 +505,7 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
             }
             await SaveAsync(db, user, document, token);
         }
-        finally { writes.Release(); }
+        finally { await write.DisposeAsync(); }
     }
 
     internal async Task GenerateJobAsync(DurableJobClaim claim, MixRefreshRequest request, CancellationToken token)
@@ -675,7 +675,7 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
 
     public async Task SetInAppsAsync(Guid owner, Guid id, bool enabled, CancellationToken token)
     {
-        await writes.WaitAsync(token);
+        var write = await writes.AcquireAsync(owner.ToString(), token);
         try
         {
             await using var db = await factory.CreateDbContextAsync(token);
@@ -692,12 +692,12 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
             await SaveAsync(db, user, document, token);
             clientEvents?.Publish(owner, ClientEvent.Mix(id));
         }
-        finally { writes.Release(); }
+        finally { await write.DisposeAsync(); }
     }
 
     public async Task FeedbackAsync(Guid owner, Guid id, MixFeedback feedback, CancellationToken token)
     {
-        await writes.WaitAsync(token);
+        var write = await writes.AcquireAsync(owner.ToString(), token);
         try
         {
             await using var db = await factory.CreateDbContextAsync(token);
@@ -718,7 +718,7 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
             await SaveAsync(db, user, document, token);
             clientEvents?.Publish(owner, ClientEvent.Mix(id));
         }
-        finally { writes.Release(); }
+        finally { await write.DisposeAsync(); }
     }
 
     public async Task<IReadOnlyList<VirtualPlaylistReadModel>> PublishedAsync(ProtocolExecutionContext context, CancellationToken token,
@@ -727,14 +727,14 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
         if (context.Actor?.EffectiveUserId is not { } owner || !(bool)(await settings.GetAsync(PublishKey, token)).Value) return [];
         PersonalMixDocument document;
         await using var db = await factory.CreateDbContextAsync(token);
-        await writes.WaitAsync(token);
+        var write = await writes.AcquireAsync(owner.ToString(), token);
         try
         {
             var user = await BrowseUserAsync(db, owner, token, context);
             if (user == null) return [];
             document = await LoadAsync(db, user, token, publishedOnly: true);
         }
-        finally { writes.Release(); }
+        finally { await write.DisposeAsync(); }
         document.Mixes = document.Mixes.Where(pair => pair.Value.Added &&
             (playlistId == null || pair.Value.Id == playlistId)).ToDictionary(pair => pair.Key, pair => pair.Value);
         var visible = summariesOnly ? document.Mixes.Values.ToArray() : await VisibleAsync(owner, document, token);

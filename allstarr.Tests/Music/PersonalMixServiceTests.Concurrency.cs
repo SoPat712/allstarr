@@ -10,6 +10,34 @@ namespace allstarr.Tests;
 
 public sealed partial class PersonalMixServiceTests
 {
+    [Fact]
+    public async Task OtherListenerPollingDoesNotWaitForAFeedChoiceBeingWritten()
+    {
+        var (capability, _) = await FeedAccount();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        capability.Setup(item => item.GetUserPlaylistsAsync(It.IsAny<allstarr.Core.Capabilities.ProviderExecutionContext>(),
+            It.IsAny<allstarr.Core.Capabilities.ProviderUserPlaylistsRequest>()))
+            .Returns(async (allstarr.Core.Capabilities.ProviderExecutionContext _, allstarr.Core.Capabilities.ProviderUserPlaylistsRequest _) =>
+            {
+                entered.TrySetResult();
+                await release.Task;
+                return allstarr.Core.Capabilities.ProviderOutcome<allstarr.Core.Capabilities.ProviderPage<allstarr.Core.Capabilities.ProviderPlaylistSummary>>.Success(new("spotify", []));
+            });
+        var choice = service.SetInAppsAsync(owner, Guid.NewGuid(), true, default);
+        try
+        {
+            await entered.Task.WaitAsync(CompletionDeadline);
+            Assert.NotEmpty(await service.ListAsync(other, "UTC").WaitAsync(CompletionDeadline));
+            Assert.False(choice.IsCompleted);
+        }
+        finally
+        {
+            release.TrySetResult();
+            await Assert.ThrowsAsync<KeyNotFoundException>(() => choice);
+        }
+    }
+
     private static readonly TimeSpan CompletionDeadline = TimeSpan.FromSeconds(10);
 
     private (TaskCompletionSource Entered, TaskCompletionSource Release) BlockSong(string id, bool fail = false, Song? replacement = null, bool stored = false)
