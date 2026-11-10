@@ -34,6 +34,7 @@ public static class DurableStorageRegistration
         if (preparedState == null) services.AddSingleton<DurableStorageState>();
         else services.AddSingleton(preparedState);
         services.AddSingleton<SqlitePragmaInterceptor>();
+        services.AddSingleton<RequestTimingDbInterceptor>();
         services.AddSingleton<DurableBackupService>();
         services.AddDbContextFactory<AllstarrDbContext>((provider, builder) =>
             // Lists of IDs go to SQLite as one JSON value. EF Core 10 otherwise spreads each into a parameter per value,
@@ -41,7 +42,7 @@ public static class DurableStorageRegistration
             builder.UseSqlite(options.ConnectionString, sqlite => sqlite
                     .CommandTimeout(options.CommandTimeoutSeconds)
                     .UseParameterizedCollectionMode(ParameterTranslationMode.Parameter))
-                .AddInterceptors(provider.GetRequiredService<SqlitePragmaInterceptor>()));
+                .AddInterceptors(provider.GetRequiredService<SqlitePragmaInterceptor>(), provider.GetRequiredService<RequestTimingDbInterceptor>()));
         services.AddSingleton<DurableStorageInitializer>();
         if (initializeOnStart) services.AddHostedService(provider => provider.GetRequiredService<DurableStorageInitializer>());
         return services;

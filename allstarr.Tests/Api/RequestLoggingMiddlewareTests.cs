@@ -1,4 +1,5 @@
 using allstarr.Middleware;
+using allstarr.Core.Operations;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
@@ -7,6 +8,32 @@ namespace allstarr.Tests;
 
 public sealed class RequestLoggingMiddlewareTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task TimingBreakdownIsStructuredAtDebugAndFailureWarningRemains(bool verbose)
+    {
+        var logger = new StructuredLogger();
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        { ["Debug:LogAllRequests"] = verbose.ToString() }).Build();
+        var context = new DefaultHttpContext();
+        context.Request.Path = "/allstarr/v1/me/stats";
+        context.Request.QueryString = new("?api_key=private-secret");
+        await new RequestLoggingMiddleware(http =>
+        {
+            RequestTiming.Current!.Add(RequestTimingStage.Db, TimeSpan.FromMilliseconds(1.2));
+            http.Response.StatusCode = 503;
+            return Task.CompletedTask;
+        }, logger, configuration).InvokeAsync(context);
+        var entry = Assert.Single(logger.Entries, item => item.Level == LogLevel.Debug);
+        Assert.Equal("stats", entry.Values["Route"]);
+        Assert.Equal(1.2, entry.Values["DbMs"]);
+        Assert.Equal(0, entry.Values["JellyfinCalls"]);
+        Assert.Equal("none", entry.Values["Cache"]);
+        Assert.Contains(logger.Entries, item => item.Level == LogLevel.Warning);
+        Assert.DoesNotContain(logger.Entries.SelectMany(item => item.Values.Values), value => value?.ToString()?.Contains("private-secret") == true);
+    }
+
     [Fact]
     public async Task FailedAndAbandonedRequestsAreNotedWithoutTheirQueryWhileOthersStayQuiet()
     {
@@ -180,5 +207,14 @@ public sealed class RequestLoggingMiddlewareTests
                 exceptions?.Add(exception);
             }
         }
+    }
+
+    private sealed class StructuredLogger : ILogger<RequestLoggingMiddleware>
+    {
+        public List<(LogLevel Level, Dictionary<string, object?> Values)> Entries { get; } = [];
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) =>
+            Entries.Add((logLevel, ((IEnumerable<KeyValuePair<string, object?>>)(object)state!).ToDictionary(item => item.Key, item => item.Value)));
     }
 }

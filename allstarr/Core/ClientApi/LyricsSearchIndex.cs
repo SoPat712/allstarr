@@ -4,6 +4,7 @@ using System.IO.Compression;
 using System.Text;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Music;
+using allstarr.Core.Operations;
 using allstarr.Core.Matching;
 using allstarr.Core.Protocols;
 using allstarr.Core.Routing;
@@ -108,7 +109,9 @@ public sealed class LyricsSearchIndex(StorageOptions options, IProviderRouter? r
         {
             Open();
             var key = (nameof(SnapshotAsync), context.BackendInstanceId, context.Principal?.UserId, Revision);
-            if (ListenerCache.Get<IndexedLyricsDocument[]>(key) is { } cached) return cached;
+            if (ListenerCache.Get<IndexedLyricsDocument[]>(key) is { } cached)
+            { RequestTiming.Current?.NoteCache(true); return cached; }
+            RequestTiming.Current?.NoteCache(false);
             var documents = _documents.Values.Where(document => document.Backend == context.BackendInstanceId &&
                 (document.Owner == Guid.Empty || document.Owner == context.Principal?.UserId ||
                     document.SharedSource && !document.Source.Contains(':') && document.Source is not ("backend" or "kept") && (document.Song.IsLocal || document.PublicCatalog))).ToArray();

@@ -22,7 +22,7 @@ public class SubsonicProxyService
         IHttpContextAccessor httpContextAccessor,
         ProtocolStreamingResponseAdapter? streamingResponseAdapter = null)
     {
-        _httpClient = httpClientFactory.CreateClient();
+        _httpClient = httpClientFactory.CreateClient("SubsonicBackend");
         _subsonicSettings = subsonicSettings.Value;
         _httpContextAccessor = httpContextAccessor;
         _streamingResponseAdapter = streamingResponseAdapter ?? new ProtocolStreamingResponseAdapter();

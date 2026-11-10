@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Text.Json;
 using allstarr.Core.Enrichment;
 using allstarr.Core.Intelligence;
+using allstarr.Core.Operations;
 using allstarr.Core.Storage;
 using Microsoft.EntityFrameworkCore;
 
@@ -21,6 +22,7 @@ public sealed partial class TasteService
         var row = await db.TasteProfiles.AsNoTracking().SingleOrDefaultAsync(item => item.OwnerUserId == user, token);
         var document = Read(row);
         var snapshot = document.Snapshot;
+        RequestTiming.Current?.NoteCache(snapshot != null);
         var plays = snapshot == null ? 0 : await db.ListeningEvents.AsNoTracking().CountAsync(item => item.OwnerUserId == user &&
             (item.State == ListeningEventState.Completed || item.State == ListeningEventState.Skipped), token);
         if (snapshot == null || !loaded.ContainsKey(user) || snapshot.Revision != row!.Revision || snapshot.Plays != plays ||

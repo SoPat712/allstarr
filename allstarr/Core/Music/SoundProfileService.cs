@@ -36,7 +36,9 @@ public sealed class SoundProfileService(IDbContextFactory<AllstarrDbContext> fac
 
     public async Task<SoundProfile?> GetAsync(Guid user, CancellationToken token)
     {
-        if (kept.TryGetValue(user, out var known) && clock.UtcNow - known.At < KeptFor) return known.Profile;
+        if (kept.TryGetValue(user, out var known) && clock.UtcNow - known.At < KeptFor)
+        { RequestTiming.Current?.NoteCache(true); return known.Profile; }
+        RequestTiming.Current?.NoteCache(false);
         var pending = loading.GetOrAdd(user, key => new(() => Task.Run(async () =>
         {
             try
@@ -48,6 +50,16 @@ public sealed class SoundProfileService(IDbContextFactory<AllstarrDbContext> fac
             finally { loading.TryRemove(user, out _); }
         })));
         return await pending.Value.WaitAsync(token);
+    }
+
+    internal async Task WarmAsync(Guid user, CancellationToken token)
+    {
+        if (kept.TryGetValue(user, out var known) && clock.UtcNow - known.At < KeptFor) return;
+        // Requests compute independently if they arrive before this background read finishes.
+        var profile = await ComputeAsync(user, token);
+        var warmed = new Kept(profile, clock.UtcNow);
+        if (known == null) kept.TryAdd(user, warmed);
+        else kept.TryUpdate(user, warmed, known);
     }
 
     private async Task<SoundProfile?> ComputeAsync(Guid userId, CancellationToken token)

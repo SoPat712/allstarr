@@ -322,18 +322,22 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
     public Task<IReadOnlyList<PersonalMix>> ListCardsAsync(Guid owner, string? timeZoneId = null, CancellationToken token = default) =>
         ListCoreAsync(owner, timeZoneId, token, cardsOnly: true);
 
+    internal Task WarmCardsAsync(Guid owner, CancellationToken token) =>
+        ListCoreAsync(owner, null, token, cardsOnly: true, background: true);
+
     public Task<IReadOnlyList<PersonalMix>> ListAsync(ProtocolExecutionContext context, string? timeZoneId = null) =>
         context.Actor?.EffectiveUserId is { } owner
             ? ListCoreAsync(owner, timeZoneId, context.CancellationToken, context)
             : Task.FromResult<IReadOnlyList<PersonalMix>>([]);
 
     private async Task<IReadOnlyList<PersonalMix>> ListCoreAsync(Guid owner, string? timeZoneId, CancellationToken token,
-        ProtocolExecutionContext? context = null, bool cardsOnly = false)
+        ProtocolExecutionContext? context = null, bool cardsOnly = false, bool background = false)
     {
         await using var db = await factory.CreateDbContextAsync(token);
         var user = await BrowseUserAsync(db, owner, token, context);
         if (user == null) return [];
         var row = await RowAsync(db, user, token);
+        RequestTiming.Current?.NoteCache(row != null);
         if (timeZoneId != null) DurableScheduleEngine.Validate("0 4 * * *", timeZoneId);
         var saved = row == null ? null : JsonSerializer.Deserialize<PersonalMixDocument>(row.PayloadJson)!;
         PersonalMixDocument document;
@@ -343,7 +347,7 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
         else
             document = await LoadAsync(db, user, token, saved: row, document: saved);
         return (await VisibleAsync(owner, document, token, preferLocalCopies: !cardsOnly))
-            .Concat(await ServiceMixesAsync(user, token, cardsOnly: cardsOnly)).ToArray();
+            .Concat(await ServiceMixesAsync(user, token, cardsOnly: cardsOnly, background: background)).ToArray();
     }
 
     public async Task<PersonalMix> GetAsync(Guid owner, Guid id, CancellationToken token = default)

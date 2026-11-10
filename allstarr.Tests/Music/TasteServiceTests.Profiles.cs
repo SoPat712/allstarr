@@ -11,6 +11,29 @@ namespace allstarr.Tests;
 public sealed partial class TasteServiceTests
 {
     [Fact]
+    public async Task Profile_RequestDoesNotWaitForBlockedWarmUp()
+    {
+        await using var fixture = await Fixture.Create();
+        await SeedProfileHistory(fixture);
+        var gate = new ProfileTagGate(firstOnly: true);
+        var factory = new Factory(new DbContextOptionsBuilder<AllstarrDbContext>(fixture.Factory.Options).AddInterceptors(gate).Options);
+        var service = new TasteService(factory, new(factory, fixture.Clock), fixture.Clock);
+        var warming = service.WarmAsync(fixture.User, default);
+        try
+        {
+            await gate.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var profile = await service.GetAsync(fixture.User).WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal("Imported artist", Assert.Single(profile.Usually.Artists).Name);
+            Assert.False(warming.IsCompleted);
+        }
+        finally
+        {
+            gate.Release.TrySetResult();
+            await warming;
+        }
+    }
+
+    [Fact]
     public async Task Profile_ColdReadReturnsStoredTasteWhileRecomputationIsBlocked()
     {
         await using var fixture = await Fixture.Create();
@@ -87,7 +110,7 @@ public sealed partial class TasteServiceTests
         await db.SaveChangesAsync();
     }
 
-    private sealed class ProfileTagGate : DbCommandInterceptor
+    private sealed class ProfileTagGate(bool firstOnly = false) : DbCommandInterceptor
     {
         public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -97,7 +120,7 @@ public sealed partial class TasteServiceTests
         {
             if (command.CommandText.Contains("FROM \"shared_tag_profiles\"", StringComparison.Ordinal) && !Release.Task.IsCompleted)
             {
-                Interlocked.Increment(ref Reads);
+                if (Interlocked.Increment(ref Reads) > 1 && firstOnly) return result;
                 Entered.TrySetResult();
                 await Release.Task.WaitAsync(cancellationToken);
             }

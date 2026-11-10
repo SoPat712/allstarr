@@ -35,11 +35,13 @@ public sealed class MemoryApplicationCache(
                     _recent.Remove(node);
                     _recent.AddLast(node);
                     _hits++;
+                    RequestTiming.Current?.NoteCache(true);
                     return Task.FromResult<string?>(node.Value.Value);
                 }
                 Remove(node);
             }
             _misses++;
+            RequestTiming.Current?.NoteCache(false);
             return Task.FromResult<string?>(null);
         }
     }

@@ -133,7 +133,8 @@ public sealed partial class ListeningStatsService(IDbContextFactory<AllstarrDbCo
         var finished = await db.ListeningEvents.AsNoTracking().LongCountAsync(item => item.OwnerUserId == owner && item.State == ListeningEventState.Completed, token);
         var key = (scope, interval, synthetic, plays, finished, cleanOnly, policy?.PreferenceRevision);
         if (!cleanOnly && cache.TryGetValue(key, out (ListeningStats Stats, DateTimeOffset ExpiresAt) cached) && cached.ExpiresAt > clock.UtcNow + ahead)
-            return cached.Stats;
+        { RequestTiming.Current?.NoteCache(true); return cached.Stats; }
+        RequestTiming.Current?.NoteCache(false);
         var result = await ReadAsync(db, scope, interval, zone, token, clock.UtcNow, tags, cleanOnly, jellyfin, libraryAccess, http?.HttpContext?.Request.Headers);
         cache.Set(key, (result, clock.UtcNow + KeptFor), new MemoryCacheEntryOptions
         {

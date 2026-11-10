@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text;
+using allstarr.Core.Operations;
 
 namespace allstarr.Middleware;
 
@@ -39,19 +40,55 @@ public class RequestLoggingMiddleware
 
     public async Task InvokeAsync(HttpContext context)
     {
+        using var timing = _configuration.GetValue("Diagnostics:ServerTimingEnabled", true) ? RequestTiming.Begin() : null;
+        var started = Stopwatch.GetTimestamp();
+        long? answered = null;
+        RequestTiming.Result? result = null;
+        context.Response.OnStarting(() =>
+        {
+            answered = Stopwatch.GetTimestamp();
+            if (timing != null)
+            {
+                result ??= timing.Snapshot(RouteLabel(context));
+                context.Response.Headers["Server-Timing"] = result.Header;
+            }
+            return Task.CompletedTask;
+        });
+        try { await InvokeLoggedAsync(context); }
+        finally
+        {
+            NoteSlowOrFailed(context, started, answered);
+            if (timing != null && _logger.IsEnabled(LogLevel.Debug))
+            {
+                result ??= timing.Snapshot(RouteLabel(context));
+                _logger.LogDebug("Request timing {Method} {Route} answered {StatusCode}: total {TotalMs:F1} ms, jellyfin {JellyfinMs:F1} ms ({JellyfinCalls} calls), db {DbMs:F1} ms, provider {ProviderMs:F1} ms, cache {Cache}",
+                    context.Request.Method, result.Route, context.Response.StatusCode, result.TotalMs, result.JellyfinMs,
+                    result.JellyfinCalls, result.DbMs, result.ProviderMs, result.Cache);
+            }
+        }
+    }
+
+    private static string RouteLabel(HttpContext context)
+    {
+        var path = context.Request.Path;
+        if (path.StartsWithSegments("/api") || context.Connection.LocalPort == 5275) return "admin";
+        if (path.StartsWithSegments("/rest")) return "subsonic";
+        if (!path.StartsWithSegments("/allstarr/v1", out var remaining)) return "jellyfin";
+        if (remaining.StartsWithSegments("/me/sound")) return "sound";
+        if (remaining.StartsWithSegments("/me/stats")) return "stats";
+        if (remaining.StartsWithSegments("/me/taste")) return "taste";
+        if (remaining.StartsWithSegments("/mixes")) return "mixes";
+        if (remaining.StartsWithSegments("/lyrics")) return "lyrics";
+        return "client";
+    }
+
+    private async Task InvokeLoggedAsync(HttpContext context)
+    {
         // Check configuration on every request to allow dynamic toggling
         var logAllRequests = _configuration.GetValue<bool>("Debug:LogAllRequests");
         if (!logAllRequests)
         {
-            var started = Stopwatch.GetTimestamp();
-            long? answered = null;
-            context.Response.OnStarting(() =>
-            {
-                answered = Stopwatch.GetTimestamp();
-                return Task.CompletedTask;
-            });
-            try { await _next(context); }
-            finally { NoteSlowOrFailed(context, started, answered); }
+            await _next(context);
             return;
         }
 
@@ -97,9 +134,6 @@ public class RequestLoggingMiddleware
         }
 
         _logger.LogInformation(requestLog.ToString().TrimEnd());
-
-        // Capture response status
-        var originalBodyStream = context.Response.Body;
 
         try
         {

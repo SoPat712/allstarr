@@ -5,6 +5,7 @@ using allstarr.Services.Jellyfin;
 using allstarr.Core.Matching;
 using allstarr.Core.ManagedFiles;
 using allstarr.Core.Music;
+using allstarr.Core.Operations;
 using allstarr.Core.Routing;
 using allstarr.Core.Protocols;
 using allstarr.Core.Settings;
@@ -18,7 +19,12 @@ public sealed class LyricsSearchReader(LyricsSearchIndex index, IDbContextFactor
     IBackendLibraryAccessResolver libraries, IEffectiveProviderPolicyResolver policies, IProtocolProviderGateway providers, IProviderRouter router, JellyfinProxyService jellyfin, RecordingKeptFiles kept, ILogger<LyricsSearchReader> logger,
     LyricsSearchChanges changes, IRuntimeSettingsChangeSignal settings)
 {
-    public async Task<LyricsSearchResponse> ReadAsync(HttpContext http, ProtocolExecutionContext execution, string query, int limit)
+    public Task<LyricsSearchResponse> ReadAsync(HttpContext http, ProtocolExecutionContext execution, string query, int limit)
+        => ReadAsync(http, execution, query, limit, false);
+
+    internal Task WarmAsync(ProtocolExecutionContext execution) => ReadAsync(new DefaultHttpContext(), execution, "", 1, true);
+
+    private async Task<LyricsSearchResponse> ReadAsync(HttpContext http, ProtocolExecutionContext execution, string query, int limit, bool warmOnly)
     {
         var total = Stopwatch.StartNew();
         var stage = Stopwatch.StartNew();
@@ -42,6 +48,7 @@ public sealed class LyricsSearchReader(LyricsSearchIndex index, IDbContextFactor
             JsonSerializer.Serialize(policy, ClientApiContract.JsonOptions),
             JsonSerializer.Serialize(access, ClientApiContract.JsonOptions), documents, changes.Version, settings.Version);
         var cached = index.ListenerCache.Get<Visibility>(cacheKey);
+        RequestTiming.Current?.NoteCache(cached != null);
         await using var db = await factory.CreateDbContextAsync(token);
         if (cached == null)
         {
@@ -89,6 +96,7 @@ public sealed class LyricsSearchReader(LyricsSearchIndex index, IDbContextFactor
             });
         }
         else Timed("visibility-cache");
+        if (warmOnly) return new([], false);
         var visibleDocuments = cached.Documents;
         var visibleByItem = cached.ByItem;
         var rows = await db.RecordingLyricsChoices.AsNoTracking().Where(choice => choice.RevokedAt == null &&

@@ -301,6 +301,10 @@ builder.Services.AddControllers()
 builder.Services.AddAdminSignInRateLimiting();
 
 builder.Services.AddHttpClient();
+builder.Services.ConfigureAll<Microsoft.Extensions.Http.HttpClientFactoryOptions>(options => options.HttpMessageHandlerBuilderActions.Add(http =>
+    http.AdditionalHandlers.Add(new RequestTimingHandler(http.Name is "JellyfinBackend" or "SubsonicBackend" or "BackendLibraryAccess" or
+        "JellyfinLibraryCatalog" or "SubsonicLibraryCatalog" or "MatchLibrary" or "JellyfinLibraryRefresh" or "SubsonicLibraryRefresh" or
+        LibraryBackendBrandResolver.HttpClientName or BackendConnectionVerifier.HttpClientName))));
 builder.Services.ConfigureHttpClientDefaults(client => client.AddHttpMessageHandler(() => new allstarr.Core.Intelligence.HistoryRequestBudgetHandler()));
 builder.Services.Configure<OdesliSettings>(builder.Configuration.GetSection("Odesli"));
 builder.Services.AddHttpClient("Odesli", client => client.Timeout = TimeSpan.FromSeconds(6)).RemoveAllLoggers()
@@ -716,7 +720,7 @@ builder.Services.AddCors(options =>
     {
         policy.WithMethods(corsAllowedMethods.ToArray())
             .WithHeaders(corsAllowedHeaders.ToArray())
-            .WithExposedHeaders("X-Content-Duration", "X-Total-Count", "X-Nd-Authorization");
+            .WithExposedHeaders("X-Content-Duration", "X-Total-Count", "X-Nd-Authorization", "Server-Timing");
 
         if (corsAllowedOrigins.Count > 0)
         {
@@ -741,12 +745,11 @@ app.UseMiddleware<AdminResponseHeadersMiddleware>();
 
 // Downstream policies must see only the forwarded identity accepted by the trust policy.
 app.UseForwardedHeaders();
+app.UseMiddleware<RequestLoggingMiddleware>();
 app.UseMiddleware<ClientApiMiddleware>();
 
-// Drop high-confidence scanner paths before they hit the proxy or request logging.
+// Drop high-confidence scanner paths before they hit the proxy.
 app.UseMiddleware<BotProbeBlockMiddleware>();
-
-app.UseMiddleware<RequestLoggingMiddleware>();
 
 app.UseExceptionHandler();
 

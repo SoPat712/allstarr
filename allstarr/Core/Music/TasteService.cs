@@ -73,7 +73,9 @@ public sealed partial class TasteService(IDbContextFactory<AllstarrDbContext> fa
         foreach (var key in document.Occurrences.Where(item => item.Value.At < now.AddDays(-8)).Select(item => item.Key).ToArray()) document.Occurrences.Remove(key);
     }
 
-    private async Task<TasteDocument> LoadAsync(Guid user, CancellationToken token, IReadOnlyList<ListeningEventRecord>? history = null)
+    internal async Task WarmAsync(Guid user, CancellationToken token) => await LoadAsync(user, token, background: true);
+
+    private async Task<TasteDocument> LoadAsync(Guid user, CancellationToken token, IReadOnlyList<ListeningEventRecord>? history = null, bool background = false)
     {
         await using var db = await factory.CreateDbContextAsync(token);
         await RequireUser(db, user, token);
@@ -88,9 +90,11 @@ public sealed partial class TasteService(IDbContextFactory<AllstarrDbContext> fa
             return loaded.TryGetValue(user, out var known) && known.Revision == revision && known.Plays == plays && known.Tags == SharedTagStore.Changes && now - known.At < LoadedFor &&
                 !known.Document.Nudges.Any(item => item.ExpiresAt <= now) ? known.Document : null;
         }
-        if (Known() is { } current) return current;
-        var gate = loading.GetOrAdd(user, _ => new(1, 1));
-        await gate.WaitAsync(token);
+        if (Known() is { } current) { RequestTiming.Current?.NoteCache(true); return current; }
+        RequestTiming.Current?.NoteCache(false);
+        // Background reads do not own the gate that foreground readers wait on.
+        var gate = background ? null : loading.GetOrAdd(user, _ => new(1, 1));
+        if (gate != null) await gate.WaitAsync(token);
         try
         {
             if (Known() is { } finished) return finished;
@@ -107,7 +111,7 @@ public sealed partial class TasteService(IDbContextFactory<AllstarrDbContext> fa
             loaded[user] = result;
             return document;
         }
-        finally { gate.Release(); }
+        finally { gate?.Release(); }
     }
 
     private TasteScales Scales(TasteDocument document)

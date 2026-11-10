@@ -26,10 +26,10 @@ public sealed partial class PersonalMixService
             new(new(ProviderAudioQuality.Any, ProviderAudioQuality.HighResolution, true), ProviderExplicitContentPolicy.Allow,
                 false, false, false, [account.ProviderId]), "service-feeds", execution.CorrelationId, clock.UtcNow.AddMinutes(5), token);
 
-    private async Task<PersonalMix[]> ServiceFeedCardsAsync(UserRecord user, CancellationToken token, bool refresh = true, bool queuePreparation = true)
+    private async Task<PersonalMix[]> ServiceFeedCardsAsync(UserRecord user, CancellationToken token, bool refresh = true, bool queuePreparation = true, bool background = false)
     {
         if (registry == null) return [];
-        await feedReads.WaitAsync(token);
+        if (!background) await feedReads.WaitAsync(token);
         try
         {
             await using var db = await factory.CreateDbContextAsync(token);
@@ -125,12 +125,12 @@ public sealed partial class PersonalMixService
             }
             return result.ToArray();
         }
-        finally { feedReads.Release(); }
+        finally { if (!background) feedReads.Release(); }
     }
 
-    private async Task<IReadOnlyList<PersonalMix>> ServiceMixesAsync(UserRecord user, CancellationToken token, Guid? id = null, bool cardsOnly = false)
+    private async Task<IReadOnlyList<PersonalMix>> ServiceMixesAsync(UserRecord user, CancellationToken token, Guid? id = null, bool cardsOnly = false, bool background = false)
     {
-        var cards = await ServiceFeedCardsAsync(user, token, refresh: id == null);
+        var cards = await ServiceFeedCardsAsync(user, token, refresh: !background && id == null, queuePreparation: !background, background: background);
         var linked = await ExternalMixesAsync(user, token, id, cardsOnly, cards);
         await using var db = await factory.CreateDbContextAsync(token);
         var links = await ExternalLinks(db, user).AsNoTracking().OrderByDescending(link => link.Enabled).ThenBy(link => link.CreatedAt).ToArrayAsync(token);
