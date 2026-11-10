@@ -50,11 +50,14 @@ public sealed partial class PersonalMixService
                 var saved = await rows.OrderByDescending(item => item.SnapshotVersion).FirstOrDefaultAsync(token);
                 var cards = saved == null ? [] : JsonSerializer.Deserialize<PersonalMix[]>(saved.PayloadJson)!;
                 var due = refresh && (saved == null || saved.ProviderRevision != revision || clock.UtcNow - saved.RetrievedAt >= FeedWindow);
+                // The background refresh job also prepares the feed's songs, so it replaces the preparation queued below.
+                var queued = false;
                 if (due && saved != null && queuePreparation && jobQueue != null)
                 {
                     var generation = new DateTimeOffset(clock.UtcNow.UtcTicks / FeedWindow.Ticks * FeedWindow.Ticks, TimeSpan.Zero);
                     await QueueServiceFeedPreparationAsync(user.Id, account, 0, generation, token);
                     due = false;
+                    queued = true;
                 }
                 if (due)
                 {
@@ -139,7 +142,7 @@ public sealed partial class PersonalMixService
                     if (complete && coverImages != null) WarmCovers(user.Id, cards);
                     await rows.Where(item => item.SnapshotVersion <= version - KeptDocuments).ExecuteDeleteAsync(token);
                 }
-                if (queuePreparation && saved != null)
+                if (queuePreparation && saved != null && !queued)
                     await QueueServiceFeedPreparationAsync(user.Id, account, 0, saved.RetrievedAt, token);
                 result.AddRange(cards);
             }

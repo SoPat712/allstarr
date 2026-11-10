@@ -48,7 +48,7 @@ public partial class JellyfinController
         HttpContext.RequestAborted = linked.Token;
         try
         {
-            var pending = Task.Run(read);
+            var pending = read();
             _ = pending.ContinueWith(task => { _ = task.Exception; }, CancellationToken.None,
                 TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
             var result = await pending.WaitAsync(linked.Token);

@@ -232,7 +232,10 @@ public sealed partial class TrackIdentityServiceTests
         Assert.Equal("ext-deezer-album-release", (await gateway.GetStoredAlbumAsync(protocol, "deezer", "release"))!.Id);
         Assert.Equal("ext-deezer-artist-performer", (await gateway.GetStoredArtistAsync(protocol, "deezer", "performer"))!.Id);
         Assert.Null(await gateway.GetStoredSongAsync(DisplayProtocol(kind), "deezer", "missing"));
+        // Song details stay fresh for a day and are served stale for up to a week.
         _clock.Advance(TimeSpan.FromMinutes(6));
+        Assert.NotNull(await gateway.GetStoredSongAsync(protocol, "deezer", "unplayed"));
+        _clock.Advance(TimeSpan.FromDays(8));
         Assert.Null(await gateway.GetStoredSongAsync(protocol, "deezer", "unplayed"));
     }
 
