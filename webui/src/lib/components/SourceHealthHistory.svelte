@@ -139,7 +139,7 @@
   }
 
   const emptyLabel = $derived(checksSupported ? "No checks yet" : "This source isn't checked automatically");
-  const empty = $derived(history !== null && history.checks.length === 0 && !loading && !error);
+  const empty = $derived(history !== null && history.checks.length === 0);
   const recentChecks = $derived(history?.checks.slice(0, 30) ?? []);
   const stripSlots = $derived([...Array<null>(30 - recentChecks.length).fill(null), ...recentChecks.toReversed()]);
   const activeCheck = $derived(activeSlot === null ? null : stripSlots[activeSlot]);
@@ -238,7 +238,7 @@
 <section class="check-history" aria-label="Last 30 checks">
   <h3>Last 30 checks</h3>
   {#if loading}<RowsSkeleton count={1} />
-  {:else if error}<ErrorState title="Checks could not be loaded" onretry={() => load(true)} />
+  {:else if error && !history}<ErrorState title="Checks could not be loaded" onretry={() => load(true)} />
   {:else}
     <div class="check-strip-anchor">
       <!-- One tab stop describes the current check while arrow keys explore the group. -->

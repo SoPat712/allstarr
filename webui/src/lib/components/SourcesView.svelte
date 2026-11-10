@@ -42,6 +42,7 @@
     type ScrobbleDelivery,
   } from "$lib/api";
   import ConnectivityBars from "$lib/components/ConnectivityBars.svelte";
+  import SourceUseSettings from "$lib/components/SourceUseSettings.svelte";
   import ProviderArtwork from "$lib/components/ProviderArtwork.svelte";
   import PlaylistConsent from "$lib/components/PlaylistConsent.svelte";
   import SelectField from "$lib/components/SelectField.svelte";
@@ -673,7 +674,7 @@
 </script>
 
 {#snippet sourceUseAndFacts(source: ProviderDefinition)}
-  {#await import("$lib/components/SourceUseSettings.svelte") then { default: SourceUseSettings }}<SourceUseSettings providerId={source.id} {administrator} onSaved={refresh} onUndo={(providerId, run) => sourceUndo = { providerId, run }} />{/await}
+  <SourceUseSettings providerId={source.id} {administrator} onSaved={refresh} onUndo={(providerId, run) => sourceUndo = { providerId, run }} />
   <dl class="source-facts"><dt>Quality</dt><dd>{qualityOf(source.id) || "Not measured yet"}</dd><dt>Score</dt><dd>{scoreOf(source.id) ?? "Not measured yet"}</dd><dt>Accounts</dt><dd>{providerAccounts(source.id).filter(account => account.enabled).length} of {providerAccounts(source.id).length} on</dd><dt>Start time</dt><dd>{sourceStartTimeLabel(measurements.find(item => item.providerId === source.id), scores.find(item => item.providerId.toLowerCase() === source.id.toLowerCase()))}</dd></dl>
 {/snippet}
 
@@ -978,7 +979,7 @@
               {#each accountSettings(pageSource ?? { id: panelAccount.providerId, name: panelAccount.displayName }) as field}<dt>{field.label}</dt><dd>{accountSettingValue(panelAccount, field)}</dd>{/each}
             </dl>
             {#if panelAccount.canManage}
-              <div class="account-send-setting"><div><strong>{["lastfm", "listenbrainz", "multi-scrobbler", "koito"].includes(panelAccount.providerId) ? "Send listens" : "Use this account"}</strong><small>Pause without removing this account</small></div>{#key `${panelAccount.id}:${panelAccount.revision}:${action}`}<Switch checked={panelAccount.enabled} aria-label="Use this account" disabled={Boolean(action)} onchange={() => void toggle(panelAccount)} />{/key}</div>
+              <div class="account-send-setting"><div><strong>{["lastfm", "listenbrainz", "multi-scrobbler", "koito"].includes(panelAccount.providerId) ? "Send listens" : "Use this account"}</strong><small>Pause without removing this account</small></div><Switch checked={panelAccount.enabled} aria-label="Use this account" disabled={Boolean(action)} onclick={event => { event.preventDefault(); void toggle(panelAccount); }} /></div>
               <Button variant="outline" onclick={() => configure(panelAccount)}>Reconnect</Button>
             {/if}
             {#if panelAccount.canChangeAudience}<Button variant="text" onclick={() => manageAccess(panelAccount)}>Edit access</Button>{/if}

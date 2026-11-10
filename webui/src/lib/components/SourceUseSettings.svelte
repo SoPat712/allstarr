@@ -17,7 +17,7 @@
   $effect(() => {
     const id = providerId;
     let current = true;
-    generation++; data = null; failed = false;
+    generation++; failed = false;
     providerUse.get().then(result => { if (current && id === providerId) data = result; }).catch(() => { if (current) failed = true; });
     return () => { current = false; };
   });

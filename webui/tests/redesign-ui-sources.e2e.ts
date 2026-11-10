@@ -7,9 +7,9 @@ const providers = [
   { id: "listenbrainz", name: "ListenBrainz", categories: ["scrobbling"], accountSettings: [{ key: "token", label: "Listening service token", type: "text", sensitive: true, required: true }] },
 ];
 
-async function fixture(page: Page) {
+async function fixture(page: Page, definitions = providers) {
   let granted = true, revision = 1;
-  const useModes = new Map(providers.map(provider => [provider.id, "automatic"]));
+  const useModes = new Map(definitions.map(provider => [provider.id, "automatic"]));
   let accounts = ["apple-musickit", "listenbrainz"].map((providerId, i) => ({ id: `account-${i}`, providerId, displayName: "Listener", ownerDisplayName: "Listener", ownerUserId: "listener", scope: i ? "Personal" : "Shared", canManage: true, canChangeAudience: true, revision: 1, enabled: true, secret: { configured: true, revoked: false }, createdAt: "2026-10-28T12:00:00Z", configuredFields: ["token"] }));
   let listens = ["First song", "Second song"].map((title, index) => ({ id: `listen-${index}`, revision: 1, targetId: "listenbrainz", state: "permanentfailure", kind: "completed", canResend: true, canConfirm: true, canDismiss: false, providerCode: "destination-unbound", suggestedDestinationAccountId: "account-1", availableDestinationAccountIds: ["account-1"], requiresReauthentication: false, sendCount: 0, safeMessage: "The destination needs confirming", updatedAt: "2026-11-03T12:00:00Z", submission: { title, artist: "An artist", occurredAt: "2026-11-03T12:00:00Z" } }));
   const writes: { path: string; body: Record<string, unknown> }[] = [];
@@ -26,7 +26,7 @@ async function fixture(page: Page) {
     if (request.method() !== "GET") writes.push({ path, body: request.postData() ? request.postDataJSON() : {} });
     if (path.endsWith("/auth/me")) body = { authenticated: true, backend: "Jellyfin", user: { id: "listener", allstarrUserId: "listener", name: "Listener", isAdministrator: true } };
     if (path.endsWith("/onboarding/status")) body = { completed: true, shouldRedirectToSetup: false, setupOpen: false, completedSteps: [], recoveryNotices: [], migration: {} };
-    if (path.endsWith("/ui/schema")) body = { activeBackend: "Jellyfin", providers };
+    if (path.endsWith("/ui/schema")) body = { activeBackend: "Jellyfin", providers: definitions };
     if (path === "/api/admin/provider-accounts") {
       if (request.method() === "POST") { const input = request.postDataJSON(); const account = { ...accounts[0], ...input, id: "new-account" }; accounts.push(account); body = account; }
       else body = { accounts, audienceUsers: [{ id: "listener", displayName: "Listener" }] };
@@ -42,7 +42,7 @@ async function fixture(page: Page) {
     if (path.endsWith("/health-history")) body = { capturedAt: "2026-11-03T12:00:00Z", counts: { passed: 1, failed: 1, neutral: 0 }, checks: [{ outcome: "failed", capability: "streaming", accountLabel: "Public", testedAt: "2026-11-03T12:00:00Z" }, { outcome: "passed", capability: "streaming", accountLabel: "Public", testedAt: "2026-11-02T12:00:00Z" }] };
     if (path.startsWith("/api/admin/providers/use")) {
       if (request.method() === "PUT") { useModes.set(path.split("/").at(-1)!, request.postDataJSON().mode); revision++; }
-      body = { householdRevision: String(revision), personalRevision: "1", providers: providers.map(provider => ({ providerId: provider.id, householdMode: useModes.get(provider.id), personalMode: null, effectiveMode: useModes.get(provider.id), canChoosePersonal: useModes.get(provider.id) !== "off" })) };
+      body = { householdRevision: String(revision), personalRevision: "1", providers: definitions.map(provider => ({ providerId: provider.id, householdMode: useModes.get(provider.id), personalMode: null, effectiveMode: useModes.get(provider.id), canChoosePersonal: useModes.get(provider.id) !== "off" })) };
     }
     if (path.includes("/providers/test/")) body = { success: true, healthy: true };
     if (path === "/api/admin/scrobbling/deliveries") body = { items: listens };
@@ -586,4 +586,169 @@ test("Sources accounts header omits incomplete delivery totals until earlier lis
   await earlier.click();
   await expect(status).toContainText("101 can't be sent");
   await expect(status).not.toContainText("waiting");
+});
+
+async function watchPanel(page: Page, sections: string[]) {
+  await page.locator("[data-side-panel]").evaluate((panel, selectors) => {
+    const groups = selectors.map(selector => {
+      const roots = [...panel.querySelectorAll(selector)];
+      if (!roots.length) throw new Error(`Missing panel section: ${selector}`);
+      return { selector, elements: new Set(roots.flatMap(root => [root, ...root.querySelectorAll("*")])), removed: 0 };
+    });
+    const observer = new MutationObserver(records => {
+      for (const record of records) for (const group of groups) {
+        if (record.target instanceof Element && group.elements.has(record.target)) {
+          for (const node of record.addedNodes) if (node instanceof Element)
+            for (const element of [node, ...node.querySelectorAll("*")]) group.elements.add(element);
+        }
+        for (const node of record.removedNodes) if (node instanceof Element)
+          for (const element of [node, ...node.querySelectorAll("*")]) if (group.elements.has(element)) group.removed++;
+      }
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+    Object.assign(window, { panelRemovals: () => Object.fromEntries(groups.map(group => [group.selector, group.removed])) });
+  }, sections);
+}
+
+const panelRemovals = (page: Page) => page.evaluate(() =>
+  (window as unknown as { panelRemovals: () => Record<string, number> }).panelRemovals());
+
+async function queuePanelFollowUps(page: Page) {
+  const item = { id: "qobuz", extensionId: "qobuz", displayName: "Qobuz", version: "1.0.0",
+    lifecycle: "installed", state: "active", active: true, installed: true, revision: 1,
+    permissionReviewRequired: false, hasPermissions: false, capabilities: ["streaming"] };
+  await page.route("**/api/admin/extensions/packages", route => route.fulfill({ json: [item] }));
+  await page.goto("#/sources/services/qobuz?section=configuration");
+  const panel = page.getByRole("dialog", { name: "Qobuz", exact: true });
+  await panel.getByRole("button", { name: "Manage extension", exact: true }).click();
+  const refreshed = ["/ui/schema", "/provider-accounts", "/ui/provider-summaries", "/providers/status", "/deep-stream/latest", "/config"]
+    .map(path => page.waitForResponse(response => new URL(response.url()).pathname.endsWith(path)));
+  await page.getByRole("menuitem", { name: "Disable", exact: true }).press("Enter");
+  await Promise.all((await Promise.all(refreshed)).map(response => response.finished()));
+  await expect(page.getByText("Extension disabled.", { exact: true })).toBeVisible();
+  await expect(panel.getByRole("button", { name: "Manage extension", exact: true })).toBeEnabled();
+}
+
+test("Sources paused panel keeps its elements across refreshes and replaces them on source change", async ({ page }) => {
+  await page.clock.install({ time: new Date("2026-11-10T12:00:00Z") });
+  await page.clock.pauseAt(new Date("2026-11-10T12:00:01Z"));
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  const genius = { id: "genius", name: "Genius", implementationOrigin: "built-in", categories: ["lyrics"],
+    runtimeCapabilities: [{ id: "lyrics", health: "degraded", ready: false, canTest: true, reasonCode: "timeout", testedAt: "2026-11-10T12:00:00Z" }] };
+  await fixture(page, [...providers, genius]);
+  let reads = 0, historyReads = 0, retryPassed = false;
+  await page.route("**/api/admin/providers/status", route => {
+    reads++;
+    return route.fulfill({ json: [{ provider: "genius", capability: "lyrics", supported: true, enabled: true,
+      configuration: "configured", health: "degraded", ready: false, canAttempt: false, canTest: true,
+      automaticPausedAt: "2026-11-10T11:59:00Z", automaticRetryAt: retryPassed ? null : "2026-11-10T12:00:02Z",
+      failureCount: reads, reasonCode: "timeout", automaticPauseReasonCode: "timeout" }] });
+  });
+  await page.route("**/health-history?*", route => {
+    historyReads++;
+    return route.fulfill({ json: { capturedAt: "2026-11-10T12:00:00Z", counts: { passed: 0, failed: historyReads, neutral: 0 },
+      checks: [{ outcome: "failed", capability: "lyrics", accountLabel: "Public access", accountScope: "public",
+        testedAt: "2026-11-10T12:00:00Z", reasonCode: "timeout", latencyMs: historyReads }] } });
+  });
+  await queuePanelFollowUps(page);
+  await page.evaluate(() => { location.hash = "#/sources/services/genius"; });
+  const panel = page.getByRole("dialog", { name: "Genius", exact: true });
+  await expect(panel.getByRole("region", { name: "Automatic routing" })).toBeVisible();
+  await expect(panel.getByRole("radio", { name: "Follow", exact: true })).toHaveAttribute("aria-checked", "true");
+  await expect(panel.locator(".check-strip")).toBeVisible();
+  await panel.locator(".check-details > summary").click();
+  await panel.locator(".source-more > summary").click();
+  await expect(panel.locator(".service-advanced .extension-skeleton")).toHaveCount(0);
+  const sections = [".source-use-settings", ".source-facts", ".check-history", ".check-details", ".source-more"];
+  const original = await panel.locator(".source-facts").elementHandle();
+  await watchPanel(page, sections);
+  const unchanged = Object.fromEntries(sections.map(section => [section, 0]));
+  const refresh = async (trigger: () => Promise<unknown>) => {
+    const previous = reads, previousHistory = historyReads;
+    await trigger();
+    await expect.poll(() => reads).toBeGreaterThan(previous);
+    await expect.poll(() => historyReads).toBeGreaterThan(previousHistory);
+    await expect(panel.locator(".check-details > summary")).toContainText(`${historyReads} failed`);
+    await expect(panel.locator(".check-details")).toHaveAttribute("open", "");
+    await expect(panel.locator(".source-more")).toHaveAttribute("open", "");
+    expect(await panelRemovals(page)).toEqual(unchanged);
+  };
+  await refresh(() => page.getByRole("button", { name: "Refresh", exact: true }).click());
+  await refresh(async () => { retryPassed = true; await page.clock.runFor(2_100); });
+  await refresh(async () => {
+    await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+    await page.clock.runFor(300);
+  });
+  for (const delay of [3_000, 10_000, 30_000]) await refresh(() => page.clock.runFor(delay));
+  const documentRequests: string[] = [];
+  page.on("request", request => { if (request.isNavigationRequest()) documentRequests.push(request.url()); });
+  await panel.getByRole("button", { name: "Next source", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "Qobuz", exact: true })).toBeVisible();
+  expect(documentRequests).toEqual([]);
+  await expect.poll(async () => (await panelRemovals(page))[".source-use-settings"]).toBeGreaterThan(0);
+  expect(await original!.evaluate(element => element.isConnected)).toBe(false);
+  expect(await page.pageErrors()).toEqual([]);
+});
+
+test("Sources account panel keeps its elements across refreshed revisions", async ({ page }) => {
+  await page.clock.install({ time: new Date("2026-11-10T12:00:00Z") });
+  await page.clock.pauseAt(new Date("2026-11-10T12:00:01Z"));
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await fixture(page);
+  let reads = 0;
+  await page.route("**/api/admin/provider-accounts", route => {
+    reads++;
+    return route.fulfill({ json: { accounts: [{ id: "account-1", providerId: "listenbrainz", displayName: "Listener",
+      ownerDisplayName: `Listener ${reads}`, ownerUserId: "listener", scope: "Shared", canManage: true,
+      canChangeAudience: true, revision: reads, enabled: reads % 2 === 1, secret: { configured: true, revoked: false },
+      createdAt: "2026-10-28T12:00:00Z", configuredFields: ["token"] }], audienceUsers: [] } });
+  });
+  const extensionLoaded = page.waitForResponse(response => new URL(response.url()).pathname.endsWith("/extensions/packages"));
+  await page.goto("#/sources/services/listenbrainz?from=accounts&account=account-1");
+  await (await extensionLoaded).finished();
+  const panel = page.getByRole("dialog", { name: "ListenBrainz", exact: true });
+  await expect(panel.getByRole("switch", { name: "Use this account", exact: true })).toBeVisible();
+  await expect(panel.locator(".service-advanced .extension-skeleton")).toHaveCount(0);
+  await expect(panel.locator(".delivery-groups")).toContainText("2 listens are waiting");
+  const sections = [".delivery-groups", ".source-facts", ".account-send-setting", ".source-more"];
+  await watchPanel(page, sections);
+  for (let refresh = 0; refresh < 3; refresh++) {
+    const previous = reads;
+    await page.getByRole("button", { name: "Refresh", exact: true }).click();
+    await expect.poll(() => reads).toBeGreaterThan(previous);
+    await expect(panel.locator(".source-facts")).toContainText(`Listener ${reads}`);
+    await expect(panel.getByRole("switch", { name: "Use this account", exact: true })).toBeChecked({ checked: reads % 2 === 1 });
+    expect(await panelRemovals(page)).toEqual(Object.fromEntries(sections.map(section => [section, 0])));
+  }
+  const enabled = reads % 2 === 1;
+  await page.route("**/api/admin/provider-accounts/account-1", route =>
+    route.fulfill({ status: 503, json: { error: "Unavailable" } }));
+  await panel.getByRole("switch", { name: "Use this account", exact: true }).click();
+  await expect(page.getByRole("region", { name: "Notifications", exact: true })).toContainText("Unavailable");
+  await expect(panel.getByRole("switch", { name: "Use this account", exact: true })).toBeEnabled();
+  await expect(panel.getByRole("switch", { name: "Use this account", exact: true })).toBeChecked({ checked: enabled });
+  expect(await panelRemovals(page)).toEqual(Object.fromEntries(sections.map(section => [section, 0])));
+  expect(await page.pageErrors()).toEqual([]);
+});
+
+test("Sources history keeps the strip and loaded checks during a failed refresh", async ({ page }) => {
+  await fixture(page);
+  let fail = false;
+  await page.route("**/health-history?*", route => fail
+    ? route.fulfill({ status: 503, json: { error: "Unavailable" } })
+    : route.fulfill({ json: { capturedAt: "2026-11-03T12:00:00Z", counts: { passed: 0, failed: 1, neutral: 0 },
+      checks: [{ outcome: "failed", capability: "streaming", accountLabel: "Public", testedAt: "2026-11-03T12:00:00Z" }] } }));
+  await page.goto("#/sources/services/qobuz");
+  const panel = page.getByRole("dialog", { name: "Qobuz", exact: true });
+  await expect(panel.getByRole("radio", { name: "Follow", exact: true })).toBeVisible();
+  await expect(panel.locator(".check-strip")).toBeVisible();
+  await panel.locator(".check-details > summary").click();
+  await expect(panel.locator(".check-details li")).toHaveCount(1);
+  await watchPanel(page, [".check-history", ".check-details"]);
+  fail = true;
+  await page.getByRole("button", { name: "Refresh", exact: true }).click();
+  await expect(panel.locator(".check-details")).toContainText("Showing the last loaded results.");
+  await expect(panel.locator(".check-strip")).toBeVisible();
+  await expect(panel.locator(".check-details li")).toHaveCount(1);
+  expect(await panelRemovals(page)).toEqual({ ".check-history": 0, ".check-details": 0 });
 });

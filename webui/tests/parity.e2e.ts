@@ -969,6 +969,21 @@ const routes = [
   ["#/settings/general", "Settings"],
 ] as const;
 
+for (const [width, theme] of [[1280, "dark"], [390, "light"]] as const) {
+  test(`Services page parity at ${width} ${theme}`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 900 });
+    await page.emulateMedia({ colorScheme: theme, reducedMotion: "reduce" });
+    await page.addInitScript(value => localStorage.setItem("allstarr.theme", value), theme);
+    await mockApi(page);
+    await page.goto("#/sources/services");
+    await expect(page.getByRole("region", { name: "Services status", exact: true })).toBeVisible();
+    await expect(page.locator(".source-row").first()).toBeVisible();
+    await page.evaluate(async () => { await document.fonts.ready; });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await page.screenshot({ path: testInfo.outputPath(`services-${width}-${theme}.png`), fullPage: true });
+  });
+}
+
 const stateRoutes = [
   ["#/", "Home", "Loading Home", "/api/admin/ui/home", ["/api/admin/ui/home", "/api/admin/ui/now-playing"]],
   ["#/library/playlists", "Library", "Loading playlists", "/api/admin/playlist-links", ["/api/admin/playlist-links"]],
