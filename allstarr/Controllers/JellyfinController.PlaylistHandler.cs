@@ -171,11 +171,16 @@ public partial class JellyfinController
         string playlistId,
         int? width = null,
         int? height = null,
-        string? requestedFormat = null)
+        string? requestedFormat = null,
+        string? cacheKey = null,
+        string? tag = null)
     {
         try
         {
             var (provider, externalId) = PlaylistIdHelper.ParsePlaylistId(playlistId);
+            if (cacheKey != null)
+                return await CachedImageAsync(cacheKey, provider, width ?? height, requestedFormat, token => ResolveExternalImageAsync(
+                    provider, "playlist", externalId, retryTransientFailures: true, width: width, height: height, imageRevision: tag, cancellationToken: token));
             var asset = await ResolveExternalImageAsync(
                 provider, "playlist", externalId, retryTransientFailures: true, width: width, height: height);
             return asset == null ? MissingExternalImage() : CreateFormattedImageResponse(asset, requestedFormat);

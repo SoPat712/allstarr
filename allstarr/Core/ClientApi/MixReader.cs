@@ -107,7 +107,7 @@ public sealed class MixReader(PersonalMixService mixes, IDbContextFactory<Allsta
     public async Task<MixCoverInput> CoverAsync(ProtocolExecutionContext execution, Guid mixId)
     {
         var owner = execution.RequireActor().EffectiveUserId!.Value;
-        var mix = await mixes.GetAsync(owner, mixId, execution.CancellationToken);
+        var mix = await mixes.GetCoverAsync(owner, mixId, execution.CancellationToken);
         var input = (await CoverInputsAsync(execution, [mix]))[mix.Id];
         if (mix.Kind == "external" && input.Source.Length == 0) throw new KeyNotFoundException("The synced mix's playlist is unavailable.");
         return input;

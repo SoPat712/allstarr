@@ -59,7 +59,7 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
     IBackendLibraryAccessResolver libraryAccess, AudioMuseDiscovery? audioMuse = null, SharedTagSources? tagSources = null, IProviderRegistry? registry = null, LastFmSimilarTracks? similarTracks = null,
     ILogger<PersonalMixService>? logger = null, IClientEventPublisher? events = null,
     ILibraryIndexService? libraryIndex = null, ITrackIdentityService? identities = null, PublicArtworkWarmer? artwork = null,
-    IPlaylistPersistenceService? playlistStore = null, DurableJobQueue? jobQueue = null, IPlaylistOrchestrationService? playlistSync = null, TrackMatchDecisionEngine? feedMatcher = null)
+    IPlaylistPersistenceService? playlistStore = null, DurableJobQueue? jobQueue = null, IPlaylistOrchestrationService? playlistSync = null, TrackMatchDecisionEngine? feedMatcher = null, MixCoverImageService? coverImages = null)
 {
     public const string PublishKey = "Mixes:PublishToApps", JobType = "mixes.refresh";
     // Saved songs carry dozens of empty fields; leaving them out keeps a listener's mixes well under the 1 MB a stored
@@ -199,6 +199,16 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
             RetrievedAt = clock.UtcNow
         });
         await db.SaveChangesAsync(token);
+        if (!preview && coverImages != null)
+        {
+            var before = previous == null ? null : JsonSerializer.Deserialize<PersonalMixDocument>(previous.PayloadJson);
+            var previousMixes = before?.Mixes.Values.ToDictionary(mix => mix.Id);
+            var changed = document.Mixes.Values.Where(mix => mix.Generation > 0 &&
+                (previousMixes == null || !previousMixes.TryGetValue(mix.Id, out var old) ||
+                 MixCoverImageService.Version(MixCoverInput.From(old)) != MixCoverImageService.Version(MixCoverInput.From(mix))))
+                .ToArray();
+            if (changed.Length > 0) WarmCovers(user.Id, changed);
+        }
         // Only the newest is ever read, and each one holds every mix.
         var oldest = (previous?.SnapshotVersion ?? 0) + 1 - KeptDocuments;
         await db.ExternalMetadataSnapshots.Where(item => item.OwnerUserId == user.Id && item.ProviderId == "allstarr" && item.ResourceKind == kind &&

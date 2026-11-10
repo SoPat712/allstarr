@@ -75,6 +75,7 @@ public partial class JellyfinController : ControllerBase
     private readonly IIntelligencePolicyService? _intelligencePolicies;
     private readonly ILibraryIndexService? _libraryIndex;
     private readonly MixCoverImageService _mixCoverImages;
+    private readonly ApplicationCacheRequestCoalescer _imageRequests;
 
     public JellyfinController(
         IOptions<JellyfinSettings> settings,
@@ -109,8 +110,9 @@ public partial class JellyfinController : ControllerBase
         ILibraryIndexService? libraryIndex = null,
         FavoriteViewReader? favoriteViews = null,
         UpcomingSongPreparation? upcomingSongs = null,
-        MixCoverImageService? mixCoverImages = null)
+        MixCoverImageService? mixCoverImages = null, ApplicationCacheRequestCoalescer? imageRequests = null)
     {
+        _imageRequests = imageRequests ?? new(new ApplicationCacheActivityMetrics());
         _settings = settings.Value;
         _mixCoverImages = mixCoverImages ?? new MixCoverImageService();
         _libraryIndex = libraryIndex;
@@ -216,7 +218,7 @@ public partial class JellyfinController : ControllerBase
             "playlist" => ProviderResourceKind.Playlist,
             _ => (ProviderResourceKind?)null
         };
-        var protocol = HttpContext.GetProtocolExecutionContext();
+        var protocol = ImageContext(cancellationToken);
         if (protocol?.Actor == null)
         {
             return kind.HasValue
@@ -493,13 +495,17 @@ public partial class JellyfinController : ControllerBase
             return NotFound();
         }
 
+        var imageKey = _virtualPlaylistProtocolAdapter.IsVirtualPlaylistId(itemId) || itemId.StartsWith("ext-", StringComparison.OrdinalIgnoreCase)
+            ? CacheKeyBuilder.BuildImageVariantKey(itemId, imageType, imageIndex, tag, maxWidth, maxHeight,
+                Request.Query["quality"], requestedFormat, HttpContext.GetProtocolExecutionContext()?.Actor?.EffectiveUserId)
+            : null;
         if (_virtualPlaylistProtocolAdapter.IsVirtualPlaylistId(itemId) || PlaylistIdHelper.IsExternalPlaylist(itemId))
         {
             var cover = await _virtualPlaylistProtocolAdapter.GetMixCoverAsync(
                 HttpContext.GetProtocolExecutionContext(), itemId, HttpContext.RequestAborted);
             if (cover != null)
                 return imageType.Equals("Primary", StringComparison.OrdinalIgnoreCase) && imageIndex == 0
-                    ? await _mixCoverImages.CreateResponseAsync(cover, HttpContext) : MissingExternalImage();
+                    ? await _mixCoverImages.CreateResponseAsync(cover, HttpContext, cacheVariant: imageKey) : MissingExternalImage();
         }
 
         if (_virtualPlaylistProtocolAdapter.IsVirtualPlaylistId(itemId))
@@ -508,14 +514,14 @@ public partial class JellyfinController : ControllerBase
                 HttpContext.GetProtocolExecutionContext(), itemId, HttpContext.RequestAborted);
             if (sourceId == null) return MissingExternalImage();
             return PlaylistIdHelper.IsExternalPlaylist(sourceId)
-                ? await GetPlaylistImage(sourceId, maxWidth, maxHeight, requestedFormat)
+                ? await GetPlaylistImage(sourceId, maxWidth, maxHeight, requestedFormat, imageKey, tag)
                 : await RelayCurrentRequestToPlaylistTargetAsync(
                     Request.Path.Value!, itemId, sourceId);
         }
 
         if (PlaylistIdHelper.IsExternalPlaylist(itemId))
         {
-            return await GetPlaylistImage(itemId, maxWidth, maxHeight, requestedFormat);
+            return await GetPlaylistImage(itemId, maxWidth, maxHeight, requestedFormat, imageKey, tag);
         }
 
         var (isExternal, provider, type, externalId) = _localLibraryService.ParseExternalId(itemId);
@@ -525,39 +531,34 @@ public partial class JellyfinController : ControllerBase
             return await RelayCurrentRequestAsync(Request.Path.Value!.TrimStart('/'));
         }
 
-        try
-        {
-            var asset = await ResolveExternalImageAsync(
-                provider!, type!, externalId!, retryTransientFailures: true,
-                maxWidth, maxHeight);
-            if (asset != null) return CreateFormattedImageResponse(asset, requestedFormat);
-        }
-        catch (OperationCanceledException) when (HttpContext.RequestAborted.IsCancellationRequested)
-        {
-            return MissingExternalImage();
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to fetch cover art for {Provider}/{ExternalId}", provider, externalId);
-        }
+        return await CachedImageAsync(imageKey!, provider!, maxWidth ?? maxHeight, requestedFormat, ReadAsync);
 
-        if (type == "song" && HttpContext.GetProtocolExecutionContext() is { } protocol)
+        async Task<ResolvedMediaAsset?> ReadAsync(CancellationToken token)
         {
             try
             {
-                var song = await _providerGateway.GetStoredSongAsync(protocol, provider!, externalId!);
-                var album = _localLibraryService.ParseExternalId(song?.AlbumId ?? "");
-                if (album.isExternal && album.type == "album")
-                {
-                    var asset = await ResolveExternalImageAsync(album.provider!, "album", album.externalId!,
-                        width: maxWidth, height: maxHeight, storedOnly: true);
-                    if (asset != null) return CreateFormattedImageResponse(asset, requestedFormat);
-                }
+                var asset = await ResolveExternalImageAsync(provider!, type!, externalId!, retryTransientFailures: true,
+                    maxWidth, maxHeight, imageRevision: tag, cancellationToken: token);
+                if (asset != null) return asset;
             }
-            catch (OperationCanceledException) when (HttpContext.RequestAborted.IsCancellationRequested) { }
-            catch (Exception ex) { _logger.LogDebug(ex, "Stored album artwork unavailable for {ItemId}", itemId); }
+            catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
+            catch (Exception ex) { _logger.LogWarning(ex, "Failed to fetch cover art for {Provider}/{ExternalId}", provider, externalId); }
+
+            if (type == "song" && HttpContext.GetProtocolExecutionContext() is { } protocol)
+            {
+                try
+                {
+                    var song = await _providerGateway.GetStoredSongAsync(ImageContext(token)!, provider!, externalId!);
+                    var album = _localLibraryService.ParseExternalId(song?.AlbumId ?? "");
+                    if (album.isExternal && album.type == "album")
+                        return await ResolveExternalImageAsync(album.provider!, "album", album.externalId!,
+                            width: maxWidth, height: maxHeight, storedOnly: true, imageRevision: tag, cancellationToken: token);
+                }
+                catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
+                catch (Exception ex) { _logger.LogDebug(ex, "Stored album artwork unavailable for {ItemId}", itemId); }
+            }
+            return null;
         }
-        return MissingExternalImage();
     }
 
     [HttpGet("Items/{itemId}/Images/{imageType}/{imageIndex}/{tag}/{format}/{maxWidth}/{maxHeight}/{percentPlayed}/{unplayedCount}")]
@@ -585,8 +586,11 @@ public partial class JellyfinController : ControllerBase
         bool retryTransientFailures = false,
         int? width = null,
         int? height = null,
-        bool storedOnly = false)
+        bool storedOnly = false,
+        string? imageRevision = null,
+        CancellationToken? cancellationToken = null)
     {
+        var requestToken = cancellationToken ?? HttpContext.RequestAborted;
         var actor = HttpContext.GetProtocolExecutionContext()?.Actor;
         // Separate revisions keep shared source artwork from reusing a listener-scoped saved-song fallback.
         var revision = resourceKind switch
@@ -595,6 +599,8 @@ public partial class JellyfinController : ControllerBase
             "song" => JellyfinItemArtwork.AlbumArtRevision,
             _ => null
         };
+        var sourceRevision = revision;
+        if (imageRevision != null) revision += ":" + imageRevision;
         var identity = new MediaAssetIdentity(
             resourceKind is "song" or "album" or "artist" ? null : actor?.EffectiveUserId,
             null,
@@ -611,7 +617,7 @@ public partial class JellyfinController : ControllerBase
             async Task<MediaAssetSource?> Fetch()
             {
                 if (resourceKind == "playlist" &&
-                    HttpContext.GetProtocolExecutionContext() is { Actor: not null } protocol)
+                    ImageContext(token) is { Actor: not null } protocol)
                 {
                     var artwork = await _providerGateway.ResolvePlaylistArtworkAsync(
                         protocol, provider, resourceId, MaximumArtworkBytes);
@@ -620,7 +626,7 @@ public partial class JellyfinController : ControllerBase
                 }
 
                 var coverUrl = storedOnly
-                    ? (await _providerGateway.GetStoredAlbumAsync(HttpContext.RequireProtocolExecutionContext(), provider, resourceId))?.CoverArtUrl
+                    ? (await _providerGateway.GetStoredAlbumAsync(ImageContext(token)!, provider, resourceId))?.CoverArtUrl
                     : await GetProviderImageUrlAsync(provider, resourceKind, resourceId, token);
                 if ((storedOnly || actor == null) && string.IsNullOrWhiteSpace(coverUrl)) return null;
                 if (resourceKind == "album" && ProviderArtworkFallback.IsFallback(provider, coverUrl, resourceKind))
@@ -682,16 +688,19 @@ public partial class JellyfinController : ControllerBase
                     _logger,
                     maxRetries: 3,
                     initialDelayMs: 500,
-                    cancellationToken: HttpContext.RequestAborted)
+                    cancellationToken: requestToken)
                 : await Fetch();
         }
 
         var shared = await _mediaAssets.ResolveAsync(identity, token => FetchAsync(token, false),
-            MaximumArtworkBytes, HttpContext.RequestAborted);
+            MaximumArtworkBytes, requestToken);
+        if (shared == null && imageRevision != null)
+            shared = await _mediaAssets.ResolveAsync(identity with { Revision = sourceRevision },
+                _ => Task.FromResult<MediaAssetSource?>(null), MaximumArtworkBytes, requestToken);
         if (shared != null || !albumFallback || actor?.EffectiveUserId is not { } listener) return shared;
         return await _mediaAssets.ResolveAsync(
-            identity with { UserId = listener, Revision = JellyfinItemArtwork.AlbumArtRevision + ":saved" },
-            token => FetchAsync(token, true), MaximumArtworkBytes, HttpContext.RequestAborted);
+            identity with { UserId = listener, Revision = JellyfinItemArtwork.AlbumArtRevision + ":saved" + (imageRevision == null ? "" : ":" + imageRevision) },
+            token => FetchAsync(token, true), MaximumArtworkBytes, requestToken);
     }
 
     internal static Uri SelectExternalArtworkVariant(
@@ -741,7 +750,59 @@ public partial class JellyfinController : ControllerBase
             : new UriBuilder(coverUri) { Path = path }.Uri;
     }
 
-    private IActionResult CreateFormattedImageResponse(
+    private ProtocolExecutionContext? ImageContext(CancellationToken token)
+    {
+        var source = HttpContext.GetProtocolExecutionContext();
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(5);
+        return source == null ? null : new(source.Protocol, source.BackendInstanceId, source.VerifiedBackendPrincipalId,
+            source.Principal, source.CorrelationId, source.Deadline < deadline ? source.Deadline : deadline, token, source.Client)
+        {
+            Policy = source.Policy,
+            IsReadOnly = source.IsReadOnly,
+            RequestedItemId = source.RequestedItemId,
+            UseStoredBackendCredentials = source.UseStoredBackendCredentials,
+            BackendCredentialReferenceId = source.BackendCredentialReferenceId
+        };
+    }
+
+    private sealed record CachedArtwork(MediaAssetSource? Image, bool Retry = false);
+
+    private async Task<IActionResult> CachedImageAsync(string key, string provider, int? size, string? requestedFormat,
+        Func<CancellationToken, Task<ResolvedMediaAsset?>> read)
+    {
+        var entry = await _cache.GetAsync<CachedArtwork>(key);
+        entry ??= await _imageRequests.RunAsync(key, async () =>
+        {
+            if (await _cache.GetAsync<CachedArtwork>(key) is { } cached) return cached;
+            // A disconnected image loader must not cancel the fetch shared by other listeners.
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            CachedArtwork result;
+            try
+            {
+                var asset = await read(timeout.Token).WaitAsync(timeout.Token);
+                result = new(asset == null ? null : FormatImage(asset, requestedFormat));
+            }
+            catch (OperationCanceledException) when (timeout.IsCancellationRequested)
+            {
+                result = new(await ProviderArtworkFallback.ReadAsync(HttpContext.RequestServices, provider, size,
+                    CancellationToken.None), true);
+            }
+            if (result.Image != null) await _cache.SetAsync(key, result, result.Retry ? TimeSpan.FromSeconds(60) : null);
+            return result;
+        }, CancellationToken.None);
+        if (entry.Image == null) return MissingExternalImage();
+        if (!entry.Retry) return CreateConditionalImageResponse(entry.Image.Bytes, entry.Image.ContentType);
+        Response.Headers.CacheControl = "private, max-age=60";
+        return File(entry.Image.Bytes, entry.Image.ContentType);
+    }
+
+    private IActionResult CreateFormattedImageResponse(ResolvedMediaAsset asset, string? requestedFormat)
+    {
+        var image = FormatImage(asset, requestedFormat);
+        return image == null ? MissingExternalImage() : CreateConditionalImageResponse(image.Bytes, image.ContentType);
+    }
+
+    private MediaAssetSource? FormatImage(
         ResolvedMediaAsset asset,
         string? requestedFormat)
     {
@@ -753,14 +814,14 @@ public partial class JellyfinController : ControllerBase
             _ => (SKEncodedImageFormat?)null
         };
         if (format == null)
-            return CreateConditionalImageResponse(asset.Bytes, asset.ContentType);
+            return new(asset.Bytes, asset.ContentType);
         var contentType = format == SKEncodedImageFormat.Jpeg
             ? "image/jpeg"
             : format == SKEncodedImageFormat.Png
                 ? "image/png"
                 : "image/webp";
         if (HasEncodedImageSignature(asset.Bytes, format.Value))
-            return CreateConditionalImageResponse(asset.Bytes, contentType);
+            return new(asset.Bytes, contentType);
 
         try
         {
@@ -768,16 +829,16 @@ public partial class JellyfinController : ControllerBase
             using var codec = SKCodec.Create(data);
             var info = codec?.Info;
             if (info is not { Width: > 0, Height: > 0 })
-                return MissingExternalImage();
+                return null;
             if ((long)info.Value.Width * info.Value.Height > MediaAssetResolver.MaximumDecodedPixels)
-                return MissingExternalImage();
+                return null;
             using var bitmap = SKBitmap.Decode(codec);
             using var image = bitmap == null ? null : SKImage.FromBitmap(bitmap);
             using var encoded = image?.Encode(format.Value, 90);
             var bytes = encoded?.ToArray();
             if (bytes is { Length: > 0 } && bytes.Length <= MaximumArtworkBytes)
             {
-                return CreateConditionalImageResponse(bytes, contentType);
+                return new(bytes, contentType);
             }
         }
         catch (Exception exception)
@@ -785,7 +846,7 @@ public partial class JellyfinController : ControllerBase
             _logger.LogDebug(exception, "Unable to encode requested Jellyfin image format {Format}", requestedFormat);
         }
 
-        return MissingExternalImage();
+        return null;
     }
 
     private static bool HasEncodedImageSignature(

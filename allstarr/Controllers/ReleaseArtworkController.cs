@@ -13,7 +13,7 @@ namespace allstarr.Controllers;
 [Route("api/admin/releases/artwork")]
 [ServiceFilter(typeof(AdminPortFilter))]
 public sealed class ReleaseArtworkController(AdminProtocolExecutionContextFactory contexts, IProtocolProviderGateway gateway,
-    IMediaAssetResolver media, IHttpClientFactory clients, ILogger<ReleaseArtworkController> logger) : ControllerBase
+    IMediaAssetResolver media, IHttpClientFactory clients, ILogger<ReleaseArtworkController> logger, IApplicationCache? cache = null) : ControllerBase
 {
     [HttpGet("{providerId}/{albumId}")]
     public async Task<IActionResult> Get(string providerId, string albumId, CancellationToken token)
@@ -24,10 +24,24 @@ public sealed class ReleaseArtworkController(AdminProtocolExecutionContextFactor
         ProtocolExecutionContext protocol;
         try { protocol = await contexts.CreateAsync(session, HttpContext.TraceIdentifier, token); }
         catch (UnauthorizedAccessException) { return StatusCode(403, new { error = "A linked listener is required." }); }
-        var asset = await new ReleaseArtworkReader(gateway, media, clients, logger).ReadAsync(owner, protocol, providerId, albumId, token);
+        ResolvedMediaAsset? asset;
+        try
+        {
+            asset = await new ReleaseArtworkReader(gateway, media, clients, logger, cache)
+                .ReadAsync(owner, protocol, providerId, albumId, token, $"{providerId}:{albumId}");
+        }
+        catch (TimeoutException)
+        {
+            Response.Headers.CacheControl = "private, max-age=60";
+            return NoContent();
+        }
         // An empty answer shows the placeholder without a broken image, and a missing cover is asked for again later.
         Response.Headers.CacheControl = asset == null ? "private, max-age=3600" : "private, max-age=604800";
-        return asset == null ? NoContent() : File(asset.Bytes, asset.ContentType);
+        if (asset == null) return NoContent();
+        var etag = ImageConditionalRequestHelper.ComputeStrongETag(asset.Bytes);
+        Response.Headers.ETag = etag;
+        return ImageConditionalRequestHelper.MatchesIfNoneMatch(Request.Headers, etag)
+            ? StatusCode(StatusCodes.Status304NotModified) : File(asset.Bytes, asset.ContentType);
     }
 
     private static bool Valid(string value, int maximumLength) =>

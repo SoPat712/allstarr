@@ -9,6 +9,38 @@ namespace allstarr.Core.Music;
 
 public sealed partial class PersonalMixService
 {
+    private void WarmCovers(Guid owner, IReadOnlyList<PersonalMix> changed) => _ = Task.Run(async () =>
+    {
+        try
+        {
+            var document = new PersonalMixDocument { Mixes = changed.ToDictionary(mix => mix.Id.ToString()) };
+            var visible = await VisibleAsync(owner, document, CancellationToken.None);
+            var inputs = new List<MixCoverInput>();
+            foreach (var mix in visible)
+                inputs.Add(MixCoverInput.From(mix.Kind == "external" ? await GetCoverAsync(owner, mix.Id) : mix));
+            await coverImages!.WarmAsync(inputs, owner);
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException)
+        {
+            logger?.LogDebug(exception, "Mix cover warm-up deferred");
+        }
+    });
+
+    public async Task<PersonalMix> GetCoverAsync(Guid owner, Guid id, CancellationToken token = default)
+    {
+        await using var db = await factory.CreateDbContextAsync(token);
+        var user = await UserAsync(db, owner, token);
+        var row = await RowAsync(db, user, token);
+        var document = row == null ? new PersonalMixDocument { AppsOptInVersion = 3 }
+            : JsonSerializer.Deserialize<PersonalMixDocument>(row.PayloadJson)!;
+        document = await LoadAsync(db, user, token, publishedOnly: true, saved: row, document: document);
+        var selected = document.Mixes.SingleOrDefault(item => item.Value.Id == id);
+        if (selected.Key != null)
+            return (await VisibleAsync(owner, new() { Mixes = new() { [selected.Key] = selected.Value } }, token)).Single();
+        return (await ServiceMixesAsync(user, token, id, coverOnly: true)).SingleOrDefault()
+            ?? throw new KeyNotFoundException();
+    }
+
     private static string ServiceArtworkUrl(Guid? account, string provider, string playlist, string revision) =>
         (account.HasValue ? $"/api/admin/playlist-sources/{account}/playlists/{Uri.EscapeDataString(playlist)}/artwork"
             : $"/api/admin/playlist-sources/public/{Uri.EscapeDataString(provider)}/playlists/{Uri.EscapeDataString(playlist)}/artwork") +

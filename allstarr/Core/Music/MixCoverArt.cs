@@ -48,12 +48,12 @@ public sealed class MixCoverArtLoader(JellyfinProxyService jellyfin, IHttpClient
         try
         {
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token);
-            timeout.CancelAfter(TimeSpan.FromSeconds(8));
+            timeout.CancelAfter(TimeSpan.FromSeconds(5));
             if (reference.StartsWith("library:", StringComparison.Ordinal))
             {
                 // The media server shares pictures without a sign-in, so a cover works for apps that load images without one.
                 var (body, _, success) = await jellyfin.GetBytesSafeAsync(
-                    $"Items/{Uri.EscapeDataString(reference[8..])}/Images/Primary", new() { ["maxWidth"] = "400", ["quality"] = "90" });
+                    $"Items/{Uri.EscapeDataString(reference[8..])}/Images/Primary", new() { ["maxWidth"] = "400", ["quality"] = "90" }, cancellationToken: timeout.Token);
                 return success && body is { Length: > 0 and <= MaximumBytes } ? body : null;
             }
             if (reference.StartsWith("service:", StringComparison.Ordinal))
@@ -61,11 +61,11 @@ public sealed class MixCoverArtLoader(JellyfinProxyService jellyfin, IHttpClient
                 var external = LocalLibraryService.ParseExternalResource(reference[8..]);
                 if (!external.isExternal || external.type != "song") return null;
                 reference = (await providers.GetPublicArtworkUriAsync(external.provider!, ProviderResourceKind.Track,
-                    external.externalId!, timeout.Token, storedRecordingOnly: external.provider == "allstarr"))?.AbsoluteUri ?? "";
+                    external.externalId!, timeout.Token, storedRecordingOnly: external.provider == "allstarr").WaitAsync(timeout.Token))?.AbsoluteUri ?? "";
                 if (ProviderArtworkFallback.IsFallback(external.provider!, reference, "song")) return null;
             }
             if (!OutboundRequestGuard.TryCreateSafeHttpUri(reference, out var uri, out _) || uri == null) return null;
-            using var response = await clients.CreateClient().GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
+            using var response = await clients.CreateClient().GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, timeout.Token).WaitAsync(timeout.Token);
             var contentType = response.Content.Headers.ContentType?.MediaType;
             if (!response.IsSuccessStatusCode || contentType?.StartsWith("image/", StringComparison.OrdinalIgnoreCase) != true ||
                 response.Content.Headers.ContentLength > MaximumBytes) return null;

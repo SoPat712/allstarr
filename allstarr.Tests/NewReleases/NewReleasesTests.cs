@@ -47,11 +47,13 @@ public sealed partial class NewReleasesTests : IAsyncLifetime
     private readonly Dictionary<Guid, ProviderAccountContext> _accounts = new();
     private ProviderAlbumMetadata[] _albums = [];
     private int _calls;
-    private readonly MediaAssetResolver _covers = new(new TestMemoryApplicationCache(), NullLogger<MediaAssetResolver>.Instance);
+    private readonly TestMemoryApplicationCache _coverCache = new();
+    private MediaAssetResolver _covers = null!;
     private readonly CoverHandler _coverSource = new();
 
     public async Task InitializeAsync()
     {
+        _covers = new(_coverCache, NullLogger<MediaAssetResolver>.Instance);
         _database = await SqliteTestDatabase.CreateAsync();
         _factory = new(_database.Options);
         await using var db = _factory.CreateDbContext();
@@ -819,7 +821,7 @@ public sealed partial class NewReleasesTests : IAsyncLifetime
     private ReleaseArtworkController Artwork(IProtocolProviderGateway gateway, AdminAuthSession? session)
     {
         var controller = new ReleaseArtworkController(new(_factory, _clock), gateway, _covers, new CoverClients(_coverSource),
-            NullLogger<ReleaseArtworkController>.Instance);
+            NullLogger<ReleaseArtworkController>.Instance, _coverCache);
         controller.ControllerContext = new() { HttpContext = new DefaultHttpContext() };
         if (session != null) controller.HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] = session;
         return controller;

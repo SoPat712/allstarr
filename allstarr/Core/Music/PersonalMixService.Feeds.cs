@@ -26,10 +26,10 @@ public sealed partial class PersonalMixService
             new(new(ProviderAudioQuality.Any, ProviderAudioQuality.HighResolution, true), ProviderExplicitContentPolicy.Allow,
                 false, false, false, [account.ProviderId]), "service-feeds", execution.CorrelationId, clock.UtcNow.AddMinutes(5), token);
 
-    private async Task<PersonalMix[]> ServiceFeedCardsAsync(UserRecord user, CancellationToken token, bool refresh = true, bool queuePreparation = true, bool background = false)
+    private async Task<PersonalMix[]> ServiceFeedCardsAsync(UserRecord user, CancellationToken token, bool refresh = true, bool queuePreparation = true, bool background = false, bool coverOnly = false)
     {
         if (registry == null) return [];
-        if (!background) await feedReads.WaitAsync(token);
+        if (!background && !coverOnly) await feedReads.WaitAsync(token);
         try
         {
             await using var db = await factory.CreateDbContextAsync(token);
@@ -117,6 +117,7 @@ public sealed partial class PersonalMixService
                     saved.PayloadSha256 = Hash(json);
                     saved.RetrievedAt = clock.UtcNow;
                     await db.SaveChangesAsync(token);
+                    if (complete && coverImages != null) WarmCovers(user.Id, cards);
                     await rows.Where(item => item.SnapshotVersion <= version - KeptDocuments).ExecuteDeleteAsync(token);
                 }
                 if (queuePreparation && saved != null)
@@ -125,12 +126,13 @@ public sealed partial class PersonalMixService
             }
             return result.ToArray();
         }
-        finally { if (!background) feedReads.Release(); }
+        finally { if (!background && !coverOnly) feedReads.Release(); }
     }
 
-    private async Task<IReadOnlyList<PersonalMix>> ServiceMixesAsync(UserRecord user, CancellationToken token, Guid? id = null, bool cardsOnly = false, bool background = false)
+    private async Task<IReadOnlyList<PersonalMix>> ServiceMixesAsync(UserRecord user, CancellationToken token, Guid? id = null, bool cardsOnly = false, bool background = false, bool coverOnly = false)
     {
-        var cards = await ServiceFeedCardsAsync(user, token, refresh: !background && id == null, queuePreparation: !background, background: background);
+        var cards = await ServiceFeedCardsAsync(user, token, refresh: !background && !coverOnly && id == null,
+            queuePreparation: !background && !coverOnly, background: background, coverOnly: coverOnly);
         var linked = await ExternalMixesAsync(user, token, id, cardsOnly, cards);
         await using var db = await factory.CreateDbContextAsync(token);
         var links = await ExternalLinks(db, user).AsNoTracking().OrderByDescending(link => link.Enabled).ThenBy(link => link.CreatedAt).ToArrayAsync(token);

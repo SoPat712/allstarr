@@ -519,14 +519,15 @@ public class JellyfinProxyService
     public async Task<(byte[]? Body, string? ContentType, bool Success)> GetBytesSafeAsync(
         string endpoint,
         Dictionary<string, string>? queryParams = null,
-        IHeaderDictionary? clientHeaders = null)
+        IHeaderDictionary? clientHeaders = null,
+        CancellationToken cancellationToken = default)
     {
         try
         {
             var url = BuildUrl(endpoint, queryParams);
             using var request = CreateClientGetRequest(
                 url, clientHeaders, out _, out _);
-            using var response = await _httpClient.SendAsync(request);
+            using var response = await _httpClient.SendAsync(request, cancellationToken);
             if (!response.IsSuccessStatusCode)
             {
                 if (response.StatusCode == HttpStatusCode.NotFound)
@@ -536,10 +537,10 @@ public class JellyfinProxyService
                 return (null, null, false);
             }
 
-            return (await response.Content.ReadAsByteArrayAsync(),
+            return (await response.Content.ReadAsByteArrayAsync(cancellationToken),
                 response.Content.Headers.ContentType?.ToString(), true);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
         {
             _logger.LogError(ex, "Failed to get bytes from {Endpoint}", endpoint);
             return (null, null, false);

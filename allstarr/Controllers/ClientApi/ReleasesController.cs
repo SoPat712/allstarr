@@ -6,7 +6,7 @@ using Microsoft.AspNetCore.Mvc;
 namespace allstarr.Controllers.ClientApi;
 
 [Route("allstarr/v1/releases")]
-public sealed class ReleasesController(ReleaseReader reader, ReleaseArtworkReader artwork) : ClientApiControllerBase
+public sealed class ReleasesController(ReleaseReader reader, ReleaseArtworkReader artwork, IApplicationCache cache) : ClientApiControllerBase
 {
     [HttpGet]
     [EndpointName("listReleases")]
@@ -25,13 +25,18 @@ public sealed class ReleasesController(ReleaseReader reader, ReleaseArtworkReade
             var source = await reader.CoverAsync(Execution, releaseId);
             if (source == null) return NotFound();
             var asset = await artwork.ReadAsync(Execution.RequireActor().EffectiveUserId!.Value, Execution,
-                source.ProviderId, source.AlbumId, Execution.CancellationToken);
+                source.ProviderId, source.AlbumId, Execution.CancellationToken, releaseId, cache);
             Response.Headers.CacheControl = asset == null ? "private, max-age=3600" : "private, max-age=604800";
             if (asset == null) return NoContent();
             var etag = ImageConditionalRequestHelper.ComputeStrongETag(asset.Bytes);
             Response.Headers.ETag = etag;
             return ImageConditionalRequestHelper.MatchesIfNoneMatch(Request.Headers, etag)
                 ? StatusCode(304) : File(asset.Bytes, asset.ContentType);
+        }
+        catch (TimeoutException)
+        {
+            Response.Headers.CacheControl = "private, max-age=60";
+            return NoContent();
         }
         catch (UnauthorizedAccessException) { return NotFound(); }
         catch (KeyNotFoundException) { return NotFound(); }

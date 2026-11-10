@@ -39,7 +39,7 @@ public sealed partial class MixesController(PersonalMixService mixes, IDurableRu
     {
         var result = await ExecuteAsync(async user =>
         {
-            var mix = await mixes.GetAsync(user.Id, id, token);
+            var mix = await mixes.GetCoverAsync(user.Id, id, token);
             var input = MixCoverInput.From(mix);
             if (mix.Kind == "external" && mix.SourcePlaylistId == null)
             {

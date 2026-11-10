@@ -18,18 +18,24 @@ public sealed class MixCoverImageService
     private readonly int _maxEntries;
     private readonly long _maxBytes;
     private long _bytes;
+    private readonly IApplicationCache? _cache;
+    private readonly SemaphoreSlim _warmup = new(1, 1);
 
     public MixCoverImageService() : this(MixCoverRenderer.Render) { }
 
     public MixCoverImageService(MixCoverArtLoader art) : this(MixCoverRenderer.Render, art.LoadAsync) { }
 
-    public MixCoverImageService(MixCoverArtLoader art, PersonalMixService mixes, IMediaAssetResolver assets)
-        : this(MixCoverRenderer.Render, art.LoadAsync, serviceArt: (input, owner, token) => mixes.LoadServiceArtworkAsync(input, owner, assets, token)) { }
+    public MixCoverImageService(MixCoverArtLoader art, IServiceProvider services, IApplicationCache cache)
+        : this(MixCoverRenderer.Render, art.LoadAsync, cache: cache,
+            serviceArt: (input, owner, token) => services.GetRequiredService<PersonalMixService>()
+                .LoadServiceArtworkAsync(input, owner, services.GetRequiredService<IMediaAssetResolver>(), token))
+    { }
 
     internal MixCoverImageService(Func<MixCoverInput, byte[]> render, Func<string, CancellationToken, Task<byte[]?>>? loadArt = null,
         int maxEntries = 96, long maxBytes = 24 * 1024 * 1024,
-        Func<MixCoverInput, Guid, CancellationToken, Task<ResolvedMediaAsset?>>? serviceArt = null)
+        Func<MixCoverInput, Guid, CancellationToken, Task<ResolvedMediaAsset?>>? serviceArt = null, IApplicationCache? cache = null)
     {
+        _cache = cache;
         _render = render;
         _serviceArt = serviceArt;
         _loadArt = loadArt;
@@ -46,11 +52,18 @@ public sealed class MixCoverImageService
 
     // Service covers stay intact. Otherwise show song covers or a gradient. A collage missing a picture has no validator,
     // so apps ask again later instead of keeping it.
-    public async Task<IActionResult> CreateResponseAsync(MixCoverInput input, HttpContext context, string? version = null, Guid? owner = null)
+    public async Task<IActionResult> CreateResponseAsync(MixCoverInput input, HttpContext context, string? version = null, Guid? owner = null, string? cacheVariant = null)
     {
         if (input.ServiceArtwork != null)
         {
-            var asset = owner.HasValue && _serviceArt != null ? await _serviceArt(input, owner.Value, context.RequestAborted) : null;
+            var key = CacheKey(input, context, owner, cacheVariant);
+            MediaAssetSource? asset;
+            try { asset = owner.HasValue && _serviceArt != null ? await LoadServiceAsync(input, owner.Value, key) : null; }
+            catch (TimeoutException)
+            {
+                context.Response.Headers.CacheControl = "private, max-age=60";
+                return new FileContentResult(_render(input), "image/png");
+            }
             if (asset == null)
             {
                 context.Response.Headers.CacheControl = "private, no-store";
@@ -66,22 +79,16 @@ public sealed class MixCoverImageService
         var etag = $"\"{tag}\"";
         var versioned = version == Version(input);
         var noArtwork = input.Art is not { Count: > 0 } || _loadArt == null;
-        if (noArtwork && input.Count > 0)
-        {
-            context.Response.Headers.CacheControl = "private, max-age=60";
-            return new FileContentResult(_render(input), "image/png");
-        }
-        if (noArtwork && ImageConditionalRequestHelper.MatchesIfNoneMatch(context.Request.Headers, etag))
+        if (noArtwork && input.Count == 0 && ImageConditionalRequestHelper.MatchesIfNoneMatch(context.Request.Headers, etag))
         {
             SetCaching(context, etag, versioned);
             return new StatusCodeResult(StatusCodes.Status304NotModified);
         }
+        var cacheKey = CacheKey(input, context, variant: cacheVariant);
         Task<(byte[] Bytes, string ContentType, bool Complete)> work;
         lock (_gate)
         {
-            if (!_images.TryGetValue(tag, out var cached) && noArtwork)
-                cached = Remember(tag, (_render(input), "image/png"));
-            if (cached.Bytes != null)
+            if (_cache == null && _images.TryGetValue(cacheKey, out var cached))
             {
                 SetCaching(context, etag, versioned);
                 if (ImageConditionalRequestHelper.MatchesIfNoneMatch(context.Request.Headers, etag))
@@ -89,15 +96,22 @@ public sealed class MixCoverImageService
                 return new FileContentResult(cached.Bytes, cached.ContentType);
             }
             // Requests for one collage share its picture downloads.
-            if (!_pending.TryGetValue(tag, out work!))
-                _pending[tag] = work = RenderCollageAsync(input);
+            if (!_pending.TryGetValue(cacheKey, out work!))
+                _pending[cacheKey] = work = LoadOrRenderAsync(input, cacheKey, noArtwork);
         }
-        var (bytes, contentType, complete) = await work;
-        lock (_gate)
+        (byte[] bytes, string contentType, bool complete) result;
+        try
         {
-            if (_pending.TryGetValue(tag, out var current) && current == work) _pending.Remove(tag);
-            if (complete && !_images.ContainsKey(tag)) Remember(tag, (bytes, contentType));
+            result = await work;
+            lock (_gate)
+                if (_cache == null && result.complete && !_images.ContainsKey(cacheKey)) Remember(cacheKey, (result.bytes, result.contentType));
         }
+        finally
+        {
+            lock (_gate)
+                if (_pending.TryGetValue(cacheKey, out var current) && current == work) _pending.Remove(cacheKey);
+        }
+        var (bytes, contentType, complete) = result;
         if (!complete)
         {
             context.Response.Headers.CacheControl = "private, max-age=60";
@@ -108,6 +122,72 @@ public sealed class MixCoverImageService
             return new StatusCodeResult(StatusCodes.Status304NotModified);
         return new FileContentResult(bytes, contentType);
     }
+
+    private static string CacheKey(MixCoverInput input, HttpContext context, Guid? owner = null, string? variant = null) =>
+        CacheKeyBuilder.BuildImageVariantKey(GetTag(input), owner, variant,
+            context.Request.Query["tag"], context.Request.Query["maxWidth"], context.Request.Query["maxHeight"],
+            context.Request.Query["fillWidth"], context.Request.Query["fillHeight"], context.Request.Query["width"],
+            context.Request.Query["height"], context.Request.Query["quality"], context.Request.Query["format"]);
+
+    private async Task<(byte[] Bytes, string ContentType, bool Complete)> LoadOrRenderAsync(MixCoverInput input, string key, bool noArtwork)
+    {
+        if (_cache != null && await _cache.GetAsync<MediaAssetSource>(key) is { } cached)
+            return (cached.Bytes, cached.ContentType, !noArtwork || input.Count == 0);
+        var image = noArtwork ? (_render(input), "image/png", input.Count == 0) : await RenderCollageAsync(input);
+        if ((image.Item3 || noArtwork) && _cache != null)
+            await _cache.SetAsync(key, new MediaAssetSource(image.Item1, image.Item2),
+                image.Item3 ? TimeSpan.FromDays(365) : TimeSpan.FromSeconds(60));
+        return image;
+    }
+
+    private async Task<MediaAssetSource?> LoadServiceAsync(MixCoverInput input, Guid owner, string key)
+    {
+        Task<(byte[] Bytes, string ContentType, bool Complete)> work;
+        lock (_gate)
+        {
+            if (!_pending.TryGetValue(key, out work!))
+                _pending[key] = work = Fetch();
+        }
+        try
+        {
+            var image = await work;
+            return image.Complete ? new(image.Bytes, image.ContentType) : null;
+        }
+        finally
+        {
+            lock (_gate)
+                if (_pending.TryGetValue(key, out var current) && current == work) _pending.Remove(key);
+        }
+
+        async Task<(byte[], string, bool)> Fetch()
+        {
+            if (_cache != null && await _cache.GetAsync<MediaAssetSource>(key) is { } cached)
+                return (cached.Bytes, cached.ContentType, true);
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            ResolvedMediaAsset? asset;
+            try { asset = await _serviceArt!(input, owner, timeout.Token).WaitAsync(timeout.Token); }
+            catch (OperationCanceledException exception) { throw new TimeoutException("Mix artwork lookup timed out.", exception); }
+            if (asset == null) return ([], "", false);
+            if (_cache != null)
+                await _cache.SetAsync(key, new MediaAssetSource(asset.Bytes, asset.ContentType), TimeSpan.FromDays(365));
+            return (asset.Bytes, asset.ContentType, true);
+        }
+    }
+
+    public Task WarmAsync(IEnumerable<MixCoverInput> inputs, Guid owner) => Task.Run(async () =>
+    {
+        foreach (var input in inputs)
+        {
+            await _warmup.WaitAsync();
+            try
+            {
+                await Task.Delay(100);
+                await CreateResponseAsync(input, new DefaultHttpContext(), Version(input), owner);
+            }
+            catch (Exception exception) when (exception is not OutOfMemoryException) { }
+            finally { _warmup.Release(); }
+        }
+    });
 
     private (byte[] Bytes, string ContentType) Remember(string tag, (byte[] Bytes, string ContentType) image)
     {

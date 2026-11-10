@@ -138,6 +138,9 @@ public static class CacheKeyBuilder
 
     #region Image Keys
 
+    public static string BuildImageVariantKey(params object?[] identity) =>
+        $"artwork:image:v1:{Digest(System.Text.Json.JsonSerializer.Serialize(identity))}";
+
     public static bool IsMediaAssetDescriptorKey(string key) =>
         key.StartsWith("media:descriptor:v5:", StringComparison.Ordinal);
 
