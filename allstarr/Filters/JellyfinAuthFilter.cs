@@ -47,79 +47,90 @@ public class JellyfinAuthFilter : IAsyncActionFilter
 
         try
         {
-            var endpoint = BuildCurrentUserEndpoint(request);
-            var (body, statusCode) = await _proxyService.GetJsonAsync(
-                endpoint,
-                queryParams: null,
-                request.Headers);
-            var actorBound = true;
-            var unboundNativeFileRelay = false;
+            var cache = _proxyService.Verifications;
+            var credential = cache.Get(request.Headers, request.QueryString.Value);
             var explicitUserEndpoint = BuildExplicitUserEndpoint(request);
-            if (statusCode is StatusCodes.Status400BadRequest or StatusCodes.Status404NotFound)
+            var fallbackPath = explicitUserEndpoint?.Split('?')[0] ??
+                (IsNativeFileRelayRequest(request) ? "native-file" : "actor");
+            await credential.Gate.WaitAsync(request.HttpContext.RequestAborted);
+            try
             {
-                if (explicitUserEndpoint != null)
+                var cachedActor = cache.Find(credential, "actor");
+                var verified = cachedActor ?? cache.Find(credential, fallbackPath);
+                if (verified == null)
                 {
-                    body?.Dispose();
-                    (body, statusCode) = await _proxyService.GetJsonAsync(
-                        explicitUserEndpoint,
-                        queryParams: null,
-                        request.Headers);
-                    actorBound = false;
-                }
-                else if (IsNativeFileRelayRequest(request))
-                {
-                    body?.Dispose();
-                    (body, statusCode) = await _proxyService.GetJsonAsync(
-                        AddQueryCredentials("System/Info", request),
-                        queryParams: null,
-                        request.Headers);
-                    unboundNativeFileRelay = true;
-                }
-            }
+                    var (body, statusCode) = await _proxyService.GetJsonAsync(
+                        BuildCurrentUserEndpoint(request), null, request.Headers, request.HttpContext.RequestAborted);
+                    var actorBound = true;
+                    var unboundNativeFileRelay = false;
+                    if (statusCode is StatusCodes.Status400BadRequest or StatusCodes.Status404NotFound)
+                    {
+                        if (explicitUserEndpoint != null)
+                        {
+                            body?.Dispose();
+                            (body, statusCode) = await _proxyService.GetJsonAsync(
+                                explicitUserEndpoint, null, request.Headers, request.HttpContext.RequestAborted);
+                            actorBound = false;
+                        }
+                        else if (IsNativeFileRelayRequest(request))
+                        {
+                            body?.Dispose();
+                            (body, statusCode) = await _proxyService.GetJsonAsync(
+                                AddQueryCredentials("System/Info", request), null, request.Headers, request.HttpContext.RequestAborted);
+                            unboundNativeFileRelay = true;
+                        }
+                    }
 
-            using (body)
-            {
-                if (statusCode < StatusCodes.Status200OK || statusCode >= StatusCodes.Status300MultipleChoices)
-                {
-                    context.Result = CreateVerificationFailure(body, statusCode);
-                    return;
-                }
+                    using (body)
+                    {
+                        if (statusCode < StatusCodes.Status200OK || statusCode >= StatusCodes.Status300MultipleChoices)
+                        {
+                            context.Result = CreateVerificationFailure(body, statusCode);
+                            return;
+                        }
 
-                if (unboundNativeFileRelay)
-                {
-                    await next();
-                    return;
+                        string? principalId = null;
+                        string? displayName = null;
+                        var isAdministrator = false;
+                        AllstarrPrincipal? principal = null;
+                        if (!unboundNativeFileRelay)
+                        {
+                            if (!TryGetPrincipal(body, out principalId, out displayName, out isAdministrator))
+                            {
+                                _logger.LogWarning("Jellyfin Users/Me returned {StatusCode} without a stable principal ID", statusCode);
+                                context.Result = new StatusCodeResult(StatusCodes.Status502BadGateway);
+                                return;
+                            }
+                            if (actorBound)
+                                principal = await _identityResolver.ResolveAsync(
+                                    new BackendIdentityDescriptor("Jellyfin", principalId, displayName, isAdministrator),
+                                    request.HttpContext.RequestAborted);
+                        }
+                        verified = new JellyfinVerificationCache.Verification(
+                            principalId, displayName, isAdministrator, principal, cache.UtcNow);
+                        credential.Paths[unboundNativeFileRelay || !actorBound ? fallbackPath : "actor"] = verified;
+                    }
                 }
-
-                if (!TryGetPrincipal(body, out var principalId, out var displayName, out var isAdministrator))
-                {
-                    _logger.LogWarning(
-                        "Jellyfin Users/Me returned {StatusCode} without a stable principal ID",
-                        statusCode);
-                    context.Result = new StatusCodeResult(StatusCodes.Status502BadGateway);
-                    return;
-                }
-
-                context.HttpContext.Items[BackendPrincipalIdItemKey] = principalId;
-                if (actorBound)
+                else if (cachedActor is { Principal: null, PrincipalId: { } actorId })
                 {
                     var principal = await _identityResolver.ResolveAsync(
-                        new BackendIdentityDescriptor(
-                            "Jellyfin",
-                            principalId,
-                            displayName,
-                            isAdministrator),
+                        new BackendIdentityDescriptor("Jellyfin", actorId, cachedActor.DisplayName, cachedActor.IsAdministrator),
                         request.HttpContext.RequestAborted);
                     if (principal != null)
                     {
-                        context.HttpContext.Items[BackendIdentityResolver.HttpContextPrincipalItemKey] = principal;
+                        verified = cachedActor with { Principal = principal };
+                        credential.Paths["actor"] = verified;
                     }
                 }
-                else
-                {
-                    _logger.LogDebug(
-                        "Verified a Jellyfin API-key request for native relay without binding its declared UserId to an Allstarr actor");
-                }
+
+                if (verified.PrincipalId != null)
+                    context.HttpContext.Items[BackendPrincipalIdItemKey] = verified.PrincipalId;
+                if (verified.Principal != null)
+                    context.HttpContext.Items[BackendIdentityResolver.HttpContextPrincipalItemKey] = verified.Principal;
+            }
+            finally
+            {
+                credential.Gate.Release();
             }
         }
         catch (OperationCanceledException) when (request.HttpContext.RequestAborted.IsCancellationRequested)

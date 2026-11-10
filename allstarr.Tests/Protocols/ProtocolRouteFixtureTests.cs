@@ -3388,7 +3388,7 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.Equal("None", stale.GetProperty("PlayAccess").GetString());
         Assert.False(stale.GetProperty("CanDownload").GetBoolean());
         Assert.Empty(stale.GetProperty("MediaSources").EnumerateArray());
-        Assert.Equal(3, observed.Count(path => path == "/Users/Me?ApiKey=fixture-key"));
+        Assert.Equal(1, observed.Count(path => path == "/Users/Me?ApiKey=fixture-key"));
         var hydration = Assert.Single(observed, path =>
             path.StartsWith("/Items?", StringComparison.Ordinal));
         Assert.Contains("Ids=local-song-a", hydration, StringComparison.Ordinal);
@@ -4509,7 +4509,7 @@ public sealed partial class ProtocolRouteFixtureTests
 
         Assert.Equal(HttpStatusCode.NoContent, commandResponse.StatusCode);
         Assert.Equal(
-            ["/Users/Me", "/Sessions?ControllableByUserId=user-1", "/Users/Me", "/Sessions/session-1/Command"],
+            ["/Users/Me", "/Sessions?ControllableByUserId=user-1", "/Sessions/session-1/Command"],
             observed.Select(item => item.PathAndQuery));
         Assert.Equal(commandBody, observed[^1].Body);
         Assert.Equal("application/json; charset=utf-8", observed[^1].ContentType);

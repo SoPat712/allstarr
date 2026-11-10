@@ -94,7 +94,7 @@ public partial class JellyfinController
 
         try
         {
-            var request = new HttpRequestMessage(
+            using var request = new HttpRequestMessage(
                 HttpMethods.IsHead(Request.Method) ? HttpMethod.Head : HttpMethod.Get,
                 jellyfinUrl);
 
@@ -102,7 +102,7 @@ public partial class JellyfinController
 
             _streamingResponseAdapter.ForwardRangeRequestHeaders(Request.Headers, request);
 
-            var response = await _proxyService.HttpClient.SendAsync(
+            var response = await _proxyService.SendBackendAsync(
                 request,
                 HttpCompletionOption.ResponseHeadersRead,
                 HttpContext.RequestAborted);

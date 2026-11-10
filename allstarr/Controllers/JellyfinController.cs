@@ -400,16 +400,14 @@ public partial class JellyfinController : ControllerBase
             return await ReadArtistSearchAsync(searchTerm.Trim().Trim('"'), limit);
         }
 
-        // Browse is a transparent relay; preserve the client's route and query semantics.
-        var endpoint = Request.Path.Value?.TrimStart('/') ?? "Artists";
-        if (Request.QueryString.HasValue)
+        // Clean-only projection must keep its JSON input uncompressed.
+        if (HttpContext.GetProtocolExecutionContext()?.Policy?.Preferences.ExplicitFilter is null or "CleanOnly")
         {
-            endpoint = $"{endpoint}{Request.QueryString.Value}";
+            var endpoint = $"{Request.Path.Value?.TrimStart('/') ?? "Artists"}{Request.QueryString}";
+            var (result, statusCode) = await _proxyService.GetJsonAsync(endpoint, null, Request.Headers);
+            return HandleProxyResponse(result, statusCode);
         }
-
-        var (result, statusCode) = await _proxyService.GetJsonAsync(endpoint, null, Request.Headers);
-
-        return HandleProxyResponse(result, statusCode);
+        return await RelayCurrentRequestAsync(Request.Path.Value?.TrimStart('/') ?? "Artists");
     }
 
     private async Task<(JsonDocument? Body, int StatusCode)> GetLocalArtistsResultForCurrentRequest(string cleanQuery)

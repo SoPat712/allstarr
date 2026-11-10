@@ -112,7 +112,7 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.Empty(await unchanged.Content.ReadAsByteArrayAsync());
         Assert.Equal(response.Headers.ETag, unchanged.Headers.ETag);
         Assert.Equal(response.Headers.CacheControl?.ToString(), unchanged.Headers.CacheControl?.ToString());
-        Assert.Equal(["/Users/Me", "/Users/Me"], upstream);
+        Assert.Equal(["/Users/Me"], upstream);
     }
 
     [Fact]

@@ -11,7 +11,7 @@ using System.Text.Json;
 
 namespace allstarr.Services.Jellyfin;
 
-public class JellyfinProxyService
+public class JellyfinProxyService : IDisposable
 {
     public const string HttpClientName = "JellyfinBackend";
 
@@ -67,6 +67,29 @@ public class JellyfinProxyService
     }
 
     public HttpClient HttpClient => _httpClient;
+    internal JellyfinVerificationCache Verifications { get; }
+
+    internal async Task<HttpResponseMessage> SendBackendAsync(HttpRequestMessage request,
+        HttpCompletionOption completion = HttpCompletionOption.ResponseContentRead,
+        CancellationToken cancellationToken = default)
+    {
+        var response = await _httpClient.SendAsync(request, completion, cancellationToken);
+        if (response.StatusCode == HttpStatusCode.Unauthorized)
+        {
+            var headers = new HeaderDictionary();
+            if (request.Headers.TryGetValues("Authorization", out var authorization))
+                headers["Authorization"] = authorization.ToArray();
+            Verifications.Evict(headers, request.RequestUri?.Query);
+            if (_httpContextAccessor.HttpContext is { Request: var incoming } &&
+                AuthHeaderHelper.HasAuthentication(incoming.Headers) &&
+                JellyfinVerificationCache.CredentialKey(headers, null) ==
+                JellyfinVerificationCache.CredentialKey(incoming.Headers, null))
+                Verifications.Evict(incoming.Headers, incoming.QueryString.Value);
+        }
+        return response;
+    }
+
+    public void Dispose() => Verifications.Dispose();
 
     public JellyfinProxyService(
         IHttpClientFactory httpClientFactory,
@@ -75,7 +98,8 @@ public class JellyfinProxyService
         ILogger<JellyfinProxyService> logger,
         IApplicationCache cache,
         IMediaAssetResolver mediaAssets,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        TimeProvider? timeProvider = null)
     {
         _httpClient = httpClientFactory.CreateClient(HttpClientName);
         _settings = settings.Value;
@@ -84,6 +108,7 @@ public class JellyfinProxyService
         _cache = cache;
         _mediaAssets = mediaAssets;
         _configuration = configuration;
+        Verifications = new(timeProvider ?? TimeProvider.System);
     }
 
     public async Task<IReadOnlyList<string>> GetMusicLibraryIdsForFilteringAsync(
@@ -206,7 +231,7 @@ public class JellyfinProxyService
         }
 
         LogOutboundRequest(method, url);
-        var response = await _httpClient.SendAsync(
+        var response = await SendBackendAsync(
             request,
             HttpCompletionOption.ResponseHeadersRead,
             cancellationToken);
@@ -224,7 +249,7 @@ public class JellyfinProxyService
 
         LogOutboundRequest(HttpMethod.Get, url);
 
-        using var response = await _httpClient.SendAsync(request, cancellationToken);
+        using var response = await SendBackendAsync(request, cancellationToken: cancellationToken);
 
         var statusCode = (int)response.StatusCode;
 
@@ -450,7 +475,7 @@ public class JellyfinProxyService
             _logger.LogTrace("{Method} to Jellyfin: {Url}, body length: {Length} bytes", method, safeUrl, body.Length);
         }
 
-        using var response = await _httpClient.SendAsync(request);
+        using var response = await SendBackendAsync(request);
         var statusCode = (int)response.StatusCode;
 
         if (!response.IsSuccessStatusCode)
@@ -502,7 +527,7 @@ public class JellyfinProxyService
 
         LogOutboundRequest(HttpMethod.Get, url);
 
-        using var response = await _httpClient.SendAsync(request);
+        using var response = await SendBackendAsync(request);
         response.EnsureSuccessStatusCode();
 
         var body = await response.Content.ReadAsByteArrayAsync();
@@ -527,7 +552,7 @@ public class JellyfinProxyService
             var url = BuildUrl(endpoint, queryParams);
             using var request = CreateClientGetRequest(
                 url, clientHeaders, out _, out _);
-            using var response = await _httpClient.SendAsync(request, cancellationToken);
+            using var response = await SendBackendAsync(request, cancellationToken: cancellationToken);
             if (!response.IsSuccessStatusCode)
             {
                 if (response.StatusCode == HttpStatusCode.NotFound)
@@ -564,7 +589,7 @@ public class JellyfinProxyService
                 new Dictionary<string, string> { ["static"] = "true" });
             using var request = CreateClientGetRequest(url, clientHeaders, out _, out _);
             request.Headers.Range = new RangeHeaderValue(0, maximumBytes - 1);
-            using var response = await _httpClient.SendAsync(
+            using var response = await SendBackendAsync(
                 request,
                 HttpCompletionOption.ResponseHeadersRead,
                 cancellationToken);
@@ -821,7 +846,7 @@ public class JellyfinProxyService
                 request.Headers.TryAddWithoutValidation("If-Range", ifRange.ToArray());
             }
 
-            var response = await _httpClient.SendAsync(
+            var response = await SendBackendAsync(
                 request,
                 HttpCompletionOption.ResponseHeadersRead,
                 cancellationToken);
@@ -1105,7 +1130,7 @@ public class JellyfinProxyService
 
         LogOutboundRequest(HttpMethod.Get, url);
 
-        using var response = await _httpClient.SendAsync(request);
+        using var response = await SendBackendAsync(request);
         var statusCode = (int)response.StatusCode;
         var content = await response.Content.ReadAsStringAsync();
 
