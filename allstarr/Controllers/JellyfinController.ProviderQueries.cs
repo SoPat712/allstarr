@@ -3,6 +3,7 @@ using allstarr.Core.Favorites;
 using allstarr.Core.Protocols;
 using allstarr.Models.Domain;
 using allstarr.Services.Jellyfin;
+using allstarr.Services.Common;
 using Microsoft.AspNetCore.Mvc;
 
 namespace allstarr.Controllers;
@@ -45,8 +46,8 @@ public partial class JellyfinController
             if (native != null) CaptureNativeQueryRows(native.RootElement);
             var rows = native != null && native.RootElement.TryGetProperty("Items", out var items)
                 ? items.EnumerateArray().Select(item => item.Deserialize<Dictionary<string, object?>>() ?? []).ToList() : [];
-            var names = rows.Select(item => JellyfinProviderQuery.Text(item, "Name")).ToHashSet(StringComparer.OrdinalIgnoreCase);
-            rows.AddRange((await providerTask).Artists.Where(artist => !names.Contains(artist.Name))
+            var names = rows.Select(item => FuzzyMatcher.NormalizeForMatching(JellyfinProviderQuery.Text(item, "Name"))).ToHashSet(StringComparer.Ordinal);
+            rows.AddRange((await providerTask).Artists.Where(artist => !names.Contains(FuzzyMatcher.NormalizeForMatching(artist.Name)))
                 .Select(_responseBuilder.ConvertArtistForQuery));
             return await ShapeProviderQueryAsync(rows, "SortName", nativeAlreadyFiltered: true, defaultLimit: limit);
         }

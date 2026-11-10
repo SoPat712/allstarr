@@ -61,7 +61,7 @@ public sealed class SearchController(IProtocolProviderGateway providers, MusicSe
                         }).ToArray();
                     var ownedAlbums = owned.Where(item => item.Kind == MusicItemKind.Album &&
                         (Execution.Policy?.Preferences.ExplicitFilter != "CleanOnly" || Execution.Policy.Includes(item.ExplicitContentLyrics)))
-                        .Select(item => AlbumKey(item.Name, item.ArtistText)).ToHashSet(StringComparer.Ordinal);
+                        .Select(item => AlbumKey(item.Name, item.AlbumMetadata?.Artist ?? item.ArtistText)).ToHashSet(StringComparer.Ordinal);
                     var ownedArtists = owned.Where(item => item.Kind == MusicItemKind.Artist).Select(item => Normalize(item.Name)).ToHashSet(StringComparer.Ordinal);
                     var projected = await music.ProjectSearchSongsAsync(Execution, results.Songs, native, cancellation).WaitAsync(cancellation);
                     var items = new List<Dictionary<string, object?>>();

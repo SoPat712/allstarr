@@ -128,6 +128,8 @@ public partial class JellyfinController
         return $"jellyfin:catalog-type:{Uri.EscapeDataString(context.BackendInstanceId)}:{Uri.EscapeDataString(context.VerifiedBackendPrincipalId)}:{Uri.EscapeDataString(id)}";
     }
 
+    private readonly HashSet<string> _rememberedNativeCatalogTypes = new(StringComparer.Ordinal);
+
     private async Task RememberNativeCatalogTypesAsync(JsonElement item)
     {
         if (item.ValueKind != JsonValueKind.Object) return;
@@ -138,7 +140,7 @@ public partial class JellyfinController
         }
         if (item.TryGetProperty("Id", out var id) && id.ValueKind == JsonValueKind.String &&
             item.TryGetProperty("Type", out var type) && type.ValueKind == JsonValueKind.String &&
-            type.GetString() == "MusicAlbum")
+            type.GetString() == "MusicAlbum" && _rememberedNativeCatalogTypes.Add(id.GetString()!))
             await _cache.SetStringAsync(NativeCatalogTypeKey(id.GetString()!), type.GetString()!, TimeSpan.FromMinutes(15));
     }
 

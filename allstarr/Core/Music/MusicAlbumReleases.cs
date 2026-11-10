@@ -51,7 +51,7 @@ internal static class MusicAlbumReleases
         return SameCatalog(left, right) || firstUpc != null && firstUpc == NormalizeUpc(right.Upc) || SameTrackList(left, right);
     }
 
-    private static bool Compatible(Album left, Album right)
+    internal static bool Compatible(Album left, Album right)
     {
         if (ArtistKey(left) is not { Length: > 0 } artist || artist != ArtistKey(right) ||
             TitleKey(left) is not { Length: > 0 } title || title != TitleKey(right) ||

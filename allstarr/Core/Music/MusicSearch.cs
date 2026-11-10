@@ -343,10 +343,15 @@ public sealed partial class MusicSearchService(
         var nativeArtists = native.Where(item => item.Kind == MusicItemKind.Artist).ToList();
         var nativeAlbums = native.Where(item => item.Kind == MusicItemKind.Album).ToList();
         var nativeAlbumIds = nativeAlbums.Select(item => item.Id).ToHashSet(StringComparer.Ordinal);
-        var mergedAlbums = MusicAlbumReleases.Collapse(albums.Concat(nativeAlbums.Select(item => item.AlbumMetadata).OfType<Album>()))
+        var nativeAlbumMetadata = nativeAlbums.Select(item => item.AlbumMetadata ?? new Album
+        { Id = item.Id, Title = item.Name, Artist = item.ArtistText ?? "", IsLocal = true }).ToArray();
+        var ownedAlbumNames = nativeAlbumMetadata.ToLookup(MusicAlbumReleases.FamilyKey, StringComparer.Ordinal);
+        var unownedAlbums = albums.Where(album => !ownedAlbumNames[MusicAlbumReleases.FamilyKey(album)]
+            .Any(owned => MusicAlbumReleases.Compatible(owned, album)));
+        var mergedAlbums = MusicAlbumReleases.Collapse(unownedAlbums.Concat(nativeAlbums.Select(item => item.AlbumMetadata).OfType<Album>()))
             .Where(album => !album.IsLocal || !nativeAlbumIds.Contains(album.Id));
         var nativeArtistNames = hideProviderArtistsNamedLikeNative
-            ? nativeArtists.Select(item => item.Name).ToHashSet(StringComparer.OrdinalIgnoreCase)
+            ? nativeArtists.Select(item => FuzzyMatcher.NormalizeForMatching(item.Name)).ToHashSet(StringComparer.Ordinal)
             : [];
         return new MusicSearchResult<TPayload>(
             RankSongs(query, native.Where(item => item.Kind == MusicItemKind.Song)
@@ -359,7 +364,7 @@ public sealed partial class MusicSearchService(
                     new MusicSearchEntry<TPayload> { Playlist = playlist },
                     SearchRelevanceRanker.Score(query, playlist.Name, playlist.CuratorName))))),
             Rank(query, nativeArtists, artists
-                .Where(artist => !nativeArtistNames.Contains(artist.Name))
+                .Where(artist => !nativeArtistNames.Contains(FuzzyMatcher.NormalizeForMatching(artist.Name)))
                 .Select(artist => (
                     new MusicSearchEntry<TPayload> { Artist = artist },
                     SearchRelevanceRanker.Score(query, artist.Name)))));

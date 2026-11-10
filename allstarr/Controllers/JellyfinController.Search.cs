@@ -416,6 +416,9 @@ public partial class JellyfinController
 
     private static Album NativeAlbumMetadata(Dictionary<string, object?> item)
     {
+        var artist = GetItemStringValue(item, "AlbumArtist");
+        if (string.IsNullOrWhiteSpace(artist)) artist = string.Join(" ", GetItemStringList(item, "AlbumArtists").Take(3));
+        if (string.IsNullOrWhiteSpace(artist)) artist = SearchArtistText(item) ?? string.Empty;
         var ids = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         if (item.TryGetValue("ProviderIds", out var raw))
         {
@@ -433,7 +436,7 @@ public partial class JellyfinController
         {
             Id = GetItemStringValue(item, "Id"),
             Title = GetItemName(item),
-            Artist = SearchArtistText(item) ?? string.Empty,
+            Artist = artist,
             IsLocal = true,
             ProviderIds = ids,
             Upc = ids.GetValueOrDefault("UPC") ?? GetItemStringValue(item, "UPC"),
@@ -1084,7 +1087,9 @@ public partial class JellyfinController
         int limit,
         int startIndex,
         CancellationToken cancellationToken,
-        bool musicLibraryParent = false)
+        bool musicLibraryParent = false,
+        IReadOnlyList<VirtualPlaylistReadModel>? searchPlaylists = null,
+        int? nativeSearchTotal = null)
     {
         var root = JsonNode.Parse(backendResult.RootElement.GetRawText()) as JsonObject ?? new JsonObject();
         var items = root["Items"] as JsonArray;
@@ -1096,7 +1101,8 @@ public partial class JellyfinController
         var context = HttpContext.RequireProtocolExecutionContext();
         var visibleTargetIds = items.OfType<JsonObject>().Where(item => item["Type"]?.ToString() == "Playlist")
             .Select(item => item["Id"]?.ToString() ?? "").ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var virtualPlaylists = await _virtualPlaylistProtocolAdapter.ListAsync(context, cancellationToken, visibleTargetIds);
+        var nativeCount = items.Count;
+        var virtualPlaylists = searchPlaylists ?? await _virtualPlaylistProtocolAdapter.ListAsync(context, cancellationToken, visibleTargetIds);
         var aliasedProtocolIds = OverlayLinkedPlaylistSummaries(items.OfType<JsonObject>(), virtualPlaylists, context);
 
         var folderId = items.OfType<JsonObject>().FirstOrDefault(item => item["Type"]?.ToString() == "Playlist")?["ParentId"]?.ToString();
@@ -1158,7 +1164,8 @@ public partial class JellyfinController
         }
         foreach (var row in rows.Where(item => item["Type"]?.ToString() == "Playlist"))
             new JellyfinItemFields(Request.Query).Apply(row);
-        root["TotalRecordCount"] = rows.Count;
+        root["TotalRecordCount"] = nativeSearchTotal.HasValue
+            ? nativeSearchTotal.Value + rows.Count - nativeCount : rows.Count;
         root["Items"] = new JsonArray(rows.Skip(Math.Max(0, startIndex)).Take(Math.Max(0, limit)).Select(item => item.DeepClone()).ToArray());
         root["StartIndex"] = startIndex;
         return Content(root.ToJsonString(), "application/json");
@@ -1222,6 +1229,9 @@ public partial class JellyfinController
                 return Content(count.ToJsonString(), "application/json");
             }
         }
+        var search = GetEffectiveSearchTerm(Request.Query["SearchTerm"], Request.QueryString.Value);
+        if (!string.IsNullOrWhiteSpace(search))
+            return await ReadNativePlaylistSearchAsync(endpoint, parameters, search, startIndex, limit, musicLibraryParent, token);
         parameters["Limit"] = "500";
         parameters["Fields"] = string.Join(',', new[] { parameters.GetValueOrDefault("Fields"), "DateCreated,Etag,ParentId,Path,SortName,ProviderIds,ChildCount,Overview" }.Where(value => !string.IsNullOrEmpty(value)));
         if (parameters.GetValueOrDefault("SortBy")?.Contains("DateLastContentAdded", StringComparison.OrdinalIgnoreCase) == true)
