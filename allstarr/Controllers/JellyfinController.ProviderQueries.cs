@@ -62,7 +62,7 @@ public partial class JellyfinController
         if (_favoriteViews != null && items.Any(IsProviderQueryItem) &&
             (string.IsNullOrWhiteSpace(requestedUser) || requestedUser == context.VerifiedBackendPrincipalId))
         {
-            var favorites = await _favoriteViews.ReadAsync(context, HttpContext.RequestAborted);
+            var favorites = await _favoriteViews.ReadForRequestAsync(HttpContext);
             var ids = favorites.Select(item => item.ItemId).ToHashSet(FavoriteViewReader.ItemComparer(favorites));
             foreach (var item in items.Where(IsProviderQueryItem))
                 if (ids.Contains(JellyfinProviderQuery.Text(item, "Id")) &&

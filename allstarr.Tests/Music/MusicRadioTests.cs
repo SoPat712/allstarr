@@ -164,7 +164,7 @@ public sealed class MusicRadioTests
             .ReturnsAsync(readable ? new NativeMusicItem<string>(MusicItemKind.Song, "native", "Seed", "Artist", "preserved") : null);
         var service = new MusicMixService(gateway.Object, musicSearch: new MusicSearchService(gateway.Object, index.Object));
 
-        var result = await service.RadioAsync(Context(), "deezer", "song", "seed", "ext-deezer-song-seed", 1, native.Object);
+        var result = await service.RadioAsync(Context(), "deezer", "song", "seed", "ext-deezer-song-seed", 1, new DelegatingNative(native.Object));
 
         if (readable) Assert.Equal("preserved", Assert.Single(result).Native!.Payload);
         else Assert.Empty(result);
@@ -250,6 +250,12 @@ public sealed class MusicRadioTests
         gateway.Setup(item => item.GetSimilarSongsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "seed", It.IsAny<int>())).ReturnsAsync([]);
         gateway.Setup(item => item.CanPlaySongAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<Song>())).ReturnsAsync(true);
         return gateway;
+    }
+
+    private sealed class DelegatingNative(INativeMusicSearch<string> single) : INativeMusicSearch<string>
+    {
+        public Task<IReadOnlyList<NativeMusicItem<string>>> SearchAsync(CancellationToken token) => single.SearchAsync(token);
+        public Task<NativeMusicItem<string>?> GetSongAsync(string id, CancellationToken token) => single.GetSongAsync(id, token);
     }
 
     private static INativeMusicSearch<string> Native() => Mock.Of<INativeMusicSearch<string>>(MockBehavior.Strict);

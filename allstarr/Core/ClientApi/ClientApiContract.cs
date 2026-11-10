@@ -34,6 +34,7 @@ public sealed record ClientFeatures
     [JsonPropertyName("releases")] public bool Releases { get; init; } = true;
     [JsonPropertyName("follow")] public bool Follow { get; init; } = true;
     [JsonPropertyName("lyricsSearch")] public bool LyricsSearch { get; init; } = true;
+    [JsonPropertyName("searchStream")] public bool SearchStream { get; init; } = true;
     [JsonPropertyName("events")] public bool Events { get; init; } = true;
     [JsonPropertyName("appearances")] public bool Appearances { get; init; } = true;
     [JsonPropertyName("similarAlbums")] public bool SimilarAlbums { get; init; } = true;

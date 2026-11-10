@@ -81,9 +81,12 @@ public sealed partial class JellyfinItemResponseFilter(JellyfinProxyService prox
         else if (http.Request.Query["Filters"].ToString().Split(',', StringSplitOptions.TrimEntries)
             .Contains("IsFavorite", StringComparer.OrdinalIgnoreCase))
             FilterProviderFavorites(root, true);
-        http.Response.Headers.CacheControl = "no-store";
-        http.Response.Headers.Remove("ETag");
-        http.Response.Headers.Remove("Last-Modified");
+        if (!http.Response.HasStarted)
+        {
+            http.Response.Headers.CacheControl = "no-store";
+            http.Response.Headers.Remove("ETag");
+            http.Response.Headers.Remove("Last-Modified");
+        }
         if (result is JsonResult jsonResult) jsonResult.Value = root;
         else if (result is ContentResult contentResult)
             contentResult.Content = JellyfinQueryResponseRows.Preserve(

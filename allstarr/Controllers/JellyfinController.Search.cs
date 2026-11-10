@@ -35,6 +35,16 @@ public partial class JellyfinController
         [FromQuery] bool recursive = true,
         string? userId = null)
     {
+        if (string.Equals(Request.Query["allstarrScope"], "library", StringComparison.OrdinalIgnoreCase) &&
+            !string.IsNullOrWhiteSpace(GetEffectiveSearchTerm(searchTerm, Request.QueryString.Value)))
+        {
+            var query = string.Join('&', (Request.QueryString.Value ?? "").TrimStart('?').Split('&')
+                .Where(part => !Uri.UnescapeDataString(part.Split('=', 2)[0]).Equals("allstarrScope", StringComparison.OrdinalIgnoreCase)));
+            var endpoint = Request.Path.Value!.TrimStart('/') + "?" + query;
+            var (body, status) = await _proxyService.GetJsonAsync(endpoint, null, Request.Headers, HttpContext.RequestAborted);
+            return HandleProxyResponse(body, status);
+        }
+
         includeItemTypes = QueryList("IncludeItemTypes", includeItemTypes);
         artistIds = QueryList("ArtistIds", artistIds);
         albumArtistIds = QueryList("AlbumArtistIds", albumArtistIds);
@@ -295,13 +305,21 @@ public partial class JellyfinController
                 new MusicSearchWindow(externalSearchLimits.ArtistLimit),
                 _settings.EnableExternalPlaylists && externalSearchLimits.AlbumLimit > 0 && !artistSearch ? new MusicSearchWindow(integratedFetchLimit) : MusicSearchWindow.None,
                 IncludeProviders: !favoritesOnlyRequest,
-                HideProviderArtistsNamedLikeNative: true),
+                HideProviderArtistsNamedLikeNative: true)
+            { LimitProviderWait = true },
             new JellyfinNativeMusicSearch(
                 cancellationToken => GetLocalSearchResultForCurrentRequest(
-                    cleanQuery, includeItemTypes, artistSearch ? int.MaxValue : integratedFetchLimit, recursive, userId),
+                    cleanQuery, includeItemTypes, artistSearch ? int.MaxValue : integratedFetchLimit, recursive, userId, cancellationToken),
                 (id, cancellationToken) => _proxyService.GetJsonAsync(
                     $"Users/{Uri.EscapeDataString(context.VerifiedBackendPrincipalId)}/Items/{Uri.EscapeDataString(id)}",
-                    null, Request.Headers), CaptureNativeQueryRows),
+                    null, Request.Headers, cancellationToken), CaptureNativeQueryRows,
+                (ids, cancellationToken) => _proxyService.GetJsonAsync($"Users/{Uri.EscapeDataString(context.VerifiedBackendPrincipalId)}/Items",
+                    new()
+                    {
+                        ["Ids"] = string.Join(',', ids),
+                        ["Limit"] = ids.Count.ToString(CultureInfo.InvariantCulture),
+                        ["IncludeItemTypes"] = "Audio"
+                    }, Request.Headers, cancellationToken)),
             HttpContext.RequestAborted);
 
         // Native rows stay Jellyfin-shaped; only provider rows are synthesized.
@@ -427,7 +445,8 @@ public partial class JellyfinController
     private sealed class JellyfinNativeMusicSearch(
         Func<CancellationToken, Task<(JsonDocument? Body, int StatusCode)>> search,
         Func<string, CancellationToken, Task<(JsonDocument? Body, int StatusCode)>> getItem,
-        Action<JsonElement>? capture = null)
+        Action<JsonElement>? capture = null,
+        Func<IReadOnlyList<string>, CancellationToken, Task<(JsonDocument? Body, int StatusCode)>>? batch = null)
         : INativeMusicSearch<Dictionary<string, object?>>
     {
         public async Task<IReadOnlyList<NativeMusicItem<Dictionary<string, object?>>>> SearchAsync(
@@ -444,6 +463,37 @@ public partial class JellyfinController
                     .OfType<NativeMusicItem<Dictionary<string, object?>>>()
                     .ToList();
             }
+        }
+
+        public async Task<IReadOnlyList<NativeMusicItem<Dictionary<string, object?>>>> GetSongsAsync(
+            IReadOnlyList<string> ids, CancellationToken cancellationToken)
+        {
+            if (batch == null)
+            {
+                using var slots = new SemaphoreSlim(4);
+                var found = await Task.WhenAll(ids.Select(async id =>
+                {
+                    await slots.WaitAsync(cancellationToken);
+                    try { return await GetSongAsync(id, cancellationToken); }
+                    catch (Exception) when (!cancellationToken.IsCancellationRequested) { return null; }
+                    finally { slots.Release(); }
+                }));
+                return found.OfType<NativeMusicItem<Dictionary<string, object?>>>().ToArray();
+            }
+            var rows = new List<NativeMusicItem<Dictionary<string, object?>>>();
+            foreach (var chunk in ids.Chunk(200))
+            {
+                var (document, status) = await batch(chunk, cancellationToken);
+                using (document)
+                {
+                    if (status != 200 || document == null || !document.RootElement.TryGetProperty("Items", out var items)) continue;
+                    capture?.Invoke(document.RootElement);
+                    rows.AddRange(items.EnumerateArray().Select(item => ToNativeSearchItem(item.Deserialize<Dictionary<string, object?>>() ?? []))
+                        .OfType<NativeMusicItem<Dictionary<string, object?>>>()
+                        .Where(item => item.Kind == MusicItemKind.Song && chunk.Contains(item.Id, StringComparer.Ordinal)));
+                }
+            }
+            return rows;
         }
 
         public async Task<NativeMusicItem<Dictionary<string, object?>>?> GetSongAsync(
@@ -467,7 +517,7 @@ public partial class JellyfinController
         string? includeItemTypes,
         int fetchLimit,
         bool recursive,
-        string? userId)
+        string? userId, CancellationToken cancellationToken = default)
     {
         var endpoint = !string.IsNullOrWhiteSpace(userId)
             ? $"Users/{userId}/Items"
@@ -490,7 +540,7 @@ public partial class JellyfinController
             endpoint,
             ToSafeQueryStringForLogs(queryParams));
 
-        return await _proxyService.GetJsonAsync(endpoint, queryParams, Request.Headers);
+        return await _proxyService.GetJsonAsync(endpoint, queryParams, Request.Headers, cancellationToken);
     }
 
     [HttpGet("Search/Hints", Order = 1)]

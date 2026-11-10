@@ -1,9 +1,13 @@
 using allstarr.Core.Matching;
 using allstarr.Core.Protocols;
+using allstarr.Core.Settings;
 using allstarr.Models.Domain;
 using allstarr.Models.Search;
 using allstarr.Models.Subsonic;
 using allstarr.Services.Common;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
 
 namespace allstarr.Core.Music;
 
@@ -63,7 +67,10 @@ public sealed record MusicSearchRequest(
     MusicSearchWindow Artists,
     MusicSearchWindow Playlists,
     bool IncludeProviders = true,
-    bool HideProviderArtistsNamedLikeNative = false);
+    bool HideProviderArtistsNamedLikeNative = false)
+{
+    public bool LimitProviderWait { get; init; }
+}
 
 public sealed record MusicSearchResult<TPayload>(
     IReadOnlyList<MusicSearchEntry<TPayload>> Songs,
@@ -79,6 +86,23 @@ public interface INativeMusicSearch<TPayload>
     Task<IReadOnlyList<NativeMusicItem<TPayload>>> SearchAsync(CancellationToken cancellationToken);
 
     Task<NativeMusicItem<TPayload>?> GetSongAsync(string id, CancellationToken cancellationToken);
+
+    async Task<IReadOnlyList<NativeMusicItem<TPayload>>> GetSongsAsync(IReadOnlyList<string> ids, CancellationToken cancellationToken)
+    {
+        using var slots = new SemaphoreSlim(4);
+        var rows = await Task.WhenAll(ids.Select(async id =>
+        {
+            await slots.WaitAsync(cancellationToken);
+            try
+            {
+                var row = await GetSongAsync(id, cancellationToken);
+                return row?.Id == id ? row : null;
+            }
+            catch (Exception) when (!cancellationToken.IsCancellationRequested) { return null; }
+            finally { slots.Release(); }
+        }));
+        return rows.OfType<NativeMusicItem<TPayload>>().ToArray();
+    }
 }
 
 /// <summary>
@@ -91,8 +115,11 @@ public sealed partial class MusicSearchService(
     ILibraryIndexService? libraryIndex = null,
     SavedLibraryReader? savedLibrary = null,
     ILogger<MusicSearchService>? logger = null,
-    TimeProvider? timeProvider = null)
+    TimeProvider? timeProvider = null, IRuntimeSettingsChangeSignal? settings = null)
 {
+    private readonly Dictionary<string, OwnedSearchLookup> ownedSearchLookups = new(StringComparer.Ordinal);
+    private sealed record OwnedSearchLookup(DateTimeOffset ExpiresAt, Lazy<Task<IReadOnlyDictionary<string, string>>> Work);
+
     /// <summary>Two songs can only be the same recording when this matches, which makes it a cheap way to narrow down comparisons.</summary>
     internal static string RecordingKey(Song song) =>
         FuzzyMatcher.NormalizeForMatching(FuzzyMatcher.SplitCredits(song.Artist).FirstOrDefault() ?? "") + "\u001f" +
@@ -207,56 +234,99 @@ public sealed partial class MusicSearchService(
         var phases = new long[3];
         var nativeTask = Timed(native.SearchAsync(cancellationToken), phases, 0);
         var providerTask = request.IncludeProviders
-            ? providers.SearchAsync(
+            ? Task.Run(() => providers.SearchAsync(
                 context,
                 request.Query,
                 request.Songs.Fetch,
                 request.Albums.Fetch,
-                request.Artists.Fetch)
+                request.Artists.Fetch))
             : Task.FromResult(new SearchResult());
         providerTask = Timed(providerTask, phases, 1);
         var playlistTask = request.IncludeProviders && request.Playlists.Fetch > 0
-            ? providers.SearchPlaylistsAsync(context, request.Query, request.Playlists.Fetch)
+            ? Task.Run(() => providers.SearchPlaylistsAsync(context, request.Query, request.Playlists.Fetch))
             : Task.FromResult(new List<ExternalPlaylist>());
         playlistTask = Timed(playlistTask, phases, 2);
-        await Task.WhenAll(nativeTask, providerTask, playlistTask);
-        var gathered = Elapsed();
-        long savedAt = gathered;
-
         var nativeRows = await nativeTask;
-        var nativeSongs = nativeRows.Where(item => item.Kind == MusicItemKind.Song &&
-            context.Policy?.Includes(item.ExplicitContentLyrics) != false).ToList();
-        var nativeAlbums = nativeRows.Where(item => item.Kind == MusicItemKind.Album &&
-            (context.Policy?.Preferences.ExplicitFilter != "CleanOnly" || context.Policy.Includes(item.ExplicitContentLyrics))).ToList();
-        var nativeArtists = nativeRows.Where(item => item.Kind == MusicItemKind.Artist).ToList();
-        var provided = await providerTask;
-        var songs = request.Songs.Apply(provided.Songs).ToList();
-        var albums = provided.Albums.ToList();
-        var artists = request.Artists.Apply(provided.Artists).ToList();
-        var playlists = request.Playlists.Apply(await playlistTask).ToList();
-
-        if (savedLibrary != null)
+        using var providerWindow = request.LimitProviderWait
+            ? new CancellationTokenSource(TimeSpan.FromSeconds(3), timeProvider ?? TimeProvider.System) : null;
+        using var providerCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken, context.CancellationToken, providerWindow?.Token ?? default);
+        var workToken = providerCancellation.Token;
+        try { return await ComposeAsync().WaitAsync(workToken); }
+        catch (OperationCanceledException) when (providerWindow?.IsCancellationRequested == true &&
+            !cancellationToken.IsCancellationRequested && !context.CancellationToken.IsCancellationRequested)
         {
-            try
-            {
-                await savedLibrary.PreferSavedIdsAsync(context, songs, albums, cancellationToken);
-            }
-            catch (Exception) when (!cancellationToken.IsCancellationRequested && !context.CancellationToken.IsCancellationRequested) { }
-            songs = songs.DistinctBy(song => song.Id, StringComparer.Ordinal).ToList();
+            var ready = providerTask.IsCompletedSuccessfully ? providerTask.Result : new SearchResult();
+            var readyPlaylists = playlistTask.IsCompletedSuccessfully ? playlistTask.Result : [];
+            logger?.LogInformation("Search provider wait budget expired after native search");
+            return Merge(request.Query, nativeRows.Where(item => item.Kind == MusicItemKind.Artist ||
+                item.Kind == MusicItemKind.Album && context.Policy?.Preferences.ExplicitFilter != "CleanOnly" ||
+                context.Policy?.Includes(item.ExplicitContentLyrics) != false),
+                request.Songs.Apply(ready.Songs), request.Albums.Apply(MusicAlbumReleases.Collapse(ready.Albums)),
+                request.Artists.Apply(ready.Artists), request.Playlists.Apply(readyPlaylists), request.HideProviderArtistsNamedLikeNative);
         }
-        albums = request.Albums.Apply(MusicAlbumReleases.Collapse(albums)).ToList();
-        savedAt = Elapsed();
-        await PreferOwnedSongsAsync(context, songs, nativeSongs, native, cancellationToken);
-        logger?.LogInformation("Search timing: library {Library} ms, sources {Sources} ms, playlists {Playlists} ms, saved songs {Saved} ms, owned songs {Owned} ms, total {Total} ms",
-            phases[0], phases[1], phases[2], savedAt - gathered, Elapsed() - savedAt, Elapsed());
-        return Merge(
-            request.Query,
-            nativeSongs.Concat(nativeAlbums).Concat(nativeArtists),
-            songs,
-            albums,
-            artists,
-            playlists,
-            request.HideProviderArtistsNamedLikeNative);
+
+        async Task<MusicSearchResult<TPayload>> ComposeAsync()
+        {
+            await Task.WhenAll(providerTask, playlistTask).WaitAsync(workToken);
+            var gathered = Elapsed();
+            long savedAt = gathered;
+
+            var nativeSongs = nativeRows.Where(item => item.Kind == MusicItemKind.Song &&
+                context.Policy?.Includes(item.ExplicitContentLyrics) != false).ToList();
+            var nativeAlbums = nativeRows.Where(item => item.Kind == MusicItemKind.Album &&
+                (context.Policy?.Preferences.ExplicitFilter != "CleanOnly" || context.Policy.Includes(item.ExplicitContentLyrics))).ToList();
+            var nativeArtists = nativeRows.Where(item => item.Kind == MusicItemKind.Artist).ToList();
+            var provided = await providerTask;
+            var songs = request.Songs.Apply(provided.Songs).ToList();
+            var albums = provided.Albums.ToList();
+            var artists = request.Artists.Apply(provided.Artists).ToList();
+            var playlists = request.Playlists.Apply(await playlistTask).ToList();
+
+            var originalSongs = songs;
+            var originalAlbums = albums;
+            songs = songs.Select(song => song.Copy()).ToList();
+            albums = albums.Select(album => album.Copy()).ToList();
+            using var enrichmentWindow = request.LimitProviderWait
+                ? new CancellationTokenSource(TimeSpan.FromMilliseconds(300), timeProvider ?? TimeProvider.System) : null;
+            using var enrichmentStop = CancellationTokenSource.CreateLinkedTokenSource(workToken, enrichmentWindow?.Token ?? default);
+            var enrichmentToken = enrichmentStop.Token;
+            try { return await Task.Run(EnrichAsync).WaitAsync(enrichmentToken); }
+            catch (OperationCanceledException) when (enrichmentWindow?.IsCancellationRequested == true && !workToken.IsCancellationRequested)
+            {
+                logger?.LogInformation("Search enrichment budget expired; keeping {Count} streaming songs", originalSongs.Count);
+                return Merge(request.Query, nativeRows.Where(item => item.Kind == MusicItemKind.Artist ||
+                    item.Kind == MusicItemKind.Album && context.Policy?.Preferences.ExplicitFilter != "CleanOnly" ||
+                    context.Policy?.Includes(item.ExplicitContentLyrics) != false), originalSongs,
+                    request.Albums.Apply(MusicAlbumReleases.Collapse(originalAlbums)), artists, playlists, request.HideProviderArtistsNamedLikeNative);
+            }
+
+            async Task<MusicSearchResult<TPayload>> EnrichAsync()
+            {
+                if (savedLibrary != null)
+                {
+                    try
+                    {
+                        await savedLibrary.PreferSavedIdsAsync(context, songs, albums, enrichmentToken);
+                    }
+                    catch (Exception) when (!enrichmentToken.IsCancellationRequested) { }
+                    songs = songs.DistinctBy(song => song.Id, StringComparer.Ordinal).ToList();
+                }
+                albums = request.Albums.Apply(MusicAlbumReleases.Collapse(albums)).ToList();
+                savedAt = Elapsed();
+                await PreferOwnedSongsAsync(context, songs, nativeSongs, native, enrichmentToken);
+                logger?.LogInformation("Search timing: library {Library} ms, sources {Sources} ms, playlists {Playlists} ms, saved songs {Saved} ms, owned songs {Owned} ms, total {Total} ms",
+                    phases[0], phases[1], phases[2], savedAt - gathered, Elapsed() - savedAt, Elapsed());
+                return Merge(
+                    request.Query,
+                    nativeSongs.Concat(nativeAlbums).Concat(nativeArtists),
+                    songs,
+                    albums,
+                    artists,
+                    playlists,
+                    request.HideProviderArtistsNamedLikeNative);
+            }
+        }
     }
 
     /// <summary>Ranks native and provider rows of each kind; native rows win ties.</summary>
@@ -342,16 +412,35 @@ public sealed partial class MusicSearchService(
             : SearchRelevanceRanker.ScoreSong(query, entry.Song!, knownDuration);
     }
 
+    public async Task<IReadOnlyList<MusicSearchEntry<TPayload>>> ProjectSearchSongsAsync<TPayload>(
+        ProtocolExecutionContext context, IReadOnlyList<Song> songs, INativeMusicSearch<TPayload> native,
+        CancellationToken cancellationToken = default)
+    {
+        using var window = new CancellationTokenSource(TimeSpan.FromMilliseconds(300), timeProvider ?? TimeProvider.System);
+        using var stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, context.CancellationToken, window.Token);
+        try { return await Task.Run(PrepareAsync).WaitAsync(stop.Token); }
+        catch (OperationCanceledException) when (window.IsCancellationRequested && !cancellationToken.IsCancellationRequested &&
+            !context.CancellationToken.IsCancellationRequested)
+        { return songs.Select(song => new MusicSearchEntry<TPayload> { Song = song }).ToArray(); }
+
+        async Task<IReadOnlyList<MusicSearchEntry<TPayload>>> PrepareAsync()
+        {
+            var copies = songs.Select(song => song.Copy()).ToArray();
+            if (savedLibrary != null) await savedLibrary.PreferSavedIdsAsync(context, copies, [], stop.Token);
+            return await ProjectSongsAsync(context, copies, native, stop.Token, cacheSearch: true);
+        }
+    }
+
     /// <summary>Projects a provider mix through the same accessible native recording choices as search.</summary>
     public async Task<IReadOnlyList<MusicSearchEntry<TPayload>>> ProjectSongsAsync<TPayload>(
         ProtocolExecutionContext context, IReadOnlyList<Song> songs, INativeMusicSearch<TPayload> native,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default, bool cacheSearch = false)
     {
         cancellationToken.ThrowIfCancellationRequested();
         IReadOnlyDictionary<string, NativeMusicItem<TPayload>> owned;
         try
         {
-            owned = await ResolveOwnedSongsAsync(context, songs, [], native, cancellationToken);
+            owned = await ResolveOwnedSongsAsync(context, songs, [], native, cancellationToken, cacheSearch);
         }
         catch (Exception) when (!cancellationToken.IsCancellationRequested)
         {
@@ -378,7 +467,7 @@ public sealed partial class MusicSearchService(
         INativeMusicSearch<TPayload> native,
         CancellationToken cancellationToken)
     {
-        var owned = await ResolveOwnedSongsAsync(context, songs, nativeSongs, native, cancellationToken);
+        var owned = await ResolveOwnedSongsAsync(context, songs, nativeSongs, native, cancellationToken, cacheSearch: true);
         var existing = nativeSongs.Select(item => item.Id).ToHashSet(StringComparer.Ordinal);
         foreach (var song in songs)
             if (owned.TryGetValue(song.Id, out var copy) && existing.Add(copy.Id)) nativeSongs.Add(copy);
@@ -388,34 +477,68 @@ public sealed partial class MusicSearchService(
     private async Task<IReadOnlyDictionary<string, NativeMusicItem<TPayload>>> ResolveOwnedSongsAsync<TPayload>(
         ProtocolExecutionContext context, IReadOnlyList<Song> songs,
         IReadOnlyList<NativeMusicItem<TPayload>> existing,
-        INativeMusicSearch<TPayload> native, CancellationToken cancellationToken)
+        INativeMusicSearch<TPayload> native, CancellationToken cancellationToken, bool cacheSearch = false)
     {
         if (libraryIndex == null || songs.Count == 0) return new Dictionary<string, NativeMusicItem<TPayload>>();
-        var matches = await libraryIndex.FindKnownRecordingTracksAsync(context, songs.Select(song =>
+        var lookups = songs.Select(song =>
                 new LibraryRecordingLookup(song.Id, song.CanonicalRecordingId, song.Isrc, song.ExternalProvider, song.ExternalId))
-            .ToArray(), cancellationToken);
-        using var slots = new SemaphoreSlim(4);
-        var fetched = await Task.WhenAll(matches.Values.Distinct(StringComparer.Ordinal).Select(async id =>
+            .ToArray();
+        var matches = cacheSearch
+            ? await FindOwnedSearchTracksAsync(context, lookups, cancellationToken)
+            : await libraryIndex.FindKnownRecordingTracksAsync(context, lookups, cancellationToken);
+        var ids = matches.Values.Distinct(StringComparer.Ordinal).ToHashSet(StringComparer.Ordinal);
+        var present = existing.Where(item => ids.Contains(item.Id)).ToArray();
+        var missing = ids.Except(present.Select(item => item.Id), StringComparer.Ordinal).ToArray();
+        IReadOnlyList<NativeMusicItem<TPayload>> fetched = [];
+        try
         {
-            var present = existing.FirstOrDefault(item => item.Id == id);
-            if (present != null) return present;
-            await slots.WaitAsync(cancellationToken);
-            try
-            {
-                var copy = await native.GetSongAsync(id, cancellationToken);
-                return copy?.Id == id ? copy : null;
-            }
-            catch (Exception) when (!cancellationToken.IsCancellationRequested)
-            {
-                return null;
-            }
-            finally { slots.Release(); }
-        }));
+            if (missing.Length > 0) fetched = await native.GetSongsAsync(missing, cancellationToken);
+        }
+        catch (Exception) when (!cancellationToken.IsCancellationRequested) { }
+        fetched = present.Concat(fetched.Where(item => ids.Contains(item.Id))).DistinctBy(item => item.Id).ToArray();
         var byId = fetched.OfType<NativeMusicItem<TPayload>>()
             .Where(item => context.Policy?.Includes(item.ExplicitContentLyrics) != false)
             .ToDictionary(item => item.Id, StringComparer.Ordinal);
         return matches.Where(item => byId.ContainsKey(item.Value))
             .ToDictionary(item => item.Key, item => byId[item.Value], StringComparer.Ordinal);
+    }
+
+    private async Task<IReadOnlyDictionary<string, string>> FindOwnedSearchTracksAsync(
+        ProtocolExecutionContext context, LibraryRecordingLookup[] lookups, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        context.CancellationToken.ThrowIfCancellationRequested();
+        var clock = timeProvider ?? TimeProvider.System;
+        var key = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new
+        {
+            context.Protocol,
+            context.BackendInstanceId,
+            context.VerifiedBackendPrincipalId,
+            context.Actor,
+            context.Policy,
+            Settings = settings?.Version,
+            Lookups = lookups
+        }))));
+        OwnedSearchLookup cached;
+        lock (ownedSearchLookups)
+        {
+            if (!ownedSearchLookups.TryGetValue(key, out cached!) || cached.ExpiresAt <= clock.GetUtcNow())
+            {
+                if (ownedSearchLookups.Count >= 256)
+                    ownedSearchLookups.Remove(ownedSearchLookups.MinBy(item => item.Value.ExpiresAt).Key);
+                cached = new(clock.GetUtcNow().AddMinutes(10), new(async () =>
+                    await libraryIndex!.FindKnownRecordingTracksAsync(context, lookups, CancellationToken.None)));
+                ownedSearchLookups[key] = cached;
+            }
+        }
+        try { return await cached.Work.Value.WaitAsync(cancellationToken).WaitAsync(context.CancellationToken); }
+        catch
+        {
+            if (cached.Work.IsValueCreated && (cached.Work.Value.IsFaulted || cached.Work.Value.IsCanceled))
+                lock (ownedSearchLookups)
+                    if (ownedSearchLookups.GetValueOrDefault(key) == cached) ownedSearchLookups.Remove(key);
+            throw;
+        }
     }
 
     private static List<MusicSearchEntry<TPayload>> Rank<TPayload>(

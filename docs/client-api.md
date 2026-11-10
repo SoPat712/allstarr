@@ -24,8 +24,8 @@ when a Subsonic-compatible server identifies itself as Navidrome, or `subsonic` 
 before using optional routes.
 `titleMarkers`, `itemDetails`, `playback`, `lyricsRich`, `lyricsSources`, `lyricsVersions`,
 `fixesMatch`, `reports`, `mixes`, `releases`, `follow`, `events`, `appearances`,
-`similarAlbums`, `playlistKinds`, `history`, `playCounts`, `libraryAdditions`, and
-`preferences` are available.
+`similarAlbums`, `playlistKinds`, `history`, `playCounts`, `libraryAdditions`,
+`preferences`, and `searchStream` are available.
 `stats`, `taste`, `sound`, `playActivity`, `historyImports`, and `historyRecheck`
 are true when their respective services are registered. `dashboardLink` is false.
 When `Admin:Oidc:PublicUrl` is configured, capabilities also includes
@@ -34,6 +34,36 @@ path. The app can open it in a browser for normal sign-in. The object is omitted
 when no public address is configured; no signed-in link is provided.
 The version in the path identifies the contract. Compatible additions stay
 within v1; incompatible changes use a new path version.
+
+For native library results, `GET /Items?searchTerm=…&allstarrScope=library`
+forwards the Jellyfin search without provider or saved-library work. The scope
+parameter is removed before forwarding; normal authentication and response
+filtering still apply. Other query parameters, including repeated fields, remain
+intact. The existing merged search remains available without this parameter.
+It waits at most three seconds for providers after Jellyfin answers; late fetches
+continue to fill the provider cache for the next search.
+
+`GET /allstarr/v1/search?q=&limit=20&types=Audio,MusicAlbum,MusicArtist,Playlist`
+streams external search results as `application/x-ndjson`. Query text must contain
+1–200 characters; `limit` is 1–200 per provider and item kind. Omitted `types`
+requests every supported kind. Each flushed line is `{provider:"id",items:[...]}`.
+Metadata and playlists can arrive in separate lines for the same provider.
+Items use the normal Jellyfin search item shape, including title markers, artwork,
+and user data; playlists retain the search route's album presentation.
+
+Searches run concurrently. Before emitting rows, the route searches the accessible
+native library to suppress matching songs, albums, and artist names, and checks
+known native recording links. Native rows are never emitted. Duplicate item IDs
+and matching recordings already sent are suppressed; the first arriving provider
+wins. Album matching uses normalized title and artist. Native search can determine
+the first-batch latency. Saved-ID and owned-copy enrichment has a shared 50 ms
+window per batch. When that window expires, the original playable external rows
+remain; a slow match does not hold up the batch. The merged route uses the same
+enrichment bound. Owned native copies are read in batches rather than one request
+per song. The final line is `{done:true,late:["provider-id"]}`;
+`late` names providers whose batches could not finish within the whole stream's
+ten-second cap. Disconnecting cancels that stream's provider work. Concurrent
+streams share provider fetches until their last reader disconnects.
 
 JSON uses camelCase. Every error has this shape:
 

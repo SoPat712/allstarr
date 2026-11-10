@@ -4,12 +4,50 @@ using allstarr.Core.Protocols;
 using allstarr.Core.Routing;
 using allstarr.Core.Storage;
 using allstarr.Services;
+using allstarr.Services.Common;
+using allstarr.Core.Operations;
+using System.Text.Json;
 using Moq;
 
 namespace allstarr.Tests;
 
 public sealed class ProtocolPlaylistGatewayTests
 {
+    [Fact]
+    public async Task PlaylistSearchSharesMergedAndStreamedFetchesAndCachesIdenticalContent()
+    {
+        var user = Guid.NewGuid();
+        var context = Context(ProtocolKind.Jellyfin, user);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource<ProviderOutcome<ProviderPage<ProviderPlaylistSummary>>>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var capability = new Mock<IProviderPlaylistCapability>(MockBehavior.Strict);
+        capability.SetupGet(item => item.ProviderId).Returns("spotify");
+        capability.SetupGet(item => item.Capability).Returns(ProviderCapabilityKind.Playlist);
+        capability.Setup(item => item.SearchPlaylistsAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderPlaylistSearchRequest>()))
+            .Returns(() => { entered.TrySetResult(); return release.Task; });
+        var descriptor = Descriptor(true);
+        var account = new ProviderAccountContext(Guid.NewGuid(), "spotify", ProviderAccountScope.Personal, 1, ownerUserId: user);
+        var router = new Mock<IProviderRouter>(MockBehavior.Strict);
+        router.Setup(item => item.PlanAsync<IProviderPlaylistCapability>(It.IsAny<ProviderRouteRequest>()))
+            .ReturnsAsync((ProviderRouteRequest request) => Plan(request, descriptor, capability.Object, account));
+        using var cache = new MemoryApplicationCache(new SystemPlatformClock());
+        var gateway = new ProtocolProviderGateway(router.Object, Registry(descriptor, capability.Object),
+            new Mock<IHttpClientFactory>(MockBehavior.Strict).Object, applicationCache: cache);
+        var merged = gateway.SearchPlaylistsAsync(context, "road", 10);
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        string? streamed = null;
+        var stream = gateway.StreamSearchAsync(context, "road", 10, false, false, false, true,
+            (_, _, playlists, _) => { streamed = JsonSerializer.Serialize(playlists); return Task.CompletedTask; });
+        release.SetResult(ProviderOutcome<ProviderPage<ProviderPlaylistSummary>>.Success(new("spotify", [PlaylistSummary()])));
+        var original = await merged.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Empty(await stream.WaitAsync(TimeSpan.FromSeconds(5)));
+        var expected = JsonSerializer.Serialize(original);
+        Assert.Equal(expected, streamed);
+        original[0].Name = "Changed";
+        Assert.Equal(expected, JsonSerializer.Serialize(await gateway.SearchPlaylistsAsync(context, "road", 10)));
+        capability.Verify(item => item.SearchPlaylistsAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderPlaylistSearchRequest>()), Times.Once);
+    }
+
     [Theory]
     [InlineData(ProtocolKind.Jellyfin)]
     [InlineData(ProtocolKind.Subsonic)]

@@ -51,6 +51,11 @@ public interface IProtocolProviderGateway
         int artistLimit,
         string? providerId = null);
 
+    Task<IReadOnlyList<string>> StreamSearchAsync(ProtocolExecutionContext protocol, string query, int limit,
+        bool songs, bool albums, bool artists, bool playlists,
+        Func<string, SearchResult, IReadOnlyList<ExternalPlaylist>, CancellationToken, Task> writeBatch,
+        CancellationToken cancellationToken = default);
+
     Task<IReadOnlyList<Song>> SearchPlayableSongsAsync(
         ProtocolExecutionContext protocol,
         string query,
@@ -1097,14 +1102,26 @@ public sealed partial class ProtocolProviderGateway(
             sourceTrackId: null));
         var settings = SearchSettings;
         var gate = new SemaphoreSlim(ProviderSearchConcurrency);
-        var searches = plan.Candidates.Select(candidate => Task.Run(() => SearchPlaylistsCachedAsync(candidate, query, limit, settings, gate))).ToArray();
+        var searches = plan.Candidates.Select(candidate => Task.Run(() => SearchProviderAsync(candidate))).ToArray();
         await WaitForFirstAnswersAsync(searches, () => searches.Any(task => task.IsCompletedSuccessfully && task.Result.Count > 0),
             settings, protocol.CancellationToken);
         return searches.Where(task => task.IsCompletedSuccessfully).SelectMany(task => task.Result).Take(limit).ToList();
+
+        async Task<List<ExternalPlaylist>> SearchProviderAsync(ProviderRouteCandidate<IProviderPlaylistCapability> candidate)
+        {
+            var context = candidate.Context;
+            var scope = JsonSerializer.Serialize(new { context.Actor, context.Policy, Kind = "playlists" });
+            var key = CacheKeyBuilder.BuildProviderSearchKey(candidate.Provider.Id, context.Account?.AccountId,
+                context.Account?.Revision, scope, query, limit, false, false, false);
+            var serialized = await RunSharedSearchAsync(key, async cancellation => JsonSerializer.Serialize(
+                await SearchPlaylistsCachedAsync(candidate, query, limit, settings, gate, cancellationToken: cancellation)), CancellationToken.None);
+            return serialized == null ? [] : JsonSerializer.Deserialize<List<ExternalPlaylist>>(serialized) ?? [];
+        }
     }
 
     private async Task<List<ExternalPlaylist>> SearchPlaylistsCachedAsync(ProviderRouteCandidate<IProviderPlaylistCapability> candidate,
-        string query, int limit, CacheSettings settings, SemaphoreSlim gate, bool allowSmallerWindow = true)
+        string query, int limit, CacheSettings settings, SemaphoreSlim gate, bool allowSmallerWindow = true,
+        CancellationToken cancellationToken = default)
     {
         var context = candidate.Context;
         var scope = JsonSerializer.Serialize(new { context.Actor, context.Policy, Kind = "playlists" });
@@ -1115,7 +1132,7 @@ public sealed partial class ProtocolProviderGateway(
         var clock = timeProvider ?? TimeProvider.System;
         try
         {
-            if (applicationCache?.IsEnabled == true && await applicationCache.GetStringAsync(key) is { } cached &&
+            if (applicationCache?.IsEnabled == true && await applicationCache.GetStringAsync(key).WaitAsync(cancellationToken) is { } cached &&
                 JsonSerializer.Deserialize<List<ExternalPlaylist>>(cached) is { } known) return known;
             if (applicationCache?.IsEnabled == true && allowSmallerWindow &&
                 await applicationCache.GetStringAsync(windowKey) is { } window &&
@@ -1134,14 +1151,16 @@ public sealed partial class ProtocolProviderGateway(
                 return smaller;
             }
             // A late answer is still worth keeping, so this outlives the request that started it.
-            using var timeout = new CancellationTokenSource(settings.SearchBackgroundWindow, clock);
+            using var background = new CancellationTokenSource(settings.SearchBackgroundWindow, clock);
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(background.Token, cancellationToken);
             await gate.WaitAsync(timeout.Token);
             ProviderOutcome<ProviderPage<ProviderPlaylistSummary>> outcome;
             try
             {
-                outcome = await candidate.Implementation.SearchPlaylistsAsync(new ProviderExecutionContext(context.Actor, context.ProviderId,
+                var request = candidate.Implementation.SearchPlaylistsAsync(new ProviderExecutionContext(context.Actor, context.ProviderId,
                     context.Account, context.Policy, context.OperationId, context.CorrelationId, clock.GetUtcNow() + settings.SearchBackgroundWindow, timeout.Token),
                     new ProviderPlaylistSearchRequest(query, new ProviderPageRequest(limit)));
+                outcome = cancellationToken.CanBeCanceled ? await request.WaitAsync(timeout.Token) : await request;
             }
             finally { gate.Release(); }
             if (!outcome.IsSuccess) return [];
@@ -1150,8 +1169,8 @@ public sealed partial class ProtocolProviderGateway(
             {
                 var serialized = JsonSerializer.Serialize(playlists);
                 await applicationCache.SetStringAsync(windowKey,
-                    JsonSerializer.Serialize(new CachedSearchWindow(limit)), settings.SearchResultsTTL);
-                await applicationCache.SetStringAsync(key, serialized, settings.SearchResultsTTL);
+                    JsonSerializer.Serialize(new CachedSearchWindow(limit)), TimeSpan.FromMinutes(10));
+                await applicationCache.SetStringAsync(key, serialized, TimeSpan.FromMinutes(10));
             }
             return playlists;
         }

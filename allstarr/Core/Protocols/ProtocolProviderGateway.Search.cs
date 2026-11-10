@@ -104,7 +104,7 @@ public sealed partial class ProtocolProviderGateway
 
     private async Task<SearchSnapshot?> SearchProviderWithinWindowAsync(
         ProviderRouteCandidate<IProviderMetadataCapability> candidate, string query, int limit,
-        bool songs, bool albums, bool artists, CacheSettings settings)
+        bool songs, bool albums, bool artists, CacheSettings settings, CancellationToken? streamCancellation = null)
     {
         var context = candidate.Context;
         var scope = JsonSerializer.Serialize(new { context.Actor, context.Policy });
@@ -114,8 +114,7 @@ public sealed partial class ProtocolProviderGateway
             context.Account?.Revision, scope, query, 0, songs, albums, artists);
         var workKey = Intelligence.HistoryRequestBudget.Current == null ? key : key + ":history";
         // Some sources do real work before their first await, so each starts on its own and can't hold up the others.
-        var work = searchWork.GetOrAdd(workKey, _ => new(() => Task.Run(SearchAsync)));
-        var serialized = await work.Value;
+        var serialized = await RunSharedSearchAsync(workKey, SearchAsync, streamCancellation ?? CancellationToken.None);
         if (serialized == null) return null;
         var snapshot = JsonSerializer.Deserialize<SearchSnapshot>(serialized)!;
         for (var index = 0; index < snapshot.Result.Songs.Count; index++)
@@ -124,28 +123,25 @@ public sealed partial class ProtocolProviderGateway
         await CacheResourcesAsync(context, snapshot.Result.Albums, snapshot.Result.Artists);
         return snapshot;
 
-        async Task<string?> SearchAsync()
+        async Task<string?> SearchAsync(CancellationToken cancellationToken)
         {
             try
             {
-                return await FetchAsync();
+                return await FetchAsync(streamCancellation == null, cancellationToken);
             }
             catch (Exception)
             {
                 logger?.LogDebug("Provider search cache work failed for {ProviderId}", candidate.Provider.Id);
                 return null;
             }
-            finally
-            {
-                searchWork.TryRemove(workKey, out _);
-            }
         }
 
-        async Task<string?> FetchAsync(bool allowSmallerWindow = true)
+        async Task<string?> FetchAsync(bool allowSmallerWindow = true, CancellationToken cancellationToken = default)
         {
             var clock = timeProvider ?? TimeProvider.System;
             var deadline = clock.GetUtcNow() + settings.SearchBackgroundWindow;
-            using var timeout = new CancellationTokenSource(settings.SearchBackgroundWindow, clock);
+            using var background = new CancellationTokenSource(settings.SearchBackgroundWindow, clock);
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(background.Token, cancellationToken);
             if (applicationCache?.IsEnabled == true)
             {
                 try
@@ -200,7 +196,7 @@ public sealed partial class ProtocolProviderGateway
             var execution = new ProviderExecutionContext(context.Actor, context.ProviderId, context.Account,
                 context.Policy, context.OperationId, context.CorrelationId,
                 deadline, timeout.Token);
-            var request = new ProviderMetadataSearchRequest(query, new ProviderPageRequest(limit));
+            var request = new ProviderMetadataSearchRequest(query.Trim(), new ProviderPageRequest(limit));
             var songsTask = TrySearchAsync(() => candidate.Implementation.SearchTracksAsync(execution, request),
                 timeout.Token, songs);
             var albumsTask = TrySearchAsync(() => candidate.Implementation.SearchAlbumsAsync(execution, request),
@@ -213,7 +209,7 @@ public sealed partial class ProtocolProviderGateway
             }
             catch (OperationCanceledException) when (timeout.IsCancellationRequested)
             {
-                RecordFailure("background timeout");
+                if (!cancellationToken.IsCancellationRequested) RecordFailure("background timeout");
                 return null;
             }
 
@@ -225,7 +221,8 @@ public sealed partial class ProtocolProviderGateway
                 new ProviderError(ProviderErrorKind.TransientFailure) : null;
             if (failed)
             {
-                if (Intelligence.HistoryRequestBudget.Current == null || error?.Kind != ProviderErrorKind.Canceled)
+                if (!cancellationToken.IsCancellationRequested &&
+                    (Intelligence.HistoryRequestBudget.Current == null || error?.Kind != ProviderErrorKind.Canceled))
                     RecordFailure("provider failure", error?.RetryAfter);
             }
             else
@@ -256,8 +253,8 @@ public sealed partial class ProtocolProviderGateway
                 try
                 {
                     await applicationCache.SetStringAsync(windowKey,
-                        JsonSerializer.Serialize(new CachedSearchWindow(limit)), settings.SearchResultsTTL).WaitAsync(timeout.Token);
-                    await applicationCache.SetStringAsync(key, serialized, settings.SearchResultsTTL).WaitAsync(timeout.Token);
+                        JsonSerializer.Serialize(new CachedSearchWindow(limit)), TimeSpan.FromMinutes(10)).WaitAsync(timeout.Token);
+                    await applicationCache.SetStringAsync(key, serialized, TimeSpan.FromMinutes(10)).WaitAsync(timeout.Token);
                 }
                 catch (Exception)
                 {

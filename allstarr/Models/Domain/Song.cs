@@ -2,6 +2,8 @@ namespace allstarr.Models.Domain;
 
 public sealed class Song
 {
+    internal Song Copy() => (Song)MemberwiseClone();
+
     public string Id { get; set; } = string.Empty;
     public Guid? CanonicalRecordingId { get; set; }
     public string? OriginalItemId { get; set; }

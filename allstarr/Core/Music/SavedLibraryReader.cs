@@ -362,6 +362,7 @@ public sealed class SavedLibraryReader(IDbContextFactory<AllstarrDbContext> fact
         if (songs.Count == 0 && albums.Count == 0 || execution.Actor?.EffectiveUserId is not { } owner) return;
         var saved = await SearchIndexAsync(execution, owner, cancellationToken);
         var policy = effectivePolicies == null ? null : await effectivePolicies.ResolveForUserAsync(owner, cancellationToken);
+        var matchedSongs = new List<(Song Song, FavoriteViewItem Match)>();
         foreach (var song in songs.Where(song => policy?.IsAutomatic(ProviderKey(song.ExternalProvider ?? "")) != false))
         {
             // Only the same title and artist can match, so nothing else in the library needs comparing.
@@ -378,7 +379,14 @@ public sealed class SavedLibraryReader(IDbContextFactory<AllstarrDbContext> fact
                          MusicSearchService.MetadataRecordingsMatch(track.Song, song, allowSparse: true));
                 })?.Item;
             if (match == null || match.ItemId == song.Id) continue;
-            var recording = identities == null ? null : await identities.ResolveRecordingAsync(execution.Actor!, match.ItemId, cancellationToken);
+            matchedSongs.Add((song, match));
+        }
+        var recordingIds = matchedSongs.Select(item => item.Match.ItemId).Distinct(StringComparer.Ordinal).ToArray();
+        var recordings = identities == null || recordingIds.Length == 0 ? new Dictionary<string, CanonicalRecordingIdentity?>() :
+            await identities.ResolveRecordingsAsync(execution.Actor!, recordingIds, cancellationToken);
+        foreach (var (song, match) in matchedSongs)
+        {
+            var recording = recordings.GetValueOrDefault(match.ItemId);
             song.Id = match.ItemId;
             song.CanonicalRecordingId = recording?.Id ??
                 (match.Resource.ProviderId == "allstarr" && Guid.TryParse(match.Resource.Value, out var id) ? id : null);

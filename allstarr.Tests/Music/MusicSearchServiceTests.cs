@@ -75,6 +75,148 @@ public sealed class MusicSearchServiceTests
     }
 
     [Fact]
+    public async Task MergedSearchKeepsReadySongsWhenPlaylistSearchIsLate()
+    {
+        var gateway = Gateway(new SearchResult { Songs = [new Song { Id = "fast", Title = "Track" }] });
+        var playlists = new TaskCompletionSource<List<ExternalPlaylist>>(TaskCreationOptions.RunContinuationsAsynchronously);
+        gateway.Setup(service => service.SearchPlaylistsAsync(_context, "Track", 20)).Returns(playlists.Task);
+        var service = new MusicSearchService(gateway.Object);
+        var request = Request("Track") with { Playlists = new(20), LimitProviderWait = true };
+        try
+        {
+            var result = await service.SearchAsync(_context, request, new FakeNative([])).WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal("fast", Assert.Single(result.Songs).Song!.Id);
+            Assert.False(playlists.Task.IsCompleted);
+        }
+        finally { playlists.TrySetResult([]); }
+    }
+
+    [Fact]
+    public async Task SearchBoundsSynchronousOwnershipWorkWithoutBlockingTheRequest()
+    {
+        var clock = new ManualTimeProvider(DateTimeOffset.UtcNow);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var release = new ManualResetEventSlim();
+        var index = new Mock<ILibraryIndexService>();
+        index.Setup(service => service.FindKnownRecordingTracksAsync(_context, It.IsAny<IReadOnlyList<LibraryRecordingLookup>>(), It.IsAny<CancellationToken>()))
+            .Returns(() =>
+            {
+                entered.TrySetResult();
+                release.Wait();
+                return Task.FromResult<IReadOnlyDictionary<string, string>>(new Dictionary<string, string>());
+            });
+        var service = new MusicSearchService(Gateway(new SearchResult { Songs = [new Song { Id = "external", Title = "Track" }] }).Object,
+            index.Object, timeProvider: clock);
+        var pending = service.SearchAsync(_context, Request("Track") with { LimitProviderWait = true }, new FakeNative([]));
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            clock.Advance(TimeSpan.FromMilliseconds(300));
+            Assert.Equal("external", Assert.Single((await pending.WaitAsync(TimeSpan.FromSeconds(5))).Songs).Song!.Id);
+        }
+        finally { release.Set(); }
+    }
+
+    [Fact]
+    public async Task SearchReadsOwnedCopiesInOneBatchAndPreservesProviderOrder()
+    {
+        var songs = Enumerable.Range(0, 8).Select(index => new Song { Id = $"external-{index}", Title = "Track" }).ToArray();
+        var index = new Mock<ILibraryIndexService>();
+        index.Setup(service => service.FindKnownRecordingTracksAsync(_context, It.IsAny<IReadOnlyList<LibraryRecordingLookup>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(songs.ToDictionary(song => song.Id, song => song.Id.Replace("external", "native")));
+        var legacy = new Mock<INativeMusicSearch<string>>(MockBehavior.Strict);
+        legacy.Setup(service => service.GetSongAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string id, CancellationToken _) => new NativeMusicItem<string>(MusicItemKind.Song, id, "Track", "Artist", "complete " + id));
+        await ((INativeMusicSearch<string>)new DelegatingNative(legacy.Object)).GetSongsAsync(songs.Select(song => song.Id.Replace("external", "native")).ToArray(), default);
+        legacy.Verify(service => service.GetSongAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Exactly(8));
+        var native = new Mock<INativeMusicSearch<string>>(MockBehavior.Strict);
+        native.Setup(service => service.SearchAsync(It.IsAny<CancellationToken>())).ReturnsAsync(Array.Empty<NativeMusicItem<string>>());
+        native.Setup(service => service.GetSongsAsync(It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((IReadOnlyList<string> ids, CancellationToken _) => ids.Reverse().Select(id =>
+                new NativeMusicItem<string>(MusicItemKind.Song, id, "Track", "Artist", "complete " + id)).ToArray());
+        var result = await new MusicSearchService(Gateway(new SearchResult { Songs = songs.ToList() }).Object, index.Object)
+            .SearchAsync(_context, Request("Track"), native.Object);
+        Assert.Equal(songs.Select(song => song.Id.Replace("external", "native")), result.Songs.Select(Id));
+        Assert.All(result.Songs, row => Assert.Equal("complete " + row.Native!.Id, row.Native.Payload));
+        native.Verify(service => service.GetSongsAsync(It.Is<IReadOnlyList<string>>(ids => ids.Count == 8), It.IsAny<CancellationToken>()), Times.Once);
+        native.Verify(service => service.GetSongAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task SearchLeavesExternalSongsPlayableWhenOwnedResolutionIsSlow()
+    {
+        var clock = new ManualTimeProvider(DateTimeOffset.UtcNow);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource<IReadOnlyDictionary<string, string>>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var index = new Mock<ILibraryIndexService>();
+        index.Setup(service => service.FindKnownRecordingTracksAsync(_context, It.IsAny<IReadOnlyList<LibraryRecordingLookup>>(), It.IsAny<CancellationToken>()))
+            .Returns(() => { entered.TrySetResult(); return release.Task; });
+        var song = new Song { Id = "external", Title = "Track" };
+        var service = new MusicSearchService(Gateway(new SearchResult { Songs = [song] }).Object, index.Object, timeProvider: clock);
+        var native = new FakeNative([], new NativeMusicItem<string>(MusicItemKind.Song, "native", "Track", "Artist", "complete"));
+        var request = Request("Track") with { LimitProviderWait = true };
+        var pending = service.SearchAsync(_context, request, native);
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        clock.Advance(TimeSpan.FromMilliseconds(300));
+        Assert.Equal("external", Assert.Single((await pending.WaitAsync(TimeSpan.FromSeconds(5))).Songs).Song!.Id);
+        release.SetResult(new Dictionary<string, string> { ["external"] = "native" });
+        var repeat = await service.SearchAsync(_context, request, native);
+        Assert.Equal("native", Assert.Single(repeat.Songs).Native!.Id);
+        Assert.Equal("external", song.Id);
+        index.Verify(service => service.FindKnownRecordingTracksAsync(_context, It.IsAny<IReadOnlyList<LibraryRecordingLookup>>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task MergedSearchLimitsProviderWaitAfterNativeAndUsesTheLateAnswerOnRepeat()
+    {
+        var clock = new ManualTimeProvider(DateTimeOffset.UtcNow);
+        var providerStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var late = new TaskCompletionSource<SearchResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var gateway = new Mock<IProtocolProviderGateway>();
+        gateway.Setup(service => service.SearchAsync(_context, "Track", 20, 20, 20, null))
+            .Returns(() => { providerStarted.TrySetResult(); return late.Task; });
+        var service = new MusicSearchService(gateway.Object, timeProvider: clock);
+        var native = new FakeNative([new(MusicItemKind.Song, "native", "Track", "Artist", "original")]);
+        var request = Request("Track") with { LimitProviderWait = true };
+        var first = service.SearchAsync(_context, request, native);
+        await providerStarted.Task;
+        clock.Advance(TimeSpan.FromSeconds(3));
+        var partial = await first.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal("native", Assert.Single(partial.Songs).Native!.Id);
+        Assert.False(late.Task.IsCompleted);
+        clock.Advance(TimeSpan.FromSeconds(7));
+        late.SetResult(new SearchResult { Songs = [new Song { Id = "external", Title = "Track" }] });
+        var repeated = await service.SearchAsync(_context, request, native);
+        Assert.Equal(["native", "external"], repeated.Songs.Select(Id));
+    }
+
+    [Fact]
+    public async Task SearchStartsNativeAndProviderReadsBeforeEitherCompletes()
+    {
+        var nativeStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var providerStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var native = new Mock<INativeMusicSearch<string>>();
+        native.Setup(service => service.SearchAsync(It.IsAny<CancellationToken>())).Returns(async () =>
+        {
+            nativeStarted.TrySetResult();
+            await release.Task;
+            return Array.Empty<NativeMusicItem<string>>();
+        });
+        var gateway = new Mock<IProtocolProviderGateway>();
+        gateway.Setup(service => service.SearchAsync(_context, "Track", 20, 20, 20, null)).Returns(async () =>
+        {
+            providerStarted.TrySetResult();
+            await release.Task;
+            return new SearchResult();
+        });
+        var pending = new MusicSearchService(gateway.Object).SearchAsync(_context, Request("Track"), native.Object);
+        try { await Task.WhenAll(nativeStarted.Task, providerStarted.Task).WaitAsync(TimeSpan.FromSeconds(5)); }
+        finally { release.TrySetResult(); }
+        await pending;
+    }
+
+    [Fact]
     public async Task MixProjectionReplacesNativeSongsInTheirOriginalPositions()
     {
         var index = new Mock<ILibraryIndexService>();
@@ -117,7 +259,7 @@ public sealed class MusicSearchServiceTests
                 finally { lock (sync) active--; }
             });
         var pending = new MusicSearchService(Mock.Of<IProtocolProviderGateway>(), index.Object)
-            .ProjectSongsAsync(_context, songs, native.Object);
+            .ProjectSongsAsync(_context, songs, new DelegatingNative(native.Object));
         var concurrent = false;
         try { await firstWave.Task.WaitAsync(TimeSpan.FromSeconds(5)); concurrent = true; }
         catch (TimeoutException) { }
@@ -203,6 +345,101 @@ public sealed class MusicSearchServiceTests
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
             new MusicSearchService(Mock.Of<IProtocolProviderGateway>()).ProjectSongsAsync(
                 _context, [new Song { Id = "external" }], new FakeNative([]), cancellation.Token));
+    }
+
+    [Fact]
+    public async Task RepeatedSearchSharesOwnedRecordingLookupAndKeepsNativeReadsFresh()
+    {
+        var gateway = Gateway(new SearchResult { Songs = [new Song { Id = "external", Title = "Track" }] });
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource<IReadOnlyDictionary<string, string>>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var index = new Mock<ILibraryIndexService>(MockBehavior.Strict);
+        index.Setup(item => item.FindKnownRecordingTracksAsync(_context,
+                It.IsAny<IReadOnlyList<LibraryRecordingLookup>>(), It.IsAny<CancellationToken>()))
+            .Returns(() => { entered.TrySetResult(); return release.Task; });
+        var native = new FakeNative([], new NativeMusicItem<string>(MusicItemKind.Song, "native", "Track", null, "complete row"));
+        var service = new MusicSearchService(gateway.Object, index.Object);
+        var first = service.SearchAsync(_context, Request("Track"), native);
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var second = service.SearchAsync(_context, Request("Track"), new FakeNative([],
+            new NativeMusicItem<string>(MusicItemKind.Song, "native", "Track", null, "complete row")));
+        release.SetResult(new Dictionary<string, string> { ["external"] = "native" });
+        var answers = await Task.WhenAll(first, second);
+        var repeated = await service.SearchAsync(_context, Request("Track"), new FakeNative([]));
+
+        Assert.All(answers, answer => Assert.Equal("complete row", Assert.Single(answer.Songs).Native!.Payload));
+        Assert.Equal("external", Assert.Single(repeated.Songs).Song!.Id);
+        index.Verify(item => item.FindKnownRecordingTracksAsync(_context,
+            It.IsAny<IReadOnlyList<LibraryRecordingLookup>>(), It.IsAny<CancellationToken>()), Times.Once);
+        await service.ProjectSongsAsync(_context, [new Song { Id = "external" }], native);
+        index.Verify(item => item.FindKnownRecordingTracksAsync(_context,
+            It.IsAny<IReadOnlyList<LibraryRecordingLookup>>(), It.IsAny<CancellationToken>()), Times.Exactly(2));
+    }
+
+    [Fact]
+    public async Task OwnedSearchCacheExpiresAndSeparatesPrincipalsAndRecordingEvidence()
+    {
+        var clock = new ManualTimeProvider(DateTimeOffset.UtcNow);
+        var other = new ProtocolExecutionContext(_context.Protocol, _context.BackendInstanceId, "other-principal", null,
+            "other-search", _context.Deadline, default);
+        var song = new Song { Id = "external", Title = "Track", Isrc = "USUM72409273" };
+        var gateway = new Mock<IProtocolProviderGateway>();
+        gateway.Setup(item => item.SearchAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), 20, 20, 20, null))
+            .ReturnsAsync(new SearchResult { Songs = [song] });
+        var index = new Mock<ILibraryIndexService>();
+        index.Setup(item => item.FindKnownRecordingTracksAsync(It.IsAny<ProtocolExecutionContext>(),
+                It.IsAny<IReadOnlyList<LibraryRecordingLookup>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Dictionary<string, string>());
+        var service = new MusicSearchService(gateway.Object, index.Object, timeProvider: clock);
+        var native = new FakeNative([]);
+        await service.SearchAsync(_context, Request("Track"), native);
+        await service.SearchAsync(_context, Request("Track"), native);
+        await service.SearchAsync(other, Request("Track"), native);
+        song.Isrc = "USUM72409274";
+        await service.SearchAsync(_context, Request("Track"), native);
+        clock.Advance(TimeSpan.FromMinutes(10));
+        await service.SearchAsync(_context, Request("Track"), native);
+        index.Verify(item => item.FindKnownRecordingTracksAsync(It.IsAny<ProtocolExecutionContext>(),
+            It.IsAny<IReadOnlyList<LibraryRecordingLookup>>(), It.IsAny<CancellationToken>()), Times.Exactly(4));
+    }
+
+    [Fact]
+    public async Task OwnedSearchLookupFailureCanRetry()
+    {
+        var gateway = Gateway(new SearchResult { Songs = [new Song { Id = "external", Title = "Track" }] });
+        var index = new Mock<ILibraryIndexService>();
+        index.SetupSequence(item => item.FindKnownRecordingTracksAsync(_context,
+                It.IsAny<IReadOnlyList<LibraryRecordingLookup>>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("Unavailable"))
+            .ReturnsAsync(new Dictionary<string, string>());
+        var service = new MusicSearchService(gateway.Object, index.Object);
+        await Assert.ThrowsAsync<HttpRequestException>(() => service.SearchAsync(_context, Request("Track"), new FakeNative([])));
+        Assert.Equal("external", Assert.Single((await service.SearchAsync(_context, Request("Track"), new FakeNative([]))).Songs).Song!.Id);
+        index.Verify(item => item.FindKnownRecordingTracksAsync(_context,
+            It.IsAny<IReadOnlyList<LibraryRecordingLookup>>(), It.IsAny<CancellationToken>()), Times.Exactly(2));
+    }
+
+    [Fact]
+    public async Task CancelledSearchWaiterKeepsTheSharedOwnedLookupAvailable()
+    {
+        var gateway = Gateway(new SearchResult { Songs = [new Song { Id = "external", Title = "Track" }] });
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource<IReadOnlyDictionary<string, string>>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var index = new Mock<ILibraryIndexService>();
+        index.Setup(item => item.FindKnownRecordingTracksAsync(_context,
+                It.IsAny<IReadOnlyList<LibraryRecordingLookup>>(), It.IsAny<CancellationToken>()))
+            .Returns(() => { entered.TrySetResult(); return release.Task; });
+        var service = new MusicSearchService(gateway.Object, index.Object);
+        using var cancellation = new CancellationTokenSource();
+        var cancelled = service.SearchAsync(_context, Request("Track"), new FakeNative([]), cancellation.Token);
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var other = service.SearchAsync(_context, Request("Track"), new FakeNative([]));
+        cancellation.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => cancelled);
+        release.SetResult(new Dictionary<string, string>());
+        Assert.Equal("external", Assert.Single((await other).Songs).Song!.Id);
+        index.Verify(item => item.FindKnownRecordingTracksAsync(_context,
+            It.IsAny<IReadOnlyList<LibraryRecordingLookup>>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -326,6 +563,12 @@ public sealed class MusicSearchServiceTests
 
     private static string Id(MusicSearchEntry<string> entry) =>
         entry.Native?.Id ?? entry.Song?.Id ?? entry.Album?.Id ?? entry.Artist?.Id ?? entry.Playlist!.Id;
+
+    private sealed class DelegatingNative(INativeMusicSearch<string> single) : INativeMusicSearch<string>
+    {
+        public Task<IReadOnlyList<NativeMusicItem<string>>> SearchAsync(CancellationToken token) => single.SearchAsync(token);
+        public Task<NativeMusicItem<string>?> GetSongAsync(string id, CancellationToken token) => single.GetSongAsync(id, token);
+    }
 
     private sealed class FakeNative(
         IReadOnlyList<NativeMusicItem<string>> rows,
