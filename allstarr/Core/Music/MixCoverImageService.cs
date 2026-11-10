@@ -1,3 +1,4 @@
+using allstarr.Core.Operations;
 using System.Security.Cryptography;
 using System.Text.Json;
 using allstarr.Services.Common;
@@ -86,6 +87,7 @@ public sealed class MixCoverImageService
         }
         var cacheKey = CacheKey(input, context, variant: cacheVariant);
         Task<(byte[] Bytes, string ContentType, bool Complete)> work;
+        bool shared;
         lock (_gate)
         {
             if (_cache == null && _images.TryGetValue(cacheKey, out var cached))
@@ -96,13 +98,14 @@ public sealed class MixCoverImageService
                 return new FileContentResult(cached.Bytes, cached.ContentType);
             }
             // Requests for one collage share its picture downloads.
-            if (!_pending.TryGetValue(cacheKey, out work!))
+            shared = _pending.TryGetValue(cacheKey, out work!);
+            if (!shared)
                 _pending[cacheKey] = work = LoadOrRenderAsync(input, cacheKey, noArtwork);
         }
         (byte[] bytes, string contentType, bool complete) result;
         try
         {
-            result = await work;
+            using (shared ? RequestTiming.Current?.Stage("lock") : null) result = await work;
             lock (_gate)
                 if (_cache == null && result.complete && !_images.ContainsKey(cacheKey)) Remember(cacheKey, (result.bytes, result.contentType));
         }
@@ -143,13 +146,16 @@ public sealed class MixCoverImageService
     private async Task<MediaAssetSource?> LoadServiceAsync(MixCoverInput input, Guid owner, string key)
     {
         Task<(byte[] Bytes, string ContentType, bool Complete)> work;
+        bool shared;
         lock (_gate)
         {
-            if (!_pending.TryGetValue(key, out work!))
+            shared = _pending.TryGetValue(key, out work!);
+            if (!shared)
                 _pending[key] = work = Fetch();
         }
         try
         {
+            using var waiting = shared ? RequestTiming.Current?.Stage("lock") : null;
             var image = await work;
             return image.Complete ? new(image.Bytes, image.ContentType) : null;
         }

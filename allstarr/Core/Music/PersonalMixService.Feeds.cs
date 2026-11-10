@@ -1,3 +1,4 @@
+using allstarr.Core.Operations;
 using System.Collections.Concurrent;
 using System.Globalization;
 using System.Text.Json;
@@ -76,7 +77,7 @@ public sealed partial class PersonalMixService
                     string? cursor = null;
                     var complete = false;
                     var requests = feedAccounts.GetOrAdd(account.Id, _ => new(2, 2));
-                    await requests.WaitAsync(token);
+                    using (RequestTiming.Current?.Stage("lock")) await requests.WaitAsync(token);
                     try
                     {
                         for (var pageNumber = 0; pageNumber < 100; pageNumber++)
@@ -208,7 +209,7 @@ public sealed partial class PersonalMixService
         var capability = registry!.GetRequiredCapability<IProviderPlaylistCapability>(account.ProviderId, ProviderCapabilityKind.Playlist);
         var key = Hash(Scope(user) + ":" + account.Revision + ":" + card.SourcePlaylistId);
         var requests = feedAccounts.GetOrAdd(account.Id, _ => new(2, 2));
-        await requests.WaitAsync(token);
+        using (RequestTiming.Current?.Stage("lock")) await requests.WaitAsync(token);
         Song[] songs;
         var sourceCount = card.SongCount;
         try

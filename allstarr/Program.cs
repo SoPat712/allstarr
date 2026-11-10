@@ -743,11 +743,11 @@ app.Services.GetRequiredService<ProviderDownloadArtifactResolver>().DeleteAbando
 
 CacheExtensions.InitializeCacheSettings(app.Services);
 
+app.UseMiddleware<RequestLoggingMiddleware>();
 app.UseMiddleware<AdminResponseHeadersMiddleware>();
 
 // Downstream policies must see only the forwarded identity accepted by the trust policy.
 app.UseForwardedHeaders();
-app.UseMiddleware<RequestLoggingMiddleware>();
 app.UseMiddleware<ClientApiMiddleware>();
 
 // Drop high-confidence scanner paths before they hit the proxy.

@@ -54,9 +54,12 @@ internal sealed class LyricsRequestCoordinator(TimeProvider clock, TimeSpan inte
         var started = false;
         try
         {
-            await _gate.WaitAsync(token);
-            admitted = true;
-            await _starts.WaitAsync(token);
+            using (allstarr.Core.Operations.RequestTiming.Current?.Stage("lock"))
+            {
+                await _gate.WaitAsync(token);
+                admitted = true;
+                await _starts.WaitAsync(token);
+            }
             Task<ProviderOutcome<ProviderLyricsResult>> request;
             try
             {

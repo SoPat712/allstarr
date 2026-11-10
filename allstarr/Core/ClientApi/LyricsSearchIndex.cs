@@ -61,7 +61,7 @@ public sealed class LyricsSearchIndex(StorageOptions options, IProviderRouter? r
         var richJson = JsonSerializer.Serialize(rich, ClientApiContract.JsonOptions);
         if (richJson.Length > 512 * 1024) return;
         var signature = CanonicalCatalogKeys.Hash(songJson + "\n" + richJson + "\n" + recordingId + "\n" + provenance + "\n" + publicCatalog + "\n" + sharedSource);
-        await _gate.WaitAsync(context.CancellationToken);
+        using (RequestTiming.Current?.Stage("lock")) await _gate.WaitAsync(context.CancellationToken);
         try
         {
             var db = Open();
@@ -104,7 +104,7 @@ public sealed class LyricsSearchIndex(StorageOptions options, IProviderRouter? r
 
     public async Task<IReadOnlyList<IndexedLyricsDocument>> SnapshotAsync(ProtocolExecutionContext context)
     {
-        await _gate.WaitAsync(context.CancellationToken);
+        using (RequestTiming.Current?.Stage("lock")) await _gate.WaitAsync(context.CancellationToken);
         try
         {
             Open();
@@ -127,7 +127,7 @@ public sealed class LyricsSearchIndex(StorageOptions options, IProviderRouter? r
 
     internal async Task<RichLyrics?> ReadBackendAsync(ProtocolExecutionContext context, Song song)
     {
-        await _gate.WaitAsync(context.CancellationToken);
+        using (RequestTiming.Current?.Stage("lock")) await _gate.WaitAsync(context.CancellationToken);
         try
         {
             Open();
@@ -194,7 +194,7 @@ public sealed class LyricsSearchIndex(StorageOptions options, IProviderRouter? r
             .ToDictionary(document => document.Id);
         Timed("selection");
         if (selected.Count == 0) return new([], false);
-        await _gate.WaitAsync(context.CancellationToken);
+        using (RequestTiming.Current?.Stage("lock")) await _gate.WaitAsync(context.CancellationToken);
         try
         {
             Open();
@@ -310,7 +310,7 @@ public sealed class LyricsSearchIndex(StorageOptions options, IProviderRouter? r
     {
         var itemId = song.IsLocal ? song.Id : $"ext-{song.ExternalProvider}-song-{song.ExternalId}";
         if (song.IsLocal && Guid.TryParse(itemId, out var nativeId)) itemId = nativeId.ToString("N");
-        await _gate.WaitAsync(context.CancellationToken);
+        using (RequestTiming.Current?.Stage("lock")) await _gate.WaitAsync(context.CancellationToken);
         try
         {
             Open();
@@ -336,7 +336,7 @@ public sealed class LyricsSearchIndex(StorageOptions options, IProviderRouter? r
     public async Task RemoveLibrarySourceAsync(string backend, string itemId, CancellationToken token)
     {
         if (Guid.TryParse(itemId, out var nativeId)) itemId = nativeId.ToString("N");
-        await _gate.WaitAsync(token);
+        using (RequestTiming.Current?.Stage("lock")) await _gate.WaitAsync(token);
         try
         {
             Open();
@@ -359,7 +359,7 @@ public sealed class LyricsSearchIndex(StorageOptions options, IProviderRouter? r
 
     public async Task<bool> LibraryIsCurrentAsync(Guid id, long revision, CancellationToken token)
     {
-        await _gate.WaitAsync(token);
+        using (RequestTiming.Current?.Stage("lock")) await _gate.WaitAsync(token);
         try
         {
             Open();
@@ -370,7 +370,7 @@ public sealed class LyricsSearchIndex(StorageOptions options, IProviderRouter? r
 
     public async Task MarkLibraryAsync(Guid id, long revision, CancellationToken token)
     {
-        await _gate.WaitAsync(token);
+        using (RequestTiming.Current?.Stage("lock")) await _gate.WaitAsync(token);
         try
         {
             Open();

@@ -38,6 +38,7 @@ public partial class JellyfinController
         if (string.Equals(Request.Query["allstarrScope"], "library", StringComparison.OrdinalIgnoreCase) &&
             !string.IsNullOrWhiteSpace(GetEffectiveSearchTerm(searchTerm, Request.QueryString.Value)))
         {
+            using var libraryTiming = allstarr.Core.Operations.RequestTiming.Current?.Stage("library");
             var query = string.Join('&', (Request.QueryString.Value ?? "").TrimStart('?').Split('&')
                 .Where(part => !Uri.UnescapeDataString(part.Split('=', 2)[0]).Equals("allstarrScope", StringComparison.OrdinalIgnoreCase)));
             var endpoint = Request.Path.Value!.TrimStart('/') + "?" + query;

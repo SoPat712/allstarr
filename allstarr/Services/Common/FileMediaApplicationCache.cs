@@ -178,7 +178,7 @@ public sealed class FileMediaApplicationCache : IApplicationCache, IDisposable
             return null;
         }
 
-        await _gate.WaitAsync();
+        using (RequestTiming.Current?.Stage("lock")) await _gate.WaitAsync();
         try
         {
             var paths = PathsFor(key);
@@ -201,7 +201,7 @@ public sealed class FileMediaApplicationCache : IApplicationCache, IDisposable
 
             var value = await File.ReadAllTextAsync(paths.Payload, Encoding.UTF8);
             metadata = metadata with { LastAccessAt = _clock.UtcNow };
-            await WriteMetadataAsync(paths.Metadata, metadata);
+            using (RequestTiming.Current?.Stage("store")) await WriteMetadataAsync(paths.Metadata, metadata);
             Interlocked.Increment(ref _hits);
             return value;
         }
@@ -219,6 +219,7 @@ public sealed class FileMediaApplicationCache : IApplicationCache, IDisposable
 
     public async Task<T?> GetAsync<T>(string key) where T : class
     {
+        using var serialization = RequestTiming.Current?.Stage("serialize");
         var value = await GetStringAsync(key);
         if (string.IsNullOrEmpty(value))
         {
@@ -256,9 +257,10 @@ public sealed class FileMediaApplicationCache : IApplicationCache, IDisposable
             return false;
         }
 
-        await _gate.WaitAsync();
+        using (RequestTiming.Current?.Stage("lock")) await _gate.WaitAsync();
         try
         {
+            using var storing = RequestTiming.Current?.Stage("store");
             var paths = PathsFor(key);
             Directory.CreateDirectory(paths.Directory);
             await WritePayloadAsync(paths.Payload, value);
@@ -289,6 +291,7 @@ public sealed class FileMediaApplicationCache : IApplicationCache, IDisposable
 
     public Task<bool> SetAsync<T>(string key, T value, TimeSpan? expiry = null) where T : class
     {
+        using var serialization = RequestTiming.Current?.Stage("serialize");
         try
         {
             return SetStringAsync(key, JsonSerializer.Serialize(value), expiry);

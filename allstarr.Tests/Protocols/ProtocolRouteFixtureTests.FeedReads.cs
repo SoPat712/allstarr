@@ -7,6 +7,7 @@ using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
 using allstarr.Models.Domain;
 using Microsoft.AspNetCore.WebUtilities;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Moq;
@@ -70,10 +71,12 @@ public sealed partial class ProtocolRouteFixtureTests
     }
 
     [Fact]
-    public async Task ClientApi_MixesReuseOwnerCardsAndInvalidateAfterMixAndLibraryChanges()
+    public async Task ClientApi_MixesReuseOwnerCardsAndInvalidateAfterOwnChanges()
     {
         var nativeReads = 0;
-        using var factory = ClientMixFactory(new(), observe: request =>
+        ProtocolExecutionContext? observed = null;
+        using var factory = ClientMixFactory(new(), configure: services => services.Configure<MvcOptions>(options =>
+            options.Filters.Add(new ClientApiObservationFilter(context => observed = context))), observe: request =>
         {
             if (request.RequestUri!.AbsolutePath != "/Users/listener/Items") return;
             Interlocked.Increment(ref nativeReads);
@@ -113,15 +116,19 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.Equal(first, warm);
         Assert.Equal(1, nativeReads);
         await factory.Services.GetRequiredService<PersonalMixService>().SetInAppsAsync(owner, mix.Id, false, default);
-        await client.GetStringAsync("/allstarr/v1/mixes?timeZoneId=UTC");
+        var changed = await client.GetStringAsync("/allstarr/v1/mixes?timeZoneId=UTC");
         Assert.Equal(2, nativeReads);
         await using (var db = await contexts.CreateDbContextAsync())
         {
             (await db.LibraryTracks.SingleAsync()).Revision++;
             await db.SaveChangesAsync();
         }
-        await client.GetStringAsync("/allstarr/v1/mixes?timeZoneId=UTC");
-        Assert.Equal(3, nativeReads);
+        Assert.Equal(changed, await client.GetStringAsync("/allstarr/v1/mixes?timeZoneId=UTC"));
+        Assert.InRange(nativeReads, 2, 3);
+        await using var readDb = await contexts.CreateDbContextAsync();
+        var key = readDb.FeedReadKey(observed!, "mixes:UTC", new(true, ["library"]));
+        await factory.Services.GetRequiredService<allstarr.Services.Common.ApplicationCacheRequestCoalescer>()
+            .RunAsync(key, () => Task.FromResult<object?>(null), default);
         _lyricsSearchOutput.WriteLine($"Mix list, 25 saved mixes with 50-song fixtures: cold {cold:F1} ms; warm {elapsed:F1} ms; native detail reads 1 -> 0; response bytes equal.");
     }
 

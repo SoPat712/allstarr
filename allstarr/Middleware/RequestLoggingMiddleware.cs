@@ -10,6 +10,7 @@ namespace allstarr.Middleware;
 /// </summary>
 public class RequestLoggingMiddleware
 {
+    private static int _inflight;
     private readonly RequestDelegate _next;
     private readonly ILogger<RequestLoggingMiddleware> _logger;
     private readonly IConfiguration _configuration;
@@ -40,32 +41,54 @@ public class RequestLoggingMiddleware
 
     public async Task InvokeAsync(HttpContext context)
     {
-        using var timing = _configuration.GetValue("Diagnostics:ServerTimingEnabled", true) ? RequestTiming.Begin() : null;
-        var started = Stopwatch.GetTimestamp();
-        long? answered = null;
-        RequestTiming.Result? result = null;
-        context.Response.OnStarting(() =>
+        var inflight = Interlocked.Increment(ref _inflight);
+        try
         {
-            answered = Stopwatch.GetTimestamp();
-            if (timing != null)
+            var enabled = _configuration.GetValue("Diagnostics:ServerTimingEnabled", true);
+            var pre = PreMilliseconds();
+            using var timing = enabled ? RequestTiming.Begin(pre, inflight) : null;
+            var started = Stopwatch.GetTimestamp();
+            long? answered = null;
+            RequestTiming.Result? result = null;
+            context.Response.OnStarting(() =>
             {
-                result ??= timing.Snapshot(RouteLabel(context));
-                context.Response.Headers["Server-Timing"] = result.Header;
-            }
-            return Task.CompletedTask;
-        });
-        try { await InvokeLoggedAsync(context); }
-        finally
-        {
-            NoteSlowOrFailed(context, started, answered);
-            if (timing != null && _logger.IsEnabled(LogLevel.Debug))
+                answered = Stopwatch.GetTimestamp();
+                if (timing != null)
+                {
+                    result ??= timing.Snapshot(RouteLabel(context));
+                    context.Response.Headers["Server-Timing"] = result.Header;
+                }
+                return Task.CompletedTask;
+            });
+            if (pre > 250 && _logger.IsEnabled(LogLevel.Debug))
+                _logger.LogDebug("Request reached middleware after {PreMs:F1} ms: pending {PendingWorkItemCount}, threads {ThreadCount}, inflight {Inflight}, route {Route}",
+                    pre, ThreadPool.PendingWorkItemCount, ThreadPool.ThreadCount, inflight, RouteLabel(context));
+            try { await InvokeLoggedAsync(context); }
+            finally
             {
-                result ??= timing.Snapshot(RouteLabel(context));
-                _logger.LogDebug("Request timing {Method} {Route} answered {StatusCode}: total {TotalMs:F1} ms, jellyfin {JellyfinMs:F1} ms ({JellyfinCalls} calls), db {DbMs:F1} ms, provider {ProviderMs:F1} ms, cache {Cache}",
-                    context.Request.Method, result.Route, context.Response.StatusCode, result.TotalMs, result.JellyfinMs,
-                    result.JellyfinCalls, result.DbMs, result.ProviderMs, result.Cache);
+                NoteSlowOrFailed(context, started, answered);
+                if (timing != null && _logger.IsEnabled(LogLevel.Debug))
+                {
+                    result ??= timing.Snapshot(RouteLabel(context));
+                    _logger.LogDebug("Request timing {Method} {Route} answered {StatusCode}: total {TotalMs:F1} ms, jellyfin {JellyfinMs:F1} ms ({JellyfinCalls} calls), db {DbMs:F1} ms, provider {ProviderMs:F1} ms, cache {Cache}, pre {PreMs:F1} ms, inflight {Inflight}, stages {Stages}",
+                        context.Request.Method, result.Route, context.Response.StatusCode, result.TotalMs, result.JellyfinMs,
+                        result.JellyfinCalls, result.DbMs, result.ProviderMs, result.Cache, result.PreMs, result.Inflight, result.StageSummary);
+                }
             }
         }
+        finally { Interlocked.Decrement(ref _inflight); }
+    }
+
+    private static double PreMilliseconds()
+    {
+        for (var activity = Activity.Current; activity != null; activity = activity.Parent)
+        {
+            if (activity.OperationName != "Microsoft.AspNetCore.Hosting.HttpRequestIn" ||
+                (activity.Source.Name != "" && (activity.Source.Name != "Microsoft.AspNetCore" || activity.Kind != ActivityKind.Server)) ||
+                activity.StartTimeUtc == default) continue;
+            return Math.Max(0, (DateTime.UtcNow - activity.StartTimeUtc).TotalMilliseconds);
+        }
+        return 0;
     }
 
     private static string RouteLabel(HttpContext context)

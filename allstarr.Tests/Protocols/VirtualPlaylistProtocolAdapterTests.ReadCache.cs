@@ -18,7 +18,7 @@ namespace allstarr.Tests;
 public sealed partial class VirtualPlaylistProtocolAdapterTests
 {
     [Fact]
-    public async Task ServedPlaylistPagesReuseResolvedTracksAndInvalidateAfterStoredChanges()
+    public async Task ServedPlaylistPagesReuseSongDetailsAndReadCurrentMembership()
     {
         await using var database = await SqliteTestDatabase.CreateAsync();
         var factory = new ReadCacheFactory(database.Options);
@@ -61,7 +61,14 @@ public sealed partial class VirtualPlaylistProtocolAdapterTests
             responseBuilder: new JellyfinResponseBuilder(), providerGateway: gateway.Object, readContexts: factory, readCache: cache);
         var uncached = new JellyfinVirtualPlaylistProtocolAdapter(service.Object, new StubJellyfinMutationResolver(null),
             responseBuilder: new JellyfinResponseBuilder(), providerGateway: gateway.Object);
-        var context = Context(ProtocolKind.Jellyfin);
+        var user = FeedReadsTests.User("principal");
+        user.BackendInstanceId = "backend";
+        await using (var seed = factory.CreateDbContext())
+        {
+            seed.Users.Add(user);
+            await seed.SaveChangesAsync();
+        }
+        var context = FeedReadsTests.Context(user);
         var query = new QueryCollection(new Dictionary<string, Microsoft.Extensions.Primitives.StringValues> { ["Limit"] = "50" });
         var watch = Stopwatch.StartNew();
         var before = JsonSerializer.Serialize(Assert.IsType<JsonResult>(await uncached.ReadItemsAsync(context, ProtocolId, null, query, default)).Value);
@@ -79,26 +86,33 @@ public sealed partial class VirtualPlaylistProtocolAdapterTests
         var warm = watch.Elapsed.TotalMilliseconds;
         Assert.Equal(first, repeated);
         Assert.Equal(before, first);
-        Assert.Equal(1, reads);
+        Assert.Equal(5, reads);
         Assert.Equal(4, providerReads);
         query = new QueryCollection(new Dictionary<string, Microsoft.Extensions.Primitives.StringValues> { ["StartIndex"] = "50", ["Limit"] = "50" });
         var page = Assert.IsType<JsonResult>(await adapter.ReadItemsAsync(context, ProtocolId, null, query, default));
         using var json = JsonDocument.Parse(JsonSerializer.Serialize(page.Value));
         Assert.Equal(200, json.RootElement.GetProperty("TotalRecordCount").GetInt32());
         Assert.Equal(50, json.RootElement.GetProperty("Items").GetArrayLength());
-        Assert.Equal(1, reads);
+        Assert.Equal(6, reads);
         Assert.Equal(4, providerReads);
         await using var db = factory.CreateDbContext();
         await using (var transaction = await db.Database.BeginTransactionAsync())
         {
-            db.Users.Add(new() { Id = Guid.NewGuid(), BackendType = "jellyfin", BackendInstanceId = "main", BackendPrincipalId = "new-listener" });
+            db.ExternalMetadataSnapshots.Add(FeedReadsTests.Snapshot(user.Id, "personal-mixes"));
             await db.SaveChangesAsync();
             await transaction.CommitAsync();
         }
         await adapter.ReadItemsAsync(context, ProtocolId, null, query, default);
-        Assert.Equal(2, reads);
+        Assert.Equal(7, reads);
         Assert.Equal(8, providerReads);
-        _output.WriteLine($"Served playlist 200 tracks / 50 per page: uncached {baseline:F1} ms; first {cold:F1} ms; warm {warm:F1} ms; resolved-list reads 1 -> 0 and provider reads 4 -> 0 on repeat and next page; response bytes equal.");
+        model = model with { Tracks = [] };
+        var emptied = Assert.IsType<JsonResult>(await adapter.ReadItemsAsync(context, ProtocolId, null, query, default));
+        using var emptyJson = JsonDocument.Parse(JsonSerializer.Serialize(emptied.Value));
+        Assert.Equal(0, emptyJson.RootElement.GetProperty("TotalRecordCount").GetInt32());
+        Assert.Empty(emptyJson.RootElement.GetProperty("Items").EnumerateArray());
+        Assert.Equal(8, reads);
+        Assert.Equal(8, providerReads);
+        _output.WriteLine($"Served playlist 200 tracks / 50 per page: uncached {baseline:F1} ms; first {cold:F1} ms; warm {warm:F1} ms; current membership read on every request and provider reads 4 -> 0 on repeat and next page; response bytes equal; source removal visible immediately without a stored change.");
     }
 
     [Fact]
@@ -113,14 +127,18 @@ public sealed partial class VirtualPlaylistProtocolAdapterTests
         service.Setup(item => item.ListAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<CancellationToken>()))
             .Returns(() => { reads++; return Task.FromResult<IReadOnlyList<VirtualPlaylistReadModel>>(Enumerable.Range(0, 36).Select(_ => model).ToArray()); });
         var adapter = new JellyfinVirtualPlaylistProtocolAdapter(service.Object, new StubJellyfinMutationResolver(null), readContexts: factory, readCache: cache);
-        var context = Context(ProtocolKind.Jellyfin);
+        var user = FeedReadsTests.User("principal");
+        user.BackendInstanceId = "backend";
+        await using (var seed = factory.CreateDbContext())
+        {
+            seed.Users.Add(user);
+            await seed.SaveChangesAsync();
+        }
+        var context = FeedReadsTests.Context(user);
         var first = await adapter.ListAsync(context, default);
         Assert.Equal(JsonSerializer.Serialize(first), JsonSerializer.Serialize(await adapter.ListAsync(context, default)));
         Assert.Equal(1, reads);
         await using var db = factory.CreateDbContext();
-        var user = new UserRecord { Id = Guid.NewGuid(), BackendType = "jellyfin", BackendInstanceId = "backend", BackendPrincipalId = "principal" };
-        db.Users.Add(user);
-        await db.SaveChangesAsync();
         var link = new PlaylistLinkRecord
         {
             Id = Guid.NewGuid(),
