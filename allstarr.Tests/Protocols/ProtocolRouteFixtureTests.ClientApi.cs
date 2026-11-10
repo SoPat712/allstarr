@@ -112,12 +112,12 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
         var root = document.RootElement;
-        Assert.Equal(["apiVersion", "features", "library", "serverVersion"], root.EnumerateObject().Select(item => item.Name).Order().ToArray());
+        Assert.Equal(["apiVersion", "features", "library", "libraryAdditions", "serverVersion"], root.EnumerateObject().Select(item => item.Name).Order().ToArray());
         Assert.Equal(1, root.GetProperty("apiVersion").GetInt32());
         Assert.False(string.IsNullOrWhiteSpace(root.GetProperty("serverVersion").GetString()));
         AssertLibraryProvider(root.GetProperty("library"));
         var features = root.GetProperty("features");
-        Assert.Equal(["appearances", "dashboardLink", "events", "fixesMatch", "follow", "history", "historyImports", "historyRecheck", "itemDetails", "lyricsRich", "lyricsSearch", "lyricsSources", "lyricsVersions", "mixes", "playActivity", "playCounts", "playback", "playlistKinds", "releases", "reports", "similarAlbums", "sound", "stats", "taste", "titleMarkers"],
+        Assert.Equal(["appearances", "dashboardLink", "events", "fixesMatch", "follow", "history", "historyImports", "historyRecheck", "itemDetails", "libraryAdditions", "lyricsRich", "lyricsSearch", "lyricsSources", "lyricsVersions", "mixes", "playActivity", "playCounts", "playback", "playlistKinds", "preferences", "releases", "reports", "similarAlbums", "sound", "stats", "taste", "titleMarkers"],
             features.EnumerateObject().Select(item => item.Name).Order(StringComparer.Ordinal).ToArray());
         Assert.All(features.EnumerateObject(), item => Assert.Equal(item.Name != "dashboardLink", item.Value.GetBoolean()));
         Assert.NotNull(observed?.Principal);

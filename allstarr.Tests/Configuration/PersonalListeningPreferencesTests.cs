@@ -268,9 +268,9 @@ public sealed class PersonalListeningPreferencesTests : IAsyncLifetime
 
         var household = await service.GetPreferencesAsync(null);
         var userB = await service.GetPreferencesAsync(_userB);
-        Assert.Equal(new ListeningPreferences("CleanOnly", false, false, DefaultLyricsOrder), updatedA.Values);
+        Assert.Equal(new ListeningPreferences("CleanOnly", false, false, DefaultLyricsOrder, HeartAction: "keep"), updatedA.Values);
         Assert.False(updatedA.UsesHouseholdDefaults);
-        Assert.Equal(new ListeningPreferences(LyricsOrder: DefaultLyricsOrder), household.Values);
+        Assert.Equal(new ListeningPreferences(LyricsOrder: DefaultLyricsOrder, HeartAction: "keep"), household.Values);
         Assert.Equal(household.Values, userB.Values);
         Assert.True(household.UsesHouseholdDefaults);
         Assert.True(userB.UsesHouseholdDefaults);
@@ -296,7 +296,7 @@ public sealed class PersonalListeningPreferencesTests : IAsyncLifetime
         var restoredA = await recreated.GetPreferencesAsync(_userA);
         var inheritedB = await recreated.GetPreferencesAsync(_userB);
         Assert.Equal(personal.Values with { ExplicitFilter = "CleanOnly", LyricsOrder = "lrclib,spotify" }, restoredA.Values);
-        Assert.Equal(new ListeningPreferences("CleanOnly", false, false, "lrclib,spotify"), restoredA.HouseholdDefaults);
+        Assert.Equal(new ListeningPreferences("CleanOnly", false, false, "lrclib,spotify", HeartAction: "keep"), restoredA.HouseholdDefaults);
         Assert.NotEqual(personal.Revision, restoredA.Revision);
         Assert.Equal(restoredA.HouseholdDefaults, inheritedB.Values);
         Assert.True(inheritedB.UsesHouseholdDefaults);
@@ -319,7 +319,7 @@ public sealed class PersonalListeningPreferencesTests : IAsyncLifetime
 
         var reset = await service.UpdatePreferencesAsync(_userA, null, current.Revision);
 
-        Assert.Equal(new ListeningPreferences("CleanOnly", true, false, DefaultLyricsOrder), reset.Values);
+        Assert.Equal(new ListeningPreferences("CleanOnly", true, false, DefaultLyricsOrder, HeartAction: "keep"), reset.Values);
         Assert.Equal(reset.HouseholdDefaults, reset.Values);
         Assert.True(reset.UsesHouseholdDefaults);
         Assert.NotEqual(personal.Revision, reset.Revision);

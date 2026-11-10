@@ -15,6 +15,7 @@ public sealed record ClientCapabilities(
     [property: JsonPropertyName("apiVersion")] int ApiVersion,
     [property: JsonPropertyName("features")] ClientFeatures Features,
     [property: JsonPropertyName("library")] ItemDetailsProvider Library,
+    [property: JsonPropertyName("libraryAdditions")] ClientLibraryAdditionCapabilities LibraryAdditions,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ClientDashboard? Dashboard = null);
 
 public sealed record ClientDashboard(string Url);
@@ -46,6 +47,8 @@ public sealed record ClientFeatures
     [JsonPropertyName("playActivity")] public bool PlayActivity { get; init; }
     [JsonPropertyName("historyImports")] public bool HistoryImports { get; init; }
     [JsonPropertyName("historyRecheck")] public bool HistoryRecheck { get; init; }
+    [JsonPropertyName("libraryAdditions")] public bool LibraryAdditions { get; init; } = true;
+    [JsonPropertyName("preferences")] public bool Preferences { get; init; } = true;
 }
 
 public sealed record ClientApiError(

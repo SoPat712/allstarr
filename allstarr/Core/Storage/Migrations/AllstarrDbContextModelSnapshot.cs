@@ -1963,7 +1963,7 @@ namespace allstarr.Core.Storage.Migrations
 
                     b.ToTable("runtime_settings", null, t =>
                         {
-                            t.HasCheckConstraint("CK_runtime_settings_personal_keys", "\"OwnerUserId\" IS NULL OR \"Key\" IN ('Library:ExplicitFilter', 'Playback:ShowExternalLabel', 'Playback:ShowExplicitLabel', 'Playback:StartPreference', 'Providers:LyricsOrder', 'Providers:UseModes')");
+                            t.HasCheckConstraint("CK_runtime_settings_personal_keys", "\"OwnerUserId\" IS NULL OR \"Key\" IN ('Library:ExplicitFilter', 'Playback:ShowExternalLabel', 'Playback:ShowExplicitLabel', 'Playback:StartPreference', 'Providers:LyricsOrder', 'Providers:UseModes', 'Library:HeartAction')");
                         });
                 });
 

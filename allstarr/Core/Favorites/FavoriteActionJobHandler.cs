@@ -154,7 +154,7 @@ public sealed class FavoriteActionJobHandler(
                             return DurableJobCompletion.Cancelled();
                     }
                 }
-                else if (action.ActionType == "download" &&
+                else if (action.ActionType is "download" or "add-to-library" &&
                          _executors.TryGetValue(action.ActionType, out var executor))
                 {
                     try
@@ -501,6 +501,7 @@ public static class FavoriteActionRegistration
         services.AddSingleton<FavoriteDownloadActionExecutor>();
         services.AddSingleton<IFavoriteActionExecutor>(provider =>
             provider.GetRequiredService<FavoriteDownloadActionExecutor>());
+        services.AddSingleton<IFavoriteActionExecutor, FavoriteLibraryAdditionExecutor>();
         services.AddSingleton<IDurableJobHandler, FavoriteActionJobHandler>();
         return services;
     }

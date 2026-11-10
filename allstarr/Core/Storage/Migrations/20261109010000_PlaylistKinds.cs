@@ -8,7 +8,7 @@ namespace allstarr.Core.Storage.Migrations;
 // listener's library lists, and each playlist can carry the listener's own choice.
 [DbContext(typeof(AllstarrDbContext))]
 [Migration("20261109010000_PlaylistKinds")]
-public sealed class PlaylistKinds : ListenerActivityIndex
+public class PlaylistKinds : ListenerActivityIndex
 {
     protected override void Up(MigrationBuilder migrationBuilder)
     {

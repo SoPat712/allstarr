@@ -42,7 +42,8 @@ public sealed partial class LibraryPromotionService(IDbContextFactory<AllstarrDb
     IBackendLibraryAccessResolver libraryAccess, ITrackIdentityService? identities = null,
     IPlaybackMetadataResolver? artwork = null, PromotionProfiles? profiles = null,
     IPromotionCatalog? promotionCatalog = null, IPromotionAcquisition? promotionAcquisition = null,
-    IProtocolLyricsResolver? lyrics = null, PromotionReplayGain? replayGain = null, MediaConversionGate? conversions = null) : IDurableJobHandler
+    IProtocolLyricsResolver? lyrics = null, PromotionReplayGain? replayGain = null, MediaConversionGate? conversions = null,
+    allstarr.Core.ClientEvents.IClientEventPublisher? events = null) : IDurableJobHandler
 {
     public const string JobType = "library.promote";
     private static readonly string[] Steps = ["Copy complete original", "MusicBrainz tags and cover", "Quality screen", "Place in library", "Request library refresh"];
@@ -136,6 +137,7 @@ public sealed partial class LibraryPromotionService(IDbContextFactory<AllstarrDb
             if (requestId is { } approvalId) await LinkApprovedRequestAsync(db, approvalId, run, approver!.Value, token);
             await db.SaveChangesAsync(token);
             await transaction.CommitAsync(token);
+            await PublishRunAsync(run, token);
             return run;
         }
         finally { gate.Release(); }
@@ -187,6 +189,7 @@ public sealed partial class LibraryPromotionService(IDbContextFactory<AllstarrDb
             run.Revision++;
             await db.SaveChangesAsync(token);
             await transaction.CommitAsync(token);
+            await PublishRunAsync(run, token);
             return run;
         }
         finally { gate.Release(); }
@@ -218,6 +221,7 @@ public sealed partial class LibraryPromotionService(IDbContextFactory<AllstarrDb
             run.Revision++;
             await db.SaveChangesAsync(token);
             await SynchronizeRequestsForRunAsync(run.Id, token);
+            await PublishRunAsync(run, token);
             return run;
         }
         finally { gate.Release(); }
@@ -261,6 +265,7 @@ public sealed partial class LibraryPromotionService(IDbContextFactory<AllstarrDb
                 };
                 run.Revision++;
                 await db.SaveChangesAsync(token);
+                await PublishRunAsync(run, token);
                 await execution.ReportProgressAsync(new(step, run.Reason), token);
             }
             async Task Save(string name, string hash, long length, string reason, string? result = null)
@@ -349,6 +354,7 @@ public sealed partial class LibraryPromotionService(IDbContextFactory<AllstarrDb
                 run.Reason = quality.Reason + " An owner or administrator must review and give a reason to proceed.";
                 run.Revision++;
                 await db.SaveChangesAsync(token);
+                await PublishRunAsync(run, token);
                 return DurableJobCompletion.Success();
             }
             if (run.ManagedFileId == null)
@@ -378,6 +384,7 @@ public sealed partial class LibraryPromotionService(IDbContextFactory<AllstarrDb
                 await db.SaveChangesAsync(token);
                 await transaction.CommitAsync(token);
             }
+            await PublishRunAsync(run, token);
             Cleanup(id);
             return DurableJobCompletion.Success();
         }
@@ -397,6 +404,7 @@ public sealed partial class LibraryPromotionService(IDbContextFactory<AllstarrDb
                     SafeOperationalText.Sanitize(error.Message, 500) ?? "Promotion stopped; review the source and destination.";
                 run.Revision++;
                 await db.SaveChangesAsync(token);
+                await PublishRunAsync(run, token);
                 if (placed) return DurableJobCompletion.Retry("promotion_cleanup_pending", run.Reason);
             }
             return DurableJobCompletion.Failure("promotion_stopped", run?.Reason);

@@ -9,6 +9,7 @@ using allstarr.Core.Intelligence;
 using allstarr.Core.Playback;
 using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
+using allstarr.Core.Settings;
 using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Core.Favorites;
@@ -207,7 +208,12 @@ public sealed partial class FavoriteActionPipeline(
             await CancelLinkedWorkAsync(context, member.LinkId, linkedTargets, now, cancellationToken);
         }
         await CancelSupersededWorkAsync(context, userId, protocol, backend, itemId, now, cancellationToken, synthetic);
-        IReadOnlyList<string> actionTypes = synthetic || spotifyImport ? [VirtualLikedAction] : BuildActions(request.Operation, itemId);
+        var heartActionJson = await context.RuntimeSettings.AsNoTracking().Where(item =>
+            item.Key == ListeningPreferenceKeys.HeartAction && (item.OwnerUserId == userId || item.OwnerUserId == null))
+            .OrderByDescending(item => item.OwnerUserId != null).Select(item => item.ValueJson).FirstOrDefaultAsync(cancellationToken);
+        var heartAction = heartActionJson == null ? "keep" : JsonSerializer.Deserialize<string>(heartActionJson)!;
+        IReadOnlyList<string> actionTypes = synthetic || spotifyImport ? [VirtualLikedAction] :
+            BuildActions(request.Operation, itemId, heartAction);
         var job = await jobs.EnqueueInExistingTransactionAsync(
             context,
             new DurableJobEnqueueRequest<FavoriteJobPayload>(
@@ -235,7 +241,7 @@ public sealed partial class FavoriteActionPipeline(
             PolicySnapshotJson = JsonSerializer.Serialize(new
             {
                 actions = actionTypes,
-                policySource = spotifyImport ? "spotify-likes-import" : "download-only"
+                policySource = spotifyImport ? "spotify-likes-import" : heartAction == "keep" ? "download-only" : "heart-preference"
             }),
             JobId = job.JobId,
             State = FavoriteEventState.Pending,
@@ -278,7 +284,8 @@ public sealed partial class FavoriteActionPipeline(
         }
         try
         {
-            if (keptFiles != null && !synthetic && !spotifyImport)
+            if (keptFiles != null && !synthetic && !spotifyImport &&
+                (request.Operation == FavoriteOperation.Unfavorite || heartAction == "keep"))
             {
                 if (member != null && request.Operation == FavoriteOperation.Unfavorite)
                     await keptFiles.StageLinkedFavoriteReleaseAsync(context, linkedTargets, record, cancellationToken);
@@ -317,11 +324,13 @@ public sealed partial class FavoriteActionPipeline(
             item.LastErrorCode, item.LastErrorMessage, actions);
     }
 
-    private static IReadOnlyList<string> BuildActions(FavoriteOperation operation, string itemId) =>
-        operation == FavoriteOperation.Favorite &&
-        FavoriteDownloadActionExecutor.ParseExternalTrack(itemId) != null
-            ? [VirtualLikedAction, "download"]
-            : [VirtualLikedAction];
+    private static IReadOnlyList<string> BuildActions(FavoriteOperation operation, string itemId, string heartAction) =>
+        operation != FavoriteOperation.Favorite ? [VirtualLikedAction] : heartAction switch
+        {
+            "addToLibrary" => [VirtualLikedAction, "add-to-library"],
+            "keep" when FavoriteDownloadActionExecutor.ParseExternalTrack(itemId) != null => [VirtualLikedAction, "download"],
+            _ => [VirtualLikedAction]
+        };
 
     private async Task CancelSupersededWorkAsync(AllstarrDbContext context, Guid userId,
         string protocol, string backend, string itemId, DateTimeOffset now, CancellationToken cancellationToken, bool syntheticOnly = false)

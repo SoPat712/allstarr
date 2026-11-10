@@ -7,7 +7,8 @@ public sealed record ListeningPreferences(
     string? LyricsOrder = null,
     IReadOnlyDictionary<string, string>? ProviderModes = null,
     string? PlaybackStart = "Balanced",
-    string? QualityLimit = null);
+    string? QualityLimit = null,
+    string? HeartAction = null);
 
 public sealed record PersonalListeningPreferences(
     ListeningPreferences Values,
@@ -38,7 +39,8 @@ internal static class ListeningPreferenceKeys
     internal const string LyricsOrder = "Providers:LyricsOrder";
     internal const string PlaybackStart = "Playback:StartPreference";
     internal const string QualityLimit = "Audio:PersonalLimit";
+    internal const string HeartAction = "Library:HeartAction";
 
     internal static readonly string[] All =
-        [ExplicitFilter, ShowExternalLabel, ShowExplicitLabel, LyricsOrder, ProviderUsePolicy.SettingKey, PlaybackStart, QualityLimit];
+        [ExplicitFilter, ShowExternalLabel, ShowExplicitLabel, LyricsOrder, ProviderUsePolicy.SettingKey, PlaybackStart, QualityLimit, HeartAction];
 }

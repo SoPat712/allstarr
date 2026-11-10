@@ -750,8 +750,8 @@ public sealed class DurableRuntimeSettingsTests : IAsyncLifetime
         var inheritedB = await service.GetPreferencesAsync(_userB);
 
         var defaultLyricsOrder = ProviderOrderPolicyCatalog.Find(allstarr.Core.Capabilities.ProviderCapabilityKind.Lyrics)!.DefaultValue;
-        Assert.Equal(new ListeningPreferences("CleanOnly", true, false, defaultLyricsOrder), personalA.Values);
-        Assert.Equal(new ListeningPreferences("ExplicitOnly", false, true, defaultLyricsOrder), household.Values);
+        Assert.Equal(new ListeningPreferences("CleanOnly", true, false, defaultLyricsOrder, HeartAction: "keep"), personalA.Values);
+        Assert.Equal(new ListeningPreferences("ExplicitOnly", false, true, defaultLyricsOrder, HeartAction: "keep"), household.Values);
         Assert.Equal(household.Values, inheritedB.Values);
         Assert.False(personalA.UsesHouseholdDefaults);
         Assert.True(inheritedB.UsesHouseholdDefaults);

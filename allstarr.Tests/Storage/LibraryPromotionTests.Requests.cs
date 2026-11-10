@@ -412,13 +412,13 @@ public sealed partial class LibraryPromotionTests
         Assert.IsType<UnauthorizedResult>(await controller.Requests(null, default));
     }
 
-    private LibraryPromotionService RequestService(IPromotionAcquisition? acquisition = null)
+    private LibraryPromotionService RequestService(IPromotionAcquisition? acquisition = null, allstarr.Core.ClientEvents.IClientEventPublisher? clientEvents = null)
     {
         var catalog = new Mock<IPromotionCatalog>();
         catalog.Setup(item => item.ResolveAsync(It.IsAny<ProtocolExecutionContext>(), recordingId, It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new[] { new Song { CanonicalRecordingId = recordingId, Title = "Song", Artist = "Artist", Album = "Album", Year = 2022,
                 AlbumId = "release", ExternalProvider = "source", CoverArtUrl = "cover-reference" } });
-        return BatchService(catalog.Object, acquisition ?? Mock.Of<IPromotionAcquisition>());
+        return BatchService(catalog.Object, acquisition ?? Mock.Of<IPromotionAcquisition>(), clientEvents: clientEvents);
     }
 
     private async Task SetPromotionRoleAsync(bool admin, bool trusted)

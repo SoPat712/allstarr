@@ -15,7 +15,7 @@ namespace allstarr.Core.Enrichment;
 
 public sealed partial class LibraryPromotionService
 {
-    private static PromotionAlbumPlan? ReadAlbum(PromotionRunRecord run)
+    internal static PromotionAlbumPlan? ReadAlbum(PromotionRunRecord run)
     {
         using var json = JsonDocument.Parse(run.PlanJson);
         return json.RootElement.TryGetProperty("Version", out var version) && version.GetInt32() == 2
@@ -202,6 +202,7 @@ public sealed partial class LibraryPromotionService
             if (requestId is { } approvalId) await LinkApprovedRequestAsync(db, approvalId, run, approver!.Value, token);
             await db.SaveChangesAsync(token);
             await transaction.CommitAsync(token);
+            await PublishRunAsync(run, token);
             return run;
         }
         finally { gate.Release(); }
@@ -256,6 +257,7 @@ public sealed partial class LibraryPromotionService
             run.Revision++;
             await db.SaveChangesAsync(token);
             await transaction.CommitAsync(token);
+            await PublishRunAsync(run, token);
             HydrateTracks(run);
             return run;
         }
@@ -280,6 +282,7 @@ public sealed partial class LibraryPromotionService
             run.PlanJson = JsonSerializer.Serialize(album);
             run.Revision++;
             await db.SaveChangesAsync(token);
+            await PublishRunAsync(run, token);
         }
         async Task Step(PromotionTrack track, string name, string outcome, string reason)
         {

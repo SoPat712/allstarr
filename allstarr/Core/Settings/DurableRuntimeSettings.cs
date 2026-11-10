@@ -62,6 +62,7 @@ public interface IDurableRuntimeSettings
     Task<PersonalListeningPreferences> UpdatePreferencesAsync(
         Guid userId, ListeningPreferences? overrides, string expectedRevision,
         CancellationToken cancellationToken = default);
+    Task UpdateHeartActionAsync(Guid userId, string heartAction, CancellationToken cancellationToken = default);
     Task<PersonalListeningPreferences> GetManagedPreferencesAsync(
         Guid userId, Guid actorUserId, CancellationToken cancellationToken = default);
     Task<PersonalListeningPreferences> UpdateCleanOnlyLockAsync(
@@ -203,6 +204,9 @@ public static class RuntimeSettingCatalog
         items.Add(new(ListeningPreferenceKeys.QualityLimit, RuntimeSettingValueType.String,
             ListeningPreferenceKeys.QualityLimit, AllowEmpty: true, DefaultValue: "",
             Choices: new HashSet<string>(AudioQualityPolicy.Steps, Comparer)));
+        items.Add(new(ListeningPreferenceKeys.HeartAction, RuntimeSettingValueType.String,
+            ListeningPreferenceKeys.HeartAction, DefaultValue: "keep",
+            Choices: new HashSet<string>(["heart", "keep", "addToLibrary"], StringComparer.Ordinal)));
         items.Add(new("Playback:PrepareUpcomingSongs", RuntimeSettingValueType.Boolean,
             "Playback:PrepareUpcomingSongs", DefaultValue: "false"));
         items.Add(new("Playback:PrepareUpcomingCount", RuntimeSettingValueType.Integer,
@@ -468,6 +472,24 @@ public sealed partial class DurableRuntimeSettingsService : BackgroundService, I
         return await ReadPreferencesAsync(db, userId, cancellationToken);
     }
 
+    public async Task UpdateHeartActionAsync(Guid userId, string heartAction, CancellationToken cancellationToken = default)
+    {
+        await using var db = await _factory.CreateDbContextAsync(cancellationToken);
+        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+        await RequirePreferenceScopeAsync(db, userId, cancellationToken);
+        var revision = await db.RuntimeSettings.AsNoTracking().Where(item => item.OwnerUserId == userId && item.Key == ListeningPreferenceKeys.HeartAction)
+            .Select(item => (long?)item.Revision).SingleOrDefaultAsync(cancellationToken);
+        await StageScopedBatchAsync(db, userId, [new(ListeningPreferenceKeys.HeartAction, heartAction, revision)], "personal-preferences", userId, cancellationToken);
+        try
+        {
+            await db.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+        }
+        catch (Exception error) when (IsWriteConflict(error))
+        { throw new RuntimeSettingConflictException("Listening preferences changed during the update.", error); }
+        _signal.Publish();
+    }
+
     public async Task<PersonalListeningPreferences> UpdatePreferencesAsync(
         Guid userId, ListeningPreferences? overrides, string expectedRevision,
         CancellationToken cancellationToken = default)
@@ -511,6 +533,9 @@ public sealed partial class DurableRuntimeSettingsService : BackgroundService, I
             if (overrides.PlaybackStart != null)
                 writes.Add(new(ListeningPreferenceKeys.PlaybackStart, overrides.PlaybackStart,
                     existingRevisions.GetValueOrDefault(ListeningPreferenceKeys.PlaybackStart)));
+            if (overrides.HeartAction != null)
+                writes.Add(new(ListeningPreferenceKeys.HeartAction, overrides.HeartAction,
+                    existingRevisions.GetValueOrDefault(ListeningPreferenceKeys.HeartAction)));
             if (overrides.QualityLimit != null)
                 writes.Add(new(ListeningPreferenceKeys.QualityLimit, overrides.QualityLimit,
                     existingRevisions.GetValueOrDefault(ListeningPreferenceKeys.QualityLimit)));
@@ -687,7 +712,8 @@ public sealed partial class DurableRuntimeSettingsService : BackgroundService, I
             modes.Count == 0 ? null : modes.ToDictionary(item => item.Key,
                 item => ProviderUsePolicy.Name(item.Value), StringComparer.Ordinal),
             (string)settings[ListeningPreferenceKeys.PlaybackStart].Value,
-            settings[ListeningPreferenceKeys.QualityLimit].Value is string { Length: > 0 } limit ? limit : null);
+            settings[ListeningPreferenceKeys.QualityLimit].Value is string { Length: > 0 } limit ? limit : null,
+            (string)settings[ListeningPreferenceKeys.HeartAction].Value);
     }
 
     private static string ComputePreferencesRevision(

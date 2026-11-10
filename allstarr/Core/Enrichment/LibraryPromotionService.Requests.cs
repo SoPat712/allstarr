@@ -102,6 +102,7 @@ public sealed partial class LibraryPromotionService
             }
             db.PromotionRequests.Add(pending);
             await db.SaveChangesAsync(token);
+            await PublishRequestAsync(pending, token);
             if (direct && covering != null)
             {
                 await SynchronizeRequestAsync(db, pending, token);
@@ -166,6 +167,7 @@ public sealed partial class LibraryPromotionService
                 DecideRequest(db, pending, "approved", administrator.Id, null);
                 CompleteRequest(db, pending, "added");
                 await db.SaveChangesAsync(token);
+                await PublishRequestAsync(pending, token);
                 return pending;
             }
             var covering = await CoveringRunAsync(db, ownerContext, start, pending.Unit, songs, token);
@@ -174,6 +176,7 @@ public sealed partial class LibraryPromotionService
                 pending.RunId = covering.Id;
                 DecideRequest(db, pending, "approved", administrator.Id, null);
                 await db.SaveChangesAsync(token);
+                await PublishRequestAsync(pending, token);
                 return await GetRequestAsync(context, id, token);
             }
             await StartRunAsync(ownerContext, start with { RequestKey = $"request:{pending.Id:N}" }, token, songs, pending.Id, administrator.Id);
@@ -201,6 +204,7 @@ public sealed partial class LibraryPromotionService
             if (request.State != "pending") throw new PromotionException(PromotionFailure.PromotionChanged);
             DecideRequest(db, request, state, user.Id, string.IsNullOrWhiteSpace(note) ? null : SafeOperationalText.Sanitize(note.Trim(), 500));
             await db.SaveChangesAsync(token);
+            await PublishRequestAsync(request, token);
             return request;
         }
         finally { requestGate.Release(); }
@@ -343,17 +347,19 @@ public sealed partial class LibraryPromotionService
         await SaveSynchronizedRequestsAsync(db, token);
     }
 
-    private static async Task SynchronizeRequestsAsync(AllstarrDbContext db, Guid? owner, CancellationToken token)
+    private async Task SynchronizeRequestsAsync(AllstarrDbContext db, Guid? owner, CancellationToken token)
     {
         var requests = await db.PromotionRequests.Where(item => (owner == null || item.RequesterUserId == owner) && item.State == "approved").ToArrayAsync(token);
         foreach (var request in requests) await SynchronizeRequestAsync(db, request, token);
         await SaveSynchronizedRequestsAsync(db, token);
     }
 
-    private static async Task SaveSynchronizedRequestsAsync(AllstarrDbContext db, CancellationToken token)
+    private async Task SaveSynchronizedRequestsAsync(AllstarrDbContext db, CancellationToken token)
     {
+        var changed = db.ChangeTracker.Entries<PromotionRequestRecord>().Where(item => item.State == EntityState.Modified).Select(item => item.Entity).ToArray();
         try { await db.SaveChangesAsync(token); }
-        catch (DbUpdateConcurrencyException) { db.ChangeTracker.Clear(); }
+        catch (DbUpdateConcurrencyException) { db.ChangeTracker.Clear(); return; }
+        foreach (var request in changed) await PublishRequestAsync(request, token);
     }
 
     private static async Task SynchronizeRequestAsync(AllstarrDbContext db, PromotionRequestRecord request, CancellationToken token)
