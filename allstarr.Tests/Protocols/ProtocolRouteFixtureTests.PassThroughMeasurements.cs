@@ -5,6 +5,7 @@ using allstarr.Core.Storage;
 using System.Text.Json;
 using allstarr.Services.Jellyfin;
 using allstarr.Services.Common;
+using allstarr.Services.Subsonic;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -13,6 +14,65 @@ namespace allstarr.Tests;
 
 public sealed partial class ProtocolRouteFixtureTests
 {
+    [Fact]
+    public async Task PassThrough_SubsonicVerificationMeasuresAgainstDelayedBackend()
+    {
+        const string route = "/rest/getLicense.view?apiKey=measurement-key&v=1.16.1&c=measurement&f=json";
+        using var backend = new DelayedSubsonicPassThroughBackend();
+        using var factory = new ProtocolFactory("Subsonic", _ => throw new InvalidOperationException(), services =>
+        {
+            services.RemoveAll<IHttpClientFactory>();
+            services.AddSingleton<IHttpClientFactory>(new StubHttpClientFactory(backend));
+        });
+        using var client = factory.CreateClient();
+        factory.Services.GetRequiredService<DurableStorageState>().Set(DurableStorageReadiness.Ready);
+        var cache = factory.Services.GetRequiredService<SubsonicVerificationCache>();
+        var parameters = SubsonicRequestParameters.FromDictionary(new Dictionary<string, string>
+        {
+            ["apiKey"] = "measurement-key",
+            ["v"] = "1.16.1",
+            ["c"] = "measurement",
+            ["f"] = "json"
+        });
+        async Task<double> Send()
+        {
+            var timer = Stopwatch.StartNew();
+            using var response = await client.GetAsync(route);
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            Assert.Equal(DelayedSubsonicPassThroughBackend.Native, await response.Content.ReadAsStringAsync());
+            return timer.Elapsed.TotalMilliseconds;
+        }
+        await Send();
+        var before = new List<double>();
+        var after = new List<double>();
+        var direct = new List<double>();
+        var pings = backend.Pings;
+        var tokens = backend.TokenInfos;
+        for (var index = 0; index < 5; index++)
+        {
+            cache.Evict(parameters);
+            before.Add(await Send());
+        }
+        Assert.Equal(5, backend.Pings - pings);
+        Assert.Equal(5, backend.TokenInfos - tokens);
+        pings = backend.Pings;
+        tokens = backend.TokenInfos;
+        for (var index = 0; index < 5; index++) after.Add(await Send());
+        Assert.Equal(pings, backend.Pings);
+        Assert.Equal(tokens, backend.TokenInfos);
+        using var backendClient = new HttpClient(backend, disposeHandler: false);
+        for (var index = 0; index < 5; index++)
+        {
+            var timer = Stopwatch.StartNew();
+            using var response = await backendClient.GetAsync("http://backend.test" + route);
+            Assert.Equal(DelayedSubsonicPassThroughBackend.Native, await response.Content.ReadAsStringAsync());
+            direct.Add(timer.Elapsed.TotalMilliseconds);
+        }
+        var measurement = $"Subsonic /rest/getLicense.view: uncached p50={before.Order().ElementAt(2):F2} ms; warm p50={after.Order().ElementAt(2):F2} ms; direct p50={direct.Order().ElementAt(2):F2} ms; ping calls=5 -> 0; tokenInfo calls=5 -> 0";
+        _lyricsSearchOutput.WriteLine(measurement);
+        Console.WriteLine(measurement);
+    }
+
     [Fact]
     public async Task JellyfinProxy_MeasuresUncachedAndWarmVerificationAgainstDelayedBackend()
     {
@@ -35,18 +95,21 @@ public sealed partial class ProtocolRouteFixtureTests
         string[] routes = ["/Users/Me", "/Items/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa?userId=listener", "/Items/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
             "/Items?parentId=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa&includeItemTypes=Audio&limit=200", "/Artists/AlbumArtists?limit=200",
             "/Items/Latest?userId=listener", "/Items?includeItemTypes=Audio&limit=200&sortBy=SortName",
-            "/Sessions/Playing", "/Items/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/Images/Primary?fillWidth=600&quality=90&tag=art",
+            "/Sessions/Playing", "/Sessions/Playing/Progress", "/Sessions/Playing/Stopped",
+            "/Items/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/Images/Primary?fillWidth=600&quality=90&tag=art",
             "/Audio/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/stream?static=true"];
         foreach (var route in routes)
         {
+            var playback = route.StartsWith("/Sessions/Playing", StringComparison.Ordinal);
             async Task<double> Send()
             {
-                if (route == "/Sessions/Playing")
+                if (playback)
                     await factory.Services.GetRequiredService<IApplicationCache>().DeleteAsync(
-                        CacheKeyBuilder.BuildPlaybackSignalDedupeKey("primary", "listener", "start",
+                        CacheKeyBuilder.BuildPlaybackSignalDedupeKey("primary", "listener",
+                            route.EndsWith("/Stopped", StringComparison.Ordinal) ? "stop" : "start",
                             "measurement-phone", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"));
                 var timer = Stopwatch.StartNew();
-                using var request = new HttpRequestMessage(route == "/Sessions/Playing" ? HttpMethod.Post : HttpMethod.Get, route);
+                using var request = new HttpRequestMessage(playback ? HttpMethod.Post : HttpMethod.Get, route);
                 if (request.Method == HttpMethod.Post)
                     request.Content = new StringContent(JsonSerializer.Serialize(new
                     {
@@ -69,24 +132,29 @@ public sealed partial class ProtocolRouteFixtureTests
             var after = new List<double>();
             var initialVerifications = backend.Verifications;
             var initialReports = backend.PlaybackReports;
+            var initialMetadataReads = backend.MetadataReads;
             for (var index = 0; index < 5; index++)
             {
                 proxy.Verifications.Evict(headers, null);
                 before.Add(await Send());
             }
             Assert.Equal(5, backend.Verifications - initialVerifications);
-            if (route == "/Sessions/Playing") Assert.Equal(5, backend.PlaybackReports - initialReports);
+            if (playback) Assert.Equal(5, backend.PlaybackReports - initialReports);
             initialReports = backend.PlaybackReports;
             initialVerifications = backend.Verifications;
             for (var index = 0; index < 5; index++) after.Add(await Send());
             Assert.Equal(initialVerifications, backend.Verifications);
-            if (route == "/Sessions/Playing") Assert.Equal(5, backend.PlaybackReports - initialReports);
+            if (playback)
+            {
+                Assert.Equal(5, backend.PlaybackReports - initialReports);
+                Assert.Equal(initialMetadataReads, backend.MetadataReads);
+            }
             var direct = new List<double>();
             using var backendClient = new HttpClient(backend, disposeHandler: false);
             for (var index = 0; index < 5; index++)
             {
                 var timer = Stopwatch.StartNew();
-                using var directRequest = new HttpRequestMessage(route == "/Sessions/Playing" ? HttpMethod.Post : HttpMethod.Get,
+                using var directRequest = new HttpRequestMessage(playback ? HttpMethod.Post : HttpMethod.Get,
                     "http://backend.test" + route);
                 using var directResponse = await backendClient.SendAsync(directRequest, route.StartsWith("/Audio/", StringComparison.Ordinal)
                     ? HttpCompletionOption.ResponseHeadersRead : HttpCompletionOption.ResponseContentRead);
@@ -99,6 +167,7 @@ public sealed partial class ProtocolRouteFixtureTests
             }
             var measurement = $"{route}: uncached p50={before.Order().ElementAt(2):F2} ms; warm p50={after.Order().ElementAt(2):F2} ms; direct p50={direct.Order().ElementAt(2):F2} ms; verification calls=5 -> 0";
             _lyricsSearchOutput.WriteLine(measurement);
+            Console.WriteLine(measurement);
             File.AppendAllText(measurements, measurement + Environment.NewLine);
         }
     }
@@ -148,13 +217,14 @@ public sealed partial class ProtocolRouteFixtureTests
     {
         public int Verifications;
         public int PlaybackReports;
+        public int MetadataReads;
         public static int Delay(string route) => route.Split('?')[0] switch
         {
             "/Users/Me" => 150,
             "/Artists/AlbumArtists" => 134,
             "/Items/Latest" => 156,
             "/Items" => 62,
-            "/Sessions/Playing" => 45,
+            "/Sessions/Playing" or "/Sessions/Playing/Progress" or "/Sessions/Playing/Stopped" => 45,
             "/Audio/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/stream" => 20,
             _ => 40
         };
@@ -162,8 +232,10 @@ public sealed partial class ProtocolRouteFixtureTests
         {
             var path = request.RequestUri!.AbsolutePath;
             if (path == "/Users/Me" && request.Headers.Accept.Count > 0) Interlocked.Increment(ref Verifications);
+            if (path is "/Items/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" or "/Items/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+                Interlocked.Increment(ref MetadataReads);
             await Task.Delay(Delay(path), cancellationToken);
-            if (path == "/Sessions/Playing")
+            if (path.StartsWith("/Sessions/Playing", StringComparison.Ordinal))
             {
                 Interlocked.Increment(ref PlaybackReports);
                 return new HttpResponseMessage(HttpStatusCode.NoContent);
@@ -191,6 +263,32 @@ public sealed partial class ProtocolRouteFixtureTests
             }).ToArray();
             return Json(200, path == "/Items/Latest" ? JsonSerializer.Serialize(rows) :
                 JsonSerializer.Serialize(new { Items = rows, TotalRecordCount = rows.Length, StartIndex = 0 }));
+        }
+    }
+
+    private sealed class DelayedSubsonicPassThroughBackend : HttpMessageHandler
+    {
+        public const string Native = """{ "subsonic-response":{"status":"ok","license":{"valid":true},"Future":[1.00,"Björk"]} }""";
+        public int Pings;
+        public int TokenInfos;
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var path = request.RequestUri!.AbsolutePath;
+            if (path == "/rest/ping.view")
+            {
+                Interlocked.Increment(ref Pings);
+                await Task.Delay(150, cancellationToken);
+                return Json(200, """{"subsonic-response":{"status":"ok"}}""");
+            }
+            if (path == "/rest/tokenInfo.view")
+            {
+                Interlocked.Increment(ref TokenInfos);
+                await Task.Delay(40, cancellationToken);
+                return Json(200, """{"subsonic-response":{"status":"ok","tokenInfo":{"username":"listener"}}}""");
+            }
+            Assert.Equal("/rest/getLicense.view", path);
+            await Task.Delay(45, cancellationToken);
+            return Json(200, Native);
         }
     }
 

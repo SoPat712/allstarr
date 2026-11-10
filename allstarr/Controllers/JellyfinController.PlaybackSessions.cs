@@ -255,75 +255,37 @@ public partial class JellyfinController
             var playbackStartAccepted = false;
             try
             {
-                var (itemResult, itemStatus) =
-                    await _proxyService.GetJsonAsync($"Items/{itemId}", null, Request.Headers);
-                if (itemResult != null && itemStatus == 200)
+                var playbackJson = JsonSerializer.Serialize(new
                 {
-                    var item = itemResult.RootElement;
-
-                    string? trackName = null;
-                    if (item.TryGetProperty("Name", out var nameElement))
-                    {
-                        trackName = nameElement.GetString();
-                    }
-
-                    _logger.LogInformation("🎵 Local track playback started: {Name} (ID: {ItemId})",
-                        trackName ?? "Unknown", itemId);
-
-                    var playbackStart = new
-                    {
-                        ItemId = itemId,
-                        PositionTicks = positionTicks ?? 0,
-                        // Jellyfin resolves its own item; duplicating NowPlayingItem can diverge.
-                    };
-
-                    var playbackJson = JsonSerializer.Serialize(playbackStart);
-                    _logger.LogDebug("📤 Sending playback start: {Json}", playbackJson);
-
-                    var (result, statusCode) =
-                        await _proxyService.PostJsonAsync("Sessions/Playing", playbackJson, Request.Headers);
-
-                    if (statusCode == 204 || statusCode == 200)
-                    {
-                        playbackStartAccepted = true;
-                        _logger.LogDebug("✓ Playback start forwarded to Jellyfin ({StatusCode})", statusCode);
-
-                    }
-                    else
-                    {
-                        _logger.LogWarning("⚠️  Playback start returned status {StatusCode}", statusCode);
-                    }
-                }
-                else
+                    ItemId = itemId,
+                    PositionTicks = positionTicks ?? 0
+                });
+                var (result, statusCode) =
+                    await _proxyService.PostJsonAsync("Sessions/Playing", playbackJson, Request.Headers);
+                result?.Dispose();
+                playbackStartAccepted = statusCode == 204 || statusCode == 200;
+                if (!playbackStartAccepted)
                 {
-                    _logger.LogWarning("⚠️  Could not fetch item details ({StatusCode}), sending basic playback start",
-                        itemStatus);
-                    var (result, statusCode) =
-                        await _proxyService.PostJsonAsync("Sessions/Playing", body, Request.Headers);
-                    if (statusCode == 204 || statusCode == 200)
-                    {
-                        playbackStartAccepted = true;
-                        _logger.LogDebug("✓ Basic playback start forwarded to Jellyfin ({StatusCode})", statusCode);
-                        _logger.LogInformation("🎵 Local track playback started: {Name} (ID: {ItemId})",
-                            itemName ?? "Unknown", itemId ?? "unknown");
-                    }
+                    _logger.LogWarning("⚠️ Playback start returned status {StatusCode}, trying original body", statusCode);
                 }
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Failed to send playback start, trying basic");
-                var (result, statusCode) = await _proxyService.PostJsonAsync("Sessions/Playing", body, Request.Headers);
-                if (statusCode == 204 || statusCode == 200)
-                {
-                    playbackStartAccepted = true;
-                    _logger.LogDebug("✓ Basic playback start forwarded to Jellyfin ({StatusCode})", statusCode);
-                    _logger.LogInformation("🎵 Local track playback started: {Name} (ID: {ItemId})",
-                        itemName ?? "Unknown", itemId ?? "unknown");
-                }
+            }
+
+            if (!playbackStartAccepted)
+            {
+                var (fallback, fallbackStatus) =
+                    await _proxyService.PostJsonAsync("Sessions/Playing", body, Request.Headers);
+                fallback?.Dispose();
+                playbackStartAccepted = fallbackStatus == 204 || fallbackStatus == 200;
             }
 
             if (playbackStartAccepted)
             {
+                _logger.LogInformation("🎵 Local track playback started: {Name} (ID: {ItemId})",
+                    itemName ?? ParsePlaybackItemName(doc.RootElement) ?? "Unknown", itemId);
                 await QueuePlaybackSignalAsync(PlaybackTransition.Start, itemId, deviceId, playSessionId, positionTicks);
             }
 
@@ -576,9 +538,7 @@ public partial class JellyfinController
                     if (inferredStart &&
                         !await ShouldSuppressPlaybackSignalAsync("start", deviceId, itemId))
                     {
-                        var trackName = await TryGetLocalTrackNameAsync(itemId);
-                        _logger.LogInformation("🎵 Local track playback started (inferred from progress): {Name} (ID: {ItemId})",
-                            trackName ?? "Unknown", itemId);
+                        _logger.LogDebug("🎵 Local track playback started (inferred from progress): {ItemId}", itemId);
 
                         var inferredStartPayload = JsonSerializer.Serialize(new
                         {
@@ -655,25 +615,6 @@ public partial class JellyfinController
         }
     }
 
-    private async Task<string?> TryGetLocalTrackNameAsync(string itemId)
-    {
-        try
-        {
-            var (itemResult, itemStatus) = await _proxyService.GetJsonAsync($"Items/{itemId}", null, Request.Headers);
-            if (itemResult != null && itemStatus == 200 &&
-                itemResult.RootElement.TryGetProperty("Name", out var nameElement))
-            {
-                return nameElement.GetString();
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogDebug(ex, "Could not fetch local track name for {ItemId}", itemId);
-        }
-
-        return null;
-    }
-
     private async Task HandleInferredStopOnProgressTransitionAsync(
         string deviceId,
         string previousItemId,
@@ -733,11 +674,7 @@ public partial class JellyfinController
             return;
         }
 
-        var previousTrackName = await TryGetLocalTrackNameAsync(previousItemId);
-        _logger.LogInformation(
-            "🎵 Local track playback stopped (inferred from progress): {Name} (ID: {ItemId})",
-            previousTrackName ?? "Unknown",
-            previousItemId);
+        _logger.LogDebug("🎵 Local track playback stopped (inferred from progress): {ItemId}", previousItemId);
 
         var inferredStopPayload = JsonSerializer.Serialize(new
         {
@@ -1053,32 +990,10 @@ public partial class JellyfinController
                     return NoContent();
                 }
 
-                string? trackName = itemName;
-                if (string.IsNullOrEmpty(trackName))
-                {
-                    try
-                    {
-                        var (itemResult, itemStatus) =
-                            await _proxyService.GetJsonAsync($"Items/{itemId}", null, Request.Headers);
-                        if (itemResult != null && itemStatus == 200)
-                        {
-                            var item = itemResult.RootElement;
-                            if (item.TryGetProperty("Name", out var nameElement))
-                            {
-                                trackName = nameElement.GetString();
-                            }
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogDebug(ex, "Could not fetch track name for local track on stop");
-                    }
-                }
-
                 ObservePlaybackActivity(doc.RootElement, itemId, deviceId, receipt, stopped: true);
 
                 _logger.LogInformation("🎵 Local track playback stopped: {Name} (ID: {ItemId})",
-                    trackName ?? "Unknown", itemId);
+                    itemName ?? "Unknown", itemId);
 
                 if (await ShouldSuppressPlaybackSignalAsync("stop", deviceId, itemId))
                 {

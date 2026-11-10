@@ -16,12 +16,6 @@ public sealed class SubsonicAuthFilter : IAsyncResourceFilter
     public const string BackendPrincipalNameItemKey = "allstarr.backend-principal-name";
     public const string RequestParametersItemKey = "allstarr.subsonic-request-parameters";
 
-    private static readonly IReadOnlySet<string> VerificationParameterNames =
-        new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        {
-            "u", "p", "t", "s", "apiKey", "v", "c", "f"
-        };
-
     private readonly SubsonicRequestParser _requestParser;
     private readonly SubsonicProxyService _proxyService;
     private readonly SubsonicResponseBuilder _responseBuilder;
@@ -63,49 +57,63 @@ public sealed class SubsonicAuthFilter : IAsyncResourceFilter
 
         try
         {
-            var verificationParameters = parameters.Select(VerificationParameterNames);
-            var response = await _proxyService.RelayRawAsync(
-                "rest/ping.view",
-                verificationParameters,
-                request.HttpContext.RequestAborted);
-
-            if (!response.IsSuccessStatusCode || GetProtocolStatus(response) != ProtocolStatus.Success)
+            var cache = _proxyService.Verifications;
+            var credential = cache.Get(parameters);
+            await credential.Gate.WaitAsync(request.HttpContext.RequestAborted);
+            try
             {
-                context.Result = CreateRawResult(response, format);
-                return;
-            }
-
-            if (mechanism == AuthenticationMechanism.ApiKey)
-            {
-                var tokenInfo = await _proxyService.RelayRawAsync(
-                    "rest/tokenInfo.view",
-                    verificationParameters,
-                    request.HttpContext.RequestAborted);
-                if (!tokenInfo.IsSuccessStatusCode || GetProtocolStatus(tokenInfo) != ProtocolStatus.Success)
+                var verified = cache.Find(credential);
+                if (verified == null)
                 {
-                    context.Result = CreateRawResult(tokenInfo, format);
-                    return;
+                    var verificationParameters = parameters.Select(SubsonicVerificationCache.ParameterNames);
+                    var response = await _proxyService.RelayRawAsync(
+                        "rest/ping.view", verificationParameters, request.HttpContext.RequestAborted);
+                    if (!response.IsSuccessStatusCode || GetProtocolStatus(response) != ProtocolStatus.Success)
+                    {
+                        context.Result = CreateRawResult(response, format);
+                        return;
+                    }
+
+                    if (mechanism == AuthenticationMechanism.ApiKey)
+                    {
+                        var tokenInfo = await _proxyService.RelayRawAsync(
+                            "rest/tokenInfo.view", verificationParameters, request.HttpContext.RequestAborted);
+                        if (!tokenInfo.IsSuccessStatusCode || GetProtocolStatus(tokenInfo) != ProtocolStatus.Success)
+                        {
+                            context.Result = CreateRawResult(tokenInfo, format);
+                            return;
+                        }
+
+                        principalName = GetTokenInfoUsername(tokenInfo);
+                        if (string.IsNullOrWhiteSpace(principalName))
+                        {
+                            context.Result = CreateProtocolError(format, 0,
+                                "Backend did not identify the API-key principal", StatusCodes.Status502BadGateway);
+                            return;
+                        }
+                    }
+
+                    var principal = await _identityResolver.ResolveAsync(
+                        new BackendIdentityDescriptor("Subsonic", principalName!, principalName),
+                        request.HttpContext.RequestAborted);
+                    verified = new SubsonicVerificationCache.Verification(principalName!, principal, cache.UtcNow);
+                    credential.Verified = verified;
+                }
+                else if (verified.Principal == null)
+                {
+                    var principal = await _identityResolver.ResolveAsync(
+                        new BackendIdentityDescriptor("Subsonic", verified.PrincipalName, verified.PrincipalName),
+                        request.HttpContext.RequestAborted);
+                    if (principal != null) credential.Verified = verified = verified with { Principal = principal };
                 }
 
-                principalName = GetTokenInfoUsername(tokenInfo);
-                if (string.IsNullOrWhiteSpace(principalName))
-                {
-                    context.Result = CreateProtocolError(
-                        format,
-                        0,
-                        "Backend did not identify the API-key principal",
-                        StatusCodes.Status502BadGateway);
-                    return;
-                }
+                context.HttpContext.Items[BackendPrincipalNameItemKey] = verified.PrincipalName;
+                if (verified.Principal != null)
+                    context.HttpContext.Items[BackendIdentityResolver.HttpContextPrincipalItemKey] = verified.Principal;
             }
-
-            context.HttpContext.Items[BackendPrincipalNameItemKey] = principalName!;
-            var principal = await _identityResolver.ResolveAsync(
-                new BackendIdentityDescriptor("Subsonic", principalName!, principalName),
-                request.HttpContext.RequestAborted);
-            if (principal != null)
+            finally
             {
-                context.HttpContext.Items[BackendIdentityResolver.HttpContextPrincipalItemKey] = principal;
+                credential.Gate.Release();
             }
         }
         catch (OperationCanceledException) when (request.HttpContext.RequestAborted.IsCancellationRequested)

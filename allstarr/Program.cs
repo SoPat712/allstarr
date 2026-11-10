@@ -561,6 +561,7 @@ if (backendType == BackendType.Jellyfin)
 else if (backendType == BackendType.Subsonic)
 {
     builder.Services.AddSingleton<SubsonicRequestParser>();
+    builder.Services.AddSingleton<SubsonicVerificationCache>();
     builder.Services.AddSingleton<SubsonicResponseBuilder>();
     builder.Services.AddSingleton<SubsonicModelMapper>();
     builder.Services.AddSingleton<ISubsonicLyricsLookup, SubsonicLyricsLookup>();

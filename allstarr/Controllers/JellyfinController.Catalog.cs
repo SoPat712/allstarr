@@ -25,20 +25,29 @@ public partial class JellyfinController
             _virtualPlaylistProtocolAdapter.IsVirtualPlaylistId(parent) ||
             await _cache.GetStringAsync(NativeCatalogTypeKey(parent)) != "MusicAlbum")) return null;
         var endpoint = userId == null ? "Items" : $"Users/{Uri.EscapeDataString(userId)}/Items";
-        var upstream = await _proxyService.SendPassthroughResponseAsync(
+        var unfiltered = IsUnfilteredNativeCatalogView(artistAlbums ? parent : null);
+        var upstreamTask = _proxyService.SendPassthroughResponseAsync(
             Request, $"{endpoint}{Request.QueryString}", HttpContext.RequestAborted);
-        if (!IsUnfilteredNativeCatalogView(artistAlbums ? parent : null)) return new ProtocolRelayResponseResult(upstream);
+        using var detailCancellation = albumSongs && unfiltered
+            ? CancellationTokenSource.CreateLinkedTokenSource(HttpContext.RequestAborted) : null;
+        var detailTask = albumSongs && unfiltered ? _proxyService.GetJsonAsync(
+            $"Users/{Uri.EscapeDataString(context.VerifiedBackendPrincipalId)}/Items/{Uri.EscapeDataString(parent)}",
+            null, Request.Headers, detailCancellation!.Token) : null;
+        HttpResponseMessage? upstream = null;
         try
         {
+            upstream = await upstreamTask;
+            if (!unfiltered) return new ProtocolRelayResponseResult(upstream);
             if (!upstream.IsSuccessStatusCode) return new ProtocolRelayResponseResult(upstream);
             var bytes = await upstream.Content.ReadAsByteArrayAsync(HttpContext.RequestAborted);
             using var snapshot = JsonDocument.Parse(bytes);
             CaptureNativeQueryRows(snapshot.RootElement);
             var envelope = JsonNode.Parse(bytes) as JsonObject;
             if (envelope?["Items"] is not JsonArray original) return new ProtocolRelayResponseResult(upstream);
-            var (detail, status) = await _proxyService.GetJsonAsync(
+            var (detail, status) = await (detailTask ?? _proxyService.GetJsonAsync(
                 $"Users/{Uri.EscapeDataString(context.VerifiedBackendPrincipalId)}/Items/{Uri.EscapeDataString(parent)}",
-                null, Request.Headers);
+                null, Request.Headers));
+            detailTask = null;
             using (detail)
             {
                 var expectedType = artistAlbums ? "MusicArtist" : "MusicAlbum";
@@ -96,13 +105,30 @@ public partial class JellyfinController
         }
         catch (OperationCanceledException) when (HttpContext.RequestAborted.IsCancellationRequested)
         {
-            upstream.Dispose();
+            upstream?.Dispose();
             throw;
         }
         catch (Exception error)
         {
+            if (upstream == null) throw;
             _logger.LogDebug("Provider catalog additions were unavailable ({ExceptionType})", error.GetType().Name);
             return new ProtocolRelayResponseResult(upstream);
+        }
+        finally
+        {
+            detailCancellation?.Cancel();
+            if (detailTask != null)
+            {
+                try
+                {
+                    var (detail, _) = await detailTask;
+                    detail?.Dispose();
+                }
+                catch
+                {
+                    // The primary response and reconciliation fallback own the result.
+                }
+            }
         }
     }
 

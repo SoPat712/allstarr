@@ -13,6 +13,7 @@ public class SubsonicProxyService
     private readonly SubsonicSettings _subsonicSettings;
     private readonly IHttpContextAccessor _httpContextAccessor;
     private readonly ProtocolStreamingResponseAdapter _streamingResponseAdapter;
+    internal SubsonicVerificationCache Verifications { get; }
 
     public HttpClient HttpClient => _httpClient;
 
@@ -20,12 +21,14 @@ public class SubsonicProxyService
         IHttpClientFactory httpClientFactory,
         Microsoft.Extensions.Options.IOptions<SubsonicSettings> subsonicSettings,
         IHttpContextAccessor httpContextAccessor,
-        ProtocolStreamingResponseAdapter? streamingResponseAdapter = null)
+        ProtocolStreamingResponseAdapter? streamingResponseAdapter = null,
+        SubsonicVerificationCache? verificationCache = null)
     {
         _httpClient = httpClientFactory.CreateClient("SubsonicBackend");
         _subsonicSettings = subsonicSettings.Value;
         _httpContextAccessor = httpContextAccessor;
         _streamingResponseAdapter = streamingResponseAdapter ?? new ProtocolStreamingResponseAdapter();
+        Verifications = verificationCache ?? new SubsonicVerificationCache(TimeProvider.System);
     }
 
     public async Task<(byte[] Body, string? ContentType)> RelayAsync(
@@ -61,7 +64,9 @@ public class SubsonicProxyService
         using var request = CreateRelayRequest(endpoint, parameters);
         ForwardConditionalRequestHeaders(requestHeaders, request);
         using var response = await _httpClient.SendAsync(request, cancellationToken);
+        EvictFailedVerification(parameters, response.StatusCode, []);
         var body = await response.Content.ReadAsByteArrayAsync(cancellationToken);
+        EvictFailedVerification(parameters, response.StatusCode, body);
 
         var headers = response.Headers
             .Concat(response.Content.Headers)
@@ -133,7 +138,18 @@ public class SubsonicProxyService
                 request,
                 HttpCompletionOption.ResponseHeadersRead,
                 cancellationToken);
+            EvictFailedVerification(parameters, response.StatusCode, []);
 
+            var mediaType = response.Content.Headers.ContentType?.MediaType;
+            if (mediaType?.Contains("json", StringComparison.OrdinalIgnoreCase) == true ||
+                mediaType?.Contains("xml", StringComparison.OrdinalIgnoreCase) == true)
+            {
+                // Buffer protocol errors only; media responses retain their streaming behavior.
+                byte[] body;
+                try { body = await response.Content.ReadAsByteArrayAsync(cancellationToken); }
+                catch { response.Dispose(); throw; }
+                EvictFailedVerification(parameters, response.StatusCode, body);
+            }
             return await _streamingResponseAdapter.CreateAsync(
                 httpContext,
                 response,
@@ -147,6 +163,13 @@ public class SubsonicProxyService
                 ex,
                 "Error streaming from Subsonic");
         }
+    }
+
+    private void EvictFailedVerification(SubsonicRequestParameters parameters, HttpStatusCode status, byte[] body)
+    {
+        if (status is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden ||
+            SubsonicVerificationCache.IsAuthenticationFailure(body))
+            Verifications.Evict(parameters);
     }
 
     private HttpRequestMessage CreateRelayRequest(
