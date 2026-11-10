@@ -5,7 +5,7 @@
   import { goto } from "$app/navigation";
   import { X } from "@lucide/svelte";
   import { releaseInbox, type FollowedReleaseArtist, type ReleaseInbox, type ReleaseInboxEntry } from "$lib/api";
-  import { releaseDate } from "$lib/intelligence";
+  import { releaseDate, releaseArtistImage } from "$lib/intelligence";
   import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
   import { toast } from "$lib/toasts";
   import { Button, buttonVariants } from "$lib/components/ui/button";
@@ -44,7 +44,7 @@
     catch { error = "The release panel could not be loaded. Try again."; }
   }
   $effect(() => { if (initialRelease && !ReleasePanel) void loadReleasePanel(); });
-  const unchecked = $derived(inbox?.coverage.filter(item => item.status !== "known") ?? []);
+  const unchecked = $derived(inbox?.coverage.filter(item => item.status !== "known" && item.status !== "library-only") ?? []);
   const hidden = $derived(inbox?.excluded ?? []);
 
 
@@ -124,9 +124,10 @@
     pendingAction = `artist:${artist.providerId}:${artist.artistId}`;
     try {
       await pending;
-      await releaseInbox.unfollow(artist.providerId, artist.artistId);
+      await releaseInbox.unfollow(artist.providerId, artist.artistId, artist.libraryArtistId);
       if (disposed) return;
-      artists = artists.filter(item => item.providerId !== artist.providerId || item.artistId !== artist.artistId);
+      artists = artists.filter(item => artist.libraryArtistId ? item.libraryArtistId !== artist.libraryArtistId :
+        item.libraryArtistId != null || item.providerId !== artist.providerId || item.artistId !== artist.artistId);
       toast.success(`Unfollowed ${artist.displayName}.`);
       await load();
       unfollowOpen = false;
@@ -155,7 +156,7 @@
   <PageStatus items={[{ label: `${inbox?.entries.length ?? 0} ${(inbox?.entries.length ?? 0) === 1 ? "release" : "releases"} from ${countLabel(artists.length, "artist")} you follow` }, { label: "Just Dropped collects these every Friday." }]} />
   <section class="following-row" aria-label="Following artists">
     <Button variant="text" size="sm" onclick={() => artistsOpen = true}>Following ({artists.length})</Button>
-    <div class="artist-faces">{#each artists.slice(0, 6) as artist, index (`${index}:${artist.providerId}:${artist.artistId}`)}<button type="button" onclick={() => artistsOpen = true} aria-label={`Manage ${artist.displayName}`}><MediaArtwork url={`/api/admin/stats/art?${new URLSearchParams({ artist: artist.displayName })}`} /><span>{artist.displayName}</span></button>{/each}</div>
+    <div class="artist-faces">{#each artists.slice(0, 6) as artist, index (`${index}:${artist.providerId}:${artist.artistId}`)}<button type="button" onclick={() => artistsOpen = true} aria-label={`Manage ${artist.displayName}`}><MediaArtwork url={releaseArtistImage(artist)} /><span>{artist.displayName}</span></button>{/each}</div>
     <Button variant="outline" size="sm" onclick={() => artistsOpen = true}>Follow more artists</Button>
   </section>
   <div class="release-toolbar">

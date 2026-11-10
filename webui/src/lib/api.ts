@@ -1480,7 +1480,7 @@ export type HistoryImport = {
   preview: ListeningHistoryImportPreview & { songs: number };
 };
 
-export type FollowedReleaseArtist = { providerId: string; artistId: string; displayName: string; musicBrainzArtistId?: string | null };
+export type FollowedReleaseArtist = { providerId: string; artistId: string; displayName: string; musicBrainzArtistId?: string | null; libraryArtistId?: string | null; libraryImageTag?: string | null };
 export type ReleaseSource = { providerId: string; albumId: string; title: string; artist: string; releaseDate: string | null; datePrecision: string; type: string; isExplicit: boolean | null; edition: string; upc: string | null; isrcs: string[]; aliases: string[]; exclusionReason: string | null };
 export type ReleaseInboxEntry = { id: string; title: string; artist: string; releaseDate: string | null; datePrecision: string; type: string; isExplicit: boolean | null; edition: string; exclusionReason: string | null; sources: ReleaseSource[]; artworkUrl: string };
 export type ReleaseTrack = { number: number; title: string; artists: string; durationMs: number | null; isExplicit: boolean };
@@ -2538,7 +2538,7 @@ export const releaseInbox = {
     method: "PUT", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ providerId: artist.providerId, artistId: artist.artistId, displayName: artist.displayName }),
   }),
-  unfollow: (providerId: string, artistId: string) => json<void>(`/api/admin/releases/artists/${encodeURIComponent(providerId)}/${encodeURIComponent(artistId)}`, { method: "DELETE" }),
+  unfollow: (providerId: string, artistId: string, libraryArtistId?: string | null) => json<void>(`/api/admin/releases/artists/${encodeURIComponent(providerId)}/${encodeURIComponent(artistId)}${libraryArtistId ? `?${new URLSearchParams({ libraryArtistId })}` : ""}`, { method: "DELETE" }),
   dismiss: (id: string) => json<void>(`/api/admin/releases/${encodeURIComponent(id)}`, { method: "DELETE" }),
   tracks: (id: string) => json<ReleaseTracks>(`/api/admin/releases/${encodeURIComponent(id)}/tracks`),
   addToApps: (id: string) => json<{ mixId: string; songCount: number }>(`/api/admin/releases/${encodeURIComponent(id)}/apps`, { method: "POST" }),

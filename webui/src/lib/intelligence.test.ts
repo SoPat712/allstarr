@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatCount, listeningTime, releaseDate, groupByWeek, playlistSourceKey, brainzDetails, brainzPlaylists } from "./intelligence";
+import { formatCount, releaseArtistImage, listeningTime, releaseDate, groupByWeek, playlistSourceKey, brainzDetails, brainzPlaylists } from "./intelligence";
 
 describe("listening presentation", () => {
   it("reads generated playlist metadata and keeps the newest edition of each kind", () => {
@@ -39,6 +39,15 @@ describe("listening presentation", () => {
       ["Earlier", ["Older", "Month only", "Unknown"]],
     ]);
     expect(groupByWeek([], item => String(item))).toEqual([]);
+  });
+
+  it("uses the native picture and tag for a library follow instead of a name lookup", () => {
+    const artist = { providerId: "deezer", artistId: "wrong", displayName: "FLO" };
+    expect(releaseArtistImage(artist)).toBe("/api/admin/stats/art?artist=FLO");
+    expect(releaseArtistImage({ ...artist, libraryArtistId: "native artist", libraryImageTag: "picture+2" }))
+      .toBe("/api/admin/stats/art?artist=FLO&libraryArtistId=native+artist&tag=picture%2B2");
+    expect(releaseArtistImage({ ...artist, libraryArtistId: "native", libraryImageTag: null }))
+      .toBe("/api/admin/stats/art?artist=FLO&libraryArtistId=native");
   });
 
   it("keeps the precision of release dates", () => {

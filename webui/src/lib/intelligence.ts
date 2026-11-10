@@ -1,4 +1,4 @@
-import type { PlaylistDiscoveryItem } from "./api";
+import type { FollowedReleaseArtist, PlaylistDiscoveryItem } from "./api";
 
 export const lastFmPeriods = [
   { value: "7day", label: "Last 7 days" },
@@ -91,4 +91,13 @@ export function groupByWeek<T>(items: T[], dateOf: (item: T) => string | null | 
     groups[date && date >= monday ? 0 : date && date >= lastMonday ? 1 : 2].items.push(item);
   }
   return groups.filter(group => group.items.length);
+}
+
+export function releaseArtistImage(artist: FollowedReleaseArtist) {
+  const query = new URLSearchParams({ artist: artist.displayName });
+  if (artist.libraryArtistId) {
+    query.set("libraryArtistId", artist.libraryArtistId);
+    if (artist.libraryImageTag) query.set("tag", artist.libraryImageTag);
+  }
+  return `/api/admin/stats/art?${query}`;
 }

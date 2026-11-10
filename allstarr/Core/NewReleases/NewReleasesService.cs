@@ -35,7 +35,8 @@ public sealed class NewReleasesService(IDbContextFactory<AllstarrDbContext> fact
         return await FollowsAsync(db, user, token);
     }
 
-    public async Task FollowAsync(Guid owner, FollowedReleaseArtist artist, CancellationToken token = default)
+    public async Task FollowAsync(Guid owner, FollowedReleaseArtist artist, CancellationToken token = default,
+        FollowedReleaseArtist? legacy = null)
     {
         var id = new ProviderExternalResourceId(artist.ProviderId, ProviderResourceKind.Artist, artist.ArtistId);
         if (string.IsNullOrWhiteSpace(artist.DisplayName) || artist.DisplayName.Length > 300 || artist.DisplayName.Any(char.IsControl))
@@ -47,6 +48,13 @@ public sealed class NewReleasesService(IDbContextFactory<AllstarrDbContext> fact
             var user = await UserAsync(db, owner, token);
             var before = await ReadForEventAsync(owner, token);
             var artists = (await FollowsAsync(db, user, token)).ToList();
+            if (legacy != null)
+            {
+                var index = artists.FindIndex(item => item.LibraryArtistId == null && item.IsDirectFollow == null &&
+                    item.ProviderId == legacy.ProviderId && item.ArtistId == legacy.ArtistId);
+                if (index < 0 || artist.LibraryArtistId == null) return;
+                artists.RemoveAt(index);
+            }
             var followed = artist with
             {
                 DisplayName = artist.DisplayName.Trim(),
@@ -324,6 +332,11 @@ public sealed class NewReleasesService(IDbContextFactory<AllstarrDbContext> fact
         var coverage = new List<ReleaseCoverage>();
         foreach (var artist in await FollowsAsync(db, user, token))
         {
+            if (artist.LibraryArtistId != null && artist.ProviderId == "jellyfin")
+            {
+                coverage.Add(new(artist, "library-only", null));
+                continue;
+            }
             var route = await RouteAsync(user, artist, token);
             var cache = route == null ? null : await LatestAsync(db, CatalogKind, CatalogKey(artist, route.Context), token);
             var catalog = Read<ReleaseCatalog>(cache);
@@ -372,7 +385,7 @@ public sealed class NewReleasesService(IDbContextFactory<AllstarrDbContext> fact
             void WaitFor(TimeSpan delay) => pending = pending == null || delay < pending.Value ? delay : pending;
             foreach (var artist in await FollowsAsync(db, user, token))
             {
-                var route = await RouteAsync(user, artist, token, jobId);
+                var route = await RouteAsync(user, artist, token, jobId, WaitFor);
                 if (route == null) continue;
                 var context = route.Context;
                 var key = CatalogKey(artist, context);
@@ -485,7 +498,7 @@ public sealed class NewReleasesService(IDbContextFactory<AllstarrDbContext> fact
     }
 
     private async Task<ProviderRouteCandidate<IProviderMetadataCapability>?> RouteAsync(UserRecord user,
-        FollowedReleaseArtist artist, CancellationToken token, Guid? jobId = null)
+        FollowedReleaseArtist artist, CancellationToken token, Guid? jobId = null, Action<TimeSpan>? waitFor = null)
     {
         if (artist.LibraryArtistId != null && artist.ProviderId == "jellyfin") return null;
         var principal = new ProviderBackendPrincipal(user.BackendType, user.BackendInstanceId, user.BackendPrincipalId);
@@ -495,7 +508,12 @@ public sealed class NewReleasesService(IDbContextFactory<AllstarrDbContext> fact
             ProviderExplicitContentPolicy.Allow, false, true, false, [artist.ProviderId]);
         var plan = await router.PlanAsync<IProviderMetadataCapability>(new(ProviderCapabilityKind.Metadata, actor, policy,
             "releases-artist-albums", "releases", DateTimeOffset.UtcNow.AddSeconds(30), [artist.ProviderId], cancellationToken: token));
-        return plan.Candidates.FirstOrDefault(item => item.Descriptor.Hooks.Contains("getArtistAlbums", StringComparer.Ordinal));
+        var route = plan.Candidates.FirstOrDefault(item => item.Descriptor.Hooks.Contains("getArtistAlbums", StringComparer.Ordinal));
+        // A temporary routing block must not finish a poll with artists still unchecked.
+        if (route == null && plan.Decision.Candidates.Any(item => item.ReasonCode is
+            "circuit-open" or "health-degraded" or "health-unavailable" or "sidecar-not-ready" or "rate-limit-budget-exhausted"))
+            waitFor?.Invoke(TimeSpan.FromMinutes(1));
+        return route;
     }
 
     private async Task EnsureScheduleAsync(AllstarrDbContext db, UserRecord user, CancellationToken token)

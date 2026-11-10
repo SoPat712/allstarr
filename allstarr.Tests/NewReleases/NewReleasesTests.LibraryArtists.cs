@@ -1,12 +1,99 @@
 using System.Text.Json;
 using allstarr.Core.Capabilities;
+using allstarr.Core.Health;
+using allstarr.Core.Jobs;
+using allstarr.Core.Matching;
+using allstarr.Core.Protocols;
+using allstarr.Core.Releases;
 using allstarr.Core.Routing;
+using allstarr.Core.Storage;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using Moq;
 
 namespace allstarr.Tests;
 
 public sealed partial class NewReleasesTests
 {
+    [Fact]
+    public async Task Admin_unfollow_removes_the_native_release_follow_and_preserves_a_direct_service_follow()
+    {
+        await Follow(_first);
+        await _service.FollowAsync(_first, new("deezer", "a", "Artist", LibraryArtistId: "native-artist"));
+        Assert.Equal(2, (await _service.ListAsync(_first)).Count);
+        var controller = ReleaseController(Mock.Of<IProtocolProviderGateway>());
+
+        Assert.IsType<NoContentResult>(await controller.Unfollow("deezer", "a", default, "native-artist"));
+
+        var remaining = Assert.Single(await _service.ListAsync(_first));
+        Assert.Null(remaining.LibraryArtistId);
+        Assert.True(remaining.IsDirectFollow);
+    }
+
+    [Fact]
+    public async Task Nine_followed_artists_finish_daily_polling_across_spacing_and_temporary_route_deferrals()
+    {
+        var account = new ProviderAccountContext(Guid.CreateVersion7(), "deezer", ProviderAccountScope.Shared, 1);
+        var accounts = new Mock<IProviderRouteAccountResolver>();
+        accounts.Setup(item => item.ResolveAsync(It.IsAny<ProviderRouteAccountRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ProviderRouteAccountResolution(account, 1));
+        _metadata.SetupGet(item => item.ProviderId).Returns("deezer");
+        _metadata.SetupGet(item => item.Capability).Returns(ProviderCapabilityKind.Metadata);
+        var descriptor = new ProviderDescriptor("deezer", "Deezer", "Catalog fixture", ProviderOrigin.BuiltIn, "1", "1",
+            [new(ProviderCapabilityKind.Metadata, ProviderCapabilitySupportState.Supported, ProviderAccountRequirement.Required,
+                "1", ["searchTracks", "getTrack", "getArtistAlbums"], allowedAccountScopes: [ProviderAccountScope.Shared])], new());
+        var health = new ProviderRuntimeHealth(clock: _clock);
+        var router = new ProviderRouter(new ProviderRegistry([new(descriptor, [_metadata.Object])]), accounts.Object,
+            new RuntimeProviderRouteHealthSource(health), Mock.Of<IProviderRouteSidecarSource>(), Mock.Of<ITrackIdentityService>(), health);
+        var calls = new List<(string Artist, DateTimeOffset At)>();
+        ProviderExecutionContext? lastContext = null;
+        _metadata.Setup(item => item.GetArtistAlbumsAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderArtistItemsRequest>()))
+            .ReturnsAsync((ProviderExecutionContext context, ProviderArtistItemsRequest request) =>
+            {
+                lastContext = context;
+                calls.Add((request.Id.Value, _clock.UtcNow));
+                return ProviderOutcome<ProviderPage<ProviderAlbumMetadata>>.Success(new("deezer", [Album(id: request.Id.Value)]));
+            });
+        for (var index = 0; index < 9; index++) await Follow(_first, artist: index.ToString());
+        var jobId = Guid.CreateVersion7();
+        var service = new NewReleasesService(_factory, _clock, router, _settings.Object);
+        for (var day = 0; day < 2; day++)
+        {
+            var result = await service.PollAsync(_first, jobId, default);
+            Assert.Equal(DurableJobCompletionKind.Deferred, result.Kind);
+            Assert.Equal(TimeSpan.FromSeconds(2), result.RetryDelay);
+            health.Observe(lastContext!, ProviderCapabilityKind.Metadata,
+                new(ProviderErrorKind.RateLimited, TimeSpan.FromSeconds(30)), TimeSpan.Zero);
+            _clock.UtcNow += result.RetryDelay!.Value;
+            result = await service.PollAsync(_first, jobId, default);
+            Assert.Equal(DurableJobCompletionKind.Deferred, result.Kind);
+            for (var attempt = 0; result.Kind == DurableJobCompletionKind.Deferred && attempt < 12; attempt++)
+            {
+                _clock.UtcNow += result.RetryDelay!.Value;
+                service = new(_factory, _clock, router, _settings.Object);
+                result = await service.PollAsync(_first, jobId, default);
+            }
+            Assert.Equal(DurableJobCompletionKind.Succeeded, result.Kind);
+            Assert.Equal((day + 1) * 9, calls.Count);
+            Assert.All((await service.ReadAsync(_first)).Coverage, item => Assert.Equal("known", item.Status));
+            _clock.UtcNow = new(_clock.UtcNow.UtcDateTime.Date.AddDays(1).AddHours(4), TimeSpan.Zero);
+        }
+        Assert.All(calls.Zip(calls.Skip(1)), pair => Assert.True(pair.Second.At - pair.First.At >= TimeSpan.FromSeconds(2)));
+        Assert.All(calls.GroupBy(item => item.Artist), group => Assert.Equal(2, group.Count()));
+        await using var db = _factory.CreateDbContext();
+        Assert.Equal(9, await db.ExternalMetadataSnapshots.Where(item => item.ResourceKind == "release-catalog")
+            .Select(item => item.ExternalIdHash).Distinct().CountAsync());
+    }
+
+    [Fact]
+    public async Task Library_follow_without_a_verified_service_has_its_own_coverage()
+    {
+        await _service.FollowAsync(_first, new("jellyfin", "native-artist", "Artist", LibraryArtistId: "native-artist", LibraryImageTag: "native-picture"));
+        Assert.Equal("library-only", Assert.Single((await _service.ReadAsync(_first)).Coverage).Status);
+        Assert.Equal(DurableJobCompletionKind.Succeeded, (await Poll(_first)).Kind);
+        Assert.Equal(0, _calls);
+    }
+
     [Fact]
     public async Task Library_artist_with_the_same_name_and_no_title_overlap_is_rejected()
     {

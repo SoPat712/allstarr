@@ -1,15 +1,22 @@
 using System.Net;
 using System.Text.Json;
+using allstarr.Controllers;
 using allstarr.Core.Capabilities;
+using allstarr.Core.ClientApi;
 using allstarr.Core.Identity;
+using allstarr.Core.Playback;
 using allstarr.Core.Protocols;
 using allstarr.Core.Releases;
 using allstarr.Core.Routing;
 using allstarr.Core.Storage;
 using allstarr.Models.Domain;
+using allstarr.Services.Admin;
+using allstarr.Services.Jellyfin;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.DependencyInjection;
 using Moq;
 
 namespace allstarr.Tests;
@@ -337,6 +344,141 @@ public sealed partial class ProtocolRouteFixtureTests
         using var second = await client.GetAsync("/allstarr/v1/releases");
         Assert.Equal(HttpStatusCode.OK, second.StatusCode);
         Assert.Equal(2, (await releases.ListAsync(owner)).Count);
+    }
+
+    [Theory]
+    [InlineData(false, false, true)]
+    [InlineData(true, false, true)]
+    [InlineData(false, true, true)]
+    [InlineData(false, false, false)]
+    public async Task Releases_repair_legacy_follows_without_hearts_on_client_and_admin_reads(bool overlap, bool admin, bool accessible)
+    {
+        var searches = 0;
+        using var factory = ClientReleaseFactory(ClientReleaseMetadata(), new(), library: request => request.RequestUri!.AbsolutePath switch
+        {
+            "/Users/listener/Items/native-release-artist" => accessible ? Json(200,
+                """{"Id":"native-release-artist","Name":"Release artist","Type":"MusicArtist","ImageTags":{"Primary":"native-picture"}}""") : Json(403, "{}"),
+            "/Users/listener/Items" when request.RequestUri.Query.Contains("SearchTerm", StringComparison.Ordinal) => Search(),
+            "/Users/listener/Items" when request.RequestUri.Query.Contains("ArtistIds", StringComparison.Ordinal) => Json(200, overlap
+                ? """{"Items":[{"Name":"New record","Type":"MusicAlbum"}]}""" : """{"Items":[]}"""),
+            "/Users/listener/Items" => Json(200, """{"Items":[]}"""),
+            _ => null
+        });
+        HttpResponseMessage Search()
+        {
+            searches++;
+            return Json(200, """{"Items":[{"Id":"native-release-artist","Name":"Release artist","Type":"MusicArtist"},{"Id":"tribute","Name":"Release artist tribute","Type":"MusicArtist"}]}""");
+        }
+        using var client = CreateClientApiClient(factory);
+        client.DefaultRequestHeaders.Add("X-Emby-Token", "listener-token");
+        var owner = (await factory.Services.GetRequiredService<BackendIdentityResolver>().ResolveAsync(new("Jellyfin", "listener")))!.UserId;
+        var releases = factory.Services.GetRequiredService<NewReleasesService>();
+        await releases.FollowAsync(owner, new("deezer", "wrong-artist", "Release artist"));
+        await using (var db = await factory.Services.GetRequiredService<IDbContextFactory<AllstarrDbContext>>().CreateDbContextAsync())
+        {
+            var snapshot = await db.ExternalMetadataSnapshots.AsNoTracking().SingleAsync(item => item.OwnerUserId == owner && item.ResourceKind == "release-follows");
+            snapshot.Id = Guid.CreateVersion7();
+            snapshot.SnapshotVersion++;
+            snapshot.PayloadJson = """[{"ProviderId":"deezer","ArtistId":"wrong-artist","DisplayName":"  RELEASE ARTIST! "},{"ProviderId":"deezer","ArtistId":"unmatched","DisplayName":"Other artist"},{"ProviderId":"deezer","ArtistId":"direct","DisplayName":"Release artist","IsDirectFollow":true}]""";
+            snapshot.PayloadSha256 = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(snapshot.PayloadJson))).ToLowerInvariant();
+            db.ExternalMetadataSnapshots.Add(snapshot);
+            await db.SaveChangesAsync();
+        }
+        if (admin)
+        {
+            var http = new DefaultHttpContext();
+            http.Items[AdminAuthSessionService.HttpContextSessionItemKey] = new AdminAuthSession
+            {
+                SessionId = "release-read",
+                UserId = "listener",
+                UserName = "Listener",
+                BackendType = "jellyfin",
+                BackendInstanceId = "primary",
+                AllstarrUserId = owner,
+                JellyfinAccessToken = "listener-token",
+                IsAdministrator = false,
+                ExpiresAtUtc = DateTime.UtcNow.AddHours(1)
+            };
+            http.Request.Headers["X-Emby-Token"] = "listener-token";
+            var controller = new NewReleasesController(releases, factory.Services.GetRequiredService<AdminProtocolExecutionContextFactory>(),
+                reader: factory.Services.GetRequiredService<ReleaseReader>())
+            { ControllerContext = new() { HttpContext = http } };
+            Assert.IsType<OkObjectResult>(await controller.List(default));
+            Assert.IsType<OkObjectResult>(await controller.Inbox(default));
+        }
+        using (var response = await client.GetAsync("/allstarr/v1/releases"))
+        {
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            if (accessible) AssertNativeReleaseArtist(body.RootElement.GetProperty("followedArtists").EnumerateArray()
+                .Single(item => item.GetProperty("artistId").GetString() == "native-release-artist"));
+            else Assert.DoesNotContain(body.RootElement.GetProperty("followedArtists").EnumerateArray(),
+                item => item.GetProperty("artistId").GetString() == "native-release-artist");
+        }
+        var follows = await releases.ListAsync(owner);
+        if (!accessible)
+        {
+            Assert.Contains(follows, item => item.ArtistId == "wrong-artist" && item.LibraryArtistId == null);
+            return;
+        }
+        Assert.Equal(3, follows.Count);
+        var native = Assert.Single(follows, item => item.LibraryArtistId != null);
+        Assert.Equal(overlap ? "release-artist" : "native-release-artist", native.ArtistId);
+        Assert.Equal("native-picture", native.LibraryImageTag);
+        Assert.Contains(follows, item => item.ArtistId == "unmatched" && item.LibraryArtistId == null);
+        Assert.Contains(follows, item => item.ArtistId == "direct" && item.IsDirectFollow == true && item.LibraryArtistId == null);
+        Assert.Equal(2, searches);
+        using var second = await client.GetAsync("/allstarr/v1/releases");
+        Assert.Equal(HttpStatusCode.OK, second.StatusCode);
+        Assert.Equal(2, searches);
+        Assert.Equal(follows, await releases.ListAsync(owner));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Releases_admin_library_artwork_uses_only_the_accessible_native_artist(bool accessible)
+    {
+        var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        byte[] picture = [137, 80, 78, 71, 13, 10, 26, 10];
+        var imageRequests = 0;
+        using var factory = ClientReleaseFactory(ClientReleaseMetadata(), gateway, library: request => request.RequestUri!.AbsolutePath switch
+        {
+            "/Users/listener/Items/native-release-artist" => accessible ? Json(200,
+                """{"Id":"native-release-artist","Name":"Release artist","Type":"MusicArtist","ImageTags":{"Primary":"native-picture"}}""") : Json(403, "{}"),
+            "/Items/native-release-artist/Images/Primary" => Image(request),
+            _ => null
+        });
+        HttpResponseMessage Image(HttpRequestMessage request)
+        {
+            imageRequests++;
+            Assert.Contains("tag=native-picture", request.RequestUri!.Query, StringComparison.Ordinal);
+            Assert.Contains("listener-token", request.Headers.ToString(), StringComparison.Ordinal);
+            return new(HttpStatusCode.OK) { Content = new ByteArrayContent(picture) { Headers = { ContentType = new("image/png") } } };
+        }
+        using var client = CreateClientApiClient(factory);
+        var owner = (await factory.Services.GetRequiredService<BackendIdentityResolver>().ResolveAsync(new("Jellyfin", "listener")))!.UserId;
+        var http = new DefaultHttpContext();
+        http.Items[AdminAuthSessionService.HttpContextSessionItemKey] = new AdminAuthSession
+        {
+            SessionId = "release-artwork",
+            UserId = "listener",
+            UserName = "Listener",
+            BackendType = "jellyfin",
+            BackendInstanceId = "primary",
+            AllstarrUserId = owner,
+            JellyfinAccessToken = "listener-token",
+            IsAdministrator = false,
+            ExpiresAtUtc = DateTime.UtcNow.AddHours(1)
+        };
+        var controller = new RecapArtworkController(factory.Services.GetRequiredService<AdminProtocolExecutionContextFactory>(),
+            factory.Services.GetRequiredService<RecapArtworkReader>(), factory.Services.GetRequiredService<JellyfinProxyService>())
+        { ControllerContext = new() { HttpContext = http } };
+        var result = await controller.Get("Release artist", libraryArtistId: "native-release-artist");
+        if (accessible) Assert.Equal(picture, Assert.IsType<FileContentResult>(result).FileContents);
+        else Assert.IsType<NoContentResult>(result);
+        Assert.Equal(accessible ? 1 : 0, imageRequests);
+        gateway.VerifyNoOtherCalls();
     }
 
     private static Mock<IProviderMetadataCapability> ClientReleaseMetadata()

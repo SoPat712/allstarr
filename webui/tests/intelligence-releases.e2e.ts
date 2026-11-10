@@ -7,7 +7,7 @@ const followedArtists: FollowedReleaseArtist[] = [
   { providerId: "qobuz", artistId: "north", displayName: "North" },
   { providerId: "qobuz", artistId: "mira", displayName: "Mira" },
   { providerId: "qobuz", artistId: "cedar", displayName: "Cedar" },
-  { providerId: "qobuz", artistId: "willow", displayName: "Willow" },
+  { providerId: "qobuz", artistId: "willow", displayName: "Willow", libraryArtistId: "native-willow", libraryImageTag: "native-picture" },
 ];
 
 function release(id: string, overrides: Partial<ReleaseInboxEntry> = {}): ReleaseInboxEntry {
@@ -29,7 +29,7 @@ function populatedInbox(): ReleaseInbox {
       release("Guest collection", { exclusionReason: "appearance" }),
       release("Undated release", { releaseDate: null, datePrecision: "unknown", exclusionReason: "date-unknown" }),
     ],
-    coverage: followedArtists.map((artist, index) => ({ artist, status: index === 3 ? "known" : index === 1 ? "partial" : "unknown", checkedAt: null })),
+    coverage: followedArtists.map((artist, index) => ({ artist, status: index === 3 ? "library-only" : index === 1 ? "partial" : "unknown", checkedAt: null })),
   };
 }
 
@@ -40,10 +40,13 @@ async function mockReleases(page: Page, initialInbox = populatedInbox(), initial
     reads: 0,
   };
   await mockIntelligence(page, { inbox: state.inbox, artists: state.artists });
+  await page.route("**/api/admin/stats/art?**", route => route.fulfill({
+    contentType: "image/png", body: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a6iUAAAAASUVORK5CYII=", "base64"),
+  }));
   await page.route("**/api/admin/releases**", async route => {
     const request = route.request(), url = new URL(request.url()), path = url.pathname;
     if (!["127.0.0.1", "localhost"].includes(url.hostname)) return route.abort();
-    if (request.method() !== "GET") state.mutations.push({ method: request.method(), path });
+    if (request.method() !== "GET") state.mutations.push({ method: request.method(), path: path + url.search });
     if (path === "/api/admin/releases" && request.method() === "GET") {
       state.reads++;
       return route.fulfill({ json: state.inbox });
@@ -56,7 +59,8 @@ async function mockReleases(page: Page, initialInbox = populatedInbox(), initial
       return route.fulfill({ json: { followed: 37 } });
     }
     if (path.startsWith("/api/admin/releases/artists/") && request.method() === "DELETE") {
-      const artist = state.artists.find(item => path === `/api/admin/releases/artists/${encodeURIComponent(item.providerId)}/${encodeURIComponent(item.artistId)}`);
+      const artist = state.artists.find(item => path === `/api/admin/releases/artists/${encodeURIComponent(item.providerId)}/${encodeURIComponent(item.artistId)}` &&
+        (item.libraryArtistId ? url.searchParams.get("libraryArtistId") === item.libraryArtistId : !url.searchParams.has("libraryArtistId")));
       if (artist) {
         state.artists = state.artists.filter(item => item !== artist);
         state.inbox.entries = state.inbox.entries.filter(item => item.artist !== artist.displayName);
@@ -99,6 +103,8 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     await appearance(page, width, theme);
     const state = await mockReleases(page);
     await openReleases(page);
+    await expect(page.getByRole("button", { name: "Manage Willow", exact: true }).locator("img"))
+      .toHaveAttribute("src", "/api/admin/stats/art?artist=Willow&libraryArtistId=native-willow&tag=native-picture");
     await expect(page.locator(".release-card")).toHaveCount(4);
     await expect(page.locator(".release-card h3")).toHaveText(["Aurora", "Contours", "Low Tide", "Slow Season"]);
     const album = page.getByRole("article", { name: "Aurora by North", exact: true });
@@ -110,6 +116,7 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     await page.getByText("Couldn't check 3 artists.", { exact: true }).click();
     const coverage = page.locator("details").filter({ hasText: "Couldn't check 3 artists." });
     await expect(coverage).toContainText("Some releases may be missing.");
+    await expect(coverage.getByText("Willow", { exact: true })).toHaveCount(0);
     for (const name of ["North", "Mira", "Cedar"]) await expect(coverage.getByText(name, { exact: true })).toBeVisible();
     await page.getByText("Hidden: 7 releases", { exact: true }).click();
     const hidden = page.locator("details").filter({ hasText: "Hidden: 7 releases" });
@@ -173,7 +180,15 @@ test("Unfollowing an artist updates the followed count and release inbox", async
   await page.getByRole("button", { name: "Done", exact: true }).click();
   await expect(page.getByRole("button", { name: "Following (3)", exact: true })).toBeVisible();
   await expect(page.getByRole("article", { name: "Aurora by North", exact: true })).toHaveCount(0);
-  expect(state.mutations).toEqual([{ method: "DELETE", path: "/api/admin/releases/artists/qobuz/north" }]);
+  await page.getByRole("button", { name: "Following (3)", exact: true }).click();
+  await page.getByRole("button", { name: "Unfollow Willow", exact: true }).click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Unfollow artist", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "Followed artists (2)", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Unfollow Willow", exact: true })).toHaveCount(0);
+  expect(state.mutations).toEqual([
+    { method: "DELETE", path: "/api/admin/releases/artists/qobuz/north" },
+    { method: "DELETE", path: "/api/admin/releases/artists/qobuz/willow?libraryArtistId=native-willow" },
+  ]);
 });
 
 test("Live refresh keeps the inbox visible and preserves an open artist dialog", async ({ page }) => {

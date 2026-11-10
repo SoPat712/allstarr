@@ -2,6 +2,7 @@ using System.Text.Json;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Protocols;
 using allstarr.Core.Releases;
+using allstarr.Services.Common;
 using allstarr.Services.Jellyfin;
 using allstarr.Services.Local;
 
@@ -119,40 +120,74 @@ public sealed class ReleaseReader(NewReleasesService releases, IProtocolProvider
     }
 
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, DateTimeOffset> FavoritesChecked = new();
+    private static readonly SemaphoreSlim FavoritesGate = new(1, 1);
 
     // Artists favourited before favouriting meant following, or in an app that doesn't tell Allstarr, are followed when
-    // the listener next opens releases. Checked at most every ten minutes; only new follows are added, a few at a time.
-    private async Task FollowFavoriteArtistsAsync(HttpContext http, ProtocolExecutionContext execution)
+    // the listener next opens releases. Checked at most every ten minutes; legacy library follows are repaired a few at a time.
+    public async Task FollowFavoriteArtistsAsync(HttpContext http, ProtocolExecutionContext execution)
     {
-        var owner = execution.RequireActor().EffectiveUserId!.Value;
-        var now = DateTimeOffset.UtcNow;
-        if (FavoritesChecked.TryGetValue(owner, out var last) && now - last < TimeSpan.FromMinutes(10)) return;
-        FavoritesChecked[owner] = now;
+        if (execution.Protocol != ProtocolKind.Jellyfin) return;
+        await FavoritesGate.WaitAsync(execution.CancellationToken);
         try
         {
-            await releases.FollowFavoriteArtistsAsync(owner, execution.CancellationToken);
-            var (body, status) = await jellyfin.GetJsonAsync(
-                $"Users/{Uri.EscapeDataString(execution.VerifiedBackendPrincipalId)}/Items",
-                new() { ["IsFavorite"] = "true", ["IncludeItemTypes"] = "MusicArtist", ["Recursive"] = "true", ["Limit"] = "200" },
-                http.Request.Headers, execution.CancellationToken);
-            using (body)
+            var owner = execution.RequireActor().EffectiveUserId!.Value;
+            var now = DateTimeOffset.UtcNow;
+            if (FavoritesChecked.TryGetValue(owner, out var last) && now - last < TimeSpan.FromMinutes(10)) return;
+            FavoritesChecked[owner] = now;
+            try
             {
-                if (status != 200 || body?.RootElement.TryGetProperty("Items", out var items) != true) return;
-                var follows = await releases.ListAsync(owner, execution.CancellationToken);
-                var added = 0;
-                foreach (var item in items.EnumerateArray())
+                await releases.FollowFavoriteArtistsAsync(owner, execution.CancellationToken);
+                var legacy = (await releases.ListAsync(owner, execution.CancellationToken))
+                    .Where(item => item.LibraryArtistId == null && item.IsDirectFollow == null).ToArray();
+                var repaired = 0;
+                foreach (var follow in legacy)
                 {
-                    if (added == 10) break;
-                    if (!item.TryGetProperty("Id", out var id) || id.GetString() is not { } artistId ||
-                        !item.TryGetProperty("Name", out var name) || string.IsNullOrWhiteSpace(name.GetString()) ||
-                        follows.Any(follow => SameNativeId(follow.LibraryArtistId, artistId) ||
-                            follow.LibraryArtistId == null && $"ext-{follow.ProviderId}-artist-{follow.ArtistId}" == artistId)) continue;
-                    if (await FollowAsync(http, execution, artistId, true) != null) added++;
+                    if (repaired == 10) break;
+                    var (matches, matchStatus) = await jellyfin.GetJsonAsync(
+                        $"Users/{Uri.EscapeDataString(execution.VerifiedBackendPrincipalId)}/Items",
+                        new() { ["SearchTerm"] = follow.DisplayName, ["IncludeItemTypes"] = "MusicArtist", ["Recursive"] = "true", ["Limit"] = "200" },
+                        http.Request.Headers, execution.CancellationToken);
+                    using (matches)
+                    {
+                        if (matchStatus != 200 || matches?.RootElement.TryGetProperty("Items", out var items) != true) continue;
+                        foreach (var item in items.EnumerateArray())
+                        {
+                            if (!item.TryGetProperty("Type", out var kind) || kind.GetString() != "MusicArtist" ||
+                                !item.TryGetProperty("Name", out var name) || string.IsNullOrWhiteSpace(name.GetString()) ||
+                                FuzzyMatcher.NormalizeForMatching(name.GetString()!) != FuzzyMatcher.NormalizeForMatching(follow.DisplayName) ||
+                                !item.TryGetProperty("Id", out var id) || string.IsNullOrWhiteSpace(id.GetString())) continue;
+                            var artist = await ResolveArtistAsync(http, execution, id.GetString()!, true);
+                            if (artist?.LibraryArtistId == null) continue;
+                            await releases.FollowAsync(owner, artist, execution.CancellationToken, follow);
+                            repaired++;
+                            break;
+                        }
+                    }
+                }
+                var (body, status) = await jellyfin.GetJsonAsync(
+                    $"Users/{Uri.EscapeDataString(execution.VerifiedBackendPrincipalId)}/Items",
+                    new() { ["IsFavorite"] = "true", ["IncludeItemTypes"] = "MusicArtist", ["Recursive"] = "true", ["Limit"] = "200" },
+                    http.Request.Headers, execution.CancellationToken);
+                using (body)
+                {
+                    if (status != 200 || body?.RootElement.TryGetProperty("Items", out var items) != true) return;
+                    var follows = await releases.ListAsync(owner, execution.CancellationToken);
+                    var added = 0;
+                    foreach (var item in items.EnumerateArray())
+                    {
+                        if (added == 10) break;
+                        if (!item.TryGetProperty("Id", out var id) || id.GetString() is not { } artistId ||
+                            !item.TryGetProperty("Name", out var name) || string.IsNullOrWhiteSpace(name.GetString()) ||
+                            follows.Any(follow => SameNativeId(follow.LibraryArtistId, artistId) ||
+                                follow.LibraryArtistId == null && $"ext-{follow.ProviderId}-artist-{follow.ArtistId}" == artistId)) continue;
+                        if (await FollowAsync(http, execution, artistId, true) != null) added++;
+                    }
                 }
             }
+            // Following favourites is a convenience; the releases list never fails because of it.
+            catch (Exception exception) when (exception is not OperationCanceledException) { }
         }
-        // Following favourites is a convenience; the releases list never fails because of it.
-        catch (Exception exception) when (exception is not OperationCanceledException) { }
+        finally { FavoritesGate.Release(); }
     }
 
     private static bool SameNativeId(string? first, string second) => first == second ||
