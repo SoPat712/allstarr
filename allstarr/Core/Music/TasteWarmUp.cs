@@ -1,6 +1,7 @@
 using allstarr.Core.ClientApi;
 using allstarr.Core.Extensions;
 using allstarr.Core.Identity;
+using allstarr.Core.Matching;
 using allstarr.Core.Operations;
 using allstarr.Core.Playback;
 using allstarr.Core.Protocols;
@@ -64,6 +65,16 @@ public sealed class TasteWarmUp(TasteService taste, IDbContextFactory<AllstarrDb
                 user.BackendPrincipalId, new AllstarrPrincipal(user.Id, user.BackendType, user.BackendInstanceId,
                     user.BackendPrincipalId, user.DisplayName, user.IsAdmin), "cache-warm-up", clock.UtcNow.AddMinutes(5), token)
             { IsReadOnly = true, UseStoredBackendCredentials = true };
+            await ReadAsync(async () =>
+            {
+                using var scope = scopes.CreateScope();
+                await scope.ServiceProvider.GetRequiredService<SavedLibraryReader>().WarmSearchAsync(execution, token);
+            });
+            await ReadAsync(async () =>
+            {
+                using var scope = scopes.CreateScope();
+                await scope.ServiceProvider.GetRequiredService<ILibraryIndexService>().WarmOwnershipAsync(execution, token);
+            });
             await ReadAsync(() => sound.WarmAsync(user.Id, token));
             foreach (var period in new[] { "30d", "7d", "year", "all" })
                 await ReadAsync(() => stats.GetAsync(execution, period, null, token));

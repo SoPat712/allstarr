@@ -75,6 +75,8 @@ public interface ILibraryIndexService
 
     Task<string?> ResolveKnownTrackAsync(ProtocolExecutionContext context, string publicId,
         CancellationToken cancellationToken = default);
+
+    Task WarmOwnershipAsync(ProtocolExecutionContext context, CancellationToken cancellationToken = default);
 }
 
 public sealed partial class LibraryIndexService : ILibraryIndexService

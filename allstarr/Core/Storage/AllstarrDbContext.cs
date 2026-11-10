@@ -62,8 +62,10 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
         EnsureRecordingPublicIds();
         EnforceImmutableSnapshots();
         var changed = ChangesFeedReads();
+        var libraryChanged = ChangesLibraryReads();
         var result = base.SaveChanges(acceptAllChangesOnSuccess);
         FeedReadsSaved(changed);
+        LibraryReadsSaved(libraryChanged);
         return result;
     }
 
@@ -74,8 +76,10 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
         EnsureRecordingPublicIds();
         EnforceImmutableSnapshots();
         var changed = ChangesFeedReads();
+        var libraryChanged = ChangesLibraryReads();
         var result = await base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
         FeedReadsSaved(changed);
+        LibraryReadsSaved(libraryChanged);
         return result;
     }
 

@@ -2,6 +2,8 @@ using allstarr.Core.Operations;
 using allstarr.Core.Matching;
 using allstarr.Core.Protocols;
 using allstarr.Core.Settings;
+using allstarr.Core.Storage;
+using Microsoft.EntityFrameworkCore;
 using allstarr.Models.Domain;
 using allstarr.Models.Search;
 using allstarr.Models.Subsonic;
@@ -116,7 +118,8 @@ public sealed partial class MusicSearchService(
     ILibraryIndexService? libraryIndex = null,
     SavedLibraryReader? savedLibrary = null,
     ILogger<MusicSearchService>? logger = null,
-    TimeProvider? timeProvider = null, IRuntimeSettingsChangeSignal? settings = null)
+    TimeProvider? timeProvider = null, IRuntimeSettingsChangeSignal? settings = null,
+    IDbContextFactory<AllstarrDbContext>? factory = null)
 {
     private readonly Dictionary<string, OwnedSearchLookup> ownedSearchLookups = new(StringComparer.Ordinal);
     private sealed record OwnedSearchLookup(DateTimeOffset ExpiresAt, Lazy<Task<IReadOnlyDictionary<string, string>>> Work);
@@ -528,6 +531,12 @@ public sealed partial class MusicSearchService(
         cancellationToken.ThrowIfCancellationRequested();
         context.CancellationToken.ThrowIfCancellationRequested();
         var clock = timeProvider ?? TimeProvider.System;
+        long? libraryRevision = null;
+        if (factory != null)
+        {
+            await using var db = await factory.CreateDbContextAsync(cancellationToken);
+            libraryRevision = db.LibraryReadRevision;
+        }
         var key = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new
         {
             context.Protocol,
@@ -536,6 +545,7 @@ public sealed partial class MusicSearchService(
             context.Actor,
             context.Policy,
             Settings = settings?.Version,
+            Library = libraryRevision,
             Lookups = lookups
         }))));
         OwnedSearchLookup cached;

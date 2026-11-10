@@ -4,6 +4,7 @@ using allstarr.Core.AudioMuse;
 using allstarr.Core.Capabilities;
 using allstarr.Core.ClientApi;
 using allstarr.Core.Enrichment;
+using allstarr.Core.Matching;
 using allstarr.Core.Music;
 using allstarr.Core.Operations;
 using allstarr.Core.Playback;
@@ -105,7 +106,17 @@ public sealed class TasteWarmUpTests
         Assert.True(disk.QueueWrite(recentKey, "{}", TimeSpan.FromHours(1), recent));
         Assert.True(disk.QueueWrite(inactiveKey, "{}", TimeSpan.FromHours(1), Guid.NewGuid()));
         await disk.FlushWritesAsync();
+        var ownership = new Mock<ILibraryIndexService>(MockBehavior.Strict);
+        var warmed = new List<Guid>();
+        ownership.Setup(item => item.WarmOwnershipAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<CancellationToken>()))
+            .Callback((ProtocolExecutionContext execution, CancellationToken _) =>
+            {
+                Assert.True(execution.IsReadOnly);
+                Assert.True(execution.UseStoredBackendCredentials);
+                warmed.Add(execution.Principal!.UserId);
+            }).Returns(Task.CompletedTask);
         using var services = new ServiceCollection().AddScoped(_ => lyrics).AddSingleton(cache)
+            .AddSingleton(new SavedLibraryReader(factory)).AddSingleton(ownership.Object)
             .BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true });
         var storage = new DurableStorageState(database.StorageOptions);
         storage.Set(DurableStorageReadiness.Ready);
@@ -119,6 +130,7 @@ public sealed class TasteWarmUpTests
         var warming = worker.WarmAfterStartupAsync(() => { restoringRead.TrySetResult(); return restored.Task; }, stop.Token);
         Assert.False(restoringRead.Task.IsCompleted);
         Assert.False(warming.IsCompleted);
+        Assert.Empty(warmed);
         lifetime.Started.Cancel();
         await restoringRead.Task.WaitAsync(stop.Token);
         Assert.False(warming.IsCompleted);
@@ -127,14 +139,15 @@ public sealed class TasteWarmUpTests
         await using (var db = factory.CreateDbContext()) Assert.Empty(await db.TasteProfiles.ToArrayAsync());
         restored.SetResult();
         Assert.Equal(TimeSpan.FromSeconds(1), await time.NextTimerAsync());
+        Assert.Empty(warmed);
         await using (var db = factory.CreateDbContext()) Assert.Empty(await db.TasteProfiles.ToArrayAsync());
         time.Advance(TimeSpan.FromSeconds(1));
         foreach (var owner in new[] { recent, boundary })
         {
-            for (var read = 0; read < 8; read++)
+            for (var read = 0; read < 10; read++)
             {
                 Assert.Equal(TimeSpan.FromMilliseconds(100), await time.NextTimerAsync());
-                if (read == 5)
+                if (read == 7)
                 {
                     await using var db = factory.CreateDbContext();
                     Assert.Contains(await db.TasteProfiles.Select(item => item.OwnerUserId).ToArrayAsync(), item => item == owner);
@@ -149,6 +162,7 @@ public sealed class TasteWarmUpTests
         Assert.Empty(logger.Messages);
         Assert.Equal("{}", await memory.GetStringAsync(recentKey));
         Assert.Null(await memory.GetStringAsync(inactiveKey));
+        Assert.Equal(new[] { recent, boundary }, warmed);
         await using (var db = factory.CreateDbContext())
             Assert.Equal(new[] { recent, boundary }.Order(), (await db.TasteProfiles.Select(item => item.OwnerUserId).ToArrayAsync()).Order());
         using var timing = RequestTiming.Begin();

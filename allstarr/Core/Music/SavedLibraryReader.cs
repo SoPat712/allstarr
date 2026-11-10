@@ -28,9 +28,9 @@ public sealed class SavedLibraryReader(IDbContextFactory<AllstarrDbContext> fact
         ILookup<string, IndexedAlbum> AlbumsByFamily, ILookup<string, IndexedTrack> TracksByAlbum,
         ILookup<string, IndexedAlbum> AlbumsById);
 
-    private sealed class SearchIndexEntry(Task<SearchIndex> index, DateTimeOffset loadedAt, int favoriteEvents)
+    private sealed class SearchIndexEntry(Lazy<Task<SearchIndex>> index, DateTimeOffset loadedAt, int favoriteEvents)
     {
-        public Task<SearchIndex> Index { get; } = index;
+        public Lazy<Task<SearchIndex>> Index { get; } = index;
         public DateTimeOffset LoadedAt { get; } = loadedAt;
         public int FavoriteEvents { get; } = favoriteEvents;
         public int Refreshing;
@@ -64,21 +64,28 @@ public sealed class SavedLibraryReader(IDbContextFactory<AllstarrDbContext> fact
         var favoriteEvents = await db.Set<FavoriteEventRecord>().AsNoTracking().CountAsync(item => item.OwnerUserId == owner &&
             item.Protocol == protocol && item.BackendInstanceId == execution.BackendInstanceId, cancellationToken);
         var key = (owner, protocol, execution.BackendInstanceId, execution.VerifiedBackendPrincipalId ?? "");
-        var entry = searchIndexes.AddOrUpdate(key, _ => new(LoadSearchIndexAsync(execution), clock.GetUtcNow(), favoriteEvents),
-            (_, known) => known.Index.IsFaulted || known.Index.IsCanceled || known.FavoriteEvents != favoriteEvents
-                ? new(LoadSearchIndexAsync(execution), clock.GetUtcNow(), favoriteEvents) : known);
-        if (clock.GetUtcNow() - entry.LoadedAt >= SearchIndexFreshFor && entry.Index.IsCompletedSuccessfully &&
+        var entry = searchIndexes.AddOrUpdate(key, _ => new(new(() => LoadSearchIndexAsync(execution)), clock.GetUtcNow(), favoriteEvents),
+            (_, known) => (known.Index.IsValueCreated && (known.Index.Value.IsFaulted || known.Index.Value.IsCanceled)) || known.FavoriteEvents != favoriteEvents
+                ? new(new(() => LoadSearchIndexAsync(execution)), clock.GetUtcNow(), favoriteEvents) : known);
+        var index = entry.Index.Value;
+        if (clock.GetUtcNow() - entry.LoadedAt >= SearchIndexFreshFor && index.IsCompletedSuccessfully &&
             Interlocked.Exchange(ref entry.Refreshing, 1) == 0)
             _ = Task.Run(async () =>
             {
                 try
                 {
-                    var index = await LoadSearchIndexAsync(execution);
-                    searchIndexes[key] = new(Task.FromResult(index), clock.GetUtcNow(), favoriteEvents);
+                    var refreshed = await LoadSearchIndexAsync(execution);
+                    searchIndexes.TryUpdate(key, new(new(() => Task.FromResult(refreshed)), clock.GetUtcNow(), favoriteEvents), entry);
                 }
                 catch (Exception) { Volatile.Write(ref entry.Refreshing, 0); }
             });
-        return await entry.Index.WaitAsync(cancellationToken);
+        return await index.WaitAsync(cancellationToken);
+    }
+
+    internal async Task WarmSearchAsync(ProtocolExecutionContext execution, CancellationToken cancellationToken = default)
+    {
+        if (execution.Protocol == ProtocolKind.Jellyfin && execution.Actor?.EffectiveUserId is { } owner)
+            await SearchIndexAsync(execution, owner, cancellationToken);
     }
 
     // An album built from its saved songs, in saved order. Albums from playlist songs can come from a source that

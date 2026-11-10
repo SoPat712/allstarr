@@ -113,15 +113,17 @@ public sealed partial class LibraryIndexService
                 .ToDictionary(group => group.Key, group => ManualTrackOverrides.Select(group, context.Principal.UserId).Effective!);
             var pinnedIds = overrides.Values.Where(item => item.Decision == ManualOverrideDecision.Pin && item.LibraryTrackId.HasValue)
                 .Select(item => item.LibraryTrackId!.Value).ToArray();
-            var query = LibraryTrackAccess.Query(db, context, access);
-            if (snapshots.Count == 0)
-                query = query.Where(item => pinnedIds.Contains(item.Id) ||
+            OwnershipCandidates? prepared = null;
+            LibraryTrackRecord[] tracks;
+            if (snapshots.Count > 0)
+            {
+                prepared = await OwnershipCandidatesAsync(context, access, cancellationToken);
+                tracks = prepared.Tracks;
+            }
+            else
+                tracks = OrderOwnershipTracks(await LibraryTrackAccess.Query(db, context, access).Where(item => pinnedIds.Contains(item.Id) ||
                     item.CanonicalRecordingId.HasValue && ids.Contains(item.CanonicalRecordingId.Value) ||
-                    item.Isrc != null && isrcs.Contains(item.Isrc));
-            var tracks = (await query.ToArrayAsync(cancellationToken))
-                .OrderByDescending(item => LocalCopyPreference.FormatRank(Path.GetExtension(item.FilePath)))
-                .ThenByDescending(item => item.SourceModifiedAt)
-                .ThenBy(item => item.BackendLibraryId).ThenBy(item => item.BackendItemId).ThenBy(item => item.Id).ToArray();
+                    item.Isrc != null && isrcs.Contains(item.Isrc)).ToArrayAsync(cancellationToken));
             var copyIds = tracks.Where(item => item.CanonicalRecordingId.HasValue && ids.Contains(item.CanonicalRecordingId.Value))
                 .Select(item => item.Id.ToString("N")).ToArray();
             var promoted = copyIds.Length == 0 ? [] : await db.AuditEvents.Where(item => item.Action == "promotion.library-linked" &&
@@ -132,7 +134,7 @@ public sealed partial class LibraryIndexService
                 ExplicitContent = policy?.Preferences.ExplicitFilter == "CleanOnly"
                     ? ProviderExplicitContentPolicy.CleanOnly : ProviderExplicitContentPolicy.Allow
             });
-            var candidates = engine.PrepareCandidates(tracks.Select(LocalCopyPreference.ToCandidate));
+            var candidates = prepared?.Candidates ?? engine.PrepareCandidates(tracks.Select(LocalCopyPreference.ToCandidate));
             ProviderUseMode Mode(string providerId) => policy?.GetProviderMode(providerId) ??
                 (_registry?.TryGet(providerId, out var descriptor) == true
                     ? descriptor!.DefaultUseMode : ProviderUseMode.Automatic);

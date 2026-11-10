@@ -174,10 +174,19 @@ public sealed partial class AllstarrDbContext
 
         private static void Complete(TransactionEndEventData data, bool committed)
         {
-            if (data.Context is not AllstarrDbContext db || db._feedReadTransaction != data.TransactionId) return;
-            if (committed) db.BumpFeedReads(db._pendingFeedReads);
-            db._pendingFeedReads.Clear();
-            db._feedReadTransaction = null;
+            if (data.Context is not AllstarrDbContext db) return;
+            if (db._feedReadTransaction == data.TransactionId)
+            {
+                if (committed) db.BumpFeedReads(db._pendingFeedReads);
+                db._pendingFeedReads.Clear();
+                db._feedReadTransaction = null;
+            }
+            // Library writes can commit without any feed change, so they're published on their own.
+            if (db._libraryReadsChanged)
+            {
+                if (committed) db.InvalidateLibraryReads();
+                db._libraryReadsChanged = false;
+            }
         }
 
         public override void TransactionCommitted(DbTransaction transaction, TransactionEndEventData eventData) => Complete(eventData, true);
