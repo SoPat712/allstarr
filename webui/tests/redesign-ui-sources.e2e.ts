@@ -668,7 +668,8 @@ test("Sources paused panel keeps its elements across refreshes and replaces them
     await trigger();
     await expect.poll(() => reads).toBeGreaterThan(previous);
     await expect.poll(() => historyReads).toBeGreaterThan(previousHistory);
-    await expect(panel.locator(".check-details > summary")).toContainText(`${historyReads} failed`);
+    // A further refresh can read history again before the panel repaints, so compare against the latest read each time.
+    await expect.poll(async () => (await panel.locator(".check-details > summary").textContent())?.includes(`${historyReads} failed`)).toBe(true);
     await expect(panel.locator(".check-details")).toHaveAttribute("open", "");
     await expect(panel.locator(".source-more")).toHaveAttribute("open", "");
     expect(await panelRemovals(page)).toEqual(unchanged);
