@@ -79,6 +79,9 @@ public partial class JellyfinController
                 item => GetItemType(item) + ":" + GetItemStringValue(item, "Id")).ToList();
         if (!HttpContext.Items.ContainsKey(JellyfinItemFields.PlaylistMembersKey))
             foreach (var item in ordered.Where(IsProviderQueryItem)) new JellyfinItemFields(Request.Query).Apply(item);
+        if (_providerGateway is ProtocolProviderGateway gateway)
+            gateway.QueueAlbumPrefetch(context, ordered.Skip(query.StartIndex).Take(query.Limit)
+                .Where(item => GetItemType(item) == "MusicAlbum").Select(item => GetItemStringValue(item, "Id")));
         var response = _searchProtocolAdapter.ShapeItemsResponse(ordered, query.StartIndex, query.Limit, totalRecordCount);
         return new ContentResult
         {

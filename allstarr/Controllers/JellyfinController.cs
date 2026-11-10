@@ -343,6 +343,8 @@ public partial class JellyfinController : ControllerBase
                     if (string.IsNullOrEmpty(a.ArtistId)) a.ArtistId = artist.Id;
                 }
 
+                if (_providerGateway is ProtocolProviderGateway gateway)
+                    gateway.QueueAlbumPrefetch(HttpContext.RequireProtocolExecutionContext(), albums.Select(album => album.Id));
                 return _itemProtocolAdapter.ShapeArtist(artist, albums);
 
             default:
@@ -454,6 +456,8 @@ public partial class JellyfinController : ControllerBase
                 if (string.IsNullOrEmpty(a.ArtistId)) a.ArtistId = artist.Id;
             }
 
+            if (_providerGateway is ProtocolProviderGateway gateway)
+                gateway.QueueAlbumPrefetch(HttpContext.RequireProtocolExecutionContext(), albums.Select(album => album.Id));
             return _responseBuilder.CreateArtistResponse(artist, albums);
         }
 
@@ -1057,11 +1061,14 @@ public partial class JellyfinController : ControllerBase
     [HttpGet("Albums/{itemId}/Similar")]
     [HttpGet("Songs/{itemId}/Similar")]
     [HttpGet("Artists/{itemId}/Similar")]
-    public async Task<IActionResult> GetSimilarItems(
+    public Task<IActionResult> GetSimilarItems(
         string itemId,
         [FromQuery] int limit = 50,
         [FromQuery] string? fields = null,
         [FromQuery] string? userId = null)
+        => ReadRecommendationAsync(itemId, limit, fields, userId, "similar", () => GetSimilarItemsCoreAsync(itemId, limit, fields, userId));
+
+    private async Task<IActionResult> GetSimilarItemsCoreAsync(string itemId, int limit, string? fields, string? userId)
     {
         var (externalAlbum, albumProvider, albumType, albumId) = _localLibraryService.ParseExternalId(itemId);
         var songOrArtistRoute = Request.Path.Value is { } path &&
@@ -1169,11 +1176,14 @@ public partial class JellyfinController : ControllerBase
     [HttpGet("Artists/{itemId}/InstantMix")]
     [HttpGet("MusicGenres/{itemId}/InstantMix")]
     [HttpGet("Playlists/{itemId}/InstantMix")]
-    public async Task<IActionResult> GetInstantMix(
+    public Task<IActionResult> GetInstantMix(
         string itemId,
         [FromQuery] int limit = 50,
         [FromQuery] string? fields = null,
         [FromQuery] string? userId = null)
+        => ReadRecommendationAsync(itemId, limit, fields, userId, "instant", () => GetInstantMixCoreAsync(itemId, limit, fields, userId));
+
+    private async Task<IActionResult> GetInstantMixCoreAsync(string itemId, int limit, string? fields, string? userId)
     {
         fields = QueryList("Fields", fields);
         if (JellyfinMusicEndpointPolicy.IsSynthesizedPlaylistId(itemId))

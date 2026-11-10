@@ -14,7 +14,7 @@ namespace allstarr.Core.ClientApi;
 
 // Albums by the artists a source relates to an album's artist, from the library when it has one of theirs.
 public sealed class SimilarAlbumsReader(IProtocolProviderGateway providers, SavedLibraryReader saved,
-    JellyfinProxyService jellyfin, IProviderRegistry registry, LibraryProviderResolver libraryProvider, LibraryArtistIndex? artistIndex = null)
+    JellyfinProxyService jellyfin, IProviderRegistry registry, LibraryProviderResolver libraryProvider, LibraryArtistIndex? artistIndex = null, TimeProvider? timeProvider = null)
 {
     private const int RelatedArtists = 24;
     private const string RelatedArtistsSource = "deezer";
@@ -34,21 +34,39 @@ public sealed class SimilarAlbumsReader(IProtocolProviderGateway providers, Save
         var key = CacheKey(owner, execution.BackendInstanceId, itemId, limit, execution.Policy, metadata);
         if (Recent.TryGetValue(key, out var cached) && DateTimeOffset.UtcNow - cached.At < FreshFor) return cached.Value;
 
-        var token = execution.CancellationToken;
-        // Reads are normally answered from stored data only; related artists and their albums have to be asked for.
-        execution = execution with { IsReadOnly = false };
-        var seed = await SeedAsync(http, execution, itemId);
-        var (basedOn, related) = await RelatedArtistsAsync(execution, seed);
-        var icons = new ConcurrentDictionary<string, ItemDetailsProvider?>(StringComparer.Ordinal);
-        var library = await libraryProvider.ResolveAsync(http, execution);
-        using var slots = new SemaphoreSlim(Lookups);
-        var picks = await Task.WhenAll(related.Take(Math.Min(RelatedArtists, limit * 2)).Select(async artist =>
+        var clock = timeProvider ?? TimeProvider.System;
+        using var timeout = new CancellationTokenSource(TimeSpan.FromMilliseconds(2700), clock);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(execution.CancellationToken, timeout.Token);
+        var token = linked.Token;
+        var original = execution;
+        execution = new ProtocolExecutionContext(original.Protocol, original.BackendInstanceId, original.VerifiedBackendPrincipalId,
+            original.Principal, original.CorrelationId, clock.GetUtcNow().AddMilliseconds(2700), token, original.Client)
+        { Policy = original.Policy, IsReadOnly = false };
+        Seed seed;
+        string? basedOn;
+        IReadOnlyList<Artist> related;
+        ItemDetailsProvider library;
+        try
         {
-            await slots.WaitAsync(token);
-            try { return await PickAsync(http, execution, artist, library, icons); }
-            catch (Exception exception) when (exception is HttpRequestException or JsonException or InvalidOperationException) { return null; }
+            seed = await SeedAsync(http, execution, itemId).WaitAsync(token);
+            (basedOn, related) = await RelatedArtistsAsync(execution, seed).WaitAsync(token);
+            library = await libraryProvider.ResolveAsync(http, execution).WaitAsync(token);
+        }
+        catch (OperationCanceledException) when (timeout.IsCancellationRequested && !original.CancellationToken.IsCancellationRequested)
+        { return new(itemId, null, []); }
+        var icons = new ConcurrentDictionary<string, ItemDetailsProvider?>(StringComparer.Ordinal);
+        using var slots = new SemaphoreSlim(Lookups);
+        var work = related.Take(Math.Min(RelatedArtists, limit * 2)).Select(async artist =>
+        {
+            try { await slots.WaitAsync(token); }
+            catch (OperationCanceledException) when (timeout.IsCancellationRequested) { return null; }
+            try { return await PickAsync(http, execution, artist, library, icons).WaitAsync(token); }
+            catch (Exception exception) when (exception is HttpRequestException or JsonException or InvalidOperationException ||
+                exception is OperationCanceledException && timeout.IsCancellationRequested)
+            { return null; }
             finally { slots.Release(); }
-        }));
+        }).ToArray();
+        var picks = await Task.WhenAll(work);
         var albums = picks.OfType<ClientSimilarAlbum>()
             .Where(album => !SameName(album.Artist, seed.Artist))
             .DistinctBy(album => album.Id).Take(limit).ToArray();
@@ -88,7 +106,7 @@ public sealed class SimilarAlbumsReader(IProtocolProviderGateway providers, Save
         if (parsed.isExternal)
         {
             if (parsed.type != "album") throw new ArgumentException("Only albums have similar albums.");
-            var album = await providers.GetAlbumAsync(execution, parsed.provider!, parsed.externalId!) ??
+            var album = await providers.GetAlbumAsync(execution, parsed.provider!, parsed.externalId!).WaitAsync(execution.CancellationToken) ??
                 await saved.AlbumAsync(execution, $"ext-{parsed.provider}-album-{parsed.externalId}", execution.CancellationToken) ??
                 throw new KeyNotFoundException();
             var ids = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -129,7 +147,7 @@ public sealed class SimilarAlbumsReader(IProtocolProviderGateway providers, Save
             {
                 foreach (var id in await ArtistCandidatesAsync(execution, seed, source))
                 {
-                    var related = await providers.GetSimilarArtistsAsync(execution, source, id, RelatedArtists);
+                    var related = await providers.GetSimilarArtistsAsync(execution, source, id, RelatedArtists).WaitAsync(execution.CancellationToken);
                     if (related.Count > 0) return (source, related);
                 }
             }
@@ -151,7 +169,7 @@ public sealed class SimilarAlbumsReader(IProtocolProviderGateway providers, Save
         {
             try
             {
-                var albums = await providers.SearchAsync(execution, $"{seed.Artist} {seed.Title}", 0, 5, 0, source);
+                var albums = await providers.SearchAsync(execution, $"{seed.Artist} {seed.Title}", 0, 5, 0, source).WaitAsync(execution.CancellationToken);
                 var album = albums?.Albums.FirstOrDefault(item => item.ExternalProvider == source &&
                     SameName(item.Artist, seed.Artist) && SameName(item.Title, seed.Title));
                 var artist = LocalLibraryService.ParseExternalResource(album?.ArtistId ?? "");
@@ -160,7 +178,7 @@ public sealed class SimilarAlbumsReader(IProtocolProviderGateway providers, Save
             }
             catch (Exception exception) when (exception is HttpRequestException or JsonException or InvalidOperationException) { }
         }
-        var found = await providers.SearchAsync(execution, seed.Artist, 0, 0, 10, source);
+        var found = await providers.SearchAsync(execution, seed.Artist, 0, 0, 10, source).WaitAsync(execution.CancellationToken);
         candidates.AddRange((found?.Artists ?? []).Where(item => item.ExternalProvider == source && SameName(item.Name, seed.Artist))
             .Select(item => item.ExternalId).OfType<string>().Take(5));
         return candidates.Distinct(StringComparer.Ordinal).ToArray();
@@ -171,7 +189,7 @@ public sealed class SimilarAlbumsReader(IProtocolProviderGateway providers, Save
     {
         if (await LibraryAlbumAsync(http, execution, artist.Name) is { } owned) return owned with { Provider = library };
         if (artist.ExternalProvider is not { } source || artist.ExternalId is not { } artistId) return null;
-        var albums = MusicAlbumReleases.Collapse(await providers.GetArtistAlbumsAsync(execution, source, artistId, ArtistAlbumSample))
+        var albums = MusicAlbumReleases.Collapse(await providers.GetArtistAlbumsAsync(execution, source, artistId, ArtistAlbumSample).WaitAsync(execution.CancellationToken))
             .OrderByDescending(item => item.ReleaseDate ?? item.Year?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "", StringComparer.Ordinal)
             .ToArray();
         var album = albums.FirstOrDefault(item => item.ReleaseType is not ("single" or "Single" or "compilation" or "Compilation")) ??

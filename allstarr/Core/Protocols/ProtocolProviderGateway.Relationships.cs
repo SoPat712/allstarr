@@ -42,7 +42,7 @@ public sealed partial class ProtocolProviderGateway
         {
             await applicationCache.SetStringAsync(RelationshipCacheKey(protocol, source.ProviderId, artistId, relationship),
                 JsonSerializer.Serialize(new KnownRelationships<T>(items, source.Account?.AccountId, source.Account?.Revision)),
-                TimeSpan.FromMinutes(5));
+                MetadataRetention);
         }
         catch (Exception error) when (error is not OperationCanceledException)
         {

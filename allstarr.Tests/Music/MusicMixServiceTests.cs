@@ -20,12 +20,12 @@ public sealed class MusicMixServiceTests
         var context = MusicObservationsTests.Context();
         using var handler = new ListenBrainzSimilarTracksTests.Handler("ok");
         var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
-        gateway.Setup(item => item.GetSongAsync(context, "deezer", "42"))
+        gateway.Setup(item => item.GetSongAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "42"))
             .ReturnsAsync(new Song { Id = "seed", ExternalId = "42", Artist = "Seed artist", Title = "Seed" });
-        gateway.Setup(item => item.GetSimilarSongsAsync(context, "deezer", "42", 2)).ReturnsAsync([]);
-        gateway.Setup(item => item.SearchAsync(context, "Artist First", 3, 0, 0, "deezer"))
+        gateway.Setup(item => item.GetSimilarSongsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "42", 2)).ReturnsAsync([]);
+        gateway.Setup(item => item.SearchAsync(It.IsAny<ProtocolExecutionContext>(), "Artist First", 3, 0, 0, "deezer"))
             .ReturnsAsync(new SearchResult { Songs = [new Song { Id = "found", Title = "First", Artist = "Artist" }] });
-        gateway.Setup(item => item.SearchAsync(context, "Artist Second", 3, 0, 0, "deezer"))
+        gateway.Setup(item => item.SearchAsync(It.IsAny<ProtocolExecutionContext>(), "Artist Second", 3, 0, 0, "deezer"))
             .ReturnsAsync(new SearchResult());
 
         var result = await new MusicMixService(gateway.Object, listenBrainz: ListenBrainzSimilarTracksTests.Create(handler))
@@ -41,8 +41,8 @@ public sealed class MusicMixServiceTests
     public async Task SimilarSongs_PreferProviderRecommendationsAndDropTheSeed()
     {
         var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
-        gateway.Setup(item => item.GetSongAsync(_context, "deezer", "42")).ReturnsAsync(Song(SeedId, "42"));
-        gateway.Setup(item => item.GetSimilarSongsAsync(_context, "deezer", "42", 2))
+        gateway.Setup(item => item.GetSongAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "42")).ReturnsAsync(Song(SeedId, "42"));
+        gateway.Setup(item => item.GetSimilarSongsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "42", 2))
             .ReturnsAsync([Song(SeedId, "42"), Song("ext-deezer-song-43", "43"), Song("ext-deezer-song-44", "44"),
                 Song("ext-deezer-song-45", "45")]);
 
@@ -57,8 +57,8 @@ public sealed class MusicMixServiceTests
     public async Task SimilarSongs_DropTheSeedByItsPublicIdToo()
     {
         var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
-        gateway.Setup(item => item.GetSongAsync(_context, "deezer", "42")).ReturnsAsync(Song(SeedId, "42"));
-        gateway.Setup(item => item.GetSimilarSongsAsync(_context, "deezer", "42", 5))
+        gateway.Setup(item => item.GetSongAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "42")).ReturnsAsync(Song(SeedId, "42"));
+        gateway.Setup(item => item.GetSimilarSongsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "42", 5))
             .ReturnsAsync([Song("NATIVE-7", "other-42"), Song("ext-deezer-song-43", "43")]);
 
         var songs = await new MusicMixService(gateway.Object).SimilarSongsAsync(_context, "deezer", "42", "native-7", 5);
@@ -70,9 +70,9 @@ public sealed class MusicMixServiceTests
     public async Task SimilarSongs_FallBackToTheSeedArtistWithoutRecommendations()
     {
         var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
-        gateway.Setup(item => item.GetSimilarSongsAsync(_context, "deezer", "42", 2)).ReturnsAsync([]);
-        gateway.Setup(item => item.GetSongAsync(_context, "deezer", "42")).ReturnsAsync(Song(SeedId, "42"));
-        gateway.Setup(item => item.SearchAsync(_context, "Fixture Artist", 2, 0, 0, "deezer"))
+        gateway.Setup(item => item.GetSimilarSongsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "42", 2)).ReturnsAsync([]);
+        gateway.Setup(item => item.GetSongAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "42")).ReturnsAsync(Song(SeedId, "42"));
+        gateway.Setup(item => item.SearchAsync(It.IsAny<ProtocolExecutionContext>(), "Fixture Artist", 2, 0, 0, "deezer"))
             .ReturnsAsync(new SearchResult
             {
                 Songs = [Song(SeedId, "42"), Song("ext-deezer-song-43", "43"), Song("ext-deezer-song-44", "44"),
@@ -89,8 +89,8 @@ public sealed class MusicMixServiceTests
     public async Task SimilarSongs_AreEmptyWhenTheSeedHasNoArtist()
     {
         var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
-        gateway.Setup(item => item.GetSimilarSongsAsync(_context, "deezer", "42", 5)).ReturnsAsync([]);
-        gateway.Setup(item => item.GetSongAsync(_context, "deezer", "42"))
+        gateway.Setup(item => item.GetSimilarSongsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "42", 5)).ReturnsAsync([]);
+        gateway.Setup(item => item.GetSongAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "42"))
             .ReturnsAsync(new Song { Id = SeedId, ExternalProvider = "deezer", ExternalId = "42", Title = "Seed" });
 
         Assert.Empty(await new MusicMixService(gateway.Object).SimilarSongsAsync(_context, "deezer", "42", SeedId, 5));
@@ -102,7 +102,7 @@ public sealed class MusicMixServiceTests
     public async Task InstantMix_AlbumSeedUsesTheAlbumSongsInStableOrder()
     {
         var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
-        gateway.Setup(item => item.GetAlbumAsync(_context, "deezer", "9")).ReturnsAsync(new Album
+        gateway.Setup(item => item.GetAlbumAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "9")).ReturnsAsync(new Album
         {
             Id = "ext-deezer-album-9",
             Title = "Fixture Album",
@@ -124,7 +124,7 @@ public sealed class MusicMixServiceTests
     public async Task InstantMix_MissingAlbumSeedIsEmpty()
     {
         var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
-        gateway.Setup(item => item.GetAlbumAsync(_context, "deezer", "9")).ReturnsAsync((Album?)null);
+        gateway.Setup(item => item.GetAlbumAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "9")).ReturnsAsync((Album?)null);
         var service = new MusicMixService(gateway.Object);
 
         Assert.Empty(await service.InstantMixAsync(_context, "deezer", "album", "9", "ext-deezer-album-9", 5));
@@ -137,7 +137,7 @@ public sealed class MusicMixServiceTests
     {
         var songs = Enumerable.Range(1, 8).Select(index => Song($"ext-deezer-song-{index}", $"{index}")).ToList();
         var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
-        gateway.Setup(item => item.GetAlbumAsync(_context, "deezer", "9")).ReturnsAsync(() => new Album
+        gateway.Setup(item => item.GetAlbumAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "9")).ReturnsAsync(() => new Album
         {
             Title = "Fixture Album",
             Artist = "Fixture Artist",

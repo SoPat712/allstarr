@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Storage;
@@ -8,6 +9,115 @@ namespace allstarr.Core.Protocols;
 
 public sealed partial class ProtocolProviderGateway
 {
+    private static readonly JsonSerializerOptions MetadataJson = new()
+    {
+        TypeInfoResolver = new System.Text.Json.Serialization.Metadata.DefaultJsonTypeInfoResolver
+        {
+            Modifiers =
+            {
+                info =>
+                {
+                    if (info.Type != typeof(Song)) return;
+                    info.Properties.Remove(info.Properties.First(property => property.Name == nameof(Song.PreciseDuration)));
+                    var duration = info.CreateJsonPropertyInfo(typeof(TimeSpan?), nameof(Song.PreciseDuration));
+                    duration.Get = value => ((Song)value).PreciseDuration;
+                    duration.Set = (value, duration) => ((Song)value).PreciseDuration = (TimeSpan?)duration;
+                    info.Properties.Add(duration);
+                }
+            }
+        }
+    };
+    private readonly ConcurrentDictionary<string, Lazy<Task<string?>>> metadataWork = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, int> foregroundMetadata = new(StringComparer.Ordinal);
+    private static readonly TimeSpan MetadataFreshFor = TimeSpan.FromHours(24);
+    private static readonly TimeSpan MetadataRetention = TimeSpan.FromDays(7);
+
+    private async Task<T?> FullMetadataAsync<T>(ProviderExecutionContext source, ProviderResourceKind kind,
+        string externalId, Func<ProviderExecutionContext, Task<T?>> fetch, bool prefetch = false) where T : class
+    {
+        var key = MetadataCacheKey(source.Actor, source.ProviderId, kind, externalId, true, source.Account);
+        var cached = await ReadCachedMetadataAsync<T>(source.Actor, source.ProviderId, kind, externalId, true, source.Account);
+        var clock = timeProvider ?? TimeProvider.System;
+        var stamp = applicationCache?.IsEnabled == true ? await applicationCache.GetStringAsync(key + ":fetched") : null;
+        if (cached != null && DateTimeOffset.TryParse(stamp, out var at) && clock.GetUtcNow() - at < MetadataFreshFor)
+            return cached;
+        var work = metadataWork.GetOrAdd(key, _ => new(() => Task.Run(FetchAsync)));
+        if (cached != null)
+        {
+            _ = work.Value;
+            return cached;
+        }
+        if (!prefetch) foregroundMetadata.AddOrUpdate(source.ProviderId, 1, (_, count) => count + 1);
+        try
+        {
+            var payload = await work.Value.WaitAsync(source.CancellationToken);
+            return payload == null ? null : JsonSerializer.Deserialize<T>(payload, MetadataJson);
+        }
+        finally
+        {
+            if (!prefetch) foregroundMetadata.AddOrUpdate(source.ProviderId, 0, (_, count) => count - 1);
+        }
+
+        async Task<string?> FetchAsync()
+        {
+            try
+            {
+                if (cached == null && await ReadCachedMetadataAsync<T>(source.Actor, source.ProviderId, kind, externalId, true, source.Account) is { } ready &&
+                    DateTimeOffset.TryParse(await applicationCache!.GetStringAsync(key + ":fetched"), out var refreshed) && clock.GetUtcNow() - refreshed < MetadataFreshFor)
+                    return JsonSerializer.Serialize(ready, MetadataJson);
+                using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30), clock);
+                var execution = new ProviderExecutionContext(source.Actor, source.ProviderId, source.Account, source.Policy,
+                    source.OperationId, source.CorrelationId, clock.GetUtcNow().AddSeconds(30), timeout.Token)
+                { IsReadOnly = source.IsReadOnly };
+                var value = await fetch(execution).WaitAsync(timeout.Token);
+                if (value == null) return null;
+                await CacheMetadataAsync(execution, kind, externalId, value);
+                await CacheMetadataAsync(execution, kind, externalId, value, true);
+                return JsonSerializer.Serialize(value, MetadataJson);
+            }
+            catch (Exception error) when (cached != null)
+            {
+                logger?.LogDebug("Metadata refresh was unavailable ({ErrorType})", error.GetType().Name);
+                return null;
+            }
+            finally { metadataWork.TryRemove(key, out _); }
+        }
+    }
+
+    private ProtocolExecutionContext BackgroundMetadataContext(ProtocolExecutionContext protocol) =>
+        new(protocol.Protocol, protocol.BackendInstanceId, protocol.VerifiedBackendPrincipalId, protocol.Principal,
+            protocol.CorrelationId, (timeProvider ?? TimeProvider.System).GetUtcNow().AddSeconds(30), CancellationToken.None, protocol.Client)
+        { Policy = protocol.Policy, IsReadOnly = protocol.IsReadOnly };
+
+    private async Task RefreshSongDetailAsync(ProtocolExecutionContext protocol, string provider, string externalId)
+    {
+        if (applicationCache?.IsEnabled != true || provider == "allstarr") return;
+        var actor = protocol.Actor ?? new ProviderActorContext(ProviderActorKind.PublicRead, null);
+        var accountPayload = await applicationCache.GetStringAsync(MetadataAccountKey(actor, provider, ProviderResourceKind.Track, externalId, true));
+        var account = accountPayload == null ? null : JsonSerializer.Deserialize<MetadataAccount>(accountPayload);
+        var key = MetadataCacheKey(actor, provider, ProviderResourceKind.Track, externalId, true);
+        if (account != null)
+            key = CacheKeyBuilder.BuildProtocolMetadataKey(provider,
+                JsonSerializer.Serialize(new { Actor = actor, AccountId = (Guid?)account.Id, AccountRevision = (long?)account.Revision }), "Track:detail", externalId);
+        var stamp = await applicationCache.GetStringAsync(key + ":fetched");
+        if (!DateTimeOffset.TryParse(stamp, out var at) || (timeProvider ?? TimeProvider.System).GetUtcNow() - at < MetadataFreshFor) return;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                var background = BackgroundMetadataContext(protocol);
+                var routed = await PlanExactAsync<IProviderMetadataCapability>(background, provider, ProviderCapabilityKind.Metadata, "protocol-metadata-get-track");
+                if (routed.Candidate is not { } candidate) return;
+                await FullMetadataAsync<Song>(candidate.Context, ProviderResourceKind.Track, externalId, async execution =>
+                {
+                    var outcome = await candidate.Implementation.GetTrackAsync(execution, new(new(provider, ProviderResourceKind.Track, externalId)));
+                    return outcome.IsSuccess ? await EnrichRelationshipsAsync(candidate with { Context = execution }, outcome.RequireValue()) : null;
+                });
+            }
+            catch (Exception error) { logger?.LogDebug("Song refresh was unavailable ({ErrorType})", error.GetType().Name); }
+        });
+    }
+
     internal async Task<ProtocolCachedSongFacts?> ReadCachedSongFactsAsync(ProviderActorContext actor, string providerId,
         string externalId, ProviderAccountContext? account = null)
     {
@@ -49,7 +159,7 @@ public sealed partial class ProtocolProviderGateway
         var payload = identities == null ? null : await identities.GetStoredMetadataAsync(
             actor, new(provider, kind, externalId), protocol.CancellationToken);
         if (payload == null) return null;
-        try { return JsonSerializer.Deserialize<T>(payload); }
+        try { return JsonSerializer.Deserialize<T>(payload, MetadataJson); }
         catch (JsonException) { return null; }
     }
 
@@ -81,10 +191,13 @@ public sealed partial class ProtocolProviderGateway
         try
         {
             await applicationCache.SetStringAsync(MetadataCacheKey(context.Actor, context.ProviderId, kind, externalId, detail, context.Account),
-                JsonSerializer.Serialize(value), TimeSpan.FromMinutes(5));
-            if (context.Account is { } account && kind is ProviderResourceKind.Album or ProviderResourceKind.Artist)
+                JsonSerializer.Serialize(value, MetadataJson), detail ? MetadataRetention : MetadataFreshFor);
+            if (detail)
+                await applicationCache.SetStringAsync(MetadataCacheKey(context.Actor, context.ProviderId, kind, externalId, true, context.Account) + ":fetched",
+                    (timeProvider ?? TimeProvider.System).GetUtcNow().ToString("O"), MetadataRetention);
+            if (context.Account is { } account)
                 await applicationCache.SetStringAsync(MetadataAccountKey(context.Actor, context.ProviderId, kind, externalId, detail),
-                    JsonSerializer.Serialize(new MetadataAccount(account.AccountId, account.Revision)), TimeSpan.FromMinutes(5));
+                    JsonSerializer.Serialize(new MetadataAccount(account.AccountId, account.Revision)), detail ? MetadataRetention : MetadataFreshFor);
         }
         catch (Exception error)
         {
@@ -126,7 +239,7 @@ public sealed partial class ProtocolProviderGateway
         try
         {
             var payload = await applicationCache.GetStringAsync(MetadataCacheKey(actor, provider, kind, externalId, detail, account));
-            return payload == null ? null : JsonSerializer.Deserialize<T>(payload);
+            return payload == null ? null : JsonSerializer.Deserialize<T>(payload, MetadataJson);
         }
         catch (Exception error)
         {

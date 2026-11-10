@@ -768,6 +768,7 @@ public sealed partial class ProtocolProviderGateway(
         var policy = await ResolveEffectivePolicyAsync(protocol);
         if (routedProviderId != "allstarr" && policy?.IsEnabled(routedProviderId) == false)
             throw new UnauthorizedAccessException("That source is disabled for this listener.");
+        await RefreshSongDetailAsync(protocol, routedProviderId, externalId);
         var stored = await GetStoredSongAsync(protocol, routedProviderId, externalId);
         if (stored != null && (NormalizeProvider(stored.ExternalProvider) == "allstarr" ||
             string.IsNullOrWhiteSpace(stored.Album) || !string.IsNullOrWhiteSpace(stored.AlbumId)))
@@ -784,25 +785,20 @@ public sealed partial class ProtocolProviderGateway(
         if (routed.Candidate != null)
         {
             var id = new ProviderExternalResourceId(routedProviderId, ProviderResourceKind.Track, externalId);
-            if (await ReadCachedSongAsync(routed.Candidate.Context.Actor, routedProviderId, externalId,
-                    routed.Candidate.Context.Account) is { } cached)
+            var song = await FullMetadataAsync<Song>(routed.Candidate.Context, ProviderResourceKind.Track, externalId, async execution =>
             {
-                await ApplyKnownPublicIdsAsync(routed.Candidate.Context, [cached], protocol);
-                return (await ResolveEffectivePolicyAsync(protocol))?.Includes(cached) == false ? null : cached;
-            }
-            var outcome = await routed.Candidate.Implementation.GetTrackAsync(
-                routed.Candidate.Context,
-                new ProviderTrackLookupRequest(id));
-            if (outcome.IsSuccess)
+                var outcome = await routed.Candidate.Implementation.GetTrackAsync(execution, new ProviderTrackLookupRequest(id));
+                if (outcome.IsSuccess)
+                    return await EnrichRelationshipsAsync(routed.Candidate with { Context = execution }, outcome.RequireValue());
+                if (outcome.Error!.Kind == ProviderErrorKind.NotFound) return null;
+                ThrowRouteFailure(outcome.Error);
+                return null;
+            });
+            if (song != null)
             {
-                var song = await EnrichRelationshipsAsync(routed.Candidate, outcome.RequireValue());
-                await CacheSongsAsync(routed.Candidate.Context, [song], true);
                 await ApplyKnownPublicIdsAsync(routed.Candidate.Context, [song], protocol, policy);
                 return policy?.Includes(song) == false ? null : song;
             }
-            if (outcome.Error!.Kind == ProviderErrorKind.NotFound)
-                return await GetKnownSongAsync(protocol, routedProviderId, externalId);
-            ThrowRouteFailure(outcome.Error);
         }
 
         return await GetKnownSongAsync(protocol, routedProviderId, externalId);
@@ -849,10 +845,10 @@ public sealed partial class ProtocolProviderGateway(
         }
     }
 
-    public async Task<Album?> GetAlbumAsync(
-        ProtocolExecutionContext protocol,
-        string providerId,
-        string externalId)
+    public Task<Album?> GetAlbumAsync(ProtocolExecutionContext protocol, string providerId, string externalId) =>
+        GetAlbumCoreAsync(protocol, providerId, externalId, false);
+
+    private async Task<Album?> GetAlbumCoreAsync(ProtocolExecutionContext protocol, string providerId, string externalId, bool prefetch)
     {
         var routedProviderId = NormalizeProvider(providerId);
         var routed = await PlanExactAsync<IProviderMetadataCapability>(
@@ -860,28 +856,19 @@ public sealed partial class ProtocolProviderGateway(
         if (routed.Candidate != null)
         {
             var id = new ProviderExternalResourceId(routedProviderId, ProviderResourceKind.Album, externalId);
-            if (await ReadCachedMetadataAsync<Album>(routed.Candidate.Context.Actor, routedProviderId,
-                    ProviderResourceKind.Album, externalId, true, routed.Candidate.Context.Account) is { } cached)
+            var album = await FullMetadataAsync<Album>(routed.Candidate.Context, ProviderResourceKind.Album, externalId, async execution =>
             {
-                var policy = await ResolveEffectivePolicyAsync(protocol);
-                cached.Songs = cached.Songs.Where(song => policy?.Includes(song) != false).ToList();
-                await ApplyKnownPublicIdsAsync(routed.Candidate.Context, cached.Songs, protocol);
-                return cached;
-            }
-            var outcome = await routed.Candidate.Implementation.GetAlbumAsync(
-                routed.Candidate.Context,
-                new ProviderAlbumLookupRequest(id));
-            if (outcome.IsSuccess)
-            {
-                var album = Map(outcome.RequireValue());
-                await CacheResourcesAsync(routed.Candidate.Context, [album], [], true);
-                var policy = await ResolveEffectivePolicyAsync(protocol);
-                album.Songs = album.Songs.Where(song => policy?.Includes(song) != false).ToList();
-                await ApplyKnownPublicIdsAsync(routed.Candidate.Context, album.Songs, protocol);
-                return album;
-            }
-            if (outcome.Error!.Kind == ProviderErrorKind.NotFound) return null;
-            ThrowRouteFailure(outcome.Error);
+                var outcome = await routed.Candidate.Implementation.GetAlbumAsync(execution, new ProviderAlbumLookupRequest(id));
+                if (outcome.IsSuccess) return Map(outcome.RequireValue());
+                if (outcome.Error!.Kind == ProviderErrorKind.NotFound) return null;
+                ThrowRouteFailure(outcome.Error);
+                return null;
+            }, prefetch);
+            if (album == null || prefetch) return album;
+            var policy = await ResolveEffectivePolicyAsync(protocol);
+            album.Songs = album.Songs.Where(song => policy?.Includes(song) != false).ToList();
+            await ApplyKnownPublicIdsAsync(routed.Candidate.Context, album.Songs, protocol);
+            return album;
         }
 
         return null;
@@ -893,26 +880,19 @@ public sealed partial class ProtocolProviderGateway(
         string externalId)
     {
         var routedProviderId = NormalizeProvider(providerId);
-        if (await ReadStoredMetadataAsync<Artist>(protocol, routedProviderId, ProviderResourceKind.Artist, externalId, true) is { } stored) return stored;
         var routed = await PlanExactAsync<IProviderMetadataCapability>(
             protocol, routedProviderId, ProviderCapabilityKind.Metadata, "protocol-metadata-get-artist");
         if (routed.Candidate != null)
         {
             var id = new ProviderExternalResourceId(routedProviderId, ProviderResourceKind.Artist, externalId);
-            if (await ReadCachedMetadataAsync<Artist>(routed.Candidate.Context.Actor, routedProviderId,
-                    ProviderResourceKind.Artist, externalId, true, routed.Candidate.Context.Account) is { } cached)
-                return cached;
-            var outcome = await routed.Candidate.Implementation.GetArtistAsync(
-                routed.Candidate.Context,
-                new ProviderArtistLookupRequest(id));
-            if (outcome.IsSuccess)
+            return await FullMetadataAsync<Artist>(routed.Candidate.Context, ProviderResourceKind.Artist, externalId, async execution =>
             {
-                var artist = Map(outcome.RequireValue());
-                await CacheResourcesAsync(routed.Candidate.Context, [], [artist], true);
-                return artist;
-            }
-            if (outcome.Error!.Kind == ProviderErrorKind.NotFound) return null;
-            ThrowRouteFailure(outcome.Error);
+                var outcome = await routed.Candidate.Implementation.GetArtistAsync(execution, new ProviderArtistLookupRequest(id));
+                if (outcome.IsSuccess) return Map(outcome.RequireValue());
+                if (outcome.Error!.Kind == ProviderErrorKind.NotFound) return null;
+                ThrowRouteFailure(outcome.Error);
+                return null;
+            });
         }
 
         return null;
@@ -940,40 +920,46 @@ public sealed partial class ProtocolProviderGateway(
         if (routed.Candidate != null)
         {
             var id = new ProviderExternalResourceId(routedProviderId, ProviderResourceKind.Artist, externalId);
-            var albums = new List<Album>();
-            var seenCursors = new HashSet<string>(StringComparer.Ordinal);
-            string? cursor = null;
-            var policy = limit == null ? null : await ResolveEffectivePolicyAsync(protocol);
-            var pages = 0;
-            do
-            {
-                var outcome = await routed.Candidate.Implementation.GetArtistAlbumsAsync(
-                    routed.Candidate.Context,
-                    new ProviderArtistItemsRequest(id, new ProviderPageRequest(limit ?? 200, cursor)));
-                if (!outcome.IsSuccess)
-                {
-                    if (outcome.Error!.Kind == ProviderErrorKind.NotFound) return [];
-                    if (outcome.Error.Kind is ProviderErrorKind.NotSupported or ProviderErrorKind.CapabilityUnavailable)
-                        return [];
-                    ThrowRouteFailure(outcome.Error);
-                }
-                var page = outcome.RequireValue();
-                var mapped = page.Items.Select(Map).ToList();
-                if (limit is { } cap) mapped = mapped.Take(cap).ToList();
-                albums.AddRange(mapped);
-                cursor = page.NextCursor;
-                pages++;
-                // One page is enough unless clean-only removed every album; then at most two further pages.
-                var stop = limit != null && (CleanAlbums(albums, policy).Any() || pages >= 3 || cursor == null);
-                if (stop) break;
-                if (cursor != null && (seenCursors.Count >= 1_000 || !seenCursors.Add(cursor)))
-                    throw new HttpRequestException("The provider repeated an artist-album page cursor.");
-            } while (cursor != null);
+            var policy = await ResolveEffectivePolicyAsync(protocol);
+            var albums = await FullMetadataAsync<List<Album>>(routed.Candidate.Context, ProviderResourceKind.Artist,
+                $"{externalId}:albums:{limit}:{policy?.Preferences.ExplicitFilter}", FetchAsync) ?? [];
             await ApplyKnownPublicIdsAsync(routed.Candidate.Context, albums.SelectMany(album => album.Songs).ToArray(), protocol);
             await CacheResourcesAsync(routed.Candidate.Context, albums, []);
-            if (limit == null)
-                await CacheKnownRelationshipsAsync(protocol, routed.Candidate.Context, externalId, "albums", albums);
-            return CleanAlbums(MusicAlbumReleases.Collapse(albums), policy ?? await ResolveEffectivePolicyAsync(protocol)).ToList();
+            if (limit == null) await CacheKnownRelationshipsAsync(protocol, routed.Candidate.Context, externalId, "albums", albums);
+            return CleanAlbums(MusicAlbumReleases.Collapse(albums), policy).ToList();
+
+            async Task<List<Album>?> FetchAsync(ProviderExecutionContext execution)
+            {
+                var albums = new List<Album>();
+                var seenCursors = new HashSet<string>(StringComparer.Ordinal);
+                string? cursor = null;
+                var pages = 0;
+                do
+                {
+                    var outcome = await routed.Candidate.Implementation.GetArtistAlbumsAsync(
+                        execution,
+                        new ProviderArtistItemsRequest(id, new ProviderPageRequest(limit ?? 200, cursor)));
+                    if (!outcome.IsSuccess)
+                    {
+                        if (outcome.Error!.Kind == ProviderErrorKind.NotFound) return [];
+                        if (outcome.Error.Kind is ProviderErrorKind.NotSupported or ProviderErrorKind.CapabilityUnavailable)
+                            return [];
+                        ThrowRouteFailure(outcome.Error);
+                    }
+                    var page = outcome.RequireValue();
+                    var mapped = page.Items.Select(Map).ToList();
+                    if (limit is { } cap) mapped = mapped.Take(cap).ToList();
+                    albums.AddRange(mapped);
+                    cursor = page.NextCursor;
+                    pages++;
+                    // One page is enough unless clean-only removed every album; then at most two further pages.
+                    var stop = limit != null && (CleanAlbums(albums, policy).Any() || pages >= 3 || cursor == null);
+                    if (stop) break;
+                    if (cursor != null && (seenCursors.Count >= 1_000 || !seenCursors.Add(cursor)))
+                        throw new HttpRequestException("The provider repeated an artist-album page cursor.");
+                } while (cursor != null);
+                return albums;
+            }
         }
 
         return [];
@@ -1049,33 +1035,39 @@ public sealed partial class ProtocolProviderGateway(
         if (routed.Candidate != null)
         {
             var id = new ProviderExternalResourceId(routedProviderId, ProviderResourceKind.Artist, externalId);
-            var tracks = new List<Song>();
-            var seenCursors = new HashSet<string>(StringComparer.Ordinal);
-            string? cursor = null;
-            do
-            {
-                var outcome = await routed.Candidate.Implementation.GetArtistTracksAsync(
-                    routed.Candidate.Context,
-                    new ProviderArtistItemsRequest(id, new ProviderPageRequest(limit is { } count ? count - tracks.Count : 200, cursor)));
-                if (!outcome.IsSuccess)
-                {
-                    if (outcome.Error!.Kind == ProviderErrorKind.NotFound) return [];
-                    if (outcome.Error.Kind is ProviderErrorKind.NotSupported or ProviderErrorKind.CapabilityUnavailable)
-                        return [];
-                    ThrowRouteFailure(outcome.Error);
-                }
-                var page = outcome.RequireValue();
-                tracks.AddRange(page.Items.Take(limit is { } remaining ? remaining - tracks.Count : int.MaxValue).Select(Map));
-                cursor = page.NextCursor;
-                if (tracks.Count >= limit) break;
-                if (cursor != null && (seenCursors.Count >= 1_000 || !seenCursors.Add(cursor)))
-                    throw new HttpRequestException("The provider repeated an artist-track page cursor.");
-            } while (cursor != null);
+            var tracks = await FullMetadataAsync<List<Song>>(routed.Candidate.Context, ProviderResourceKind.Artist,
+                $"{externalId}:tracks:{limit}", FetchAsync) ?? [];
             var policy = await ResolveEffectivePolicyAsync(protocol);
             await ApplyKnownPublicIdsAsync(routed.Candidate.Context, tracks, protocol);
-            if (limit == null)
-                await CacheKnownRelationshipsAsync(protocol, routed.Candidate.Context, externalId, "tracks", tracks);
+            if (limit == null) await CacheKnownRelationshipsAsync(protocol, routed.Candidate.Context, externalId, "tracks", tracks);
             return tracks.Where(song => policy?.Includes(song) != false).ToList();
+
+            async Task<List<Song>?> FetchAsync(ProviderExecutionContext execution)
+            {
+                var tracks = new List<Song>();
+                var seenCursors = new HashSet<string>(StringComparer.Ordinal);
+                string? cursor = null;
+                do
+                {
+                    var outcome = await routed.Candidate.Implementation.GetArtistTracksAsync(
+                        execution,
+                        new ProviderArtistItemsRequest(id, new ProviderPageRequest(limit is { } count ? count - tracks.Count : 200, cursor)));
+                    if (!outcome.IsSuccess)
+                    {
+                        if (outcome.Error!.Kind == ProviderErrorKind.NotFound) return [];
+                        if (outcome.Error.Kind is ProviderErrorKind.NotSupported or ProviderErrorKind.CapabilityUnavailable)
+                            return [];
+                        ThrowRouteFailure(outcome.Error);
+                    }
+                    var page = outcome.RequireValue();
+                    tracks.AddRange(page.Items.Take(limit is { } remaining ? remaining - tracks.Count : int.MaxValue).Select(Map));
+                    cursor = page.NextCursor;
+                    if (tracks.Count >= limit) break;
+                    if (cursor != null && (seenCursors.Count >= 1_000 || !seenCursors.Add(cursor)))
+                        throw new HttpRequestException("The provider repeated an artist-track page cursor.");
+                } while (cursor != null);
+                return tracks;
+            }
         }
 
         return [];

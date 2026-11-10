@@ -360,6 +360,9 @@ public partial class JellyfinController
         items = _musicSearch.PreserveSearchOrder(context, cleanQuery,
             SearchPaginationScope(includeItemTypes), startIndex, limit, items,
             item => GetItemType(item) + ":" + GetItemStringValue(item, "Id")).ToList();
+        if (_providerGateway is ProtocolProviderGateway gateway)
+            gateway.QueueAlbumPrefetch(context, items.Skip(startIndex).Take(limit)
+                .Where(item => GetItemType(item) == "MusicAlbum").Select(item => GetItemStringValue(item, "Id")));
         var response = _searchProtocolAdapter.ShapeItemsResponse(items, startIndex, limit);
         return new ContentResult { Content = response.Body, ContentType = response.ContentType, StatusCode = response.StatusCode };
     }

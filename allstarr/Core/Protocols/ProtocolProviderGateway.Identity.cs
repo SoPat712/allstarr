@@ -285,7 +285,8 @@ public sealed partial class ProtocolProviderGateway
         var lookups = songs.Select(song => new TrackIdentityLookup(context,
             new ProviderExternalResourceId(context.ProviderId, ProviderResourceKind.Track, song.ExternalId!))).ToArray();
         var resolved = await identities.ResolveManyAsync(lookups, context.CancellationToken);
-        for (var index = 0; index < songs.Count; index++)
+        using var displays = new SemaphoreSlim(4);
+        await Task.WhenAll(Enumerable.Range(0, songs.Count).Select(async index =>
         {
             var identity = resolved[index];
             if (identity?.Verification == ProviderIdentityVerification.Verified &&
@@ -296,9 +297,15 @@ public sealed partial class ProtocolProviderGateway
             {
                 songs[index].Id = identity.PublicId;
                 songs[index].CanonicalRecordingId = identity.CanonicalRecordingId;
-                if (protocol != null && await GetStoredSongAsync(protocol, context.ProviderId, songs[index].ExternalId!) is { } display)
-                    ApplyDisplaySource(songs[index], display);
+                if (protocol == null) return;
+                await displays.WaitAsync(context.CancellationToken);
+                try
+                {
+                    if (await GetStoredSongAsync(protocol, context.ProviderId, songs[index].ExternalId!) is { } display)
+                        ApplyDisplaySource(songs[index], display);
+                }
+                finally { displays.Release(); }
             }
-        }
+        }));
     }
 }
