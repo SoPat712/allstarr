@@ -114,7 +114,7 @@ public sealed partial class PlaylistOrchestrationIntegrationTests
     [InlineData("deezer", "editorial", "Deezer", null, PlaylistSourceKinds.Feed)]
     [InlineData("deezer", "public", "Someone", null, null)]
     [InlineData("listenbrainz", "createdfor:weekly-jams", null, null, PlaylistSourceKinds.Feed)]
-    [InlineData("lastfm", "loved", null, null, PlaylistSourceKinds.Own)]
+    [InlineData("lastfm", "loved", null, null, PlaylistSourceKinds.Feed)]
     [InlineData("lastfm", "top:7day", null, null, PlaylistSourceKinds.Feed)]
     public void PlaylistKindComesFromWhoOwnsIt(string provider, string playlist, string? owner, string? user, string? expected) =>
         Assert.Equal(expected, PlaylistSourceKinds.Classify(provider, playlist, owner, user));

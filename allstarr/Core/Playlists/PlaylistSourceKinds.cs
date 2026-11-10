@@ -20,8 +20,9 @@ public static class PlaylistSourceKinds
             return playlistId.StartsWith("createdfor:", StringComparison.Ordinal) ||
                    playlistId is Providers.ListenBrainz.ListenBrainzPlaylistCapabilityAdapter.Recommended
                        or Providers.ListenBrainz.ListenBrainzPlaylistCapabilityAdapter.FreshReleases ? Feed : null;
+        // Last.fm's lists, loved songs included, are what the service keeps for you, not playlists you made.
         if (providerId == "lastfm")
-            return playlistId == "loved" ? Own : playlistId == "similar" || playlistId.StartsWith("top:", StringComparison.Ordinal) ? Feed : null;
+            return playlistId is "loved" or "similar" || playlistId.StartsWith("top:", StringComparison.Ordinal) ? Feed : null;
         // Spotify's own playlists (Discover Weekly, Daily Mix, Release Radar, Top 50, Today's Top Hits) share this prefix,
         // so they are known as feeds before any sync says who owns them.
         if (providerId == "spotify" && playlistId.StartsWith("37i9dQZ", StringComparison.Ordinal)) return Feed;
