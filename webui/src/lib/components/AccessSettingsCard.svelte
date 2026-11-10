@@ -11,6 +11,9 @@
   import { consumeAccessRestored, markAccessRestored, savedBeforeRestart, waitForRestart } from "$lib/restart";
   import { Badge } from "$lib/components/ui/badge";
   import { Button } from "$lib/components/ui/button";
+  import { Copy } from "@lucide/svelte";
+  import { toast } from "$lib/toasts";
+  import { oidcRedirectUri } from "$lib/oidc-settings";
   let { kind }: { kind: "oidc" | "backend" } = $props();
   let snapshot = $state<OidcAccess | BackendAccess | null>(null), csrf = $state("");
   let enabled = $state(false), authority = $state(""), clientId = $state(""), publicUrl = $state(""), displayName = $state("Single sign-on");
@@ -19,7 +22,26 @@
   let confirmOpen = $state(false), form = $state<HTMLFormElement>();
   let confirming = $state(false);
   let playlistListeners = $state<{ playlistEditingAllowed?: boolean }[] | null>(null);
+  let redirectText = $state<HTMLSpanElement>();
+  const redirectUri = $derived(oidcRedirectUri(publicUrl));
   const abort = new AbortController();
+  async function copyRedirectUri() {
+    if (!redirectUri) return;
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error();
+      await navigator.clipboard.writeText(redirectUri);
+      toast.success("Copied.");
+    } catch {
+      if (redirectText) {
+        const range = document.createRange();
+        range.selectNodeContents(redirectText);
+        const selection = window.getSelection();
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+      }
+      toast.info("Select and copy the highlighted text.");
+    }
+  }
   function requestSave() {
     if (busy || !snapshot || !form?.checkValidity()) return;
     confirming = true; confirmOpen = true;
@@ -99,7 +121,8 @@
         {#if snapshot.needsReview}<p class="settings-impact notice-error">The saved connection needs attention. Enter fresh credentials or turn it off.</p>{/if}
         <label class="settings-row"><div><strong>Issuer address</strong></div><input type="url" aria-label="Issuer address" bind:value={authority} disabled={busy} required /></label>
         <label class="settings-row"><div><strong>Client ID</strong></div><input aria-label="Client ID" bind:value={clientId} disabled={busy} required /></label>
-        <label class="settings-row"><div><strong>Public Allstarr address</strong></div><input type="url" aria-label="Public Allstarr address" bind:value={publicUrl} disabled={busy} required /></label>
+        <label class="settings-row"><div><strong>Public Allstarr address</strong><small>HTTP is allowed for private or local addresses. Public addresses need HTTPS.</small></div><input type="url" aria-label="Public Allstarr address" bind:value={publicUrl} disabled={busy} required /></label>
+        <div class="settings-row"><div><p class="redirect-uri" aria-label="Redirect URI">Redirect URI: <span bind:this={redirectText}>{redirectUri || "Enter the Public Allstarr address above."}</span></p></div><Button variant="secondary" aria-label="Copy redirect URI" disabled={!redirectUri} onpointerdown={event => event.preventDefault()} onclick={() => void copyRedirectUri()}><Copy size={16} aria-hidden="true" />Copy</Button></div>
         <label class="settings-row"><div><strong>Sign-in button name</strong></div><input aria-label="Sign-in button name" bind:value={displayName} disabled={busy} /></label>
         <label class="settings-row"><div><strong>Client secret</strong><small>{oidc?.hasClientSecret ? "A secret is saved. Leave blank to keep it for the same issuer and client." : "No secret is saved."}</small></div><input type="password" aria-label="Client secret" autocomplete="new-password" bind:value={secret} disabled={busy || removeSecret} /></label>
         {#if oidc?.hasClientSecret}<label class="settings-row"><div><strong>Remove saved client secret</strong></div><span class="settings-toggle"><Switch aria-label="Remove saved client secret" bind:checked={removeSecret} disabled={busy} /></span></label>{/if}
@@ -124,6 +147,7 @@
 <style>
   .access-form { min-width: 0; }
   .restart-note { color: var(--on-warning-container); }
+  .redirect-uri { margin: 0; color: var(--color-ink-muted); font-size: var(--text-sm); overflow-wrap: anywhere; }
   .connection-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: end; gap: var(--space-2); }
   @media (max-width: 650px) { .connection-actions { justify-content: start; } }
 </style>

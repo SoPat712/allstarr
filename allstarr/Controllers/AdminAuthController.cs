@@ -85,7 +85,7 @@ public sealed class AdminAuthController : ControllerBase
     {
         if (request.LinkOidc)
         {
-            if (!Request.IsHttps) return BadRequest(new { error = "SSO linking requires HTTPS." });
+            if (_oidcOptions?.IsRequestAllowed(Request) != true) return BadRequest(new { error = "SSO linking requires HTTPS unless the public address uses private/local HTTP on the admin port." });
             if (_oidcOptions?.Enabled != true || _oidcLinks == null || _antiforgery == null)
                 return BadRequest(new { error = "SSO is not enabled." });
             if (!await _antiforgery.IsRequestValidAsync(HttpContext))

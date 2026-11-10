@@ -38,7 +38,7 @@ public sealed class AdminOidcController(
     public async Task<IActionResult> Login()
     {
         if (!options.Enabled) return NotFound();
-        if (!Request.IsHttps) return BadRequest(new { error = "SSO requires HTTPS. Check the proxy's trusted forwarded-protocol configuration." });
+        if (!options.IsRequestAllowed(Request)) return BadRequest(new { error = "SSO requires HTTPS unless the public address uses private/local HTTP on the admin port." });
         await HttpContext.SignOutAsync(AdminOidcOptions.PendingScheme);
         return Challenge(new AuthenticationProperties
         {
@@ -51,7 +51,7 @@ public sealed class AdminOidcController(
     public async Task<IActionResult> Complete(CancellationToken cancellationToken)
     {
         if (!options.Enabled) return NotFound();
-        if (!Request.IsHttps) return BadRequest(new { error = "SSO requires HTTPS." });
+        if (!options.IsRequestAllowed(Request)) return BadRequest(new { error = "SSO requires HTTPS unless the public address uses private/local HTTP on the admin port." });
         var pending = await HttpContext.AuthenticateAsync(AdminOidcOptions.PendingScheme);
         var key = pending.Principal == null ? null : AdminOidcLinks.IdentityKey(pending.Principal, options.ClientId);
         if (key == null) return Redirect(options.PublicUrl + "/?oidc=failed");

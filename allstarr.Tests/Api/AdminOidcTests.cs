@@ -37,9 +37,14 @@ public sealed class AdminOidcTests
 
     [Theory]
     [InlineData("http://idp.test", "https://admin.test/allstarr")]
+    [InlineData("https://idp.test", "http://admin.test/allstarr")]
+    [InlineData("http://user@identity.lan", "http://localhost/allstarr")]
+    [InlineData("http://identity.lan?query=value", "http://localhost/allstarr")]
+    [InlineData("http://identity.lan#fragment", "http://localhost/allstarr")]
     [InlineData("https://idp.test", "https://admin.test/wrong")]
     [InlineData("https://idp.test", "https://admin.test/allstarr?redirect=elsewhere")]
     [InlineData("https://idp.test", "https://user@admin.test/allstarr")]
+    [InlineData("http://identity.lan", "http://localhost/allstarr#fragment")]
     public void InvalidConfigurationFailsClosed(string authority, string publicUrl)
     {
         var options = new AdminOidcOptions
@@ -70,16 +75,20 @@ public sealed class AdminOidcTests
     }
 
     [Theory]
-    [InlineData("", "none")]
-    [InlineData("/allstarr", "none")]
-    [InlineData("/allstarr", "signature")]
-    [InlineData("/allstarr", "issuer")]
-    [InlineData("/allstarr", "audience")]
-    [InlineData("/allstarr", "nonce")]
-    [InlineData("/allstarr", "state")]
-    [InlineData("/allstarr", "cookie")]
-    public async Task AuthorizationCodeFlowVerifiesTokenAndPreservesPrefix(string prefix, string failure)
+    [InlineData("", "none", false)]
+    [InlineData("/allstarr", "none", false)]
+    [InlineData("/allstarr", "signature", false)]
+    [InlineData("/allstarr", "issuer", false)]
+    [InlineData("/allstarr", "audience", false)]
+    [InlineData("/allstarr", "nonce", false)]
+    [InlineData("/allstarr", "state", false)]
+    [InlineData("/allstarr", "cookie", false)]
+    [InlineData("", "none", true)]
+    [InlineData("/allstarr", "none", true)]
+    public async Task AuthorizationCodeFlowVerifiesTokenAndPreservesPrefix(string prefix, string failure, bool privateHttp)
     {
+        var authority = privateHttp ? "http://identity.lan" : "https://idp.test";
+        var publicUrl = (privateHttp ? "http://192.168.1.116:5275" : "https://admin.test") + prefix;
         using var signingRsa = RSA.Create(2048);
         using var wrongRsa = RSA.Create(2048);
         var key = new RsaSecurityKey(signingRsa) { KeyId = "fixture" };
@@ -87,7 +96,7 @@ public sealed class AdminOidcTests
         string? nonce = null;
         var backchannel = new TokenHandler(() => new JsonWebTokenHandler().CreateToken(new SecurityTokenDescriptor
         {
-            Issuer = failure == "issuer" ? "https://wrong-issuer.test" : "https://idp.test",
+            Issuer = failure == "issuer" ? "https://wrong-issuer.test" : authority,
             Audience = failure == "audience" ? "other-application" : "allstarr-test",
             Expires = DateTime.UtcNow.AddMinutes(5),
             IssuedAt = DateTime.UtcNow,
@@ -104,8 +113,8 @@ public sealed class AdminOidcTests
         {
             ["Admin:BasePath"] = prefix,
             ["Admin:Oidc:Enabled"] = "true",
-            ["Admin:Oidc:Authority"] = "https://idp.test",
-            ["Admin:Oidc:PublicUrl"] = "https://admin.test" + prefix,
+            ["Admin:Oidc:Authority"] = authority,
+            ["Admin:Oidc:PublicUrl"] = publicUrl,
             ["Admin:Oidc:ClientId"] = "allstarr-test",
             ["Admin:Oidc:ClientSecret"] = "fixture-secret"
         }).Build();
@@ -118,9 +127,9 @@ public sealed class AdminOidcTests
             {
                 options.Configuration = new OpenIdConnectConfiguration
                 {
-                    Issuer = "https://idp.test",
-                    AuthorizationEndpoint = "https://idp.test/authorize",
-                    TokenEndpoint = "https://idp.test/token"
+                    Issuer = authority,
+                    AuthorizationEndpoint = authority + "/authorize",
+                    TokenEndpoint = authority + "/token"
                 };
                 options.Configuration.SigningKeys.Add(key);
                 options.Backchannel = new HttpClient(backchannel);
@@ -153,7 +162,7 @@ public sealed class AdminOidcTests
             });
         })).StartAsync();
         using var client = host.GetTestClient();
-        client.BaseAddress = new Uri("https://untrusted-host.test");
+        client.BaseAddress = new Uri(privateHttp ? "http://untrusted-host.test" : "https://untrusted-host.test");
         using var nativeRequest = new HttpRequestMessage(HttpMethod.Get, AdminOidcOptions.CallbackPath + "?code=ignored&state=ignored");
         nativeRequest.Headers.Add("X-Test-Native-Port", "true");
         using var nativeResponse = await client.SendAsync(nativeRequest);
@@ -165,10 +174,15 @@ public sealed class AdminOidcTests
         var parameters = QueryHelpers.ParseQuery(challenge.Headers.Location!.Query);
         Assert.Equal("code", parameters["response_type"]);
         Assert.Equal("S256", parameters["code_challenge_method"]);
-        Assert.Equal("https://admin.test" + prefix + AdminOidcOptions.CallbackPath, parameters["redirect_uri"]);
+        Assert.Equal(publicUrl + AdminOidcOptions.CallbackPath, parameters["redirect_uri"]);
         nonce = parameters["nonce"];
         var cookies = challenge.Headers.GetValues("Set-Cookie").ToArray();
         Assert.All(cookies, cookie => Assert.Contains("path=" + prefix + AdminOidcOptions.CallbackPath, cookie));
+        Assert.All(cookies, cookie =>
+        {
+            Assert.Equal(!privateHttp, cookie.Contains("; secure", StringComparison.Ordinal));
+            Assert.Contains(privateHttp ? "samesite=lax" : "samesite=none", cookie);
+        });
         using var callback = new HttpRequestMessage(HttpMethod.Get,
             QueryHelpers.AddQueryString(prefix + AdminOidcOptions.CallbackPath, new Dictionary<string, string?>
             {
@@ -187,7 +201,8 @@ public sealed class AdminOidcTests
         }
         Assert.Equal(prefix + "/complete", response.Headers.Location!.ToString());
         var pendingCookie = Assert.Single(response.Headers.GetValues("Set-Cookie"), cookie => cookie.StartsWith("allstarr_oidc_pending="));
-        Assert.Contains("secure", pendingCookie);
+        Assert.Equal(!privateHttp, pendingCookie.Contains("; secure", StringComparison.Ordinal));
+        Assert.Contains("samesite=lax", pendingCookie);
         Assert.Contains("httponly", pendingCookie);
         using var complete = new HttpRequestMessage(HttpMethod.Get, prefix + "/complete");
         complete.Headers.Add("Cookie", pendingCookie.Split(';')[0]);
@@ -198,7 +213,7 @@ public sealed class AdminOidcTests
         Assert.Equal(0, result.RootElement.GetProperty("tokens").GetInt32());
         Assert.InRange(result.RootElement.GetProperty("expires").GetDateTimeOffset(), DateTimeOffset.UtcNow, DateTimeOffset.UtcNow.AddMinutes(5));
         Assert.Contains("code_verifier=", backchannel.RequestBody);
-        Assert.Equal("https://admin.test" + prefix + AdminOidcOptions.CallbackPath, QueryHelpers.ParseQuery(backchannel.RequestBody)["redirect_uri"]);
+        Assert.Equal(publicUrl + AdminOidcOptions.CallbackPath, QueryHelpers.ParseQuery(backchannel.RequestBody)["redirect_uri"]);
     }
 
     private sealed class TokenHandler(Func<string> token) : HttpMessageHandler

@@ -33,9 +33,8 @@ internal static class OperatorSettingPolicy
     {
         allstarr.Core.Storage.DurableBackupService.ValidatePolicyString(key, value);
         if (key is "Admin:Oidc:Authority" or "Admin:Oidc:PublicUrl" && value.Length > 0 &&
-            (!Uri.TryCreate(value, UriKind.Absolute, out var oidcUri) || oidcUri.Scheme != "https" ||
-            oidcUri.UserInfo.Length > 0 || oidcUri.Query.Length > 0 || oidcUri.Fragment.Length > 0))
-            throw new ArgumentException("Single sign-on URLs must use HTTPS without credentials, query or fragment.");
+            !allstarr.Services.Admin.AdminOidcOptions.IsAllowedUrl(value, out _))
+            throw new ArgumentException("Single sign-on URLs need HTTPS for public addresses. HTTP is allowed for private/local addresses. Omit credentials, query and fragment.");
         if (key.StartsWith("Admin:Oidc:", StringComparison.Ordinal) && value.Any(char.IsControl))
             throw new ArgumentException("Single sign-on settings cannot contain control characters.");
         if (key == "ChallengeSolver:Url" && value.Length > 0 &&

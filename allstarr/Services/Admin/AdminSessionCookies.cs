@@ -12,7 +12,7 @@ internal static class AdminSessionCookies
         {
             HttpOnly = true,
             Secure = context.Request.IsHttps,
-            SameSite = SameSiteMode.Strict,
+            SameSite = context.RequestServices?.GetService<AdminOidcOptions>()?.AllowsHttp == true ? SameSiteMode.Lax : SameSiteMode.Strict,
             Path = Path(context.Request),
             IsEssential = true,
             Expires = expiresAtUtc

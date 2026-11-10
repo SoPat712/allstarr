@@ -73,7 +73,7 @@ public sealed class AdminOidcSettingsService(IDbContextFactory<AllstarrDbContext
             ClientSecret = !string.IsNullOrEmpty(request.ClientSecret) || reference.HasValue ? "configured" : ""
         };
         try { options.Validate(new AdminBasePath(configuration).Value); }
-        catch (InvalidOperationException) { throw new ArgumentException("Enable single sign-on only with HTTPS identity and public URLs, the configured admin path, a client ID and a client secret. Changing identity service or client ID requires a new secret."); }
+        catch (InvalidOperationException) { throw new ArgumentException("Single sign-on needs HTTPS for public addresses; HTTP is allowed for private/local addresses. Use the configured admin path, a client ID and a client secret. Changing identity service or client ID requires a new secret."); }
         if (!string.IsNullOrEmpty(request.ClientSecret))
         {
             var bytes = Encoding.UTF8.GetBytes(request.ClientSecret);

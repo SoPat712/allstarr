@@ -140,6 +140,7 @@ public sealed class AdminOidcSettingsServiceTests : IAsyncLifetime
 
     [Theory]
     [InlineData("http://identity.example.test", "https://admin.example.test/allstarr")]
+    [InlineData("https://identity.example.test", "http://admin.example.test/allstarr")]
     [InlineData("https://identity.example.test", "https://admin.example.test/wrong")]
     [InlineData("https://identity.example.test", "https://admin.example.test/allstarr?code=private-fixture")]
     public async Task InvalidPolicyRollsBackEveryCredentialAndSetting(string authority, string publicUrl)
@@ -153,6 +154,25 @@ public sealed class AdminOidcSettingsServiceTests : IAsyncLifetime
         Assert.Empty(await db.SecretReferences.ToListAsync());
         Assert.Empty(await db.SecretVersions.ToListAsync());
         Assert.Empty(await db.AuditEvents.ToListAsync());
+    }
+
+    [Theory]
+    [InlineData("http://identity.home.arpa", "http://192.168.1.116:5275/allstarr/")]
+    [InlineData("https://identity.example.test", "http://localhost:5275/allstarr")]
+    [InlineData("http://identity.internal", "https://admin.example.test/allstarr")]
+    public async Task SaveAndStartupAcceptPrivateHttpAddresses(string authority, string publicUrl)
+    {
+        var request = await Request();
+        request.Authority = authority;
+        request.PublicUrl = publicUrl;
+        await service.SaveAsync(Actor, request, default);
+        var snapshot = await service.GetAsync(Actor, default);
+        Assert.Equal(authority, snapshot.Authority);
+        Assert.Equal(publicUrl.TrimEnd('/'), snapshot.PublicUrl);
+        var restarted = new ConfigurationManager { ["Storage:DataDirectory"] = database.StorageOptions.DataDirectory, ["Admin:BasePath"] = "/allstarr" };
+        await StartupConfiguration.PrepareAsync(restarted, Mock.Of<IHostEnvironment>());
+        Assert.Equal("true", restarted["Admin:Oidc:Enabled"]);
+        Assert.Equal(publicUrl.TrimEnd('/'), restarted["Admin:Oidc:PublicUrl"]);
     }
 
     [Fact]
