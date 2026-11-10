@@ -15,7 +15,7 @@ namespace allstarr.Core.Music;
 /// </summary>
 public sealed partial class MusicMixService(IProtocolProviderGateway providers, LastFmSimilarTracks? lastFm = null,
     ListenBrainzSimilarTracks? listenBrainz = null, MusicSearchService? musicSearch = null,
-    IEffectiveProviderPolicyResolver? effectivePolicies = null, TimeProvider? timeProvider = null, TasteService? taste = null, IApplicationCache? applicationCache = null)
+    IEffectiveProviderPolicyResolver? effectivePolicies = null, TimeProvider? timeProvider = null, TasteService? taste = null)
 {
     private const int SuggestionLookups = 10;
     private readonly ConcurrentDictionary<string, CachedItemMix> itemMixCache = new();
@@ -185,17 +185,6 @@ public sealed partial class MusicMixService(IProtocolProviderGateway providers, 
         });
         if (itemMixCache.TryGetValue(key, out var cached) && cached.ExpiresAt > clock.GetUtcNow())
             return Copy(cached.Songs);
-        var persistedKey = CacheKeyBuilder.BuildProtocolMetadataKey("allstarr", key, "item-mix", publicId);
-        if (applicationCache != null && await applicationCache.GetAsync<StoredItemMix>(persistedKey) is { } retained &&
-            retained.Songs.Length == retained.Durations.Length && retained.Songs.Length == retained.Routes.Length)
-        {
-            for (var index = 0; index < retained.Songs.Length; index++)
-            {
-                retained.Songs[index].PreciseDuration = retained.Durations[index];
-                retained.Songs[index].SearchRoutes = retained.Routes[index].ToList();
-            }
-            return Copy(retained.Songs);
-        }
         var pending = itemMixLoads.GetOrAdd(key, _ => new Lazy<Task<IReadOnlyList<Song>>>(LoadAsync));
         return Copy(await pending.Value.WaitAsync(context.CancellationToken));
 
@@ -230,9 +219,6 @@ public sealed partial class MusicMixService(IProtocolProviderGateway providers, 
                 if (songs.Count > 0 || !timeout.IsCancellationRequested)
                 {
                     itemMixCache[key] = new(clock.GetUtcNow().AddHours(6), songs);
-                    if (applicationCache != null)
-                        await applicationCache.SetAsync(persistedKey, new StoredItemMix(songs.ToArray(),
-                            songs.Select(song => song.PreciseDuration).ToArray(), songs.Select(song => song.SearchRoutes.ToArray()).ToArray()), TimeSpan.FromHours(6));
                     if (itemMixCache.Count > 256)
                         foreach (var oldest in itemMixCache.OrderBy(item => item.Value.ExpiresAt).Take(itemMixCache.Count - 256))
                             itemMixCache.TryRemove(oldest.Key, out _);
@@ -246,7 +232,6 @@ public sealed partial class MusicMixService(IProtocolProviderGateway providers, 
             songs.Select(song => song.WithTasteReason(song.TasteReason)).ToArray();
     }
 
-    private sealed record StoredItemMix(Song[] Songs, TimeSpan?[] Durations, allstarr.Core.Capabilities.ProviderExternalResourceId[][] Routes);
     private sealed record CachedItemMix(DateTimeOffset ExpiresAt, IReadOnlyList<Song> Songs);
 
     // Keep the same seed stable across retries and process restarts.

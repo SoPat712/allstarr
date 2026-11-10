@@ -14,7 +14,7 @@ namespace allstarr.Core.ClientApi;
 
 // Albums by the artists a source relates to an album's artist, from the library when it has one of theirs.
 public sealed class SimilarAlbumsReader(IProtocolProviderGateway providers, SavedLibraryReader saved,
-    JellyfinProxyService jellyfin, IProviderRegistry registry, LibraryProviderResolver libraryProvider, LibraryArtistIndex? artistIndex = null, TimeProvider? timeProvider = null, IApplicationCache? applicationCache = null)
+    JellyfinProxyService jellyfin, IProviderRegistry registry, LibraryProviderResolver libraryProvider, LibraryArtistIndex? artistIndex = null, TimeProvider? timeProvider = null)
 {
     private const int RelatedArtists = 24;
     private const string RelatedArtistsSource = "deezer";
@@ -33,10 +33,6 @@ public sealed class SimilarAlbumsReader(IProtocolProviderGateway providers, Save
         var metadata = providers.GetProviderOrder(ProviderCapabilityKind.Metadata) ?? [];
         var key = CacheKey(owner, execution.BackendInstanceId, itemId, limit, execution.Policy, metadata);
         if (Recent.TryGetValue(key, out var cached) && DateTimeOffset.UtcNow - cached.At < FreshFor) return cached.Value;
-
-        var persistedKey = CacheKeyBuilder.BuildProtocolMetadataKey("allstarr", key, "similar-albums", itemId);
-        if (applicationCache != null && await applicationCache.GetAsync<ClientSimilarAlbums>(persistedKey) is { } retained)
-            return retained;
 
         var clock = timeProvider ?? TimeProvider.System;
         using var timeout = new CancellationTokenSource(TimeSpan.FromMilliseconds(2700), clock);
@@ -77,7 +73,6 @@ public sealed class SimilarAlbumsReader(IProtocolProviderGateway providers, Save
         var result = new ClientSimilarAlbums(itemId, basedOn, albums);
         Recent[key] = (DateTimeOffset.UtcNow, result);
         TrimCache();
-        if (applicationCache != null) await applicationCache.SetAsync(persistedKey, result, FreshFor);
         return result;
     }
 

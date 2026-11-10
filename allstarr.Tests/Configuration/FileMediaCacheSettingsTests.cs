@@ -12,7 +12,6 @@ public sealed class FileMediaCacheSettingsTests
             new ConfigurationBuilder().AddInMemoryCollection().Build());
 
         Assert.Equal("/app/cache/media", options.RootPath);
-        Assert.Equal("/app/data/cache/metadata", options.MetadataRootPath);
         Assert.Equal(512L * 1024 * 1024, options.MaximumBytes);
         Assert.Equal(16 * 1024 * 1024, options.MaximumEntryBytes);
         Assert.Equal(10_000, options.MaximumCleanupFiles);
@@ -25,7 +24,6 @@ public sealed class FileMediaCacheSettingsTests
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
                 ["Cache:MediaDirectory"] = "/cache/artwork",
-                ["Storage:DataDirectory"] = "/data/custom",
                 ["Cache:MediaMaximumMegabytes"] = "1024",
                 ["Cache:MediaMaximumEntryMegabytes"] = "32",
                 ["Cache:MediaCleanupFileLimit"] = "25000"
@@ -35,7 +33,6 @@ public sealed class FileMediaCacheSettingsTests
         var options = FileMediaCacheOptions.FromConfiguration(configuration);
 
         Assert.Equal("/cache/artwork", options.RootPath);
-        Assert.Equal("/data/custom/cache/metadata", options.MetadataRootPath);
         Assert.Equal(1024L * 1024 * 1024, options.MaximumBytes);
         Assert.Equal(32 * 1024 * 1024, options.MaximumEntryBytes);
         Assert.Equal(25_000, options.MaximumCleanupFiles);

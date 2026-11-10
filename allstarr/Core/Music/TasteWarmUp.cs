@@ -5,7 +5,6 @@ using allstarr.Core.Operations;
 using allstarr.Core.Playback;
 using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
-using allstarr.Services.Common;
 using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Core.Music;
@@ -55,9 +54,6 @@ public sealed class TasteWarmUp(TasteService taste, IDbContextFactory<AllstarrDb
         }
         catch (Exception error) when (!token.IsCancellationRequested)
         { logger.LogDebug("Listener cache warm-up skipped a pass ({ErrorType})", error.GetType().Name); return; }
-        using (var diskScope = scopes.CreateScope())
-            if (diskScope.ServiceProvider.GetService<HybridApplicationCache>() is { } cache)
-                await cache.WarmRecentAsync(users.Select(user => user.Id).ToHashSet(), token);
         foreach (var user in users)
         {
             var execution = new ProtocolExecutionContext(Enum.Parse<ProtocolKind>(user.BackendType, true), user.BackendInstanceId,

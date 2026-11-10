@@ -1,9 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using System.Text.Json.Serialization;
 using allstarr.Core.Operations;
-using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
 using Microsoft.EntityFrameworkCore;
 
@@ -14,8 +12,7 @@ public sealed record FileMediaCacheOptions(
     long MaximumBytes = 512L * 1024 * 1024,
     int MaximumEntryBytes = 16 * 1024 * 1024,
     int MaximumCleanupFiles = 10_000,
-    int CleanupIntervalMinutes = 15,
-    string? MetadataRootPath = null)
+    int CleanupIntervalMinutes = 15)
 {
     public static FileMediaCacheOptions FromConfiguration(IConfiguration configuration)
     {
@@ -42,8 +39,7 @@ public sealed record FileMediaCacheOptions(
             maximumBytes,
             maximumEntryBytes,
             cleanupLimit,
-            cleanupIntervalMinutes,
-            Path.Combine(configuration["Storage:DataDirectory"] ?? "/app/data", "cache", "metadata"));
+            cleanupIntervalMinutes);
     }
 }
 
@@ -72,7 +68,7 @@ public sealed record UnreferencedMediaPayloadPreview(
 /// Bounded disk cache for artwork and other reconstructable media payloads.
 /// Cache keys are hashed before becoming paths and original keys live only in sidecars.
 /// </summary>
-public sealed partial class FileMediaApplicationCache : IApplicationCache, IDisposable
+public sealed class FileMediaApplicationCache : IApplicationCache, IDisposable
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private readonly FileMediaCacheOptions _options;
@@ -171,24 +167,18 @@ public sealed partial class FileMediaApplicationCache : IApplicationCache, IDisp
         }
     }
 
-    public async Task<string?> GetStringAsync(string key) => (await ReadEntryAsync(key))?.Value;
-
-    internal async Task<(string Value, TimeSpan Remaining)?> ReadEntryAsync(string key, bool lowPriority = false)
+    public async Task<string?> GetStringAsync(string key)
     {
         if (!IsEnabled || !ApplicationCachePayloadPolicy.IsValidKey(key) ||
             !ApplicationCachePolicyRegistry.TryClassify(key, out _) ||
-            (ApplicationCachePayloadPolicy.IsMemoryEligible(key) && !ApplicationCachePayloadPolicy.IsRestartSafe(key)) ||
+            ApplicationCachePayloadPolicy.IsMemoryEligible(key) ||
             !ApplicationCachePolicyRegistry.IsEnabled(key, _settings))
         {
             Interlocked.Increment(ref _misses);
             return null;
         }
 
-        if (lowPriority)
-        {
-            if (!await _gate.WaitAsync(0)) return null;
-        }
-        else await _gate.WaitAsync();
+        await _gate.WaitAsync();
         try
         {
             var paths = PathsFor(key);
@@ -209,19 +199,11 @@ public sealed partial class FileMediaApplicationCache : IApplicationCache, IDisp
                 return null;
             }
 
-            if (ApplicationCachePayloadPolicy.IsRestartSafe(key) && FileLength(paths.Payload) > _options.MaximumEntryBytes + 3L) return null;
             var value = await File.ReadAllTextAsync(paths.Payload, Encoding.UTF8);
-            if (ApplicationCachePayloadPolicy.IsRestartSafe(key) &&
-                (metadata.ExpiresAt is null || metadata.PayloadHash != PayloadHash(value)))
-            {
-                DeleteFiles(paths);
-                Interlocked.Increment(ref _misses);
-                return null;
-            }
             metadata = metadata with { LastAccessAt = _clock.UtcNow };
             await WriteMetadataAsync(paths.Metadata, metadata);
             Interlocked.Increment(ref _hits);
-            return (value, (metadata.ExpiresAt ?? DateTimeOffset.MaxValue) - _clock.UtcNow);
+            return value;
         }
         catch (Exception exception)
         {
@@ -253,20 +235,16 @@ public sealed partial class FileMediaApplicationCache : IApplicationCache, IDisp
         }
     }
 
-    public Task<bool> SetStringAsync(string key, string value, TimeSpan? expiry = null) =>
-        WriteEntryAsync(key, value, expiry, null);
-
-    internal async Task<bool> WriteEntryAsync(string key, string value, TimeSpan? expiry, Guid? listenerId)
+    public async Task<bool> SetStringAsync(string key, string value, TimeSpan? expiry = null)
     {
         if (!IsEnabled || !ApplicationCachePayloadPolicy.IsValidKey(key) ||
             !ApplicationCachePolicyRegistry.TryClassify(key, out _) ||
-            (ApplicationCachePayloadPolicy.IsMemoryEligible(key) && !ApplicationCachePayloadPolicy.IsRestartSafe(key)) ||
+            ApplicationCachePayloadPolicy.IsMemoryEligible(key) ||
             !ApplicationCachePolicyRegistry.IsEnabled(key, _settings))
         {
             return false;
         }
 
-        if (ApplicationCachePayloadPolicy.IsRestartSafe(key) && !CanPersistMetadata(value)) return false;
         var payloadBytes = Encoding.UTF8.GetByteCount(value);
         if (payloadBytes > _options.MaximumEntryBytes)
         {
@@ -293,9 +271,7 @@ public sealed partial class FileMediaApplicationCache : IApplicationCache, IDisp
                     payloadBytes,
                     now.Add(effectiveExpiry),
                     now,
-                    now,
-                    ApplicationCachePayloadPolicy.IsRestartSafe(key) ? PayloadHash(value) : null,
-                    listenerId));
+                    now));
             Interlocked.Add(ref _evictions, await TrimToQuotaAsync());
             Interlocked.Increment(ref _writes);
             return true;
@@ -385,8 +361,13 @@ public sealed partial class FileMediaApplicationCache : IApplicationCache, IDisp
         await _gate.WaitAsync();
         try
         {
-            var deleted = CacheFiles("*.json").Count();
-            foreach (var root in CacheRoots.Where(Directory.Exists)) Directory.Delete(root, recursive: true);
+            if (!Directory.Exists(_options.RootPath)) return 0;
+            var deleted = Directory.EnumerateFiles(
+                    _options.RootPath,
+                    "*.json",
+                    SearchOption.AllDirectories)
+                .Count();
+            Directory.Delete(_options.RootPath, recursive: true);
             Interlocked.Add(ref _evictions, deleted);
             return deleted;
         }
@@ -470,7 +451,7 @@ public sealed partial class FileMediaApplicationCache : IApplicationCache, IDisp
         await _gate.WaitAsync(cancellationToken);
         try
         {
-            if (!CacheRoots.Any(Directory.Exists))
+            if (!Directory.Exists(_options.RootPath))
             {
                 return new FileMediaCacheMaintenancePreview(
                     0, false, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -480,7 +461,8 @@ public sealed partial class FileMediaApplicationCache : IApplicationCache, IDisp
                     _clock.UtcNow);
             }
 
-            var files = CacheFiles("*")
+            var files = Directory
+                .EnumerateFiles(_options.RootPath, "*", SearchOption.AllDirectories)
                 .OrderBy(path => path, StringComparer.Ordinal)
                 .Take(Math.Max(1, _options.MaximumCleanupFiles) + 1)
                 .ToArray();
@@ -717,13 +699,14 @@ public sealed partial class FileMediaApplicationCache : IApplicationCache, IDisp
 
     private int CleanupOrphanedFiles()
     {
-        if (!CacheRoots.Any(Directory.Exists))
+        if (!Directory.Exists(_options.RootPath))
         {
             return 0;
         }
 
         var deleted = 0;
-        var files = CacheFiles("*")
+        var files = Directory
+            .EnumerateFiles(_options.RootPath, "*", SearchOption.AllDirectories)
             .OrderBy(path => path, StringComparer.Ordinal)
             .Take(Math.Max(1, _options.MaximumCleanupFiles))
             .ToArray();
@@ -825,12 +808,12 @@ public sealed partial class FileMediaApplicationCache : IApplicationCache, IDisp
 
     private IEnumerable<MediaEntryMetadata> ReadAllMetadata()
     {
-        if (!CacheRoots.Any(Directory.Exists))
+        if (!Directory.Exists(_options.RootPath))
         {
             return Array.Empty<MediaEntryMetadata>();
         }
 
-        return CacheFiles("*.json")
+        return Directory.EnumerateFiles(_options.RootPath, "*.json", SearchOption.AllDirectories)
             .Select(path =>
             {
                 try
@@ -853,8 +836,7 @@ public sealed partial class FileMediaApplicationCache : IApplicationCache, IDisp
     {
         var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(key)))
             .ToLowerInvariant();
-        var root = ApplicationCachePayloadPolicy.IsRestartSafe(key) ? MetadataRoot : _options.RootPath;
-        var directory = Path.Combine(root, hash[..2]);
+        var directory = Path.Combine(_options.RootPath, hash[..2]);
         return new CachePaths(
             directory,
             Path.Combine(directory, $"{hash}.payload"),
@@ -923,79 +905,50 @@ public sealed partial class FileMediaApplicationCache : IApplicationCache, IDisp
         long PayloadBytes,
         DateTimeOffset? ExpiresAt,
         DateTimeOffset LastAccessAt,
-        DateTimeOffset? WrittenAt = null,
-        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? PayloadHash = null,
-        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] Guid? ListenerId = null);
+        DateTimeOffset? WrittenAt = null);
 }
 
-public sealed partial class HybridApplicationCache(
+public sealed class HybridApplicationCache(
     MemoryApplicationCache metadata,
     FileMediaApplicationCache media,
     Microsoft.Extensions.Options.IOptions<allstarr.Models.Settings.CacheSettings>? configuredSettings = null,
     ApplicationCacheActivityMetrics? activityMetrics = null,
     IDbContextFactory<AllstarrDbContext>? contextFactory = null,
     IPlatformClock? clock = null,
-    ILogger<HybridApplicationCache>? logger = null, IApplicationCacheWriteObserver? writeObserver = null,
-    IHttpContextAccessor? httpContextAccessor = null) : IApplicationCache
+    ILogger<HybridApplicationCache>? logger = null, IApplicationCacheWriteObserver? writeObserver = null) : IApplicationCache
 {
     private readonly allstarr.Models.Settings.CacheSettings _settings = configuredSettings?.Value ?? new();
     private readonly ApplicationCacheActivityMetrics _activity = activityMetrics ?? new();
     private DateTimeOffset Now => clock?.UtcNow ?? DateTimeOffset.UtcNow;
     public bool IsEnabled => metadata.IsEnabled || media.IsEnabled;
 
-    public async Task<string?> GetStringAsync(string key)
-    {
-        if (!IsCategoryEnabled(key)) return null;
-        var value = await Target(key).GetStringAsync(key);
-        if (value != null || !ApplicationCachePayloadPolicy.IsRestartSafe(key)) return value;
-        return await RefillAsync(key);
-    }
-
-    public async Task<T?> GetAsync<T>(string key) where T : class
-    {
-        var value = await GetStringAsync(key);
-        try { return value is null ? null : JsonSerializer.Deserialize<T>(value); }
-        catch (JsonException)
-        {
-            if (ApplicationCachePayloadPolicy.IsRestartSafe(key)) await DeleteAsync(key);
-            return null;
-        }
-    }
-
+    public Task<string?> GetStringAsync(string key) => IsCategoryEnabled(key)
+        ? Target(key).GetStringAsync(key) : Task.FromResult<string?>(null);
+    public Task<T?> GetAsync<T>(string key) where T : class => IsCategoryEnabled(key)
+        ? Target(key).GetAsync<T>(key) : Task.FromResult<T?>(null);
     public async Task<bool> SetStringAsync(string key, string value, TimeSpan? expiry = null)
     {
         if (!IsCategoryEnabled(key)) return false;
-        var lifetime = EffectiveExpiry(key, expiry);
-        var writtenAt = Now;
-        var saved = await Target(key).SetStringAsync(key, value, lifetime);
-        if (ApplicationCachePayloadPolicy.IsRestartSafe(key))
-        {
-            var listener = httpContextAccessor?.HttpContext?.GetProtocolExecutionContext()?.Actor?.EffectiveUserId;
-            if (!saved || !await media.WriteEntryAsync(key, value, lifetime - (Now - writtenAt), listener))
-                await media.DeleteAsync(key);
-        }
+        var saved = await Target(key).SetStringAsync(key, value, EffectiveExpiry(key, expiry));
         if (saved) NotifyWritten(key);
         return saved;
     }
-
-    public Task<bool> SetAsync<T>(string key, T value, TimeSpan? expiry = null) where T : class
+    public async Task<bool> SetAsync<T>(string key, T value, TimeSpan? expiry = null) where T : class
     {
-        try { return SetStringAsync(key, JsonSerializer.Serialize(value), expiry); }
-        catch (JsonException) { return Task.FromResult(false); }
+        if (!IsCategoryEnabled(key)) return false;
+        var saved = await Target(key).SetAsync(key, value, EffectiveExpiry(key, expiry));
+        if (saved) NotifyWritten(key);
+        return saved;
     }
     private void NotifyWritten(string key)
     {
         try { writeObserver?.Written(key); }
         catch (Exception error) { logger?.LogWarning("Cache write notification deferred ({ErrorType})", error.GetType().Name); }
     }
-    public async Task<bool> DeleteAsync(string key)
-    {
-        if (!ApplicationCachePayloadPolicy.IsValidKey(key)) return false;
-        var deleted = await Target(key).DeleteAsync(key);
-        if (ApplicationCachePayloadPolicy.IsRestartSafe(key)) deleted |= await media.DeleteAsync(key);
-        return deleted;
-    }
-    public async Task<bool> ExistsAsync(string key) => await GetStringAsync(key) is not null;
+    public Task<bool> DeleteAsync(string key) => ApplicationCachePayloadPolicy.IsValidKey(key)
+        ? Target(key).DeleteAsync(key) : Task.FromResult(false);
+    public Task<bool> ExistsAsync(string key) => IsCategoryEnabled(key)
+        ? Target(key).ExistsAsync(key) : Task.FromResult(false);
     public async Task<int> DeleteByPatternAsync(string pattern) =>
         await metadata.DeleteByPatternAsync(pattern) + await media.DeleteByPatternAsync(pattern);
 
@@ -1014,19 +967,12 @@ public sealed partial class HybridApplicationCache(
         };
     }
 
-    public async Task<int> PurgeMetadataAsync() =>
-        await metadata.PurgeAllAsync() + await media.DeleteByPatternAsync("protocol:metadata:*") +
-        await media.DeleteByPatternAsync("search:v3:*") + await media.DeleteByPatternAsync("search:v4:*");
-    public async Task<int> PurgeMediaAsync()
-    {
-        var deleted = 0;
-        foreach (var policy in ApplicationCachePolicyRegistry.All(_settings).Where(item => item.StorageTier == ApplicationCacheStorageTier.Media))
-            deleted += await media.DeleteCategoryAsync(policy.Category);
-        return deleted;
-    }
-    public async Task<int> PurgeAllAsync() => await metadata.PurgeAllAsync() + await media.PurgeAllAsync();
-    public async Task<int> PurgeCategoryAsync(ApplicationCacheCategory category) =>
-        await metadata.DeleteCategoryAsync(category) + await media.DeleteCategoryAsync(category);
+    public Task<int> PurgeMetadataAsync() => metadata.PurgeAllAsync();
+    public Task<int> PurgeMediaAsync() => media.PurgeAllAsync();
+    public async Task<int> PurgeAllAsync() => await PurgeMetadataAsync() + await PurgeMediaAsync();
+    public Task<int> PurgeCategoryAsync(ApplicationCacheCategory category) =>
+        ApplicationCachePolicyRegistry.Resolve(category, _settings).StorageTier == ApplicationCacheStorageTier.Metadata
+            ? metadata.DeleteCategoryAsync(category) : media.DeleteCategoryAsync(category);
 
     public async Task<ApplicationCacheMaintenancePreview> PreviewMaintenanceAsync(CancellationToken cancellationToken = default)
     {
@@ -1046,7 +992,8 @@ public sealed partial class HybridApplicationCache(
         var candidates = await MaintenanceCandidatesAsync(cancellationToken);
         var deleted = 0;
         foreach (var entry in candidates.Entries)
-            if (await DeleteAsync(entry.Key)) deleted++;
+            if (await (entry.Tier == ApplicationCacheStorageTier.Metadata ? (IApplicationCache)metadata : media)
+                .DeleteAsync(entry.Key)) deleted++;
         deleted += await media.CleanupAsync(cancellationToken);
         var references = await media.GetArtworkPayloadReferencesAsync(cancellationToken);
         if (!references.ScanLimitReached)
