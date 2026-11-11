@@ -198,7 +198,7 @@ public sealed partial class ProtocolRouteFixtureTests
                 new Artist { Id = "ext-artist-baby", Name = "BABY juice WRLD [A]" },
                 new Artist { Id = "ext-artist-999", Name = "Juice WRLD 999" },
                 new Artist { Id = "ext-artist-type", Name = "Juice WRLD Type Beat" },
-                new Artist { Id = "ext-artist-ai", Name = "Ai Juice Wrld" }
+                new Artist { Id = "ext-artist-dj", Name = "DJ Juice Wrld" }
             ],
             Albums =
             [
