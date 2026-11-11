@@ -107,17 +107,17 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
 
     [Theory]
     [InlineData(HttpStatusCode.Unauthorized)]
-    public async Task OpenStream_DoesNotBypassAuthenticationFailures(HttpStatusCode status)
+    public async Task OpenStream_AuthenticationFailureUsesTheNextEligibleSource(HttpStatusCode status)
     {
         var content = new ObservedContent([1]);
         var first = Streaming("deezer", (_, _) => Task.FromResult(new HttpResponseMessage(status) { Content = content }));
         var second = Streaming("qobuz", (_, _) => Task.FromResult(AudioResponse()));
         var (gateway, _) = FailoverGateway(first, second);
-        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
-            gateway.OpenStreamAsync(Context(), "deezer", "source-track", ProviderAudioQuality.Any, null));
+        using var response = (await gateway.OpenStreamAsync(Context(), "deezer", "source-track", ProviderAudioQuality.Any, null))!.Response;
+        Assert.Equal("qobuz", Assert.Single(response.Headers.GetValues("X-Allstarr-Provider")));
         Assert.True(content.Disposed);
         second.Verify(item => item.GetStreamLeaseAsync(It.IsAny<ProviderExecutionContext>(),
-            It.IsAny<ProviderStreamLeaseRequest>()), Times.Never);
+            It.IsAny<ProviderStreamLeaseRequest>()), Times.Once);
     }
 
     [Fact]
@@ -655,7 +655,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
                 It.IsAny<int>(), It.IsAny<ProviderError>()))
             .Returns((ProviderRoutePlan<IProviderStreamingCapability> plan, int index, ProviderError error) =>
                 new ProviderFallbackDecision<IProviderStreamingCapability>(
-                    !error.IsTrackScoped && error.Kind is (ProviderErrorKind.Unauthorized or ProviderErrorKind.Forbidden) || index + 1 == plan.Candidates.Count
+                    index + 1 == plan.Candidates.Count
                         ? ProviderFallbackDisposition.StopFailure : ProviderFallbackDisposition.Advance,
                     error.Code, index + 1 < plan.Candidates.Count ? plan.Candidates[index + 1] : null));
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>

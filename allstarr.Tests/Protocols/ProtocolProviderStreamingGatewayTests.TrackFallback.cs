@@ -105,7 +105,8 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         internal ProviderAudioQuality? OpenedQuality { get; private set; }
         private readonly ProtocolProviderGateway gateway;
 
-        internal TrackFallbackFixture(bool isrc = true, string? restriction = null, string? quality = null, bool stalled = false)
+        internal TrackFallbackFixture(bool isrc = true, string? restriction = null, string? quality = null, bool stalled = false,
+            IProviderOutcomeObserver? outcomes = null, bool startPreference = true)
         {
             var first = Capability("deezer", ProviderOutcome<ProviderStreamLease>.Failure(
                 ProviderError.TrackUnavailable(ProviderErrorKind.Forbidden)));
@@ -174,7 +175,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
                 });
             var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["Providers:StreamingOrder"] = "deezer,qobuz", ["Cache:SearchBudgetMilliseconds"] = stalled ? "100" : "3500" }).Build();
             gateway = new(router.Object, registry, new HttpClientFactory(), configuration, identities: identities.Object,
-                effectivePolicies: policies.Object, audioVerifier: FixtureAudioVerifier.Instance);
+                effectivePolicies: startPreference ? policies.Object : null, outcomes: outcomes, audioVerifier: FixtureAudioVerifier.Instance);
         }
 
         internal Task<ProtocolProviderStream?> Open() => gateway.OpenStreamAsync(ClientContext(), "deezer", "source", ProviderAudioQuality.Any, null);

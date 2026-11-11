@@ -72,6 +72,10 @@ public sealed partial class ProtocolProviderGateway
             finally { checks.Release(); }
         }));
         var facts = gathered.OfType<PlaybackStartCandidate>().ToList();
+        if (facts.Count == 0 && await resolveAvailability() is { } refreshedSources)
+            return await OpenWithStartPreferenceAsync(protocol, refreshedSources, requestedTrack, quality, policy,
+                startDeadline, transferDeadline, requestedRange, startDeadlineCancellation, streamCancellation,
+                opened, resolveAvailability, attempted, originalFailure: originalFailure);
         Task<PlaybackStartCandidate?> StartFactsAsync(ProviderRouteCandidate<IProviderStreamingCapability> candidate, int index) =>
             ReadPlaybackStartCandidateAsync(protocol, candidate, requestedTrack, quality, index);
         var failing = eligible.Select(candidate => HasFailingPlaybackHealth(protocol, candidate)).ToArray();
@@ -140,7 +144,7 @@ public sealed partial class ProtocolProviderGateway
         return null;
 
         static bool Ready(PlaybackStartResult item) =>
-            item.Stream != null || item.Error?.Code == LocalCapacityException.Code || item.Error?.IsTrackScoped != true && item.Error?.Kind is (ProviderErrorKind.Unauthorized or ProviderErrorKind.Forbidden);
+            item.Stream != null || item.Error?.Code == LocalCapacityException.Code;
 
         // A song known at only one source waits for that source alone. When another source is found while it is still
         // starting, that source races it the way a second known source would.

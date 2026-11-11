@@ -257,6 +257,23 @@ public sealed partial class ProviderRouterTests
         Assert.Null(fallback.NextCandidate);
     }
 
+    [Theory]
+    [InlineData(ProviderErrorKind.Unauthorized)]
+    [InlineData(ProviderErrorKind.Forbidden)]
+    [InlineData(ProviderErrorKind.AccountNeedsConfiguration)]
+    [InlineData(ProviderErrorKind.AccountNeedsReauthentication)]
+    public async Task StreamingFallback_AccountFailureAdvancesAndPreservesExhaustion(ProviderErrorKind kind)
+    {
+        var router = Router([Streaming("deezer"), Streaming("spotiflac-deezer")]);
+        var plan = await router.PlanAsync<IProviderStreamingCapability>(Request(ProviderCapabilityKind.Streaming,
+            ["deezer", "spotiflac-deezer"],
+            states: [new ProviderRouteProviderState("deezer", availableQualities: [ProviderAudioQuality.Lossless]),
+                new ProviderRouteProviderState("spotiflac-deezer", availableQualities: [ProviderAudioQuality.Lossless])]));
+        Assert.Equal(2, plan.Candidates.Count);
+        Assert.Equal(ProviderFallbackDisposition.Advance, router.EvaluateFallback(plan, 0, new(kind)).Disposition);
+        Assert.Equal(ProviderFallbackDisposition.Exhausted, router.EvaluateFallback(plan, 1, new(kind)).Disposition);
+    }
+
     [Fact]
     public async Task Plan_RejectsCrossProviderFallbackWithoutVerifiedExactIdentity()
     {

@@ -306,12 +306,14 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
     }
 
     [Fact]
-    public async Task RecordingAvailability_ForbiddenVerifiedRouteStopsFallback()
+    public async Task RecordingAvailability_ForbiddenVerifiedRouteResolvesAnotherSource()
     {
         var fixture = new AvailabilityFixture("qobuz,pandora", verifiedFirst: true,
             firstError: ProviderErrorKind.Forbidden);
-        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => fixture.Open());
-        fixture.VerifyLookups(0);
+        var stream = await fixture.Open();
+        using var response = Assert.IsType<ProtocolProviderStream>(stream).Response;
+        Assert.Equal("pandora", stream.ServingProviderId);
+        fixture.VerifyLookups(1);
     }
 
     [Fact]

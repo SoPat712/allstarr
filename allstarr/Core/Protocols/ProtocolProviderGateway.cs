@@ -1519,7 +1519,7 @@ public sealed partial class ProtocolProviderGateway(
         }
         async Task<bool> ResolveAvailabilityAsync(bool afterFailure = false)
         {
-            if (protocol.IsOriginalDownload || protocol.IsReadOnly || protocol.IsPreparation || availabilityAttempted ||
+            if (protocol.IsOriginalDownload || protocol.IsPreparation || availabilityAttempted ||
                 !afterFailure && !hasPlaybackIdentity && providerId != "allstarr" ||
                 providerId != "allstarr" && !IsAutomaticProvider(providerId, effectivePolicy)) return false;
             availabilityAttempted = true;
@@ -1537,6 +1537,7 @@ public sealed partial class ProtocolProviderGateway(
                 }
                 plan = expanded;
             }
+            if (protocol.IsReadOnly) return false;
             try
             {
                 var linked = await TryResolvePlaybackAvailabilityAsync(plan, availabilityOrder, trackId,
@@ -1547,7 +1548,7 @@ public sealed partial class ProtocolProviderGateway(
             }
             catch (OperationCanceledException) when (afterFailure && !streamCancellation.IsCancellationRequested) { return false; }
         }
-        if (plan.Candidates.Count == 0) await ResolveAvailabilityAsync();
+        if (plan.Candidates.Count == 0) await ResolveAvailabilityAsync(afterFailure: true);
         if (plan.Candidates.Count == 0)
         {
             if (plan.Decision.Candidates.Any(item =>
@@ -1648,6 +1649,8 @@ public sealed partial class ProtocolProviderGateway(
             if (!protocol.IsReadOnly && outcomes?.IsPlaybackCoolingDown(candidate.Context, servingTrack, quality) == true)
             {
                 fallbackReason = "fallback-source-cooldown";
+                if (candidateIndex + 1 == plan.Candidates.Count && await ResolveAvailabilityAsync(afterFailure: true))
+                    candidateIndex = -1;
                 continue;
             }
             if (sourceAttempts++ >= 4) break;
@@ -2085,6 +2088,12 @@ public sealed partial class ProtocolProviderGateway(
                 expectedDuration, delivery, openVerificationRange, timingProvider);
             outcome = result.Error?.Code ?? "ready";
             return result;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            var error = new ProviderError(ProviderErrorKind.Unauthorized);
+            outcome = error.Code;
+            return ProviderOutcome<(HttpResponseMessage, ProviderStreamLease)>.Failure(error);
         }
         catch (OperationCanceledException) { outcome = "canceled"; throw; }
         finally

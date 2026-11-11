@@ -93,6 +93,7 @@ public sealed class ProviderRouter(
             .ToArray();
         var decisions = new List<ProviderRouteCandidateDecision>(orderedProviders.Length);
         var candidates = new List<ProviderRouteCandidate<TCapability>>(orderedProviders.Length);
+        var degradedProviders = new HashSet<string>(StringComparer.Ordinal);
         ProviderExecutionContext? sourceContext = null;
 
         foreach (var provider in orderedProviders)
@@ -240,7 +241,7 @@ public sealed class ProviderRouter(
 
                 var healthRejection = snapshot.State switch
                 {
-                    ProviderRouteHealthState.Degraded => "health-degraded",
+                    ProviderRouteHealthState.Degraded when request.Capability != ProviderCapabilityKind.Streaming => "health-degraded",
                     ProviderRouteHealthState.Unavailable => "health-unavailable",
                     ProviderRouteHealthState.Unauthorized => "health-unauthorized",
                     _ => null
@@ -250,6 +251,7 @@ public sealed class ProviderRouter(
                     Reject(snapshot.ReasonCode ?? healthRejection);
                     continue;
                 }
+                if (snapshot.State == ProviderRouteHealthState.Degraded) degradedProviders.Add(provider.Id);
 
                 if (descriptor.SidecarDependency != null && !sidecars.IsReady(descriptor.SidecarDependency))
                 {
@@ -377,7 +379,11 @@ public sealed class ProviderRouter(
                 targetTrack));
         }
 
+        candidates = candidates.OrderBy(candidate => degradedProviders.Contains(candidate.Provider.Id)).ToList();
         var selected = candidates.FirstOrDefault();
+        decisions = decisions.Select(item => item.Status == ProviderRouteDecisionStatus.Accepted
+            ? item with { ReasonCode = item.ProviderId == selected?.Provider.Id ? "selected" : "eligible-fallback" }
+            : item).ToList();
         var decision = new ProviderRouteDecisionRecord(
             request.CorrelationId,
             request.Capability,
@@ -408,7 +414,11 @@ public sealed class ProviderRouter(
                 null);
         }
 
-        if (error.Code == "local-capacity-unavailable" || !error.IsTrackScoped && !AllowedFallbackFailures.Contains(error.Kind))
+        var streamAccountFailure = plan.Request.Capability == ProviderCapabilityKind.Streaming && error.Kind is
+            ProviderErrorKind.Unauthorized or ProviderErrorKind.Forbidden or
+            ProviderErrorKind.AccountNeedsConfiguration or ProviderErrorKind.AccountNeedsReauthentication;
+        if (error.Code == "local-capacity-unavailable" ||
+            !error.IsTrackScoped && !streamAccountFailure && !AllowedFallbackFailures.Contains(error.Kind))
         {
             return new ProviderFallbackDecision<TCapability>(
                 ProviderFallbackDisposition.StopFailure,

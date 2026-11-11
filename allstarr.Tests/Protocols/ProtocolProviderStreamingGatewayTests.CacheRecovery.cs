@@ -50,7 +50,8 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         using var response = (await fixture.Gateway.OpenStreamAsync(fixture.Context, "allstarr", fixture.Recording,
             ProviderAudioQuality.Any, "bytes=44-"))!.Response;
         Assert.Equal(fixture.Bytes, await response.Content.ReadAsByteArrayAsync());
-        Assert.Contains(fixture.Router.Requests, request => request.CacheOnly);
+        if (failure == "degraded") Assert.DoesNotContain(fixture.Router.Requests, request => request.CacheOnly);
+        else Assert.Contains(fixture.Router.Requests, request => request.CacheOnly);
         fixture.AssertNoProviderOpens();
     }
 
