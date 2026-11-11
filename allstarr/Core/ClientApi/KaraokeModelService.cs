@@ -50,6 +50,10 @@ public sealed class KaraokeModelService : IKaraokeModelService, IHostedService, 
     private Dictionary<string, ValidatedKaraokeModel> _validatedModels = new(StringComparer.Ordinal);
     private bool _initialScanCompleted;
     private bool _disposed;
+    private int _hashedFiles;
+
+    /// <summary>How many model files have been hashed since startup; requests must never add to it.</summary>
+    internal int HashedFileCount => Volatile.Read(ref _hashedFiles);
 
     public KaraokeModelService(StorageOptions storageOptions, ILogger<KaraokeModelService> logger)
     {
@@ -232,6 +236,7 @@ public sealed class KaraokeModelService : IKaraokeModelService, IHostedService, 
                     try
                     {
                         await using var fileStream = File.OpenRead(modelFilePath);
+                        Interlocked.Increment(ref _hashedFiles);
                         var hashBytes = await SHA256.HashDataAsync(fileStream, cancellationToken);
                         actualSha256 = Convert.ToHexString(hashBytes).ToLowerInvariant();
                     }

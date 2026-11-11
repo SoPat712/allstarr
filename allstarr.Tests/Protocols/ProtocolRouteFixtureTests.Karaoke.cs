@@ -351,18 +351,12 @@ public sealed partial class ProtocolRouteFixtureTests
             license = "MIT"
         }));
 
-        var karaokeService = factory.Services.GetRequiredService<IKaraokeModelService>();
+        var karaokeService = factory.Services.GetRequiredService<KaraokeModelService>();
         await karaokeService.ScanAsync();
+        var hashedAfterScan = karaokeService.HashedFileCount;
+        Assert.True(hashedAfterScan > 0);
 
-        // Mutate the file on disk without updating manifest or triggering re-scan,
-        // and keep mtime identical so cheap mtime check sees no folder change.
-        var originalMtime = File.GetLastWriteTimeUtc(modelFilePath);
-        var mutatedBytes = new byte[512];
-        for (var i = 0; i < 512; i++) mutatedBytes[i] = (byte)(255 - modelBytes[i]);
-        await File.WriteAllBytesAsync(modelFilePath, mutatedBytes);
-        File.SetLastWriteTimeUtc(modelFilePath, originalMtime);
-
-        // A request to the metadata endpoint or file endpoint serves the cached SHA-256 ETag without re-hashing
+        // Requests serve the checksum recorded by the background scan; none of them hashes the file again.
         using var metaResponse = await client.GetAsync("/allstarr/v1/models/karaoke");
         Assert.Equal(HttpStatusCode.OK, metaResponse.StatusCode);
         using var metaDoc = JsonDocument.Parse(await metaResponse.Content.ReadAsStringAsync());
@@ -371,5 +365,9 @@ public sealed partial class ProtocolRouteFixtureTests
         using var fileResponse = await client.GetAsync("/allstarr/v1/models/karaoke/htdemucs-ane-1/file");
         Assert.Equal(HttpStatusCode.OK, fileResponse.StatusCode);
         Assert.Equal($"\"{initialSha}\"", fileResponse.Headers.ETag?.Tag);
+        using var headRequest = new HttpRequestMessage(HttpMethod.Head, "/allstarr/v1/models/karaoke/htdemucs-ane-1/file");
+        using var headResponse = await client.SendAsync(headRequest);
+        Assert.Equal(HttpStatusCode.OK, headResponse.StatusCode);
+        Assert.Equal(hashedAfterScan, karaokeService.HashedFileCount);
     }
 }
