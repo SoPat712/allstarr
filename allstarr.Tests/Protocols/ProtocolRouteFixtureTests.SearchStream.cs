@@ -5,6 +5,7 @@ using allstarr.Core.Protocols;
 using allstarr.Models.Domain;
 using allstarr.Models.Search;
 using allstarr.Models.Subsonic;
+using allstarr.Services.Common;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Moq;
@@ -66,9 +67,168 @@ public sealed partial class ProtocolRouteFixtureTests
         var item = Assert.Single(lines[0]["items"]!.AsArray())!;
         Assert.Equal("ext-deezer-song-one", item["Id"]!.GetValue<string>());
         Assert.Equal("Audio", item["Type"]!.GetValue<string>());
+        Assert.Equal(SearchRelevanceRanker.ScoreSong("a", "Visible", "Artist", "Release", durationSeconds: 200),
+            item["score"]!.GetValue<double>());
+        Assert.Null(item["Score"]);
         Assert.Null(item["id"]);
         Assert.Empty(lines[1]["items"]!.AsArray());
         Assert.True(lines[2]["done"]!.GetValue<bool>());
         Assert.Equal("slow", Assert.Single(lines[2]["late"]!.AsArray())!.GetValue<string>());
+    }
+
+    [Fact]
+    public async Task ClientApi_SearchStreamScoresAndStablyRanksEveryKindTogether()
+    {
+        const string query = "say now";
+        var songs = new[] { "Brick By Brick", "Supermarket", "Met my match" }.Select((title, index) => new Song
+        {
+            Id = $"ext-deezer-song-{index}",
+            ExternalProvider = "deezer",
+            ExternalId = index.ToString(),
+            Title = title,
+            Artist = "Say Now",
+            Duration = 200
+        }).ToList();
+        var album = new Album { Id = "ext-deezer-album-release", Title = "Release", Artist = "Say Now" };
+        var artists = new[] { "Now", "Say When", "Say Now" }.Select((name, index) =>
+            new Artist { Id = $"ext-deezer-artist-{index}", Name = name }).ToList();
+        var playlist = new ExternalPlaylist { Id = "ext-deezer-playlist-list", Name = "Say Now", CuratorName = "Curator", Provider = "deezer" };
+        var rows = await ReadSearchStreamRowsAsync(new() { Songs = songs, Albums = [album], Artists = artists }, [playlist], query);
+        var scores = rows.Select(row => row["score"]!.GetValue<double>()).ToArray();
+        Assert.Equal(scores.OrderDescending(), scores);
+        Assert.All(rows, row =>
+        {
+            Assert.True(row["score"] is JsonValue value && value.TryGetValue<double>(out _));
+            Assert.Null(row["Score"]);
+        });
+        foreach (var song in songs)
+            Assert.Equal(SearchRelevanceRanker.ScoreSong(query, song),
+                rows.Single(row => row["Id"]!.GetValue<string>() == song.Id)["score"]!.GetValue<double>());
+        Assert.Equal(SearchRelevanceRanker.ScoreAlbum(query, album), rows.Single(row => row["Id"]!.GetValue<string>() == album.Id)["score"]!.GetValue<double>());
+        Assert.Equal(SearchRelevanceRanker.Score(query, playlist.Name, playlist.CuratorName),
+            rows.Single(row => row["Id"]!.GetValue<string>() == playlist.Id)["score"]!.GetValue<double>());
+        foreach (var artist in artists)
+            Assert.Equal(SearchRelevanceRanker.Score(query, artist.Name),
+                rows.Single(row => row["Id"]!.GetValue<string>() == artist.Id)["score"]!.GetValue<double>());
+        Assert.Equal(songs.Select(song => song.Id), rows.Where(row => row["Type"]!.GetValue<string>() == "Audio")
+            .Select(row => row["Id"]!.GetValue<string>()));
+        var lastSong = Array.FindLastIndex(rows, row => row["Type"]!.GetValue<string>() == "Audio");
+        Assert.All(artists.Take(2), artist => Assert.True(lastSong < Array.FindIndex(rows,
+            row => row["Id"]!.GetValue<string>() == artist.Id)));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("ranked")]
+    public async Task ClientApi_SearchStreamCapsEachKindIncludingPlaylistAlbumRows(string? shape)
+    {
+        var result = new SearchResult
+        {
+            Songs = Enumerable.Range(0, 4).Select(index => new Song
+            {
+                Id = $"ext-deezer-song-{index}",
+                ExternalProvider = "deezer",
+                ExternalId = index.ToString(),
+                Title = $"Track {index}",
+                Artist = "Artist",
+                Duration = 200
+            }).ToList(),
+            Albums = Enumerable.Range(0, 4).Select(index => new Album
+            { Id = $"ext-deezer-album-{index}", Title = $"Album {index}", Artist = "Artist" }).ToList(),
+            Artists = Enumerable.Range(0, 4).Select(index => new Artist
+            { Id = $"ext-deezer-artist-{index}", Name = $"Artist {index}" }).ToList()
+        };
+        var playlists = Enumerable.Range(0, 4).Select(index => new ExternalPlaylist
+        { Id = $"ext-deezer-playlist-{index}", Name = $"Playlist {index}", Provider = "deezer" }).ToArray();
+        var rows = await ReadSearchStreamRowsAsync(result, playlists, "a", 2, shape);
+        Assert.Equal(8, rows.Length);
+        foreach (var kind in new[] { "song", "album", "artist", "playlist" })
+            Assert.Equal(2, rows.Count(row => row["Id"]!.GetValue<string>().StartsWith($"ext-deezer-{kind}-", StringComparison.Ordinal)));
+        Assert.All(rows.Where(row => row["Id"]!.GetValue<string>().Contains("-playlist-", StringComparison.Ordinal)),
+            row => Assert.Equal("MusicAlbum", row["Type"]!.GetValue<string>()));
+    }
+
+    [Fact]
+    public async Task ClientApi_SearchStreamRankedShapeUsesCompleteSectionsAndAnExactArtistTop()
+    {
+        var artist = new Artist { Id = "ext-deezer-artist-exact", Name = "Say Now" };
+        var lines = await ReadSearchStreamLinesAsync(new() { Artists = [artist] }, [], "say now", 20, "ranked");
+        Assert.NotEmpty(lines);
+        Assert.Equal(Enumerable.Range(1, lines.Length), lines.Select(line => line["revision"]!.GetValue<int>()));
+        Assert.All(lines, line =>
+        {
+            Assert.Null(line["provider"]);
+            Assert.NotNull(line["items"]);
+        });
+        Assert.All(lines.Where(line => line["top"] != null), line =>
+        {
+            Assert.Equal(artist.Id, Assert.Single(line["items"]!.AsArray())!["Id"]!.GetValue<string>());
+            Assert.Equal("deezer", Assert.Single(line["providers"]!.AsArray())!.GetValue<string>());
+            Assert.Equal(artist.Id, line["top"]!["Id"]!.GetValue<string>());
+            Assert.Equal(artist.Id, Assert.Single(line["sections"]!["artists"]!.AsArray())!["Id"]!.GetValue<string>());
+        });
+        Assert.Equal(artist.Id, lines[^1]["top"]!["Id"]!.GetValue<string>());
+        Assert.True(lines[^1]["done"]!.GetValue<bool>());
+        Assert.Empty(lines[^1]["late"]!.AsArray());
+    }
+
+    [Theory]
+    [InlineData(null, 20)]
+    [InlineData("ranked", 40)]
+    public async Task ClientApi_SearchStreamOmittedLimitKeepsTheShapeSpecificDefault(string? shape, int expected)
+    {
+        var lines = await ReadSearchStreamLinesAsync(new(), [], "a", expected, shape, omitLimit: true);
+        Assert.NotEmpty(lines);
+        Assert.True(lines[^1]["done"]!.GetValue<bool>());
+    }
+
+    private static async Task<JsonNode[]> ReadSearchStreamRowsAsync(SearchResult result,
+        IReadOnlyList<ExternalPlaylist> playlists, string query, int limit = 20, string? shape = null)
+    {
+        var lines = await ReadSearchStreamLinesAsync(result, playlists, query, limit, shape);
+        return shape == "ranked"
+            ? lines[^1]["sections"]!.AsObject().SelectMany(section => section.Value!.AsArray()).OfType<JsonNode>().ToArray()
+            : lines.Where(line => line["items"] != null).SelectMany(line => line["items"]!.AsArray()).OfType<JsonNode>().ToArray();
+    }
+
+    private static async Task<JsonNode[]> ReadSearchStreamLinesAsync(SearchResult result,
+        IReadOnlyList<ExternalPlaylist> playlists, string query, int limit, string? shape, bool omitLimit = false)
+    {
+        var gateway = new Mock<IProtocolProviderGateway>();
+        gateway.Setup(item => item.StreamSearchAsync(It.IsAny<ProtocolExecutionContext>(), query, limit, true, true, true, true,
+                It.IsAny<Func<string, SearchResult, IReadOnlyList<ExternalPlaylist>, CancellationToken, Task>>(), It.IsAny<CancellationToken>()))
+            .Returns(async (ProtocolExecutionContext _, string _, int _, bool _, bool _, bool _, bool _,
+                Func<string, SearchResult, IReadOnlyList<ExternalPlaylist>, CancellationToken, Task> write, CancellationToken token) =>
+            {
+                await write("deezer", result, playlists, token);
+                return (IReadOnlyList<string>)[];
+            });
+        var index = new Mock<ILibraryIndexService>();
+        index.Setup(item => item.FindKnownRecordingTracksAsync(It.IsAny<ProtocolExecutionContext>(),
+                It.IsAny<IReadOnlyList<LibraryRecordingLookup>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Dictionary<string, string>());
+        using var factory = ClientApiFactory(request => request.RequestUri!.AbsolutePath switch
+        {
+            "/Users/Me" => Json(200, """{"Id":"listener"}"""),
+            "/System/Info/Public" => Json(200, """{"Id":"native-server"}"""),
+            "/Users/listener/Items" => Json(200, """{"Items":[]}"""),
+            _ => Json(404, "{}")
+        }, services =>
+        {
+            services.RemoveAll<IProtocolProviderGateway>();
+            services.AddSingleton(gateway.Object);
+            services.RemoveAll<ILibraryIndexService>();
+            services.AddSingleton(index.Object);
+        });
+        using var client = CreateClientApiClient(factory);
+        client.DefaultRequestHeaders.Add("X-Emby-Token", "listener-token");
+        using var response = await client.GetAsync($"/allstarr/v1/search?q={Uri.EscapeDataString(query)}" +
+            (omitLimit ? "" : $"&limit={limit}") +
+            (shape == null ? "" : $"&shape={shape}"));
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        gateway.Verify(item => item.StreamSearchAsync(It.IsAny<ProtocolExecutionContext>(), query, limit, true, true, true, true,
+            It.IsAny<Func<string, SearchResult, IReadOnlyList<ExternalPlaylist>, CancellationToken, Task>>(), It.IsAny<CancellationToken>()), Times.Once);
+        return (await response.Content.ReadAsStringAsync()).Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .Select(line => JsonNode.Parse(line)!).ToArray();
     }
 }

@@ -25,7 +25,7 @@ before using optional routes.
 `titleMarkers`, `itemDetails`, `playback`, `lyricsRich`, `lyricsSources`, `lyricsVersions`,
 `fixesMatch`, `reports`, `mixes`, `releases`, `follow`, `events`, `appearances`,
 `similarAlbums`, `playlistKinds`, `history`, `playCounts`, `libraryAdditions`,
-`preferences`, and `searchStream` are available.
+`preferences`, `searchStream`, `searchStreamScores`, and `searchStreamRanked` are available.
 `stats`, `taste`, `sound`, `playActivity`, `historyImports`, and `historyRecheck`
 are true when their respective services are registered. `dashboardLink` is false.
 When `Admin:Oidc:PublicUrl` is configured, capabilities also includes
@@ -50,6 +50,70 @@ requests every supported kind. Each flushed line is `{provider:"id",items:[...]}
 Metadata and playlists can arrive in separate lines for the same provider.
 Items use the normal Jellyfin search item shape, including title markers, artwork,
 and user data; playlists retain the search route's album presentation.
+Every item also has a lowercase numeric `score` from the same relevance scorer
+used by merged search. Each provider batch is stably sorted by decreasing score.
+Artist rows below the scorer's 70-point token band are omitted, except for the
+best artist when all candidates fall below that band. Exact and prefix artist
+matches score 95–100. Songs and albums can match through their artist credits;
+their titles need not contain the query. Limits apply separately to playlists
+even though their item presentation uses `MusicAlbum`.
+
+Songbird can check `features.searchStreamRanked` and request `shape=ranked` to
+render the server's complete order without sorting in the app. Each line replaces
+the previous snapshot:
+
+```json
+{
+  "revision": 1,
+  "done": false,
+  "providers": ["deezer", "qobuz"],
+  "top": {"Id":"ext-deezer-artist-123","Name":"Say Now","Type":"MusicArtist","score":100},
+  "items": [{"Id":"ext-deezer-artist-123","Name":"Say Now","Type":"MusicArtist","score":100}],
+  "sections": {"songs":[],"albums":[],"artists":[{"Id":"ext-deezer-artist-123","Name":"Say Now","Type":"MusicArtist","score":100}],"playlists":[]}
+}
+```
+
+Revisions increase from 1. `providers` lists answered providers in arrival order.
+Each line is a complete replacement snapshot, with these field types:
+
+| Field | Type |
+|---|---|
+| `revision` | Integer, strictly increasing from 1 |
+| `done` | Boolean |
+| `providers`, `late` | Arrays of provider-id strings |
+| `top` | One item or `null` |
+| `items` | Array of items |
+| `sections` | Object containing item arrays named `songs`, `albums`, `artists`, `playlists` |
+
+Missing keys mean empty: missing arrays or section keys are `[]`, a missing
+`sections` object is `{}`, and a missing or null `top` has no item. Earlier lines
+omit `late`; the done line includes it. Items retain the existing Jellyfin item
+JSON plus numeric `score`, keyed by a stable string `Id`. Render All as `top`
+followed by `items`, deduplicated by `Id`, keeping the server's order.
+`features.searchStreamRanked` is advertised only when this ranked shape is
+available; an absent or false flag means the client should use provider batches.
+
+Only sections selected by `types` are present, and each contains at most `limit`
+items across all providers. `items` mixes all requested types in the same relevance
+order as merged `/Items` search, and also contains at most `limit` items. An omitted
+`limit` defaults to 40 for ranked snapshots; default provider batches still use 20.
+Items keep their `Id` across snapshots. `top` selects
+the best exact or near-exact artist (95 points or higher), otherwise the best item
+overall, or `null` when there are no items. An exact-name artist is pinned as `top`
+for the rest of the stream. The top item also appears in its section and remains
+in `items` wherever relevance places it, when within the mixed limit. When rendering
+All as `top` followed by `items`, skip the repeated top `Id` in `items`.
+
+The mixed list and sections use the same scores as merged search. After the first snapshot, an item
+moves above another only when it leads by at least five points, one score band;
+smaller changes retain the previous order. The first snapshot waits for the
+preferred provider and another provider to answer, or for 400 ms, whichever comes
+first. Later snapshots are at least 250 ms apart and fold intervening batches
+together. The final state is always flushed with `done:true` and a `late` list;
+earlier snapshots omit `late`. Provider work has the same ten-second cap; a final
+flush can take up to another 250 ms to preserve snapshot spacing. These holds
+reduce visual churn and add latency; they are not search-speed improvements.
+Omitting `shape` keeps the existing per-provider envelope and final line.
 
 Searches run concurrently. Before emitting rows, the route searches the accessible
 native library to suppress matching songs, albums, and artist names, and checks

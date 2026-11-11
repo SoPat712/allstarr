@@ -322,6 +322,10 @@ public partial class JellyfinController
                     }, Request.Headers, cancellationToken)),
             HttpContext.RequestAborted);
 
+        await ArtistArtworkCache.PrepareSearchAsync(_cache, context,
+            merged.Artists.Where(item => item.Native != null).Select(item => item.Native!.Payload),
+            merged.Artists.Select(item => item.Artist).OfType<Artist>().ToArray());
+
         // Native rows stay Jellyfin-shaped; only provider rows are synthesized.
         var allSongs = merged.Songs.Select(RenderSearchEntry).ToList();
         var allArtists = merged.Artists.Select(entry => artistSearch ? RenderQuerySearchEntry(entry) : RenderSearchEntry(entry)).ToList();
@@ -599,6 +603,9 @@ public partial class JellyfinController
             native,
             HttpContext.RequestAborted);
 
+        await ArtistArtworkCache.PrepareSearchAsync(_cache, context,
+            merged.Artists.Where(item => item.Native != null).Select(item => item.Native!.Payload),
+            merged.Artists.Select(item => item.Artist).OfType<Artist>().ToArray());
         var hints = MusicSearchService.RankTogether(cleanQuery, merged).Select(RenderSearchHint)
             .Concat(native.Unranked)
             .Take(Math.Max(0, limit))

@@ -47,7 +47,8 @@ public sealed class ProviderArtworkFallbackTests
         string Tag(Dictionary<string, object?> item) => Assert.IsType<Dictionary<string, string>>(item["ImageTags"])["Primary"];
         Assert.Equal(local ? "song" : "song-art-v3", Tag(song));
         Assert.Equal(local ? "album" : "album-art-v4", Tag(album));
-        Assert.Equal(local ? "artist" : "artist-art-v3", Tag(artist));
+        if (local) Assert.Equal("artist", Tag(artist));
+        else Assert.Empty(Assert.IsType<Dictionary<string, string>>(artist["ImageTags"]));
         Assert.False(ProviderArtworkFallback.IsFallback("deezer", "https://images.example.test/cover.png", "song"));
     }
 }

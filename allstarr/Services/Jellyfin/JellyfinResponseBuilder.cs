@@ -790,10 +790,9 @@ public partial class JellyfinResponseBuilder
                 ["Key"] = $"Artist-{artist.Name}",
                 ["ItemId"] = artist.Id
             },
-            ["ImageTags"] = new Dictionary<string, string>
-            {
-                ["Primary"] = artist.IsLocal ? artist.Id : $"{artist.Id}-art-v3"
-            },
+            ["ImageTags"] = !artist.IsLocal && string.IsNullOrWhiteSpace(artist.ImageUrl)
+                ? new Dictionary<string, string>()
+                : new Dictionary<string, string> { ["Primary"] = artist.IsLocal ? artist.Id : ArtistArtworkCache.ImageTag(artist) },
             ["BackdropImageTags"] = new string[0],
             ["ImageBlurHashes"] = artist.IsLocal ? new Dictionary<string, object>() : null,
             ["LocationType"] = "FileSystem",

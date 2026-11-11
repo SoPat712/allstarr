@@ -90,6 +90,7 @@ public sealed partial class ProtocolProviderGateway
                 var index = pending.FindIndex(item => item.Work == completed);
                 var batch = await completed;
                 token.ThrowIfCancellationRequested();
+                await ArtistArtworkCache.PrepareSearchAsync(applicationCache, protocol, [], batch.Items.Artists);
                 await writeBatch(pending[index].Provider, batch.Items, batch.Playlists, token).WaitAsync(token);
                 pending.RemoveAt(index);
             }
@@ -105,11 +106,19 @@ public sealed partial class ProtocolProviderGateway
                     Lookup: new TrackIdentityLookup(candidate.Context, snapshot.TrackIds[index])))
                     .Where(item => tracks.Contains(item.Song)).ToArray();
                 var collapsed = await CollapseVerifiedSearchTracksAsync(tracks, lookups, playable, policy, protocol).WaitAsync(token);
+                var knownDurationTitles = collapsed.Where(song => (song.PreciseDuration?.TotalSeconds ?? song.Duration) is > 0)
+                    .Select(song => SearchRelevanceRanker.RecordingTitle(song.Title, song.Artist, song.AlbumArtist)).ToHashSet(StringComparer.Ordinal);
+                // The shared scorer gives exact/prefix matches 95–100 and accepts token fits from 70.
+                const double minimumArtistScore = 70;
+                var rankedArtists = result.Artists.Select(artist => (Artist: artist, Score: SearchRelevanceRanker.Score(query, artist.Name)))
+                    .OrderByDescending(item => item.Score);
                 return (new SearchResult
                 {
-                    Songs = collapsed.Take(limit).ToList(),
-                    Albums = CleanAlbums(result.Albums, policy).Take(limit).ToList(),
-                    Artists = result.Artists.Take(limit).ToList()
+                    Songs = collapsed.OrderByDescending(song => SearchRelevanceRanker.ScoreSong(query, song,
+                        knownDurationTitles.Contains(SearchRelevanceRanker.RecordingTitle(song.Title, song.Artist, song.AlbumArtist)))).Take(limit).ToList(),
+                    Albums = CleanAlbums(result.Albums, policy).OrderByDescending(album => SearchRelevanceRanker.ScoreAlbum(query, album)).Take(limit).ToList(),
+                    Artists = rankedArtists.Where((item, index) => index == 0 || item.Score >= minimumArtistScore)
+                        .Take(limit).Select(item => item.Artist).ToList()
                 }, []);
             }
 
@@ -125,7 +134,9 @@ public sealed partial class ProtocolProviderGateway
                     return JsonSerializer.Serialize(await SearchPlaylistsCachedAsync(candidate, query, limit, settings, gate,
                         false, cancellation));
                 }, token);
-                return (new(), value == null ? [] : JsonSerializer.Deserialize<List<ExternalPlaylist>>(value) ?? []);
+                List<ExternalPlaylist> found = value == null ? [] : JsonSerializer.Deserialize<List<ExternalPlaylist>>(value) ?? [];
+                return (new(), found.OrderByDescending(playlist => SearchRelevanceRanker.Score(query, playlist.Name, playlist.CuratorName))
+                    .Take(limit).ToArray());
             }
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested) { }

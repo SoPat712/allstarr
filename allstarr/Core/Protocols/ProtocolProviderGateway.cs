@@ -277,7 +277,11 @@ public sealed partial class ProtocolProviderGateway(
             return storedArtwork;
         if (identities != null && resourceKind is ProviderResourceKind.Track or ProviderResourceKind.Album or ProviderResourceKind.Artist &&
             await identities.GetStoredArtworkUriAsync(new(providerId, resourceKind, externalId), cancellationToken) is { } stored)
-            return stored;
+        {
+            if (resourceKind != ProviderResourceKind.Artist) return stored;
+            var cleaned = await ArtistArtworkCache.ResolveResourceAsync(applicationCache, null, providerId, externalId, stored.AbsoluteUri);
+            return Uri.TryCreate(cleaned, UriKind.Absolute, out var image) ? image : null;
+        }
         if (storedOnly || storedRecordingOnly && providerId == "allstarr") return null;
         if (providerId != "allstarr" && (!IsPublicMetadataProvider(providerId) ||
             !ResolveProviderOrder(ProviderCapabilityKind.Metadata).Contains(providerId))) return null;
@@ -303,7 +307,12 @@ public sealed partial class ProtocolProviderGateway(
                 break;
             case ProviderResourceKind.Artist:
                 var artist = await candidate.Implementation.GetArtistAsync(candidate.Context, new(id));
-                if (artist.IsSuccess) artwork = artist.RequireValue().Artwork;
+                if (artist.IsSuccess)
+                {
+                    var mapped = Map(artist.RequireValue());
+                    await ArtistArtworkCache.PrepareSearchAsync(applicationCache, PublicMetadataContext(cancellationToken), [], [mapped]);
+                    return Uri.TryCreate(mapped.ImageUrl, UriKind.Absolute, out var image) ? image : null;
+                }
                 break;
             case ProviderResourceKind.Playlist:
                 var playlist = await candidate.Implementation.GetPlaylistArtworkAsync(candidate.Context, id);
@@ -481,6 +490,8 @@ public sealed partial class ProtocolProviderGateway(
             routed.Albums.AddRange(result.Albums);
             routed.Artists.AddRange(result.Artists);
         }
+
+        await ArtistArtworkCache.PrepareSearchAsync(applicationCache, protocol, [], routed.Artists);
 
         if (albumLimit > 0 && routed.Albums.Count > 1 && effectivePolicy?.Preferences.ExplicitFilter != "CleanOnly")
             routed.Albums = await EnrichAlbumReleasesAsync(protocol, routed.Albums, plan.Candidates);
@@ -885,7 +896,7 @@ public sealed partial class ProtocolProviderGateway(
         if (routed.Candidate != null)
         {
             var id = new ProviderExternalResourceId(routedProviderId, ProviderResourceKind.Artist, externalId);
-            return await FullMetadataAsync<Artist>(routed.Candidate.Context, ProviderResourceKind.Artist, externalId, async execution =>
+            var artist = await FullMetadataAsync<Artist>(routed.Candidate.Context, ProviderResourceKind.Artist, externalId, async execution =>
             {
                 var outcome = await routed.Candidate.Implementation.GetArtistAsync(execution, new ProviderArtistLookupRequest(id));
                 if (outcome.IsSuccess) return Map(outcome.RequireValue());
@@ -893,6 +904,9 @@ public sealed partial class ProtocolProviderGateway(
                 ThrowRouteFailure(outcome.Error);
                 return null;
             });
+            if (artist != null)
+                await ArtistArtworkCache.PrepareSearchAsync(applicationCache, protocol, [], [artist]);
+            return artist;
         }
 
         return null;
@@ -2738,7 +2752,7 @@ public sealed partial class ProtocolProviderGateway(
         Biography = item.Biography,
         ProviderIds = new Dictionary<string, string>(item.ProviderIds, StringComparer.Ordinal),
         LastFmUrl = item.LastFmUrl,
-        ImageUrl = item.Artwork?.PublicUri?.ToString() ?? ProviderArtworkFallback.CoverPath(item.Id.ProviderId),
+        ImageUrl = item.Artwork?.PublicUri?.ToString(),
         IsLocal = false
     };
 

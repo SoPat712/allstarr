@@ -144,6 +144,8 @@ public sealed partial class ProtocolProviderGateway
     public async Task<Artist?> GetStoredArtistAsync(ProtocolExecutionContext protocol, string providerId, string externalId)
     {
         var artist = await ReadStoredMetadataAsync<Artist>(protocol, providerId, ProviderResourceKind.Artist, externalId);
+        if (artist != null)
+            await ArtistArtworkCache.PrepareSearchAsync(applicationCache, protocol, [], [artist]);
         return string.IsNullOrWhiteSpace(artist?.Id) ? null : artist;
     }
 

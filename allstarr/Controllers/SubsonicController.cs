@@ -1033,6 +1033,8 @@ public partial class SubsonicController : ControllerBase
         {
             case "artist":
                 var artist = await GetProviderArtistAsync(coverProvider!, coverExternalId!);
+                if (artist != null)
+                    await ArtistArtworkCache.PrepareSearchAsync(_cache, CurrentProtocolContext, [], [artist]);
                 if (artist?.ImageUrl != null)
                 {
                     coverUrl = artist.ImageUrl;
@@ -1092,6 +1094,7 @@ public partial class SubsonicController : ControllerBase
         int? size = null)
     {
         var actor = CurrentProtocolContext.Actor;
+        if (resourceKind == "artist" && await ArtistArtworkCache.IsPlaceholderAsync(_cache, provider, coverUrl)) return null;
         return await _mediaAssets.ResolveAsync(
             new MediaAssetIdentity(
                 actor?.EffectiveUserId,
@@ -1099,6 +1102,7 @@ public partial class SubsonicController : ControllerBase
                 provider,
                 resourceKind,
                 resourceId,
+                Revision: resourceKind == "artist" ? "artist-v1:" + coverUrl : null,
                 Width: size,
                 Height: size),
             async token =>
@@ -1130,6 +1134,8 @@ public partial class SubsonicController : ControllerBase
                     return null;
                 await response.Content.LoadIntoBufferAsync(MaximumArtworkBytes, token);
                 var bytes = await response.Content.ReadAsByteArrayAsync(token);
+                if (resourceKind == "artist" &&
+                    !await ArtistArtworkCache.ObserveAsync(_cache, provider, resourceId, coverUrl!, bytes)) return null;
                 return new MediaAssetSource(
                     bytes,
                     contentType ?? "image/jpeg",

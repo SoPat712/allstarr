@@ -118,9 +118,13 @@ public sealed partial class VirtualPlaylistProtocolAdapterTests
         var first = builder.ConvertSongToJellyfinItem(song);
         var second = builder.ConvertSongToJellyfinItem(song);
         var album = builder.ConvertAlbumToJellyfinItem(new Album { Id = song.AlbumId!, ExternalProvider = "deezer" });
-        var artist = builder.ConvertArtistToJellyfinItem(new Artist { Id = song.ArtistId!, ExternalProvider = "deezer" });
-        foreach (var item in new[] { first, artist })
-            Assert.Equal(item["Id"] + "-art-v3", Assert.IsType<Dictionary<string, string>>(item["ImageTags"])["Primary"]);
+        var artistMetadata = new Artist { Id = song.ArtistId!, ExternalProvider = "deezer", ImageUrl = "https://images.example.test/artist.png" };
+        var artist = builder.ConvertArtistToJellyfinItem(artistMetadata);
+        Assert.Equal(first["Id"] + "-art-v3", Assert.IsType<Dictionary<string, string>>(first["ImageTags"])["Primary"]);
+        var artistTag = Assert.IsType<Dictionary<string, string>>(artist["ImageTags"])["Primary"];
+        Assert.StartsWith(artist["Id"] + "-art-v4-", artistTag);
+        artistMetadata.ImageUrl = "https://images.example.test/replacement.png";
+        Assert.NotEqual(artistTag, Assert.IsType<Dictionary<string, string>>(builder.ConvertArtistToJellyfinItem(artistMetadata)["ImageTags"])["Primary"]);
         Assert.Equal(album["Id"] + "-art-v4", Assert.IsType<Dictionary<string, string>>(album["ImageTags"])["Primary"]);
         Assert.Equal(first["AlbumPrimaryImageTag"], Assert.IsType<Dictionary<string, string>>(album["ImageTags"])["Primary"]);
         Assert.Equal(Assert.IsType<Dictionary<string, string>>(first["ImageTags"]), Assert.IsType<Dictionary<string, string>>(second["ImageTags"]));

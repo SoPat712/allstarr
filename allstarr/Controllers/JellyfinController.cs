@@ -534,7 +534,14 @@ public partial class JellyfinController : ControllerBase
             return await RelayCurrentRequestAsync(Request.Path.Value!.TrimStart('/'));
         }
 
-        return await CachedImageAsync(imageKey!, provider!, maxWidth ?? maxHeight, requestedFormat, ReadAsync);
+        if (type == "artist")
+        {
+            var url = await ResolveArtistImageUrlAsync(provider!, externalId!, HttpContext.RequestAborted);
+            if (url == null) return MissingExternalImage();
+            imageKey += ":artist-v1:" + Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(url)));
+        }
+
+        return await CachedImageAsync(imageKey!, provider!, maxWidth ?? maxHeight, requestedFormat, ReadAsync, artist: type == "artist");
 
         async Task<ResolvedMediaAsset?> ReadAsync(CancellationToken token)
         {
@@ -546,6 +553,10 @@ public partial class JellyfinController : ControllerBase
             }
             catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
             catch (Exception ex) { _logger.LogWarning(ex, "Failed to fetch cover art for {Provider}/{ExternalId}", provider, externalId); }
+
+            if (type == "artist")
+                return await ResolveExternalImageAsync(provider!, type, externalId!, width: maxWidth, height: maxHeight,
+                    imageRevision: tag, cancellationToken: token);
 
             if (type == "song" && HttpContext.GetProtocolExecutionContext() is { } protocol)
             {
@@ -603,6 +614,13 @@ public partial class JellyfinController : ControllerBase
             _ => null
         };
         var sourceRevision = revision;
+        string? artistImage = null;
+        if (resourceKind == "artist")
+        {
+            artistImage = await ResolveArtistImageUrlAsync(provider, resourceId, requestToken);
+            if (artistImage == null) return null;
+            revision = "artist-v1:" + Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(artistImage)));
+        }
         if (imageRevision != null) revision += ":" + imageRevision;
         var identity = new MediaAssetIdentity(
             resourceKind is "song" or "album" or "artist" ? null : actor?.EffectiveUserId,
@@ -634,8 +652,18 @@ public partial class JellyfinController : ControllerBase
                     using var resolving = allstarr.Core.Operations.RequestTiming.Current?.Stage("resolve");
                     coverUrl = (await _providerGateway.GetStoredAlbumAsync(ImageContext(token)!, provider, resourceId))?.CoverArtUrl;
                 }
-                else coverUrl = await GetProviderImageUrlAsync(provider, resourceKind, resourceId, token);
+                else coverUrl = artistImage ?? await GetProviderImageUrlAsync(provider, resourceKind, resourceId, token);
                 if ((storedOnly || actor == null) && string.IsNullOrWhiteSpace(coverUrl)) return null;
+                if (resourceKind == "artist" && coverUrl?.StartsWith("/Items/", StringComparison.Ordinal) == true)
+                {
+                    var path = coverUrl.Split('?', 2);
+                    var libraryId = Uri.UnescapeDataString(path[0].Split('/')[2]);
+                    var image = await _proxyService.GetImageAsync(libraryId, maxWidth: width, maxHeight: height,
+                        imageTag: path.Length == 2 ? Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(path[1])["tag"].ToString() : null,
+                        clientHeaders: Request.Headers).WaitAsync(token);
+                    return image.Body != null && image.ContentType != null ? new(image.Body, image.ContentType) : null;
+                }
+                if (resourceKind == "artist" && await ArtistArtworkCache.IsPlaceholderAsync(_cache, provider, coverUrl)) return null;
                 if (resourceKind == "album" && ProviderArtworkFallback.IsFallback(provider, coverUrl, resourceKind))
                 {
                     if (storedOnly || actor?.EffectiveUserId == null) return null;
@@ -682,6 +710,8 @@ public partial class JellyfinController : ControllerBase
                     return null;
                 await response.Content.LoadIntoBufferAsync(MaximumArtworkBytes, token);
                 var bytes = await response.Content.ReadAsByteArrayAsync(token);
+                if (resourceKind == "artist" &&
+                    !await ArtistArtworkCache.ObserveAsync(_cache, provider, resourceId, coverUrl!, bytes)) return null;
                 return new MediaAssetSource(
                     bytes,
                     contentType ?? DetectImageContentType(bytes),
@@ -702,7 +732,7 @@ public partial class JellyfinController : ControllerBase
 
         var shared = await _mediaAssets.ResolveAsync(identity, token => FetchAsync(token, false),
             MaximumArtworkBytes, requestToken);
-        if (shared == null && imageRevision != null)
+        if (shared == null && imageRevision != null && resourceKind != "artist")
             shared = await _mediaAssets.ResolveAsync(identity with { Revision = sourceRevision },
                 _ => Task.FromResult<MediaAssetSource?>(null), MaximumArtworkBytes, requestToken);
         if (shared != null || !albumFallback || actor?.EffectiveUserId is not { } listener) return shared;
@@ -758,6 +788,17 @@ public partial class JellyfinController : ControllerBase
             : new UriBuilder(coverUri) { Path = path }.Uri;
     }
 
+    private async Task<string?> ResolveArtistImageUrlAsync(string provider, string id, CancellationToken token)
+    {
+        if (await ArtistArtworkCache.ReadResourceAsync(_cache, provider, id) is { } stored)
+            return await ArtistArtworkCache.ResolveAsync(_cache, ImageContext(token), stored);
+        var url = await GetProviderImageUrlAsync(provider, "artist", id, token);
+        if (await ArtistArtworkCache.ReadResourceAsync(_cache, provider, id) == null)
+            await ArtistArtworkCache.RememberAsync(_cache, ImageContext(token), new Artist
+            { Id = $"ext-{provider}-artist-{id}", ExternalProvider = provider, ExternalId = id, ImageUrl = url });
+        return await ArtistArtworkCache.ResolveResourceAsync(_cache, ImageContext(token), provider, id, url);
+    }
+
     private ProtocolExecutionContext? ImageContext(CancellationToken token)
     {
         var source = HttpContext.GetProtocolExecutionContext();
@@ -776,7 +817,7 @@ public partial class JellyfinController : ControllerBase
     private sealed record CachedArtwork(MediaAssetSource? Image, bool Retry = false);
 
     private async Task<IActionResult> CachedImageAsync(string key, string provider, int? size, string? requestedFormat,
-        Func<CancellationToken, Task<ResolvedMediaAsset?>> read)
+        Func<CancellationToken, Task<ResolvedMediaAsset?>> read, bool artist = false)
     {
         var entry = await _cache.GetAsync<CachedArtwork>(key);
         entry ??= await _imageRequests.RunAsync(key, async () =>
@@ -792,7 +833,7 @@ public partial class JellyfinController : ControllerBase
             }
             catch (OperationCanceledException) when (timeout.IsCancellationRequested)
             {
-                result = new(await ProviderArtworkFallback.ReadAsync(HttpContext.RequestServices, provider, size,
+                result = new(artist ? null : await ProviderArtworkFallback.ReadAsync(HttpContext.RequestServices, provider, size,
                     CancellationToken.None), true);
             }
             if (result.Image != null) await _cache.SetAsync(key, result, result.Retry ? TimeSpan.FromSeconds(60) : null);

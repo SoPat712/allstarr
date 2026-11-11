@@ -28,8 +28,8 @@ public sealed partial class ProtocolRouteFixtureTests
             using var png = image.Encode(SKEncodedImageFormat.Png, 100);
             await File.WriteAllBytesAsync(Path.Combine(root, "icon.png"), png.ToArray());
             var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
-            gateway.Setup(item => item.GetArtistAsync(It.IsAny<ProtocolExecutionContext>(), provider, "resource"))
-                .ReturnsAsync(new Artist { Id = $"ext-{provider}-artist-resource", ExternalProvider = provider, ExternalId = "resource" });
+            gateway.Setup(item => item.GetAlbumAsync(It.IsAny<ProtocolExecutionContext>(), provider, "resource"))
+                .ReturnsAsync(new Album { Id = $"ext-{provider}-album-resource", ExternalProvider = provider, ExternalId = "resource" });
             using var factory = new ProtocolFactory(backend, request => request.RequestUri!.AbsolutePath == "/Users/Me"
                 ? Json(200, """{"Id":"user-1"}""")
                 : Json(200, """{"subsonic-response":{"status":"ok","version":"1.16.1"}}"""), services =>
@@ -57,7 +57,7 @@ public sealed partial class ProtocolRouteFixtureTests
                 });
                 await db.SaveChangesAsync();
             }
-            var id = $"ext-{provider}-artist-resource";
+            var id = $"ext-{provider}-album-resource";
             using var response = await client.GetAsync(backend == "Jellyfin" ? $"/Items/{id}/Images/Primary?api_key=fixture-key" :
                 $"/rest/getCoverArt?id={id}&u=fixture&p=fixture&v=1.16.1&c=Tempo");
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -116,6 +116,12 @@ public sealed partial class ProtocolRouteFixtureTests
         var url = backend == "Jellyfin" ? $"/Items/{id}/Images/Primary?api_key=fixture-key" :
             $"/rest/getCoverArt?id={id}&u=fixture&p=fixture&v=1.16.1&c=Tempo";
         using var response = await client.GetAsync(url);
+        if (kind == "artist" && !real)
+        {
+            Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+            Assert.Equal(0, imageRequests);
+            return;
+        }
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal("image/png", response.Content.Headers.ContentType?.MediaType);
         var bytes = await response.Content.ReadAsByteArrayAsync();
