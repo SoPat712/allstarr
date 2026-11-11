@@ -8321,8 +8321,8 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
     });
     await page.goto("#/integrations/routing");
     const group = page.locator(".routing-group");
-    await expect(group.getByRole("heading", { name: "Source order", exact: true })).toBeVisible();
-    await expect(group.getByRole("heading", { name: "Search order", exact: true })).toHaveText("Search order");
+    await expect(group.getByRole("heading", { name: "Search source order", exact: true })).toBeVisible();
+    await expect(group.getByText("Everyone", { exact: true })).toBeVisible();
     await expect(group.getByText("Drag to reorder. Saves as you drop.", { exact: true })).toBeVisible();
     await expect(group.getByRole("listitem").first()).toContainText("Deezer");
     await group.locator('summary[aria-label="Reorder SoundCloud"]').click();
@@ -9238,7 +9238,7 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
       return route.fulfill({ json: { ...(responses["/api/admin/config"] as object), providers: { lyricsOrder: order } } });
     });
     await page.goto("#/integrations/routing");
-    const group = page.locator(".routing-group").filter({ has: page.getByRole("heading", { name: "Lyrics order", exact: true }) });
+    const group = page.locator(".routing-group").filter({ has: page.getByRole("heading", { name: "Lyrics source order", exact: true }) });
     await expect(group.locator("li strong")).toHaveText(["Media server lyrics", "LRCLib", "Kept LRC", "Paxsenix"]);
     await group.getByLabel("Reorder Kept LRC", { exact: true }).click();
     await expect(group.getByRole("button", { name: "Move Kept LRC up", exact: true })).toBeEnabled();
@@ -9260,7 +9260,7 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
     await expect(group).not.toContainText("gets 5 confidence points");
     while (await page.getByRole("button", { name: "Dismiss notification", exact: true }).count())
       await page.getByRole("button", { name: "Dismiss notification", exact: true }).first().click();
-    await group.getByRole("heading", { name: "Source order", exact: true }).click();
+    await group.getByRole("heading", { name: "Lyrics source order", exact: true }).click();
     if (width < 600) await expectContainedMobileGeometry(page);
     await page.evaluate(() => window.scrollTo(0, 0));
     await page.screenshot({ path: `test-results/lyrics-routing-${width}-${theme}.png`, fullPage: true });

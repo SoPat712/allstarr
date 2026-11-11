@@ -45,11 +45,13 @@
   let lyricsExpanded = $state(false), draggedLyrics = $state(-1);
   let initialLyricsOrder = $state("");
   let loading = $state(true);
-  let busy = $state(false);
+  let reloading = $state(false);
+  let orderSaving = $state(false);
   let saving = $state(false);
+  let writes = 0;
   let error = $state("");
   let conflict = $state(false);
-  const controlsDisabled = $derived(busy || saving || conflict);
+  const controlsDisabled = $derived(reloading || orderSaving || saving || conflict);
 
   const householdQualityIndex = $derived(audioQualityOptions.findIndex(option => option.value === snapshot?.householdQuality));
   const householdQualityLabel = $derived(audioQualityOptions[householdQualityIndex]?.label ?? "Best available");
@@ -103,7 +105,8 @@
   const orderSave = createOrderSave({
     save: async (_, order) => {
       if (!snapshot) return;
-      busy = true;
+      orderSaving = true;
+      writes++;
       try {
         const next = await listeningPreferences.save({
           explicitFilter: snapshot.values.explicitFilter as ExplicitFilter,
@@ -115,7 +118,7 @@
         });
         snapshot = next;
         initialLyricsOrder = completeLyricsOrder(next.values.lyricsOrder).join(",");
-      } finally { busy = false; }
+      } finally { orderSaving = false; }
     },
     saved: (_, order, previous) => {
       error = "";
@@ -176,22 +179,27 @@
     return cause instanceof Error ? cause.message : action;
   }
 
+  const editing = () => orderSaving || saving || conflict || dirty || lyricsOrder.join(",") !== initialLyricsOrder;
+
+  // Background refreshes stay silent: they never show "Saving…", lock the controls or replace a choice made meanwhile.
   async function load(passive = false) {
-    if (passive && (busy || saving || conflict || dirty || lyricsOrder.join(",") !== initialLyricsOrder)) return;
+    if (passive && editing()) return;
+    const startedAt = writes;
     loading = !snapshot;
-    busy = Boolean(snapshot);
-    error = "";
-    conflict = false;
+    reloading = !passive && Boolean(snapshot);
+    if (!passive) { error = ""; conflict = false; }
     try {
       const [preferences, catalog] = await Promise.allSettled([listeningPreferences.get(), home.schema()]);
       if (preferences.status === "rejected") throw preferences.reason;
+      if (passive && (writes !== startedAt || editing())) return;
       providerDefinitions = catalog.status === "fulfilled" ? (catalog.value as UiSchema).providers ?? [] : [];
+      if (passive && snapshot && JSON.stringify(preferences.value) === JSON.stringify(snapshot)) return;
       apply(preferences.value);
     } catch (cause) {
-      error = messageFor(cause, "Listening preferences could not be loaded.");
+      if (!passive) error = messageFor(cause, "Listening preferences could not be loaded.");
     } finally {
       loading = false;
-      busy = false;
+      reloading = false;
     }
   }
 
@@ -206,6 +214,7 @@
     playbackStart = values.playbackStart;
     qualityLimit = values.qualityLimit;
     saving = true;
+    writes++;
     error = "";
     try {
       await orderSave.flush();
@@ -235,6 +244,7 @@
     const values = valuesFor(previous);
     if (!filterOptions.some(option => option.value === values.explicitFilter)) return;
     saving = true;
+    writes++;
     error = "";
     try {
       await orderSave.flush();
@@ -253,6 +263,7 @@
   async function reset() {
     if (!snapshot || controlsDisabled) return;
     saving = true;
+    writes++;
     error = "";
     try {
       await orderSave.flush();
@@ -280,18 +291,18 @@
 {:else if !snapshot}
   <ErrorState title="Listening preferences could not be loaded." detail={error} onretry={load} />
 {:else}
-  <section class="preferences-view" aria-busy={busy || saving}>
+  <section class="preferences-view" aria-busy={reloading || orderSaving || saving}>
     <PageStatus label="Listening preferences status" items={[
       ...householdStatus,
       { label: snapshot.usesHouseholdDefaults ? "Using household defaults" : "Personal choices" },
-      { label: busy || saving ? "Saving…" : conflict ? "Reload needed" : "Changes save automatically", tone: conflict ? "warn" : "neutral" },
+      { label: orderSaving || saving ? "Saving…" : reloading ? "Loading…" : conflict ? "Reload needed" : "Changes save automatically", tone: conflict ? "warn" : "neutral" },
     ]} />
     {#if error}
       <div class="degraded-banner" role="alert">
         <span aria-hidden="true">!</span>
         <p><strong>Preferences were not changed.</strong> {error}</p>
         {#if conflict}
-          <Button variant="secondary" disabled={busy || saving} onclick={() => void load()}>Reload latest</Button>
+          <Button variant="secondary" disabled={reloading || orderSaving || saving} onclick={() => void load()}>Reload latest</Button>
         {/if}
       </div>
     {/if}
@@ -313,7 +324,7 @@
     <div class="settings-card preferences-panel">
       <section class="preference-options" aria-label="Lyrics source order">
         <div>
-          <h3>Lyrics source order</h3>
+          {#if administrator}<div class="settings-card-title"><h3>Lyrics source order</h3><span class="scope-tag" data-scope="you">Just you</span></div>{:else}<h3>Lyrics source order</h3>{/if}
           <p>A version you picked for a song always wins. Otherwise word timing beats line timing, then plain text; this order breaks ties.</p>
         </div>
         {#if !lyricsOrder.length}<EmptyState title="No lyrics sources available" description="Available lyrics sources appear here when they are enabled for your account." />{:else}

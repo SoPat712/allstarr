@@ -115,7 +115,7 @@ for (const [width, theme] of [[1280, "light"], [1280, "dark"], [390, "light"], [
         const filters = page.getByRole("radiogroup", { name: "Source orders", exact: true });
         await expect(filters.getByRole("radio", { name: /Search/ })).toContainText("2");
         await filters.getByRole("radio", { name: /Streaming/ }).click();
-        await expect(page.getByRole("heading", { name: "Streaming order", exact: true })).toBeVisible();
+        await expect(page.getByRole("heading", { name: "Streaming source order", exact: true })).toBeVisible();
       }
     }
   });
@@ -213,7 +213,7 @@ test("Quality changes save and undo, and source filters remember the selected li
   expect(writes[2]).toEqual({ updates: { MATCHING_LOCAL_PREFERENCE_PERCENT: "0" } });
   await page.getByRole("radiogroup", { name: "Source orders", exact: true }).getByRole("radio", { name: /Streaming/ }).click();
   await page.reload();
-  await expect(page.getByRole("heading", { name: "Streaming order", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Streaming source order", exact: true })).toBeVisible();
 });
 
 test("Undo after a restart asks before restarting again", async ({ page }) => {

@@ -166,6 +166,28 @@ test("listener autosaves each change and resets with the latest returned revisio
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 });
 
+test("background refreshes never show Saving or lock the controls when nothing changed", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 844 });
+  let reads = 0, writes = 0;
+  await mockShell(page, false, async route => {
+    if (route.request().method() !== "GET") { writes++; return fulfillJson(route, {}); }
+    if (++reads > 1) await new Promise(resolve => setTimeout(resolve, 1_500));
+    return fulfillJson(route, response({ explicitFilter: "All", showExternalLabel: true, showExplicitLabel: true,
+      revision: "current", usesHouseholdDefaults: true }));
+  });
+  await page.goto("/#/preferences");
+  const external = page.getByRole("switch", { name: "Show [A] for external tracks", exact: true });
+  await expect(external).toBeEnabled();
+  await expect(page.getByText("Changes save automatically", { exact: true })).toBeVisible();
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await expect.poll(() => reads).toBeGreaterThan(1);
+  await expect(page.getByText("Saving…", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("Changes save automatically", { exact: true })).toBeVisible();
+  await expect(external).toBeEnabled();
+  await expect(page.locator(".preferences-view")).not.toHaveAttribute("aria-busy", "true");
+  expect(writes).toBe(0);
+});
+
 test("administrator reloads a 409 conflict before saving against the refreshed revision", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   let getCount = 0;

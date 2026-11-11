@@ -82,6 +82,8 @@
   }
   function update(patch: Partial<PromotionProfile>) {
     if (!profile || !mine || !household) return;
+    const current = profile;
+    if (Object.entries(patch).every(([key, value]) => JSON.stringify(current[key as keyof PromotionProfile]) === JSON.stringify(value))) return;
     const next = { ...profile, ...patch };
     if (scope === "me") mine = { ...mine, values: next };
     else household = { ...household, values: next };
@@ -221,7 +223,7 @@
       {/if}
       <div class="settings-row"><div><strong>Default unit</strong><small>What “Add to library” adds from a song</small></div><ThreeDetentSwitch label="Default unit" value={profile.defaultUnit} options={[{ value: "album", label: "Whole album" }, { value: "song", label: "Just the song" }]} onchange={value => update({ defaultUnit: value })} /></div>
       {@render toggle("removeKeptCopy", "Remove kept copy", "Release the kept copy after Jellyfin confirms the library song")}
-      {#if administrator && scope === "household"}<div class="settings-row"><div><strong>Who adds without approval</strong><small>Everyone else sends a request to an admin</small></div><SelectField label="Who adds without approval" value={household.addWithoutApproval} options={[{ value: "admins-and-trusted-listeners", label: "Admins and trusted listeners" }, { value: "admins", label: "Admins" }]} onchange={value => { if (household) household = { ...household, addWithoutApproval: value as ApprovalRoles }; dirty.add(scope); scheduleSave(); }} /></div>{/if}
+      {#if administrator && scope === "household"}<div class="settings-row"><div><strong>Who adds without approval</strong><small>Everyone else sends a request to an admin</small></div><SelectField label="Who adds without approval" value={household.addWithoutApproval} options={[{ value: "admins-and-trusted-listeners", label: "Admins and trusted listeners" }, { value: "admins", label: "Admins" }]} onchange={value => { if (!household || household.addWithoutApproval === value) return; household = { ...household, addWithoutApproval: value as ApprovalRoles }; dirty.add(scope); scheduleSave(); }} /></div>{/if}
     </section>
   </div>
 {/if}

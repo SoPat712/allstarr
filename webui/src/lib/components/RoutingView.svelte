@@ -192,14 +192,13 @@
       {#each groups.filter((item) => item.id === shown) as group}
         <section class="settings-card routing-group">
           <p class="sr-only" role="status">{moveAnnouncement?.groupId === group.id ? moveAnnouncement.message : ""}</p>
-          <header><div><h3>Source order</h3><small>Drag to reorder. Saves as you drop.</small></div>{#if scores.length && group.id !== "lyrics"}<Button variant="text" onclick={() => sortByScore(group)}>Sort by score</Button>{/if}</header>
+          <header><div><div class="settings-card-title"><h3>{tabNames[group.id] ?? group.label.replace(/ order$/i, "")} source order</h3><span class="scope-tag" data-scope="everyone">Everyone</span></div><small>Drag to reorder. Saves as you drop.</small></div>{#if scores.length && group.id !== "lyrics"}<Button variant="text" onclick={() => sortByScore(group)}>Sort by score</Button>{/if}</header>
           <div class="routing-tabs">
             {#if groups.length > 1}
               <FilterSegments label="Source orders" options={groups.map(item => ({ id: item.id, label: tabNames[item.id] ?? item.label, count: (orders[item.id] ?? item.providers).length }))}
                 value={shown ?? ""} storageKey={tabKey} onchange={id => { chooseTab(id); expanded = false; }} />
             {/if}
           </div>
-          <h4 class="sr-only">{tabNames[group.id] ?? group.label.replace(/ order$/i, "")} order</h4>
           <ol>
             {#if group.pinnedProvider}
               <li class="pinned">
