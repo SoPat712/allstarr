@@ -424,10 +424,18 @@ public sealed class PlaylistVirtualizationService(
                 seen.Add((track.RouteKind, track.RouteProviderId, track.RouteExternalId)),
             _ => true
         }).ToArray();
+        var cover = result.MixCover is { } current ? current with { Count = uniqueTracks.Length } : null;
+        if (publishedProjection == null)
+        {
+            cover = allstarr.Core.Music.MixCoverInput.From(await personalMixes.GetCoverAsync(
+                link.OwnerUserId, link.Id, cancellationToken));
+            if (cover.Kind == "external")
+                cover = cover with { Source = link.SourceProviderId, SourcePlaylistId = link.SourcePlaylistId };
+        }
         return result with
         {
             Tracks = uniqueTracks,
-            MixCover = result.MixCover is { } cover ? cover with { Count = uniqueTracks.Length } : null
+            MixCover = cover
         };
     }
 

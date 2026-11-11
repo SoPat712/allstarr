@@ -14,7 +14,8 @@ public sealed class MixCoverImageService
     private readonly Queue<string> _order = new();
     private readonly Dictionary<string, Task<(byte[] Bytes, string ContentType, bool Complete)>> _pending = new(StringComparer.Ordinal);
     private readonly Func<MixCoverInput, byte[]> _render;
-    private readonly Func<string, CancellationToken, Task<byte[]?>>? _loadArt;
+    private readonly Func<MixCoverInput, string, CancellationToken, Task<byte[]?>>? _loadArt;
+    private readonly Action<string, string, string>? _reportFailure;
     private readonly Func<MixCoverInput, Guid, CancellationToken, Task<ResolvedMediaAsset?>>? _serviceArt;
     private readonly int _maxEntries;
     private readonly long _maxBytes;
@@ -24,13 +25,19 @@ public sealed class MixCoverImageService
 
     public MixCoverImageService() : this(MixCoverRenderer.Render) { }
 
-    public MixCoverImageService(MixCoverArtLoader art) : this(MixCoverRenderer.Render, art.LoadAsync) { }
+    public MixCoverImageService(MixCoverArtLoader art) : this(MixCoverRenderer.Render)
+    {
+        _loadArt = (input, reference, token) => art.LoadAsync(reference, token, reason => art.ReportFailure(input.Id, reference, reason));
+        _reportFailure = art.ReportFailure;
+    }
 
     public MixCoverImageService(MixCoverArtLoader art, IServiceProvider services, IApplicationCache cache)
-        : this(MixCoverRenderer.Render, art.LoadAsync, cache: cache,
-            serviceArt: (input, owner, token) => services.GetRequiredService<PersonalMixService>()
-                .LoadServiceArtworkAsync(input, owner, services.GetRequiredService<IMediaAssetResolver>(), token))
-    { }
+        : this(art)
+    {
+        _cache = cache;
+        _serviceArt = (input, owner, token) => services.GetRequiredService<PersonalMixService>()
+            .LoadServiceArtworkAsync(input, owner, services.GetRequiredService<IMediaAssetResolver>(), token);
+    }
 
     internal MixCoverImageService(Func<MixCoverInput, byte[]> render, Func<string, CancellationToken, Task<byte[]?>>? loadArt = null,
         int maxEntries = 96, long maxBytes = 24 * 1024 * 1024,
@@ -39,7 +46,7 @@ public sealed class MixCoverImageService
         _cache = cache;
         _render = render;
         _serviceArt = serviceArt;
-        _loadArt = loadArt;
+        _loadArt = loadArt == null ? null : (_, reference, token) => loadArt(reference, token);
         _maxEntries = maxEntries;
         _maxBytes = maxBytes;
     }
@@ -252,13 +259,41 @@ public sealed class MixCoverImageService
 
     private async Task<(byte[] Bytes, string ContentType, bool Complete)> RenderCollageAsync(MixCoverInput input)
     {
-        var pictures = await Task.WhenAll(input.Art!.Select(reference => _loadArt!(reference, CancellationToken.None)));
-        if (pictures.All(picture => picture != null) && MixCoverRenderer.RenderCollage(pictures!) is { } collage)
+        var art = input.Art!;
+        var references = art.Concat(input.FallbackArt?.Keys ?? []).Distinct(StringComparer.Ordinal).ToArray();
+        var pictures = new List<byte[]>(4);
+        var albums = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var wanted = art.Count == 1 ? 1 : 4;
+        var primaryLoaded = false;
+        for (var index = 0; index < references.Length && pictures.Count < wanted;)
+        {
+            var batch = new List<string>(wanted - pictures.Count);
+            while (index < references.Length && batch.Count < wanted - pictures.Count)
+            {
+                var reference = references[index++];
+                if (input.FallbackArt != null && input.FallbackArt.TryGetValue(reference, out var knownAlbum) && albums.Contains(knownAlbum)) continue;
+                batch.Add(reference);
+            }
+            var loaded = await Task.WhenAll(batch.Select(reference => _loadArt!(input, reference, CancellationToken.None)));
+            for (var tile = 0; tile < loaded.Length; tile++)
+            {
+                if (loaded[tile] is not { } picture) continue;
+                using var image = SkiaSharp.SKImage.FromEncodedData(picture);
+                if (image is not { Width: > 0, Height: > 0 })
+                {
+                    _reportFailure?.Invoke(input.Id, batch[tile], "artwork could not be decoded");
+                    continue;
+                }
+                if (input.FallbackArt != null && input.FallbackArt.TryGetValue(batch[tile], out var album) && !albums.Add(album)) continue;
+                if (batch[tile] == art[0]) primaryLoaded = true;
+                pictures.Add(picture);
+            }
+        }
+        if (pictures.Count == 4 && MixCoverRenderer.RenderCollage(pictures) is { } collage)
             return (collage, "image/jpeg", true);
         // Whatever loaded still beats a gradient for now; the full cover follows on a later request.
-        var loaded = pictures.Where(picture => picture != null).Take(1).ToArray();
-        return loaded.Length == 1 && MixCoverRenderer.RenderCollage(loaded!) is { } single
-            ? (single, "image/jpeg", false)
+        return pictures.Count > 0 && MixCoverRenderer.RenderCollage([pictures[0]]) is { } single
+            ? (single, "image/jpeg", art.Count == 1 && primaryLoaded)
             : (_render(input), "image/png", false);
     }
 

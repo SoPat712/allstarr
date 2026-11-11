@@ -8,6 +8,85 @@ namespace allstarr.Tests;
 public sealed class MixCoverImageServiceTests
 {
     [Fact]
+    public async Task SongsFromOnlyTwoAlbumsDoNotRepeatTheirPicturesToFillTheGrid()
+    {
+        var mix = new PersonalMix(Guid.NewGuid(), "daily-1", "Daily Mix", "", 1, null, new(true, "Ready"), true,
+            Enumerable.Range(0, 4).Select(index => new PersonalMixItem(Guid.Empty, 1,
+                new() { Id = "song-" + index, Album = "Album " + index / 2, Artist = "Artist", IsLocal = true }, "library", "", 1)).ToArray());
+        var service = new MixCoverImageService(MixCoverRenderer.Render, (reference, _) =>
+        {
+            return Task.FromResult<byte[]?>(Picture(reference is "library:song-0" or "library:song-1" ? 40 : 80));
+        });
+        var context = new DefaultHttpContext();
+        var result = Assert.IsType<FileContentResult>(await service.CreateResponseAsync(MixCoverInput.From(mix), context));
+        Assert.Equal(MixCoverRenderer.RenderCollage([Picture(40)]), result.FileContents);
+        Assert.Equal("private, max-age=0, must-revalidate", context.Response.Headers.CacheControl);
+    }
+
+    [Fact]
+    public async Task FailedAlbumPictureCanUseAnotherSongWithoutReloadingSuccessfulAlbums()
+    {
+        var mix = new PersonalMix(Guid.NewGuid(), "daily-1", "Daily Mix", "", 1, null, new(true, "Ready"), true,
+            Enumerable.Range(1, 6).Select(index => new PersonalMixItem(Guid.Empty, 1,
+                new() { Id = "song-" + index, Album = "Album " + (index == 5 ? 1 : index == 6 ? 2 : index), Artist = "Artist", IsLocal = true }, "library", "", 1)).ToArray());
+        var service = new MixCoverImageService(MixCoverRenderer.Render, (reference, _) =>
+        {
+            Assert.NotEqual("library:song-5", reference);
+            return Task.FromResult(reference == "library:song-2" ? null : Picture(int.Parse(reference[^1..]) * 40));
+        });
+        var context = new DefaultHttpContext();
+        var result = Assert.IsType<FileContentResult>(await service.CreateResponseAsync(MixCoverInput.From(mix), context));
+        Assert.Equal(MixCoverRenderer.RenderCollage(new[] { 1, 3, 4, 6 }.Select(index => Picture(index * 40)).ToArray()), result.FileContents);
+        Assert.NotEmpty(context.Response.Headers.ETag.ToString());
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task FailedSecondPictureUsesTheFifthSongAndKeepsTheOriginalOrder(bool undecodable)
+    {
+        var loaded = new List<string>();
+        var pictures = Enumerable.Range(1, 5).ToDictionary(index => "library:album-" + index, index => Picture(index * 40));
+        var mix = new PersonalMix(Guid.NewGuid(), "daily-1", "Daily Mix", "", 1, null, new(true, "Ready"), true,
+            Enumerable.Range(1, 5).Select(index => new PersonalMixItem(Guid.Empty, 1,
+                new() { Id = "song-" + index, AlbumId = "album-" + index, IsLocal = true }, "library", "", 1)).ToArray());
+        var input = MixCoverInput.From(mix);
+        var service = new MixCoverImageService(MixCoverRenderer.Render, (reference, _) =>
+        {
+            loaded.Add(reference);
+            return Task.FromResult(reference == "library:album-2" ? undecodable ? new byte[] { 1, 2, 3 } : null : pictures[reference]);
+        });
+        var context = new DefaultHttpContext();
+        var result = Assert.IsType<FileContentResult>(await service.CreateResponseAsync(input, context));
+        Assert.Equal(MixCoverRenderer.RenderCollage(new[] { 1, 3, 4, 5 }.Select(index => pictures["library:album-" + index]).ToArray()), result.FileContents);
+        Assert.Equal(5, loaded.Count);
+        Assert.NotEmpty(context.Response.Headers.ETag.ToString());
+        var intact = new MixCoverImageService(MixCoverRenderer.Render, (reference, _) => Task.FromResult<byte[]?>(pictures[reference]));
+        var original = Assert.IsType<FileContentResult>(await intact.CreateResponseAsync(input, new DefaultHttpContext()));
+        Assert.Equal(MixCoverRenderer.RenderCollage(Enumerable.Range(1, 4).Select(index => pictures["library:album-" + index]).ToArray()), original.FileContents);
+    }
+
+    [Fact]
+    public async Task OnlyTwoLoadableDistinctPicturesUseTheFirstWithShortCaching()
+    {
+        var first = Picture(40);
+        var attempts = new List<string>();
+        var service = new MixCoverImageService(MixCoverRenderer.Render, (reference, _) =>
+        {
+            attempts.Add(reference);
+            return Task.FromResult(reference switch { "first" => first, "second" => Picture(80), _ => null });
+        });
+        var input = new MixCoverInput("mix", 1, "daily-1", Count: 5, Art: ["first", "missing", "second", "first"],
+            FallbackArt: new Dictionary<string, string> { ["second"] = "second", ["also-missing"] = "also-missing" });
+        var context = new DefaultHttpContext();
+        var result = Assert.IsType<FileContentResult>(await service.CreateResponseAsync(input, context, MixCoverImageService.Version(input)));
+        Assert.Equal(MixCoverRenderer.RenderCollage([first]), result.FileContents);
+        Assert.Equal(new[] { "first", "missing", "second", "also-missing" }, attempts);
+        Assert.Equal("private, max-age=60", context.Response.Headers.CacheControl);
+        Assert.False(context.Response.Headers.ContainsKey("ETag"));
+    }
+
+    [Fact]
     public async Task ConcurrentRequestsRenderOnceAndCacheEvictsWithinBothLimits()
     {
         var renders = 0;

@@ -3,9 +3,14 @@ using allstarr.Core.Capabilities;
 using allstarr.Core.Music;
 using allstarr.Core.Protocols;
 using allstarr.Models.Domain;
+using allstarr.Models.Settings;
+using allstarr.Services.Common;
+using allstarr.Services.Jellyfin;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Options;
 using Moq;
 using SkiaSharp;
 
@@ -13,6 +18,77 @@ namespace allstarr.Tests;
 
 public sealed class MixCoverArtLoaderTests
 {
+    [Fact]
+    public async Task LocalAlbumItemsLoadAndLocalCopiesDoNotSendServiceAlbumIdsToTheLibrary()
+    {
+        var paths = new List<string>();
+        using var client = new HttpClient(new CoverHandler(request =>
+        {
+            paths.Add(request.RequestUri!.AbsolutePath);
+            var color = request.RequestUri.AbsolutePath switch
+            {
+                "/Items/third/Images/Primary" => SKColors.Green,
+                "/Items/fourth/Images/Primary" => SKColors.Red,
+                "/Items/fifth/Images/Primary" => SKColors.Yellow,
+                _ => SKColors.Blue
+            };
+            return new(HttpStatusCode.OK) { Content = new ByteArrayContent(Picture(color)) };
+        }));
+        var clients = new Mock<IHttpClientFactory>();
+        clients.Setup(item => item.CreateClient(It.IsAny<string>())).Returns(client);
+        var cache = new DisabledApplicationCache();
+        using var jellyfin = new JellyfinProxyService(clients.Object, Options.Create(new JellyfinSettings { Url = "http://library.test" }),
+            new HttpContextAccessor(), NullLogger<JellyfinProxyService>.Instance, cache,
+            new MediaAssetResolver(cache, NullLogger<MediaAssetResolver>.Instance), new ConfigurationBuilder().Build());
+        var gateway = new Mock<IProtocolProviderGateway>();
+        gateway.Setup(item => item.GetPublicArtworkUriAsync("deezer", ProviderResourceKind.Track, "missing",
+            It.IsAny<CancellationToken>(), false, false)).ReturnsAsync((Uri?)null);
+        var loader = new MixCoverArtLoader(jellyfin, clients.Object, gateway.Object, NullLogger<MixCoverArtLoader>.Instance);
+        var song = new Song { Id = "local-talk", AlbumId = "3027f96ecc3c97320fdc6ce9e60e1fba", IsLocal = true };
+        Assert.NotNull(await loader.LoadAsync(MixCoverArt.Reference(song)!, default));
+        Assert.Equal("/Items/3027f96ecc3c97320fdc6ce9e60e1fba/Images/Primary", Assert.Single(paths));
+        song.AlbumId = "ext-deezer-album-42";
+        Assert.Equal("library:local-talk", MixCoverArt.Reference(song));
+        Assert.NotNull(await loader.LoadAsync(MixCoverArt.Reference(song)!, default));
+        Assert.Equal("/Items/local-talk/Images/Primary", paths[1]);
+        song.AlbumId = "3027f96ecc3c97320fdc6ce9e60e1fba";
+        var mix = new PersonalMix(Guid.NewGuid(), "daily-1", "Hip-Hop Blend", "", 1, null, new(true, "Ready"), true,
+            new[] { song, new Song { Id = "ext-deezer-song-missing", ExternalProvider = "deezer" },
+                new Song { Id = "third", IsLocal = true }, new Song { Id = "fourth", IsLocal = true }, new Song { Id = "fifth", IsLocal = true } }
+                .Select(item => new PersonalMixItem(Guid.Empty, 1, item, "library", "", 1)).ToArray());
+        var context = new DefaultHttpContext();
+        var result = Assert.IsType<FileContentResult>(await new MixCoverImageService(loader).CreateResponseAsync(MixCoverInput.From(mix), context));
+        Assert.Equal(MixCoverRenderer.RenderCollage(new[] { SKColors.Blue, SKColors.Green, SKColors.Red, SKColors.Yellow }.Select(Picture).ToArray()), result.FileContents);
+        Assert.NotEmpty(context.Response.Headers.ETag.ToString());
+    }
+
+    [Fact]
+    public async Task MissingServiceArtworkIsSkippedAndReportedOncePerMixWithoutCredentials()
+    {
+        var gateway = new Mock<IProtocolProviderGateway>();
+        gateway.Setup(item => item.GetPublicArtworkUriAsync("deezer", ProviderResourceKind.Track, "missing",
+            It.IsAny<CancellationToken>(), false, false)).ReturnsAsync((Uri?)null);
+        var messages = new List<string>();
+        var logger = new Mock<Microsoft.Extensions.Logging.ILogger<MixCoverArtLoader>>();
+        logger.Setup(item => item.Log(Microsoft.Extensions.Logging.LogLevel.Information, It.IsAny<Microsoft.Extensions.Logging.EventId>(),
+            It.IsAny<It.IsAnyType>(), It.IsAny<Exception?>(), It.IsAny<Func<It.IsAnyType, Exception?, string>>()))
+            .Callback(new InvocationAction(call => messages.Add(call.Arguments[2].ToString()!)));
+        using var client = new HttpClient(new CoverHandler(_ => throw new HttpRequestException("https://user:secret@covers.example.test/?token=secret")));
+        var clients = new Mock<IHttpClientFactory>();
+        clients.Setup(item => item.CreateClient(It.IsAny<string>())).Returns(client);
+        var service = new MixCoverImageService(new MixCoverArtLoader(null!, clients.Object, gateway.Object, logger.Object));
+        var missing = new Song { Id = "ext-deezer-song-missing", ExternalProvider = "deezer" };
+        var input = new MixCoverInput("daily-1", 1, "daily-1", Count: 5,
+            Art: [MixCoverArt.Reference(missing)!, "https://covers.example.test/picture?token=secret"]);
+        await service.CreateResponseAsync(input, new DefaultHttpContext());
+        await service.CreateResponseAsync(input, new DefaultHttpContext());
+        Assert.Equal(2, messages.Count);
+        Assert.Contains(messages, message => message.Contains("service:ext-deezer-song-missing") && message.Contains("no artwork"));
+        Assert.DoesNotContain(messages, message => message.Contains("secret") || message.Contains("https://"));
+        await service.CreateResponseAsync(input with { Id = "daily-2" }, new DefaultHttpContext());
+        Assert.Equal(4, messages.Count);
+    }
+
     [Fact]
     public async Task ServiceSongsWithoutSavedUrlsUsePublicItemArtworkForTheCollage()
     {

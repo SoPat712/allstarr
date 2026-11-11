@@ -170,7 +170,8 @@ public sealed partial class PersonalMixServiceTests
         var summary = Assert.Single(await virtualization.ListSummariesAsync(context, default));
         Assert.Equal(count, summary.TrackCount);
         Assert.Equal(duration, summary.DurationMilliseconds);
-        if (uniqueSongs) Assert.Equal(count, detail.MixCover!.Count);
+        // Cover versions use the mix endpoint's source count, while playlist rows omit duplicates.
+        if (uniqueSongs) Assert.Equal(3, detail.MixCover!.Count);
         var adapter = new JellyfinVirtualPlaylistProtocolAdapter(virtualization,
             new Mock<IJellyfinPlaylistMutationResolver>().Object);
         foreach (var item in new[] { adapter.ToItem(summary), adapter.ToItem(detail) })

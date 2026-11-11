@@ -113,6 +113,12 @@ public sealed partial class PersonalMixService
                 .OrderByDescending(item => item.SnapshotVersion).FirstOrDefaultAsync(token);
             if (snapshot == null) return null;
             var count = await db.PlaylistSourceEntries.CountAsync(item => item.PlaylistSourceSnapshotId == snapshot.Id, token);
+            if (count > 0)
+            {
+                var user = await UserAsync(db, link.OwnerUserId, token);
+                var mix = (await ServiceMixesAsync(user, token, id, coverOnly: true)).SingleOrDefault();
+                return mix == null ? null : MixCoverInput.From(mix);
+            }
             return new(link.Id.ToString(), snapshot.SnapshotVersion, "external", Source: link.SourceProviderId,
                 SourcePlaylistId: link.SourcePlaylistId, Name: PlaylistVirtualizationService.DisplayName(link.SourceProviderId, snapshot.Name),
                 Count: count);

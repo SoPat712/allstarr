@@ -12,6 +12,26 @@ namespace allstarr.Tests;
 public sealed partial class PersonalMixServiceTests
 {
     [Fact]
+    public async Task CoverReferencesForMatchedLocalSongsUseLibraryIdsInsteadOfTheirSavedServiceAlbums()
+    {
+        await Seed(count: 4, plays: 0);
+        songs["0"].AlbumId = "ext-deezer-album-42";
+        var saved = await service.SaveListAsync(owner, Guid.NewGuid(), "Saved songs", "Songs in order", songs.Values.ToArray(), "Picked by you");
+        var identities = new Mock<allstarr.Core.Matching.ITrackIdentityService>();
+        identities.Setup(item => item.ResolveRecordingsAsync(It.IsAny<ProviderActorContext>(),
+                It.IsAny<IReadOnlyCollection<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Dictionary<string, allstarr.Core.Matching.CanonicalRecordingIdentity?>());
+        var library = new Mock<allstarr.Core.Matching.ILibraryIndexService>();
+        library.Setup(item => item.FindKnownRecordingTracksAsync(It.IsAny<allstarr.Core.Protocols.ProtocolExecutionContext>(),
+                It.IsAny<IReadOnlyList<allstarr.Core.Matching.LibraryRecordingLookup>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Dictionary<string, string> { [songs["0"].Id] = "local-copy" });
+        var cover = await NewService(libraryIndex: library.Object, identities: identities.Object).GetCoverAsync(owner, saved.Id);
+        var local = Assert.Single(cover.Songs, item => item.Song.IsLocal).Song;
+        Assert.Equal("ext-deezer-album-42", local.AlbumId);
+        Assert.Equal("library:local-copy", MixCoverArt.Reference(local));
+    }
+
+    [Fact]
     public async Task ServiceFeedCoverVersionsAreWarmedAfterRefresh()
     {
         var first = new TaskCompletionSource<MixCoverInput>(TaskCreationOptions.RunContinuationsAsynchronously);
