@@ -123,7 +123,7 @@ public sealed partial class FileMediaApplicationCache : IApplicationCache, IDisp
         CancellationToken cancellationToken = default)
     {
         await FlushWritesAsync().WaitAsync(cancellationToken);
-        await _gate.WaitAsync(cancellationToken);
+        await WaitForWriteAsync(cancellationToken);
         try
         {
             var entries = ReadAllMetadata()
@@ -153,7 +153,7 @@ public sealed partial class FileMediaApplicationCache : IApplicationCache, IDisp
         GetCategoryUsageAsync(CancellationToken cancellationToken = default)
     {
         await FlushWritesAsync().WaitAsync(cancellationToken);
-        await _gate.WaitAsync(cancellationToken);
+        await WaitForWriteAsync(cancellationToken);
         try
         {
             return ReadAllMetadata()
@@ -196,11 +196,14 @@ public sealed partial class FileMediaApplicationCache : IApplicationCache, IDisp
                 Interlocked.Increment(ref _misses);
                 return null;
             }
-        }
-        if (!await _gate.WaitAsync(0))
-        {
-            Interlocked.Increment(ref _misses);
-            return null;
+            // Provider searches still skip busy storage; media reads do not share the writer gate.
+            if (ApplicationCachePayloadPolicy.IsRestartSafe(key) && _gate.CurrentCount == 0)
+            {
+                Interlocked.Increment(ref _misses);
+                return null;
+            }
+            // Pending values cover writes already in progress; new writes and maintenance yield to these readers.
+            _activeReaders++;
         }
         try
         {
@@ -223,10 +226,9 @@ public sealed partial class FileMediaApplicationCache : IApplicationCache, IDisp
 
             if (ApplicationCachePayloadPolicy.IsRestartSafe(key) && FileLength(paths.Payload) > _options.MaximumEntryBytes + 3L) return null;
             var value = await File.ReadAllTextAsync(paths.Payload, Encoding.UTF8);
-            if (ApplicationCachePayloadPolicy.IsRestartSafe(key) &&
-                (metadata.ExpiresAt is null || metadata.PayloadHash != PayloadHash(value)))
+            if ((ApplicationCachePayloadPolicy.IsRestartSafe(key) && (metadata.ExpiresAt is null || metadata.PayloadHash is null)) ||
+                (metadata.PayloadHash is not null && metadata.PayloadHash != PayloadHash(value)))
             {
-                QueueWrite(key, null);
                 Interlocked.Increment(ref _misses);
                 return null;
             }
@@ -243,7 +245,7 @@ public sealed partial class FileMediaApplicationCache : IApplicationCache, IDisp
         }
         finally
         {
-            _gate.Release();
+            lock (_pendingLock) _activeReaders--;
         }
     }
 
@@ -307,7 +309,7 @@ public sealed partial class FileMediaApplicationCache : IApplicationCache, IDisp
                     write.ExpiresAt,
                     lastAccessAt,
                     write.WrittenAt,
-                    ApplicationCachePayloadPolicy.IsRestartSafe(key) ? PayloadHash(value) : null,
+                    PayloadHash(value),
                     write.ListenerId));
             Interlocked.Add(ref _evictions, await TrimToQuotaAsync());
             Interlocked.Increment(ref _writes);
@@ -375,7 +377,7 @@ public sealed partial class FileMediaApplicationCache : IApplicationCache, IDisp
     public async Task<int> DeleteByPatternAsync(string pattern)
     {
         await FlushWritesAsync();
-        await _gate.WaitAsync();
+        await WaitForWriteAsync();
         try
         {
             var matcher = ApplicationCachePayloadPolicy.PatternMatcher(pattern);
@@ -404,7 +406,7 @@ public sealed partial class FileMediaApplicationCache : IApplicationCache, IDisp
     public async Task<int> PurgeAllAsync()
     {
         await FlushWritesAsync();
-        await _gate.WaitAsync();
+        await WaitForWriteAsync();
         try
         {
             var deleted = CacheFiles("*.json").Count();
@@ -426,7 +428,7 @@ public sealed partial class FileMediaApplicationCache : IApplicationCache, IDisp
     public async Task<int> DeleteCategoryAsync(ApplicationCacheCategory category)
     {
         await FlushWritesAsync();
-        await _gate.WaitAsync();
+        await WaitForWriteAsync();
         try
         {
             var matches = ReadAllMetadata()
@@ -454,7 +456,7 @@ public sealed partial class FileMediaApplicationCache : IApplicationCache, IDisp
     public async Task<int> CleanupAsync(CancellationToken cancellationToken = default)
     {
         await FlushWritesAsync().WaitAsync(cancellationToken);
-        await _gate.WaitAsync(cancellationToken);
+        await WaitForWriteAsync(cancellationToken);
         try
         {
             var deleted = CleanupOrphanedFiles();
@@ -492,7 +494,7 @@ public sealed partial class FileMediaApplicationCache : IApplicationCache, IDisp
         CancellationToken cancellationToken = default)
     {
         await FlushWritesAsync().WaitAsync(cancellationToken);
-        await _gate.WaitAsync(cancellationToken);
+        await WaitForWriteAsync(cancellationToken);
         try
         {
             if (!CacheRoots.Any(Directory.Exists))
@@ -621,7 +623,7 @@ public sealed partial class FileMediaApplicationCache : IApplicationCache, IDisp
         CancellationToken cancellationToken = default)
     {
         await FlushWritesAsync().WaitAsync(cancellationToken);
-        await _gate.WaitAsync(cancellationToken);
+        await WaitForWriteAsync(cancellationToken);
         try
         {
             var take = Math.Clamp(maximumEntries, 1, _options.MaximumCleanupFiles);
@@ -667,7 +669,7 @@ public sealed partial class FileMediaApplicationCache : IApplicationCache, IDisp
     internal async Task<FileCacheEntrySnapshot> SnapshotAsync(CancellationToken cancellationToken)
     {
         await FlushWritesAsync().WaitAsync(cancellationToken);
-        await _gate.WaitAsync(cancellationToken);
+        await WaitForWriteAsync(cancellationToken);
         try
         {
             var entries = ReadAllMetadata().OrderBy(item => item.Key, StringComparer.Ordinal)
@@ -697,7 +699,7 @@ public sealed partial class FileMediaApplicationCache : IApplicationCache, IDisp
         CancellationToken cancellationToken = default)
     {
         await FlushWritesAsync().WaitAsync(cancellationToken);
-        await _gate.WaitAsync(cancellationToken);
+        await WaitForWriteAsync(cancellationToken);
         try
         {
             var descriptors = ReadAllMetadata()

@@ -14,6 +14,7 @@ public sealed partial class FileMediaApplicationCache
     private Task _writer = Task.CompletedTask;
     private long _pendingBytes;
     private int _pendingCount;
+    private int _activeReaders;
     private bool _writing;
     private bool _disposed;
 
@@ -69,7 +70,7 @@ public sealed partial class FileMediaApplicationCache
             }
             try
             {
-                // Leave the gate free between background operations for foreground disk reads.
+                // Pace background disk work so foreground reads have room to finish.
                 await Task.Delay(25);
                 if (write.Access is { } access)
                 {
@@ -102,9 +103,16 @@ public sealed partial class FileMediaApplicationCache
         }
     }
 
-    private async Task WaitForWriteAsync()
+    private async Task WaitForWriteAsync(CancellationToken cancellationToken = default)
     {
-        while (!await _gate.WaitAsync(0)) await Task.Delay(25);
+        while (true)
+        {
+            lock (_pendingLock)
+            {
+                if (_activeReaders == 0 && _gate.Wait(0, cancellationToken)) return;
+            }
+            await Task.Delay(25, cancellationToken);
+        }
     }
 
     private bool CanStore(string key) => IsEnabled && ApplicationCachePayloadPolicy.IsValidKey(key) &&
