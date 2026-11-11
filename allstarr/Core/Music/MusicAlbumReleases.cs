@@ -25,6 +25,27 @@ internal static class MusicAlbumReleases
         return Present(selected);
     }
 
+    // Without a barcode or track list the same album from two services survives Collapse. On one artist's page an
+    // owned album, or the first service's copy, stands in for another service's copy with the same title, edition and
+    // explicitness (and, between services, the same year and length).
+    internal static List<Album> WithoutServiceRepeats(IEnumerable<Album> albums)
+    {
+        var kept = new List<Album>();
+        foreach (var album in albums)
+        {
+            if (!album.IsLocal && kept.Any(other => FamilyKey(other) == FamilyKey(album) && Agree(other.IsExplicit, album.IsExplicit) &&
+                    (other.IsLocal || Service(other.ExternalProvider) != Service(album.ExternalProvider) &&
+                     Agree(other.Year, album.Year) && Agree(other.SongCount, album.SongCount))))
+                continue;
+            kept.Add(album);
+        }
+        return kept;
+    }
+
+    private static string Service(string? provider) => AppleMusicClient.NormalizeProviderId(provider ?? "");
+
+    private static bool Agree<T>(T? first, T? second) where T : struct => first is null || second is null || first.Value.Equals(second.Value);
+
     internal static IReadOnlyList<List<Album>> Partition(IEnumerable<Album> albums)
     {
         var rows = albums.ToArray();

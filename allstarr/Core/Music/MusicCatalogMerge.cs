@@ -47,7 +47,7 @@ public sealed class MusicCatalogMerge(IProtocolProviderGateway providers, ILibra
         }
         if (albums.Count == 0) return [];
         var nativeIds = libraryAlbums.Select(album => album.Id).ToHashSet(StringComparer.Ordinal);
-        return WithoutRepeats(MusicAlbumReleases.Collapse(libraryAlbums.Concat(albums)))
+        return MusicAlbumReleases.WithoutServiceRepeats(MusicAlbumReleases.Collapse(libraryAlbums.Concat(albums)))
             .Where(album => !album.IsLocal || !nativeIds.Contains(album.Id)).ToList();
     }
 
@@ -73,26 +73,6 @@ public sealed class MusicCatalogMerge(IProtocolProviderGateway providers, ILibra
     }
 
     private static string Service(string provider) => AppleMusicClient.NormalizeProviderId(provider);
-
-    // Without a barcode or track list the same album from two services survives Collapse. On one artist's page an owned
-    // album, or the first service's copy, stands in for another service's copy with the same title, edition and
-    // explicitness (and, between services, the same year and length).
-    private static IEnumerable<Album> WithoutRepeats(IReadOnlyList<Album> albums)
-    {
-        var kept = new List<Album>();
-        foreach (var album in albums)
-        {
-            if (!album.IsLocal && kept.Any(other => MusicAlbumReleases.FamilyKey(other) == MusicAlbumReleases.FamilyKey(album) &&
-                    Agree(other.IsExplicit, album.IsExplicit) && (other.IsLocal ||
-                    !string.Equals(Service(other.ExternalProvider ?? ""), Service(album.ExternalProvider ?? ""), StringComparison.Ordinal) &&
-                    Agree(other.Year, album.Year) && Agree(other.SongCount, album.SongCount))))
-                continue;
-            kept.Add(album);
-        }
-        return kept;
-    }
-
-    private static bool Agree<T>(T? first, T? second) where T : struct => first is null || second is null || first.Value.Equals(second.Value);
 
     /// <summary>
     /// Provider songs missing from a library album: the provider album must have the same

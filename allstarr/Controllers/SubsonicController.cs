@@ -169,8 +169,11 @@ public partial class SubsonicController : ControllerBase
     private Task<Artist?> GetProviderArtistAsync(string provider, string externalId) =>
         _providerGateway.GetArtistAsync(CurrentProtocolContext, provider, externalId);
 
-    private async Task<List<Album>> GetProviderArtistAlbumsAsync(string provider, string externalId) =>
-        MusicAlbumReleases.Collapse(await _providerGateway.GetArtistAlbumsAsync(CurrentProtocolContext, provider, externalId));
+    // A service artist's page also lists the same artist's albums from other services.
+    private async Task<List<Album>> GetProviderArtistAlbumsAsync(string provider, string externalId, Artist? artist = null) =>
+        artist != null && HttpContext.RequestServices.GetService<StreamingArtistCatalog>() is { } catalog
+            ? await catalog.AlbumsAsync(CurrentProtocolContext, provider, externalId, Task.FromResult<Artist?>(artist))
+            : MusicAlbumReleases.Collapse(await _providerGateway.GetArtistAlbumsAsync(CurrentProtocolContext, provider, externalId));
 
     [HttpGet, HttpPost]
     [Route("rest/search2")]
@@ -356,7 +359,7 @@ public partial class SubsonicController : ControllerBase
                 if (artist != null)
                 {
                     name = artist.Name;
-                    foreach (var album in await GetProviderArtistAlbumsAsync(provider!, externalId!))
+                    foreach (var album in await GetProviderArtistAlbumsAsync(provider!, externalId!, artist))
                     {
                         if (string.IsNullOrEmpty(album.Artist)) album.Artist = artist.Name;
                         album.ArtistId ??= artist.Id;
@@ -688,7 +691,7 @@ public partial class SubsonicController : ControllerBase
                 return _responseBuilder.CreateError(format, 70, "Artist not found");
             }
 
-            var albums = await GetProviderArtistAlbumsAsync(provider!, externalId!);
+            var albums = await GetProviderArtistAlbumsAsync(provider!, externalId!, artist);
 
             // Deezer's artist-albums payload omits artist identity.
             foreach (var album in albums)

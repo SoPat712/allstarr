@@ -253,8 +253,10 @@ public partial class JellyfinController
                     .Contains(selectedArtistId, JellyfinItemIdComparer.Instance);
             var tracksTask = includeTracks || contributes
                 ? GetProviderArtistTracksAsync(provider, externalId, cancellationToken) : Task.FromResult(new List<Song>());
-            var albumsTask = GetProviderArtistAlbumsAsync(provider, externalId, cancellationToken);
             var artistTask = includeAlbums ? GetProviderArtistAsync(provider, externalId, cancellationToken) : Task.FromResult<Artist?>(null);
+            // An artist's own album list also shows the same artist's albums from other services; guest appearances don't.
+            var albumsTask = GetProviderArtistAlbumsAsync(provider, externalId, cancellationToken,
+                includeAlbums && artistRelation != ExternalArtistRelation.ContributingArtist ? artistTask : null);
             await Task.WhenAll(tracksTask, albumsTask, artistTask);
             var allTracks = await tracksTask;
             var allAlbums = (await albumsTask).ToList();

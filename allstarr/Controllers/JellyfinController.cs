@@ -179,11 +179,15 @@ public partial class JellyfinController : ControllerBase
         CancellationToken cancellationToken = default) =>
         _providerGateway.GetArtistAsync(HttpContext.RequireProtocolExecutionContext(), provider, externalId);
 
+    // A service artist's page also lists the same artist's albums from other services.
     private async Task<List<Album>> GetProviderArtistAlbumsAsync(
         string provider,
         string externalId,
-        CancellationToken cancellationToken = default) =>
-        MusicAlbumReleases.Collapse(await _providerGateway.GetArtistAlbumsAsync(HttpContext.RequireProtocolExecutionContext(), provider, externalId));
+        CancellationToken cancellationToken = default,
+        Task<Artist?>? artist = null) =>
+        artist != null && HttpContext.RequestServices.GetService<StreamingArtistCatalog>() is { } catalog
+            ? await catalog.AlbumsAsync(HttpContext.RequireProtocolExecutionContext(), provider, externalId, artist)
+            : MusicAlbumReleases.Collapse(await _providerGateway.GetArtistAlbumsAsync(HttpContext.RequireProtocolExecutionContext(), provider, externalId));
 
     private Task<List<Song>> GetProviderArtistTracksAsync(
         string provider,
@@ -336,7 +340,7 @@ public partial class JellyfinController : ControllerBase
             case "artist":
                 var artist = await GetProviderArtistAsync(provider, externalId, cancellationToken);
                 if (artist == null) return _itemProtocolAdapter.ShapeNotFound("Artist");
-                var albums = await GetProviderArtistAlbumsAsync(provider, externalId, cancellationToken);
+                var albums = await GetProviderArtistAlbumsAsync(provider, externalId, cancellationToken, Task.FromResult<Artist?>(artist));
 
                 foreach (var a in albums)
                 {
@@ -450,7 +454,7 @@ public partial class JellyfinController : ControllerBase
                 return _responseBuilder.CreateError(404, "Artist not found");
             }
 
-            var albums = await GetProviderArtistAlbumsAsync(provider!, externalId!);
+            var albums = await GetProviderArtistAlbumsAsync(provider!, externalId!, artist: Task.FromResult<Artist?>(artist));
             foreach (var a in albums)
             {
                 if (string.IsNullOrEmpty(a.Artist)) a.Artist = artist.Name;

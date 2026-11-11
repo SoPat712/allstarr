@@ -33,6 +33,9 @@ public sealed partial class ProtocolRouteFixtureTests
                 .ReturnsAsync(new Artist { Id = id, Name = "Artist" });
             gateway.Setup(item => item.GetArtistAlbumsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "7"))
                 .ReturnsAsync([CatalogAlbum("1", "Album")]);
+            // The artist's page also looks for the same artist on other services.
+            gateway.Setup(item => item.SearchAsync(It.IsAny<ProtocolExecutionContext>(), "Artist", 0, 0, 20, null))
+                .ReturnsAsync(new SearchResult());
         }
         else
         {

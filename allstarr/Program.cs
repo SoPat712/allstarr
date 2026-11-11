@@ -648,6 +648,7 @@ builder.Services.AddSingleton<IDurableJobHandler, allstarr.Core.Music.PersonalMi
 builder.Services.AddSingleton<IDurableJobHandler, allstarr.Core.Music.ServiceFeedPreparationJobHandler>();
 builder.Services.AddSingleton<allstarr.Core.Music.MusicMixService>();
 builder.Services.AddSingleton<allstarr.Core.Music.MusicCatalogMerge>();
+builder.Services.AddSingleton<allstarr.Core.Music.StreamingArtistCatalog>();
 
 
 if (backendType == BackendType.Jellyfin)
