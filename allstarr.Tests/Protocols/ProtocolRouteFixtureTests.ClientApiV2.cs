@@ -52,6 +52,7 @@ public sealed partial class ProtocolRouteFixtureTests
         var artist = Assert.Single(track.GetProperty("artists").EnumerateArray());
         Assert.Equal(V2Ids.Artist("artist1"), artist.GetProperty("id").GetString());
         Assert.Equal("Library artist", artist.GetProperty("name").GetString());
+        Assert.Empty(track.GetProperty("featuring").EnumerateArray());
         Assert.Equal(V2Ids.Album("album1"), track.GetProperty("album").GetProperty("id").GetString());
         Assert.Equal(1, track.GetProperty("disc").GetInt32());
         Assert.Equal(3, track.GetProperty("track").GetInt32());
@@ -86,9 +87,9 @@ public sealed partial class ProtocolRouteFixtureTests
                 Id = "ext-deezer-song-known",
                 Title = "Stored song",
                 Artist = "Stored artist",
-                Artists = ["Stored artist"],
+                Artists = ["Stored artist", "Guest"],
                 ArtistId = "ext-deezer-artist-9",
-                ArtistIds = ["ext-deezer-artist-9"],
+                ArtistIds = ["ext-deezer-artist-9", "ext-deezer-artist-10"],
                 Album = "Stored album",
                 AlbumId = "ext-deezer-album-7",
                 Duration = 200,
@@ -124,7 +125,11 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.Equal(JsonValueKind.Null, track.GetProperty("libraryItemId").ValueKind);
         Assert.Equal("deezer", track.GetProperty("provider").GetProperty("id").GetString());
         Assert.Equal("Stored song", track.GetProperty("title").GetString());
-        Assert.Equal(V2Ids.Artist("ext-deezer-artist-9"), Assert.Single(track.GetProperty("artists").EnumerateArray()).GetProperty("id").GetString());
+        Assert.Equal([V2Ids.Artist("ext-deezer-artist-9"), V2Ids.Artist("ext-deezer-artist-10")],
+            track.GetProperty("artists").EnumerateArray().Select(artist => artist.GetProperty("id").GetString()!).ToArray());
+        var featured = Assert.Single(track.GetProperty("featuring").EnumerateArray());
+        Assert.Equal(V2Ids.Artist("ext-deezer-artist-10"), featured.GetProperty("id").GetString());
+        Assert.Equal("Guest", featured.GetProperty("name").GetString());
         Assert.Equal(V2Ids.Album("ext-deezer-album-7"), track.GetProperty("album").GetProperty("id").GetString());
         Assert.Equal(200000, track.GetProperty("durationMs").GetInt64());
         Assert.Equal(-6.25, track.GetProperty("trackGainDb").GetDouble());
@@ -204,6 +209,7 @@ public sealed partial class ProtocolRouteFixtureTests
     public async Task ClientApiV2_ArtworkIsServedByTheImageRoute()
     {
         var images = new List<Uri>();
+        var imageAuthorizations = new List<string?>();
         using var factory = ClientDetailsFactory(request =>
         {
             if (request.RequestUri!.AbsolutePath == "/Users/Me") return Json(200, """{"Id":"listener"}""");
@@ -211,6 +217,7 @@ public sealed partial class ProtocolRouteFixtureTests
             if (request.RequestUri.AbsolutePath == "/Items")
                 return Json(200, """{"Items":[{"Id":"native1","Type":"Audio"}],"TotalRecordCount":1}""");
             images.Add(request.RequestUri);
+            imageAuthorizations.Add(request.Headers.TryGetValues("Authorization", out var values) ? values.Single() : null);
             return new(HttpStatusCode.OK) { Content = new ByteArrayContent([0x89, 0x50, 0x4e, 0x47]) { Headers = { ContentType = new("image/png") } } };
         });
         using var client = CreateClientApiClient(factory);
@@ -232,6 +239,14 @@ public sealed partial class ProtocolRouteFixtureTests
         using var posted = await client.PostAsync(url, null);
         await AssertClientApiError(posted, 404, "not_found");
         Assert.Single(images);
+
+        // Lock screens, cast receivers and widgets load artwork without a token, as they do the media server's image urls.
+        using var anonymous = factory.CreateClient();
+        using var unsigned = await anonymous.GetAsync(url + "?w=120");
+        Assert.Equal(HttpStatusCode.OK, unsigned.StatusCode);
+        Assert.Equal(2, images.Count);
+        Assert.Equal("120", Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(images[1].Query)["maxWidth"].ToString());
+        Assert.DoesNotContain("listener-token", imageAuthorizations[1] ?? "");
     }
 
     [Theory]

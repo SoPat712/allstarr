@@ -123,7 +123,8 @@ public sealed class V2TrackReader(
         long? durationMs, int? year, V2Artwork? artwork, V2Format? format, double? trackGain, double? albumGain) =>
         new(id, [], item.IsExternal, libraryItemId,
             item.Provider == null ? null : new(item.Provider.Id, item.Provider.Name, item.Provider.IconUrl, item.Provider.GlyphUrl),
-            externalIds, title, artists, albumArtists, album, disc, track, durationMs, year, item.Explicit, artwork, format,
+            externalIds, title, artists, albumArtists, Featuring(artists, albumArtists), album, disc, track, durationMs, year,
+            item.Explicit, artwork, format,
             Finite(trackGain), Finite(albumGain), item.Saved, item.PlayCount, item.LastPlayedAt,
             new(item.Keep.State, item.Keep.Progress),
             item.Match == null ? null : new(item.Match.State, item.Match.Confidence, item.Match.Authority),
@@ -171,6 +172,11 @@ public sealed class V2TrackReader(
             song.DiscNumber is > 0 ? song.DiscNumber : null, song.Track is > 0 ? song.Track : null, duration, song.Year, artwork, format,
             song.ReplayGain?.TrackGain, song.ReplayGain?.AlbumGain);
     }
+
+    /// <summary>The first artist leads the track, so a compilation's lead artist is never listed as featured.</summary>
+    private static IReadOnlyList<V2Ref> Featuring(IReadOnlyList<V2Ref> artists, IReadOnlyList<V2Ref> albumArtists) =>
+        artists.Skip(1).Where(artist => !albumArtists.Any(albumArtist => artist.Id != null && albumArtist.Id == artist.Id ||
+            string.Equals(albumArtist.Name, artist.Name, StringComparison.OrdinalIgnoreCase))).ToArray();
 
     private static string? ArtistId(string? source) =>
         source != null && V2Ids.IsValidSource(source, V2IdKind.Artist) ? V2Ids.Artist(source) : null;

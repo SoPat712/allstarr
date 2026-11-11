@@ -291,6 +291,7 @@
               "null",
               "integer"
             ],
+            "description": "Bits per second.",
             "format": "int32"
           },
           "sampleRate": {
@@ -298,6 +299,7 @@
               "null",
               "integer"
             ],
+            "description": "Hz.",
             "format": "int32"
           },
           "bitDepth": {
@@ -305,6 +307,7 @@
               "null",
               "integer"
             ],
+            "description": "Bits per sample; null for lossy codecs.",
             "format": "int32"
           },
           "channels": {
@@ -447,6 +450,7 @@
           "title",
           "artists",
           "albumArtists",
+          "featuring",
           "album",
           "disc",
           "track",
@@ -522,6 +526,13 @@
             "items": {
               "$ref": "#/components/schemas/V2Ref"
             }
+          },
+          "featuring": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/V2Ref"
+            },
+            "description": "Track artists after the first who are not album artists."
           },
           "album": {
             "type": [

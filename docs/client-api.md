@@ -878,20 +878,27 @@ Ids are typed: `trk_`, `alb_`, `art_`, `pl_` and `mix_`. A track with a canonica
 recording uses `trk_` plus that recording, so its id survives keeping, adding to
 the library and rematching. Other tracks wrap their library or service id. Every
 route also accepts the older spellings: library item ids and `ext-` service ids.
+A `trk_s` id stays valid after the song gains a recording; responses then use the
+new `trk_` id and list the old one in `aliases`.
 
 `GET /allstarr/v2/tracks?ids=a,b,c` reads up to 100 tracks in the order asked.
-Each track has one shape everywhere: title, artists and album with their ids,
+Each track has one shape everywhere: title, artists, `featuring` and album with their ids,
 disc and track numbers, `durationMs`, year, `explicit`, `artwork`, the stored or
 measured `format`, ReplayGain, `saved`, plays, keep, match and lyrics
 availability. Songs in the library are read from the library. `aliases` lists the
 other ids a track answers to, so two spellings of one song return it once. Ids
 that are unknown or hidden for this listener are listed in `missing`.
 `include=album` adds an `albums` map keyed by album id.
+`featuring` lists the track artists after the first who are not album artists.
+`format` describes the library file, or the service's file as last measured, and
+is null until measured; `bitrate` is in bits per second and `sampleRate` in Hz.
 `GET /allstarr/v2/tracks/{id}` returns `{track}` for one id, or 404.
 
 `artwork.url` is `/allstarr/v2/artwork/{key}`; add `?w=` with the pixel width you
 draw at (32 to 2048, default 600). The url changes when the picture does, so it
-can be cached for as long as the app likes. Send the token with image requests too.
+can be cached for as long as the app likes. Artwork urls work without a token, like
+the media server's own image urls, so lock screens, cast receivers and widgets can
+load them. Without a token only pictures Allstarr has already stored are served.
 
 The OpenAPI document is at `/allstarr/v2/openapi.json`; its checked-in copy is
 `apis/specifications/allstarr/client-v2.json` and refreshes the same way as v1.

@@ -20,6 +20,7 @@ public sealed record V2Track(
     [property: JsonPropertyName("title")] string Title,
     [property: JsonPropertyName("artists")] IReadOnlyList<V2Ref> Artists,
     [property: JsonPropertyName("albumArtists")] IReadOnlyList<V2Ref> AlbumArtists,
+    [property: JsonPropertyName("featuring"), Description("Track artists after the first who are not album artists.")] IReadOnlyList<V2Ref> Featuring,
     [property: JsonPropertyName("album")] V2Ref? Album,
     [property: JsonPropertyName("disc")] int? Disc,
     [property: JsonPropertyName("track")] int? Track,
@@ -48,16 +49,22 @@ public sealed record V2Provider(
     [property: JsonPropertyName("iconUrl")] string? IconUrl,
     [property: JsonPropertyName("glyphUrl")] string? GlyphUrl);
 
-/// <summary>Artwork that the server resizes; append <c>?w=</c> with the pixel width you draw at. The url changes when the picture does.</summary>
+/// <summary>
+/// Artwork that the server resizes; append <c>?w=</c> with the pixel width you draw at. The url changes when the picture does.
+/// It works without a token, like the media server's own image urls, so lock screens, cast receivers and widgets can load it.
+/// </summary>
 public sealed record V2Artwork([property: JsonPropertyName("url")] string Url);
 
-/// <summary>What the stored or best available file is, before any delivery decision.</summary>
+/// <summary>
+/// The library file for library songs, or the service's file as last measured for other songs; null until it has been
+/// measured. It never describes a stream after conversion.
+/// </summary>
 public sealed record V2Format(
     [property: JsonPropertyName("container")] string? Container,
     [property: JsonPropertyName("codec")] string? Codec,
-    [property: JsonPropertyName("bitrate")] int? Bitrate,
-    [property: JsonPropertyName("sampleRate")] int? SampleRate,
-    [property: JsonPropertyName("bitDepth")] int? BitDepth,
+    [property: JsonPropertyName("bitrate"), Description("Bits per second.")] int? Bitrate,
+    [property: JsonPropertyName("sampleRate"), Description("Hz.")] int? SampleRate,
+    [property: JsonPropertyName("bitDepth"), Description("Bits per sample; null for lossy codecs.")] int? BitDepth,
     [property: JsonPropertyName("channels")] int? Channels,
     [property: JsonPropertyName("isLossless")] bool? IsLossless);
 
