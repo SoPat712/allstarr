@@ -119,32 +119,7 @@ internal sealed class RankedSearchSnapshots(string query, int limit, IReadOnlyLi
 
     private void PruneExternalDuplicates(IReadOnlyList<RankedSearchRow> libraryRows)
     {
-        var nativeArtists = libraryRows.Where(r => r.Native?.Kind == MusicItemKind.Artist)
-            .Select(r => Normalize(r.Native!.Name)).ToHashSet(StringComparer.Ordinal);
-        if (nativeArtists.Count > 0 && sections.TryGetValue("artists", out var artistRows))
-        {
-            artistRows.RemoveAll(r => r.Native == null && r.Artist != null &&
-                nativeArtists.Contains(Normalize(r.Artist.Name)));
-            mixed.RemoveAll(r => r.Native == null && r.Artist != null &&
-                nativeArtists.Contains(Normalize(r.Artist.Name)));
-            if (pinned != null && pinned.Native == null && pinned.Artist != null &&
-                nativeArtists.Contains(Normalize(pinned.Artist.Name)))
-                pinned = null;
-            if (top != null && top.Native == null && top.Artist != null &&
-                nativeArtists.Contains(Normalize(top.Artist.Name)))
-                top = null;
-        }
-
-        var nativeAlbums = libraryRows.Where(r => r.Native?.Kind == MusicItemKind.Album)
-            .Select(r => AlbumKey(r.Native!.Name, r.Native.AlbumMetadata?.Artist ?? r.Native.ArtistText)).ToHashSet(StringComparer.Ordinal);
-        if (nativeAlbums.Count > 0 && sections.TryGetValue("albums", out var albumRows))
-        {
-            albumRows.RemoveAll(r => r.Native == null && r.Album != null &&
-                nativeAlbums.Contains(AlbumKey(r.Album.Title, r.Album.Artist)));
-            mixed.RemoveAll(r => r.Native == null && r.Album != null &&
-                nativeAlbums.Contains(AlbumKey(r.Album.Title, r.Album.Artist)));
-        }
-
+        // Same-named artists and albums stay separate rows; only a matching recording of a library song is a duplicate.
         var nativeSongs = libraryRows.Where(r => r.Native?.Kind == MusicItemKind.Song).Select(r => new Song
         {
             Title = r.Native!.Name,
@@ -162,8 +137,6 @@ internal sealed class RankedSearchSnapshots(string query, int limit, IReadOnlyLi
         }
     }
 
-    private static string Normalize(string? value) => FuzzyMatcher.NormalizeForMatching(value ?? "");
-    private static string AlbumKey(string title, string? artist) => Normalize(title) + "\u001f" + Normalize(artist);
 
     private async Task EmitAsync(IReadOnlyList<string>? late, CancellationToken token)
     {

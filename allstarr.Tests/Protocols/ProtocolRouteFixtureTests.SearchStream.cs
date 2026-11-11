@@ -64,8 +64,13 @@ public sealed partial class ProtocolRouteFixtureTests
             .Select(line => JsonNode.Parse(line)!).ToArray();
         Assert.Equal(3, lines.Length);
         Assert.Equal("deezer", lines[0]["provider"]!.GetValue<string>());
-        var item = Assert.Single(lines[0]["items"]!.AsArray())!;
-        Assert.Equal("ext-deezer-song-one", item["Id"]!.GetValue<string>());
+        // The library's same-named album and artist no longer hide Deezer's; every item names its source.
+        var deezer = lines[0]["items"]!.AsArray();
+        Assert.Equal(["ext-deezer-album-owned", "ext-deezer-artist-owned", "ext-deezer-song-one"],
+            deezer.Select(row => row!["Id"]!.GetValue<string>()).Order(StringComparer.Ordinal).ToArray());
+        Assert.All(deezer, row => Assert.Equal("deezer", row!["source"]!.GetValue<string>()));
+        Assert.All(deezer, row => Assert.False(string.IsNullOrWhiteSpace(row!["sourceName"]!.GetValue<string>())));
+        var item = deezer.Single(row => row!["Id"]!.GetValue<string>() == "ext-deezer-song-one")!;
         Assert.Equal("Audio", item["Type"]!.GetValue<string>());
         Assert.Equal(SearchRelevanceRanker.ScoreSong("a", "Visible", "Artist", "Release", durationSeconds: 200),
             item["score"]!.GetValue<double>());
@@ -195,6 +200,7 @@ public sealed partial class ProtocolRouteFixtureTests
         {
             Artists =
             [
+                new Artist { Id = "ext-artist-same", Name = "Juice WRLD" },
                 new Artist { Id = "ext-artist-baby", Name = "BABY juice WRLD [A]" },
                 new Artist { Id = "ext-artist-999", Name = "Juice WRLD 999" },
                 new Artist { Id = "ext-artist-type", Name = "Juice WRLD Type Beat" },
@@ -221,6 +227,12 @@ public sealed partial class ProtocolRouteFixtureTests
         var artistsSection = final["sections"]!["artists"]!.AsArray();
         Assert.Equal("lib-artist-juice", artistsSection[0]!["Id"]!.GetValue<string>());
         Assert.True(artistsSection.Count > 1);
+        // A service artist with the library artist's name is its own row, labelled with where it came from.
+        var sameName = Assert.Single(artistsSection, item => item!["Id"]!.GetValue<string>() == "ext-artist-same")!;
+        Assert.Equal("deezer", sameName["source"]!.GetValue<string>());
+        Assert.Equal("jellyfin", artistsSection[0]!["source"]!.GetValue<string>());
+        Assert.Equal("Jellyfin", artistsSection[0]!["sourceName"]!.GetValue<string>());
+        Assert.All(final["items"]!.AsArray(), item => Assert.False(string.IsNullOrWhiteSpace(item!["sourceName"]?.GetValue<string>())));
 
         var albumsSection = final["sections"]!["albums"]!.AsArray();
         Assert.Contains(albumsSection, item => item!["Id"]!.GetValue<string>() == "lib-album-goodbye");

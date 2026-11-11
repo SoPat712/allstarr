@@ -58,7 +58,7 @@ public sealed partial class ProtocolRouteFixtureTests
     }
 
     [Fact]
-    public async Task SearchStream_NormalizedAlbumArtistCreditsHideTheOwnedCharliRelease()
+    public async Task SearchStream_KeepsSameNamedServiceReleasesBesideTheLibraryAndLabelsTheirSource()
     {
         var gateway = new Mock<IProtocolProviderGateway>();
         gateway.Setup(service => service.StreamSearchAsync(It.IsAny<ProtocolExecutionContext>(), "charli", 20,
@@ -101,7 +101,12 @@ public sealed partial class ProtocolRouteFixtureTests
         var lines = (await response.Content.ReadAsStringAsync()).Split('\n', StringSplitOptions.RemoveEmptyEntries)
             .Select(line => JsonNode.Parse(line)!).ToArray();
         Assert.Equal(3, lines.Length);
-        Assert.Equal("ext-deezer-album-fresh", Assert.Single(lines[0]["items"]!.AsArray())!["Id"]!.GetValue<string>());
+        // The library's Charli album and artist no longer hide Deezer's; a second service's repeat of Fresh still does.
+        var deezer = lines[0]["items"]!.AsArray();
+        Assert.Equal(["ext-deezer-album-charli", "ext-deezer-album-fresh", "ext-deezer-artist-charli"],
+            deezer.Select(item => item!["Id"]!.GetValue<string>()).Order(StringComparer.Ordinal).ToArray());
+        Assert.All(deezer, item => Assert.Equal("deezer", item!["source"]!.GetValue<string>()));
+        Assert.All(deezer, item => Assert.False(string.IsNullOrWhiteSpace(item!["sourceName"]!.GetValue<string>())));
         Assert.Empty(lines[1]["items"]!.AsArray());
         Assert.True(lines[2]["done"]!.GetValue<bool>());
     }
