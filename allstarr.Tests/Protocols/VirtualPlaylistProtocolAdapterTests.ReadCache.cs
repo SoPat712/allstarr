@@ -104,14 +104,14 @@ public sealed partial class VirtualPlaylistProtocolAdapterTests
         }
         await adapter.ReadItemsAsync(context, ProtocolId, null, query, default);
         Assert.Equal(7, reads);
-        Assert.Equal(8, providerReads);
+        Assert.Equal(4, providerReads);
         model = model with { Tracks = [] };
         var emptied = Assert.IsType<JsonResult>(await adapter.ReadItemsAsync(context, ProtocolId, null, query, default));
         using var emptyJson = JsonDocument.Parse(JsonSerializer.Serialize(emptied.Value));
         Assert.Equal(0, emptyJson.RootElement.GetProperty("TotalRecordCount").GetInt32());
         Assert.Empty(emptyJson.RootElement.GetProperty("Items").EnumerateArray());
         Assert.Equal(8, reads);
-        Assert.Equal(8, providerReads);
+        Assert.Equal(4, providerReads);
         _output.WriteLine($"Served playlist 200 tracks / 50 per page: uncached {baseline:F1} ms; first {cold:F1} ms; warm {warm:F1} ms; current membership read on every request and provider reads 4 -> 0 on repeat and next page; response bytes equal; source removal visible immediately without a stored change.");
     }
 

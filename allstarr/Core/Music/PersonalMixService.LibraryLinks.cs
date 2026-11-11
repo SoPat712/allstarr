@@ -1,4 +1,6 @@
 using allstarr.Core.Matching;
+using allstarr.Core.Protocols;
+using allstarr.Core.Storage;
 using allstarr.Models.Domain;
 using allstarr.Services.Local;
 
@@ -6,6 +8,32 @@ namespace allstarr.Core.Music;
 
 public sealed partial class PersonalMixService
 {
+    private sealed record RecordingIdentityCacheEntry(CanonicalRecordingIdentity? Recording);
+
+    private async Task<IReadOnlyDictionary<string, CanonicalRecordingIdentity?>> RecordingIdentitiesAsync(
+        AllstarrDbContext db, ProtocolExecutionContext context, string[] ids, CancellationToken token)
+    {
+        if (recordingCache?.IsEnabled != true) return await identities!.ResolveRecordingsAsync(context.RequireActor(), ids, token);
+        var scope = db.FeedReadKey(context, "library-recording-identities");
+        var result = new Dictionary<string, CanonicalRecordingIdentity?>(StringComparer.Ordinal);
+        var missing = new List<string>();
+        foreach (var id in ids)
+        {
+            var cached = await recordingCache.GetAsync<RecordingIdentityCacheEntry>(scope + ":" + Hash(id));
+            if (cached == null) missing.Add(id);
+            else result[id] = cached.Recording;
+        }
+        if (missing.Count > 0)
+        {
+            var resolved = await identities!.ResolveRecordingsAsync(context.RequireActor(), missing, token);
+            foreach (var id in missing) result[id] = resolved.GetValueOrDefault(id);
+            if (scope == db.FeedReadKey(context, "library-recording-identities"))
+                foreach (var id in missing)
+                    await recordingCache.SetAsync(scope + ":" + Hash(id), new RecordingIdentityCacheEntry(result[id]), TimeSpan.FromMinutes(10));
+        }
+        return result;
+    }
+
     private async Task<IReadOnlyList<PersonalMix>> PreferLocalCopiesAsync(Guid owner, PersonalMix[] mixes, CancellationToken token)
     {
         if (libraryIndex == null || identities == null) return mixes;
@@ -15,7 +43,7 @@ public sealed partial class PersonalMixService
         await using var db = await factory.CreateDbContextAsync(token);
         var user = await UserAsync(db, owner, token);
         var context = await ContextAsync(user, token);
-        var recordings = await identities.ResolveRecordingsAsync(context.RequireActor(), songs.Select(song => song.Id).ToArray(), token);
+        var recordings = await RecordingIdentitiesAsync(db, context, songs.Select(song => song.Id).ToArray(), token);
         var lookups = songs.Select(song =>
         {
             var recording = recordings.GetValueOrDefault(song.Id);

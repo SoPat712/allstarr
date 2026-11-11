@@ -2,6 +2,8 @@ using allstarr.Core.Protocols;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Storage;
 using allstarr.Services.Local;
+using System.Security.Cryptography;
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Core.Matching;
@@ -11,6 +13,8 @@ public sealed record LibraryRecordingLookup(
 
 public sealed partial class LibraryIndexService
 {
+    private sealed record RecordingMatchCacheEntry(string? BackendItemId);
+
     public async Task<string?> ResolveKnownTrackAsync(ProtocolExecutionContext context, string publicId,
         CancellationToken cancellationToken = default)
     {
@@ -40,6 +44,8 @@ public sealed partial class LibraryIndexService
         var result = new Dictionary<string, string>(StringComparer.Ordinal);
         try
         {
+            cancellationToken.ThrowIfCancellationRequested();
+            context.CancellationToken.ThrowIfCancellationRequested();
             if (context.Principal == null || recordings.Count == 0) return result;
             EnsureStorageReady();
             recordings = recordings.Select(item => item.ProviderId == null ? item : item with
@@ -50,6 +56,24 @@ public sealed partial class LibraryIndexService
             var access = await _libraryAccess.ResolveAsync(context, cancellationToken);
             if (!access.Succeeded || access.LibraryIds.Length == 0) return result;
             await using var db = await _contextFactory.CreateDbContextAsync(cancellationToken);
+            var requested = recordings;
+            var keys = new Dictionary<LibraryRecordingLookup, string>();
+            var cachedMatches = new Dictionary<LibraryRecordingLookup, string?>();
+            var cacheScope = db.FeedReadKey(context with { Policy = policy }, "library-recording-matches", access);
+            if (_recordingCache?.IsEnabled == true && recordings.Select(item => item.PublicId).Distinct().Count() == recordings.Count)
+            {
+                var missing = new List<LibraryRecordingLookup>();
+                foreach (var recording in recordings)
+                {
+                    var key = cacheScope + ":" + Convert.ToHexStringLower(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(recording)));
+                    keys[recording] = key;
+                    var cached = await _recordingCache.GetAsync<RecordingMatchCacheEntry>(key);
+                    if (cached == null) missing.Add(recording);
+                    else cachedMatches[recording] = cached.BackendItemId;
+                }
+                recordings = missing;
+                if (recordings.Count == 0) return CurrentMatches();
+            }
             await RequireUserAsync(db, context.Principal, cancellationToken);
             var sources = recordings.Where(item => item.ProviderId != null && item.ExternalId != null)
                 .Select(item => (ProviderId: item.ProviderId!, ExternalIdHash: CanonicalCatalogKeys.Hash(item.ExternalId!))).ToArray();
@@ -189,7 +213,20 @@ public sealed partial class LibraryIndexService
                 }
                 if (track != null) result.TryAdd(recording.PublicId, track.BackendItemId);
             }
-            return result;
+            if (_recordingCache?.IsEnabled == true && cacheScope == db.FeedReadKey(context with { Policy = policy }, "library-recording-matches", access))
+                foreach (var recording in recordings)
+                    if (keys.TryGetValue(recording, out var key))
+                        await _recordingCache.SetAsync(key, new RecordingMatchCacheEntry(result.GetValueOrDefault(recording.PublicId)), TimeSpan.FromMinutes(10));
+            return CurrentMatches();
+
+            IReadOnlyDictionary<string, string> CurrentMatches()
+            {
+                var current = new Dictionary<string, string>(StringComparer.Ordinal);
+                foreach (var recording in requested)
+                    if ((cachedMatches.TryGetValue(recording, out var cached) ? cached : result.GetValueOrDefault(recording.PublicId)) is { } native)
+                        current.TryAdd(recording.PublicId, native);
+                return current;
+            }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested || context.CancellationToken.IsCancellationRequested) { throw; }
         catch (Exception error)

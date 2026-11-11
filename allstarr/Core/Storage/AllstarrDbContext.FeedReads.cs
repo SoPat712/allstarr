@@ -21,7 +21,8 @@ public sealed partial class AllstarrDbContext
     private long FeedReadVersion(Guid? owner, string model) =>
         FeedReadVersions.GetValueOrDefault((Database.GetConnectionString() ?? "", owner, model));
 
-    private static string FeedReadModel(string scope) => scope.StartsWith("mix", StringComparison.Ordinal) ? "mixes" :
+    private static string FeedReadModel(string scope) => scope.StartsWith("library-", StringComparison.Ordinal) ? "library" :
+        scope.StartsWith("mix", StringComparison.Ordinal) ? "mixes" :
         scope.StartsWith("releases", StringComparison.Ordinal) ? "releases" : "playlists";
 
     internal string FeedReadKey(ProtocolExecutionContext context, string scope, BackendLibraryAccess? access = null)
@@ -58,7 +59,7 @@ public sealed partial class AllstarrDbContext
     private HashSet<(Guid? Owner, string Model)> ChangesFeedReads()
     {
         HashSet<(Guid? Owner, string Model)> changed = [];
-        void All(Guid? owner) { changed.Add((owner, "mixes")); changed.Add((owner, "releases")); changed.Add((owner, "playlists")); }
+        void All(Guid? owner) { changed.Add((owner, "mixes")); changed.Add((owner, "releases")); changed.Add((owner, "playlists")); changed.Add((owner, "library")); }
         void MixesAndPlaylists(Guid? owner) { changed.Add((owner, "mixes")); changed.Add((owner, "playlists")); }
         var snapshotOwners = new Dictionary<Guid, Guid?>();
         var linkOwners = new Dictionary<Guid, Guid?>();
@@ -141,7 +142,13 @@ public sealed partial class AllstarrDbContext
                 case PlaylistSyncRunRecord run: MixesAndPlaylists(run.OwnerUserId); break;
                 case PlaylistSyncEntryResultRecord result: MixesAndPlaylists(RunOwner(result.PlaylistSyncRunId)); break;
                 case PlaylistTargetMembershipRecord member: MixesAndPlaylists(LinkOwner(member.PlaylistLinkId)); break;
-                case ManualTrackOverrideRecord manual: MixesAndPlaylists(manual.OwnerUserId); break;
+                case ManualTrackOverrideRecord manual:
+                    MixesAndPlaylists(manual.OwnerUserId);
+                    changed.Add((manual.OwnerUserId, "library"));
+                    break;
+                case AuditEventRecord audit when audit.Action == "promotion.library-linked":
+                    changed.Add((null, "library"));
+                    break;
                 case SharedTagProfileRecord or LibraryTrackRecord or ProviderTrackIdentityRecord or CanonicalRecordingRecord or TrackMatchRecord:
                     changed.Add((null, "library"));
                     break;

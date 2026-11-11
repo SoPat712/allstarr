@@ -183,16 +183,17 @@ public sealed partial class LibraryIndexServiceTests
         UpdatedAt = _clock.UtcNow
     };
 
-    private sealed class RecordingReadCounter : DbCommandInterceptor
+    private sealed class RecordingReadCounter(int delayMilliseconds = 0) : DbCommandInterceptor
     {
         public List<string> Commands { get; } = [];
 
-        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+        public override async ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
             DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result,
             CancellationToken cancellationToken = default)
         {
             Commands.Add(command.CommandText);
-            return ValueTask.FromResult(result);
+            if (delayMilliseconds > 0) await Task.Delay(delayMilliseconds, cancellationToken);
+            return result;
         }
     }
 }

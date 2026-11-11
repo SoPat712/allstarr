@@ -101,7 +101,7 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
     {
         using var building = RequestTiming.Current?.Stage("build");
         if (readContexts == null || readCache == null) return await read(context, token);
-        var access = readAccess != null && context.Actor != null && !scope.StartsWith("playlist-song:", StringComparison.Ordinal)
+        var access = readAccess != null && context.Actor != null
             ? await readAccess.ResolveAsync(context, token) : null;
         return await FeedReadCache.ReadAsync(readContexts, readCache, _readCoalescer, readClock ?? new SystemPlatformClock(),
             context, scope, access, httpContexts?.HttpContext, (_, execution) =>
@@ -646,18 +646,32 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
                             !string.IsNullOrWhiteSpace(track.RouteExternalId))
             .DistinctBy(track => track.BackendItemId)
             .ToArray();
+        if (external.Length == 0) return result;
+        await using var db = readContexts == null || readCache?.IsEnabled != true ? null :
+            await readContexts.CreateDbContextAsync(context.CancellationToken);
+        var keys = db == null ? new Dictionary<string, string>() : external.ToDictionary(track => track.BackendItemId,
+            track => db.FeedReadKey(context, "library-playlist-song:" + track.RouteProviderId + ":" + track.RouteExternalId));
         foreach (var batch in external.Chunk(4))
         {
             var songs = await Task.WhenAll(batch.Select(async track =>
             {
                 try
                 {
-                    var cached = await CachedReadAsync<PlaylistSongCacheEntry>(context,
-                        "playlist-song:" + track.RouteProviderId + ":" + track.RouteExternalId,
-                        async (execution, _) => await providerGateway.GetSongAsync(execution, track.RouteProviderId!, track.RouteExternalId!) is { } song
-                            ? new(song, song.PreciseDuration?.Ticks) : null, context.CancellationToken);
+                    var key = keys.GetValueOrDefault(track.BackendItemId);
+                    var cached = key == null ? await ReadAsync() :
+                        await readCache!.GetAsync<PlaylistSongCacheEntry>(key) ??
+                        await _readCoalescer.RunAsync(key, async () =>
+                        {
+                            var entry = await readCache!.GetAsync<PlaylistSongCacheEntry>(key) ?? await ReadAsync();
+                            if (entry != null) await readCache.SetAsync(key, entry, TimeSpan.FromMinutes(10));
+                            return entry;
+                        }, context.CancellationToken);
                     if (cached != null) cached.Song.PreciseDuration = cached.DurationTicks is { } ticks ? TimeSpan.FromTicks(ticks) : null;
                     return (track.BackendItemId, Song: cached?.Song);
+
+                    async Task<PlaylistSongCacheEntry?> ReadAsync() =>
+                        await providerGateway.GetSongAsync(context, track.RouteProviderId!, track.RouteExternalId!) is { } song
+                            ? new(song, song.PreciseDuration?.Ticks) : null;
                 }
                 catch (OperationCanceledException) when (context.CancellationToken.IsCancellationRequested)
                 {
