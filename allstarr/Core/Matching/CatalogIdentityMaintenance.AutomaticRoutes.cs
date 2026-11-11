@@ -18,10 +18,10 @@ public sealed partial class CatalogIdentityMaintenance
                     item.Scope == ProviderIdentityScope.Catalog && item.ResourceKind == ProviderResourceKind.Track &&
                     item.Verification == ProviderIdentityVerification.Verified && item.VerificationMethod == "automatic-match")
                 .OrderBy(item => item.Id).Select(item => item.Id).ToArrayAsync(cancellationToken);
-        foreach (var batch in ids.Chunk(100))
+        foreach (var batch in ids.Chunk(1))
         {
             await RepairAutomaticRouteBatchAsync(batch, cancellationToken);
-            await Task.Yield();
+            await Task.Delay(10, cancellationToken);
         }
     }
 

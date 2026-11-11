@@ -18,7 +18,6 @@ public sealed partial class CatalogIdentityMaintenance(
         ArgumentOutOfRangeException.ThrowIfLessThan(batchSize, 1);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(batchSize, 100);
         await using var db = await factory.CreateDbContextAsync(cancellationToken);
-        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
         var active = db.ProviderTrackIdentities.Where(item =>
             item.ResourceKind == ProviderResourceKind.Track &&
             (item.Verification == ProviderIdentityVerification.Verified || item.Verification == ProviderIdentityVerification.Pinned) &&
@@ -42,22 +41,27 @@ public sealed partial class CatalogIdentityMaintenance(
         var repaired = 0;
         foreach (var group in groups)
         {
-            var members = active.Where(item => item.CanonicalRecordingId == group.CanonicalRecordingId &&
-                item.ProviderId == group.ProviderId && item.CatalogNamespace == group.CatalogNamespace &&
-                item.Scope == group.Scope && item.ProviderAccountId == group.ProviderAccountId);
-            var retained = await members.OrderByDescending(item => item.VerificationMethod != "automatic-suggestion")
-                .ThenByDescending(item => item.Verification == ProviderIdentityVerification.Pinned)
-                .ThenByDescending(item => item.DecisionVersion).ThenByDescending(item => item.VerifiedAt)
-                .ThenBy(item => item.Id).FirstAsync(cancellationToken);
-            var duplicates = await members.Where(item => item.Id != retained.Id &&
-                    item.Verification == ProviderIdentityVerification.Verified)
-                .OrderBy(item => item.Id).Take(batchSize - repaired).ToArrayAsync(cancellationToken);
-            foreach (var duplicate in duplicates) CatalogIdentityPolicy.Supersede(duplicate, clock.UtcNow);
-            repaired += duplicates.Length;
+            await using (var transaction = await db.Database.BeginTransactionAsync(cancellationToken))
+            {
+                var members = active.Where(item => item.CanonicalRecordingId == group.CanonicalRecordingId &&
+                    item.ProviderId == group.ProviderId && item.CatalogNamespace == group.CatalogNamespace &&
+                    item.Scope == group.Scope && item.ProviderAccountId == group.ProviderAccountId);
+                var retained = await members.OrderByDescending(item => item.VerificationMethod != "automatic-suggestion")
+                    .ThenByDescending(item => item.Verification == ProviderIdentityVerification.Pinned)
+                    .ThenByDescending(item => item.DecisionVersion).ThenByDescending(item => item.VerifiedAt)
+                    .ThenBy(item => item.Id).FirstOrDefaultAsync(cancellationToken);
+                if (retained == null) continue;
+                var duplicates = await members.Where(item => item.Id != retained.Id &&
+                        item.Verification == ProviderIdentityVerification.Verified)
+                    .OrderBy(item => item.Id).Take(batchSize - repaired).ToArrayAsync(cancellationToken);
+                foreach (var duplicate in duplicates) CatalogIdentityPolicy.Supersede(duplicate, clock.UtcNow);
+                repaired += duplicates.Length;
+                await db.SaveChangesAsync(cancellationToken);
+                await transaction.CommitAsync(cancellationToken);
+            }
+            await Task.Delay(10, cancellationToken);
             if (repaired == batchSize) break;
         }
-        await db.SaveChangesAsync(cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
         return repaired;
     }
 

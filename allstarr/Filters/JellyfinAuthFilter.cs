@@ -154,12 +154,23 @@ public class JellyfinAuthFilter : IAsyncActionFilter
             context.Result = new StatusCodeResult(StatusCodes.Status502BadGateway);
             return;
         }
+        catch (UnauthorizedAccessException)
+        {
+            context.Result = new StatusCodeResult(StatusCodes.Status403Forbidden);
+            return;
+        }
+        catch (Exception ex) when (ex is Microsoft.EntityFrameworkCore.DbUpdateException or Microsoft.Data.Sqlite.SqliteException)
+        {
+            _logger.LogError("Storage unavailable while resolving Jellyfin identity ({ExceptionType})", ex.GetType().Name);
+            context.Result = new StatusCodeResult(StatusCodes.Status503ServiceUnavailable);
+            return;
+        }
         catch (Exception ex)
         {
             _logger.LogError(
                 "Unexpected failure while verifying Jellyfin client credentials ({ExceptionType})",
                 ex.GetType().Name);
-            context.Result = new StatusCodeResult(StatusCodes.Status502BadGateway);
+            context.Result = new StatusCodeResult(StatusCodes.Status500InternalServerError);
             return;
         }
 

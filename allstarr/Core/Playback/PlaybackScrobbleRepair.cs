@@ -65,14 +65,12 @@ public sealed class PlaybackScrobbleRepair(IDbContextFactory<AllstarrDbContext> 
     private async Task RecoverPendingCoreAsync(Guid id, CancellationToken token)
     {
         await using var db = await factory.CreateDbContextAsync(token);
-        await using var transaction = await db.Database.BeginTransactionAsync(token);
         var row = await db.PlaybackDeliveryCheckpoints.SingleAsync(x => x.Id == id, token);
         if (row.State != ScopedPlaybackScrobbleOutcome.Retrying) return;
         var savedPayload = row.SignalPayloadJson == null ? null : JsonSerializer.Deserialize<PlaybackSignalPayload>(row.SignalPayloadJson);
         if (await IgnoreSyntheticAsync(db, row, savedPayload, token))
         {
             await db.SaveChangesAsync(token);
-            await transaction.CommitAsync(token);
             return;
         }
         if (row.Kind == PlaybackScrobbleDeliveryKind.Completed && row.ProviderCode == "pending" &&
@@ -85,16 +83,9 @@ public sealed class PlaybackScrobbleRepair(IDbContextFactory<AllstarrDbContext> 
             row.Revision++;
             row.UpdatedAt = DateTimeOffset.UtcNow;
             await db.SaveChangesAsync(token);
-            await transaction.CommitAsync(token);
             return;
         }
-        var active = await db.Jobs.AsNoTracking().Where(x => x.Type == PlaybackSignalPipeline.JobType &&
-            x.ScopeKey == DurableJobQueue.CreateUserScopeKey(row.OwnerUserId) && x.OwnerUserId == row.OwnerUserId &&
-            (x.State == DurableJobState.Pending || x.State == DurableJobState.Running ||
-                x.State == DurableJobState.RetryScheduled)).Select(x => x.PayloadJson).ToArrayAsync(token);
-        if (active.Select(x => JsonSerializer.Deserialize<PlaybackSignalPayload>(x)).Any(x => x != null &&
-                (x.DestinationTargets == null || x.DestinationTargets.Contains(row.TargetId)) &&
-                ScopedPlaybackScrobbleDelivery.CheckpointKey(x) == row.SignalKey)) return;
+        if (await HasActiveDeliveryAsync(db, row, token)) return;
         if (row.Kind == PlaybackScrobbleDeliveryKind.NowPlaying)
         {
             row.State = ScopedPlaybackScrobbleOutcome.Ignored;
@@ -106,11 +97,14 @@ public sealed class PlaybackScrobbleRepair(IDbContextFactory<AllstarrDbContext> 
             row.Revision++;
             row.UpdatedAt = DateTimeOffset.UtcNow;
             await db.SaveChangesAsync(token);
-            await transaction.CommitAsync(token);
             return;
         }
         var restored = await RestorePayloadAsync(db, row, token);
         var payload = restored.Payload;
+        await using var transaction = await db.Database.BeginTransactionAsync(token);
+        if (!await db.PlaybackDeliveryCheckpoints.AsNoTracking().AnyAsync(x => x.Id == row.Id &&
+                x.Revision == row.Revision && x.State == ScopedPlaybackScrobbleOutcome.Retrying, token) ||
+            await HasActiveDeliveryAsync(db, row, token)) return;
         if (await IgnoreSyntheticAsync(db, row, payload, token))
         {
             await db.SaveChangesAsync(token);
@@ -166,6 +160,18 @@ public sealed class PlaybackScrobbleRepair(IDbContextFactory<AllstarrDbContext> 
         row.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync(token);
         await transaction.CommitAsync(token);
+    }
+
+    private static async Task<bool> HasActiveDeliveryAsync(AllstarrDbContext db, PlaybackDeliveryCheckpointEntity row,
+        CancellationToken token)
+    {
+        var active = await db.Jobs.AsNoTracking().Where(x => x.Type == PlaybackSignalPipeline.JobType &&
+            x.ScopeKey == DurableJobQueue.CreateUserScopeKey(row.OwnerUserId) && x.OwnerUserId == row.OwnerUserId &&
+            (x.State == DurableJobState.Pending || x.State == DurableJobState.Running ||
+                x.State == DurableJobState.RetryScheduled)).Select(x => x.PayloadJson).ToArrayAsync(token);
+        return active.Select(x => JsonSerializer.Deserialize<PlaybackSignalPayload>(x)).Any(x => x != null &&
+            (x.DestinationTargets == null || x.DestinationTargets.Contains(row.TargetId)) &&
+            ScopedPlaybackScrobbleDelivery.CheckpointKey(x) == row.SignalKey);
     }
 
     private sealed record RestoredPlayback(PlaybackSignalPayload? Payload, bool MetadataUnavailable = false);

@@ -199,35 +199,63 @@ public sealed partial class DurableJobQueue
     public async Task<int> RecoverInterruptedAsync(CancellationToken cancellationToken = default)
     {
         var now = _clock.UtcNow;
-        await using var context = await _contextFactory.CreateDbContextAsync(cancellationToken);
-        await using var transaction = await context.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
-        var interrupted = await context.Jobs.Where(item => item.State == DurableJobState.Running)
-            .OrderBy(item => item.Id).ToArrayAsync(cancellationToken);
-        foreach (var job in interrupted)
+        Guid[] ids;
+        await using (var read = await _contextFactory.CreateDbContextAsync(cancellationToken))
+            ids = await read.Jobs.AsNoTracking().Where(item => item.State == DurableJobState.Running)
+                .OrderBy(item => item.Id).Select(item => item.Id).ToArrayAsync(cancellationToken);
+        var recovered = 0;
+        foreach (var batch in ids.Chunk(25))
         {
-            var cancelled = job.CancellationRequestedAt.HasValue;
-            // A restart does not spend the failure budget, but work that keeps being
-            // interrupted without ever finishing an attempt (for example because it
-            // takes the process down) must stop instead of looping on every restart.
-            var exhausted = !cancelled && await ConsecutiveInterruptionsAsync(context, job.Id, cancellationToken) + 1 >=
-                _options.MaxConsecutiveInterruptions;
-            job.LastAttemptStartedAt ??= job.StartedAt ?? job.UpdatedAt;
-            job.LastAttemptCompletedAt = now;
-            job.LastAttemptOutcome = cancelled ? "cancelled" : "interrupted";
-            job.LastErrorCode = cancelled ? null : exhausted ? "worker_interrupted_repeatedly" : "worker_interrupted";
-            job.LastErrorMessage = cancelled ? null : exhausted
-                ? "Work was interrupted by restarts too many times in a row and was stopped."
-                : "Work was interrupted by a restart and is ready to resume.";
-            DurableJobHistory.Append(context, job, now);
-            job.State = cancelled ? DurableJobState.Cancelled : exhausted ? DurableJobState.Failed : DurableJobState.Pending;
-            job.CompletedAt = cancelled || exhausted ? now : null;
-            if (!cancelled && !exhausted) job.AvailableAt = now;
-            job.UpdatedAt = now;
-            job.Revision++;
+            bool changed;
+            do
+            {
+                changed = false;
+                await using (var context = await _contextFactory.CreateDbContextAsync(cancellationToken))
+                {
+                    var candidates = await context.Jobs.AsNoTracking().Where(item => batch.Contains(item.Id) &&
+                        item.State == DurableJobState.Running).ToArrayAsync(cancellationToken);
+                    var interruptions = new Dictionary<Guid, (long Revision, bool Exhausted)>();
+                    foreach (var job in candidates)
+                        interruptions[job.Id] = (job.Revision, !job.CancellationRequestedAt.HasValue &&
+                            await ConsecutiveInterruptionsAsync(context, job.Id, cancellationToken) + 1 >= _options.MaxConsecutiveInterruptions);
+                    if (interruptions.Count == 0) continue;
+                    await using var transaction = await context.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
+                    var interrupted = await context.Jobs.Where(item => batch.Contains(item.Id) && item.State == DurableJobState.Running)
+                        .OrderBy(item => item.Id).ToArrayAsync(cancellationToken);
+                    foreach (var job in interrupted)
+                    {
+                        if (!interruptions.TryGetValue(job.Id, out var previous) || previous.Revision != job.Revision)
+                        {
+                            changed = true;
+                            continue;
+                        }
+                        var cancelled = job.CancellationRequestedAt.HasValue;
+                        var exhausted = previous.Exhausted;
+                        // A restart does not spend the failure budget, but work that keeps being
+                        // interrupted without ever finishing an attempt (for example because it
+                        // takes the process down) must stop instead of looping on every restart.
+                        job.LastAttemptStartedAt ??= job.StartedAt ?? job.UpdatedAt;
+                        job.LastAttemptCompletedAt = now;
+                        job.LastAttemptOutcome = cancelled ? "cancelled" : "interrupted";
+                        job.LastErrorCode = cancelled ? null : exhausted ? "worker_interrupted_repeatedly" : "worker_interrupted";
+                        job.LastErrorMessage = cancelled ? null : exhausted
+                            ? "Work was interrupted by restarts too many times in a row and was stopped."
+                            : "Work was interrupted by a restart and is ready to resume.";
+                        DurableJobHistory.Append(context, job, now);
+                        job.State = cancelled ? DurableJobState.Cancelled : exhausted ? DurableJobState.Failed : DurableJobState.Pending;
+                        job.CompletedAt = cancelled || exhausted ? now : null;
+                        if (!cancelled && !exhausted) job.AvailableAt = now;
+                        job.UpdatedAt = now;
+                        job.Revision++;
+                        recovered++;
+                    }
+                    await context.SaveChangesAsync(cancellationToken);
+                    await transaction.CommitAsync(cancellationToken);
+                }
+                await Task.Delay(10, cancellationToken);
+            } while (changed);
         }
-        await context.SaveChangesAsync(cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
-        return interrupted.Length;
+        return recovered;
     }
 
     private async Task<int> ConsecutiveInterruptionsAsync(AllstarrDbContext context, Guid jobId,
