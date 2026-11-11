@@ -52,13 +52,13 @@ public sealed partial class PersonalMixService
             if (document.RootElement.TryGetProperty("Mixes", out var stored) &&
                 stored.EnumerateObject().Any(mix => mix.Value.GetProperty("Id").GetGuid() == id)) return;
         }
-        var cards = await ServiceFeedCardsAsync(user, token, refresh: false, queuePreparation: false);
-        if (cards.Any(card => card.Id == id)) return;
-        var link = await ExternalLinks(db, user).AsNoTracking().SingleOrDefaultAsync(link => link.Id == id, token);
-        if (link != null && (IsExternalLink(link) || (link.SourceProviderId is "spotify" or "apple-musickit") &&
-                ((await PlaylistSourceKinds.LatestAsync(db, [id], token)).GetValueOrDefault(id) == PlaylistSourceKinds.Feed ||
-                 cards.Any(card => (card.ProviderAccountId == link.ProviderAccountId || link.ProviderAccountId == null) &&
-                     card.Source == link.SourceProviderId && card.SourcePlaylistId == link.SourcePlaylistId)))) return;
+        var mix = (await ServiceMixesAsync(user, token, id, coverOnly: true)).SingleOrDefault();
+        if (mix != null && mix.Kind == "external")
+        {
+            var publish = (bool)(await settings.GetAsync(PublishKey, token)).Value;
+            if (mix.Added && (mix.Source is "spotify" or "apple-musickit" || publish && mix.Generation > 0))
+                return;
+        }
         throw new KeyNotFoundException();
     }
 

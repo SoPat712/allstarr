@@ -35,6 +35,8 @@ public sealed class MixReader(PersonalMixService mixes, IDbContextFactory<Allsta
     {
         var token = execution.CancellationToken;
         var stored = await mixes.ListAsync(execution, timeZoneId);
+        var publish = (bool)(await settings.GetAsync(PersonalMixService.PublishKey, token)).Value;
+        stored = stored.Where(mix => mix.Kind != "external" || IsInApps(mix, publish)).ToArray();
         var allowed = await AllowedLocalIdsAsync(execution, stored);
         var artworkSongs = stored.Where(mix => mix.Kind != "external" || mix.ArtworkUrl == null)
             .Select(mix => Playable(mix, allowed).Select(item => item.Song).ToArray()).ToArray();
@@ -57,13 +59,12 @@ public sealed class MixReader(PersonalMixService mixes, IDbContextFactory<Allsta
         var remainingIds = artworkSongs.Where(NeedsMore).SelectMany(songs => songs)
             .Where(song => song.IsLocal && !attempted.Contains(song.Id)).Select(song => song.Id).Distinct().ToArray();
         foreach (var item in await ReadNativeAsync(http, execution, remainingIds)) native[item.Key] = item.Value;
-        var publish = (bool)(await settings.GetAsync(PersonalMixService.PublishKey, token)).Value;
         var covers = await CoverInputsAsync(execution, stored);
         using var serialization = RequestTiming.Current?.Stage("serialize");
         return new(stored.Select(mix =>
         {
             var songs = Playable(mix, allowed);
-            var inApps = mix.Added && (mix.Source is "spotify" or "apple-musickit" || publish && mix.Generation > 0);
+            var inApps = IsInApps(mix, publish);
             return new ClientMix(mix.Id, mix.Kind, mix.Name, mix.Description, State(mix), mix.SongCount ?? songs.Count,
                 songs.Sum(item => item.Song.Duration * 1000L ?? 0), mix.UpdatedAt,
                 $"/allstarr/v1/mixes/{mix.Id}/cover?v={MixCoverImageService.Version(covers[mix.Id])}", inApps,
@@ -86,6 +87,11 @@ public sealed class MixReader(PersonalMixService mixes, IDbContextFactory<Allsta
     private async Task<ClientMixItems> ItemsCoreAsync(HttpContext http, ProtocolExecutionContext execution, Guid mixId)
     {
         var mix = await mixes.GetAsync(execution.RequireActor().EffectiveUserId!.Value, mixId, execution.CancellationToken);
+        if (mix.Kind == "external")
+        {
+            var publish = (bool)(await settings.GetAsync(PersonalMixService.PublishKey, execution.CancellationToken)).Value;
+            if (!IsInApps(mix, publish)) throw new KeyNotFoundException();
+        }
         var songs = Playable(mix, await AllowedLocalIdsAsync(execution, [mix]));
         var native = await ReadNativeAsync(http, execution, songs.Where(item => item.Song.IsLocal).Select(item => item.Song.Id).Distinct().ToArray());
         var providerIds = songs.Where(item => !item.Song.IsLocal).Select(item => item.Song.ExternalProvider)
@@ -176,6 +182,11 @@ public sealed class MixReader(PersonalMixService mixes, IDbContextFactory<Allsta
             using var building = RequestTiming.Current?.Stage("build");
             var owner = execution.RequireActor().EffectiveUserId!.Value;
             var mix = await mixes.GetCoverAsync(owner, mixId, execution.CancellationToken);
+            if (mix.Kind == "external")
+            {
+                var publish = (bool)(await settings.GetAsync(PersonalMixService.PublishKey, execution.CancellationToken)).Value;
+                if (!IsInApps(mix, publish)) throw new KeyNotFoundException();
+            }
             var input = (await CoverInputsAsync(execution, [mix]))[mix.Id];
             if (mix.Kind == "external" && input.Source.Length == 0) throw new KeyNotFoundException("The synced mix's playlist is unavailable.");
             return input;
@@ -270,6 +281,9 @@ public sealed class MixReader(PersonalMixService mixes, IDbContextFactory<Allsta
         var itemId = ClientCatalogIds.Normalize(song.Id)!;
         return JellyfinItemArtwork.PrimaryImageUrl(itemId, JellyfinItemArtwork.PrimaryImageTag(itemId, false));
     }
+
+    internal static bool IsInApps(PersonalMix mix, bool publish) =>
+        mix.Added && (mix.Source is "spotify" or "apple-musickit" || publish && mix.Generation > 0);
 
     private static bool SameNativeId(string? first, string second) => first == second ||
         Guid.TryParse(first, out var firstId) && Guid.TryParse(second, out var secondId) && firstId == secondId;

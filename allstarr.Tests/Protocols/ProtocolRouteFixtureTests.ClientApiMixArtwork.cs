@@ -92,25 +92,38 @@ public sealed partial class ProtocolRouteFixtureTests
         using var response = await client.GetAsync("/allstarr/v1/mixes");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-        var card = Assert.Single(body.RootElement.GetProperty("mixes").EnumerateArray(), item => item.GetProperty("kind").GetString() == "external");
-        Assert.Equal(synced, card.GetProperty("inApps").GetBoolean());
-        if (!synced) Assert.Equal("building", card.GetProperty("state").GetString());
-        Assert.Equal(30, card.GetProperty("itemCount").GetInt32());
-        var cover = card.GetProperty("coverUrl").GetString()!;
-        Assert.StartsWith("/allstarr/v1/mixes/", cover);
-        Assert.Equal(cover, Assert.Single(card.GetProperty("artworkUrls").EnumerateArray()).GetString());
-        using var image = await client.GetAsync(cover);
-        Assert.Equal(HttpStatusCode.OK, image.StatusCode);
-        Assert.Equal("image/png", image.Content.Headers.ContentType!.MediaType);
-        Assert.Equal(picture, await image.Content.ReadAsByteArrayAsync());
-        using var conditional = new HttpRequestMessage(HttpMethod.Get, cover);
-        conditional.Headers.IfNoneMatch.Add(image.Headers.ETag!);
-        using var cached = await client.SendAsync(conditional);
-        Assert.Equal(HttpStatusCode.NotModified, cached.StatusCode);
-        capability.Verify(item => item.ResolveArtworkAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderPlaylistArtworkRequest>()), Times.Once);
-        capability.Verify(item => item.GetPlaylistTracksAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderPlaylistTracksRequest>()), Times.Never);
-        gateway.Verify(item => item.GetPlayableProviderOrderAsync(It.IsAny<ProviderActorContext>(), It.IsAny<CancellationToken>()), synced ? Times.AtLeastOnce() : Times.Never());
-        gateway.VerifyNoOtherCalls();
+        if (synced)
+        {
+            var card = Assert.Single(body.RootElement.GetProperty("mixes").EnumerateArray(), item => item.GetProperty("kind").GetString() == "external");
+            Assert.True(card.GetProperty("inApps").GetBoolean());
+            Assert.Equal(30, card.GetProperty("itemCount").GetInt32());
+            var cover = card.GetProperty("coverUrl").GetString()!;
+            Assert.StartsWith("/allstarr/v1/mixes/", cover);
+            Assert.Equal(cover, Assert.Single(card.GetProperty("artworkUrls").EnumerateArray()).GetString());
+            using var image = await client.GetAsync(cover);
+            Assert.Equal(HttpStatusCode.OK, image.StatusCode);
+            Assert.Equal("image/png", image.Content.Headers.ContentType!.MediaType);
+            Assert.Equal(picture, await image.Content.ReadAsByteArrayAsync());
+            using var conditional = new HttpRequestMessage(HttpMethod.Get, cover);
+            conditional.Headers.IfNoneMatch.Add(image.Headers.ETag!);
+            using var cached = await client.SendAsync(conditional);
+            Assert.Equal(HttpStatusCode.NotModified, cached.StatusCode);
+            capability.Verify(item => item.ResolveArtworkAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderPlaylistArtworkRequest>()), Times.Once);
+            capability.Verify(item => item.GetPlaylistTracksAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderPlaylistTracksRequest>()), Times.Never);
+            gateway.Verify(item => item.GetPlayableProviderOrderAsync(It.IsAny<ProviderActorContext>(), It.IsAny<CancellationToken>()), Times.AtLeastOnce());
+            gateway.VerifyNoOtherCalls();
+        }
+        else
+        {
+            Assert.DoesNotContain(body.RootElement.GetProperty("mixes").EnumerateArray(), item => item.GetProperty("kind").GetString() == "external");
+            var unadded = (await factory.Services.GetRequiredService<PersonalMixService>().ListCardsAsync(owner)).Single(mix => mix.Kind == "external");
+            using var coverResponse = await client.GetAsync($"/allstarr/v1/mixes/{unadded.Id}/cover");
+            Assert.Equal(HttpStatusCode.NotFound, coverResponse.StatusCode);
+            capability.Verify(item => item.ResolveArtworkAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderPlaylistArtworkRequest>()), Times.Never);
+            capability.Verify(item => item.GetPlaylistTracksAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderPlaylistTracksRequest>()), Times.Never);
+            gateway.Verify(item => item.GetPlayableProviderOrderAsync(It.IsAny<ProviderActorContext>(), It.IsAny<CancellationToken>()), Times.Never);
+            gateway.VerifyNoOtherCalls();
+        }
     }
 
     [Theory]

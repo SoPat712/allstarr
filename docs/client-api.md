@@ -599,7 +599,8 @@ unchanged.
 listener's For you page. An optional `timeZoneId` uses the dashboard's time zone
 validation and saved preference. Reads do not generate listening-based mixes.
 Connected personal accounts also contribute service playlists automatically,
-without adding them to Jellyfin. Discovery is cached per account for six hours;
+without adding them to Jellyfin. Only service feeds added to apps are listed;
+unadded service feeds are omitted. Discovery is cached per account for six hours;
 a failed refresh retains the previous list. Spotify discovery covers saved
 service playlists through the existing web-player client. Apple Music reads
 personal recommendations and library playlists; Last.fm and ListenBrainz use
@@ -640,7 +641,7 @@ details; library songs use `capabilities.library` as their provider. Missing
 relationships and durations are null. Library songs no longer visible to the caller's token are omitted.
 Song, album, and artist IDs use the Jellyfin surface, including native
 library IDs, service `ext-...` IDs, stored recording IDs, and Apple catalog
-aliases. These JSON routes use `Cache-Control: no-store`.
+aliases. Unknown mixes and service feeds not added to apps return 404 `not_found`. These JSON routes use `Cache-Control: no-store`.
 
 `GET /allstarr/v1/mixes/{mixId}/cover` serves the same cover as the dashboard
 and the mix's playlist image in Jellyfin and Subsonic apps: a JPEG 2×2 of the
@@ -651,7 +652,7 @@ version may be kept for a year (`immutable`); the URL changes when the cover
 does, including when the mix's songs change. A collage still missing a picture
 is sent with a one-minute cache and no version, so apps fetch it again. Other
 requests use a private cache with revalidation and return 304 for a matching
-`If-None-Match`. Unknown mixes and other listeners' mixes return 404,
+`If-None-Match`. Unknown mixes, unadded service feeds, and other listeners' mixes return 404,
 including conditional cover requests.
 
 `GET /allstarr/v1/items/{itemId}/appearances` (`appearances`) lists where an

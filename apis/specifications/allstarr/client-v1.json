@@ -2702,6 +2702,7 @@
         "tags": [
           "Mixes"
         ],
+        "description": "Lists mixes for the listener. Service feeds from connected accounts are included only when added to apps.",
         "operationId": "listMixes",
         "parameters": [
           {
@@ -2791,6 +2792,7 @@
         "tags": [
           "Mixes"
         ],
+        "description": "Returns the items in a mix. Unknown mixes and service feeds not added to apps return 404.",
         "operationId": "listMixItems",
         "parameters": [
           {
@@ -2882,6 +2884,7 @@
         "tags": [
           "Mixes"
         ],
+        "description": "Serves the cover image for a mix. Unknown mixes and service feeds not added to apps return 404.",
         "operationId": "getMixCover",
         "parameters": [
           {

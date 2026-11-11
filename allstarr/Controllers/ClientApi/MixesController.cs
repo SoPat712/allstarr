@@ -9,18 +9,21 @@ public sealed class MixesController(MixReader reader, MixCoverImageService cover
 {
     [HttpGet]
     [EndpointName("listMixes")]
+    [EndpointDescription("Lists mixes for the listener. Service feeds from connected accounts are included only when added to apps.")]
     [ProducesResponseType<ClientMixes>(200)]
     public Task<ActionResult<ClientMixes>> List([FromQuery] string? timeZoneId = null) =>
         ExecuteAsync(() => reader.ListAsync(HttpContext, Execution, timeZoneId));
 
     [HttpGet("{mixId}/items")]
     [EndpointName("listMixItems")]
+    [EndpointDescription("Returns the items in a mix. Unknown mixes and service feeds not added to apps return 404.")]
     [ProducesResponseType<ClientMixItems>(200)]
     public Task<ActionResult<ClientMixItems>> Items(Guid mixId) =>
         ExecuteAsync(() => reader.ItemsAsync(HttpContext, Execution, mixId));
 
     [HttpGet("{mixId}/cover")]
     [EndpointName("getMixCover")]
+    [EndpointDescription("Serves the cover image for a mix. Unknown mixes and service feeds not added to apps return 404.")]
     [ProducesResponseType(typeof(byte[]), 200, "image/jpeg", "image/png")]
     [ProducesResponseType(304)]
     public async Task<IActionResult> Cover(Guid mixId, [FromQuery(Name = "v")] string? version = null)

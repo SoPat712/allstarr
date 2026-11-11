@@ -202,6 +202,21 @@ public sealed partial class ProtocolRouteFixtureTests
             PayloadSha256 = Hash(json),
             RetrievedAt = DateTimeOffset.UtcNow
         });
+        db.PlaylistLinks.Add(new()
+        {
+            Id = card.Id,
+            OwnerUserId = owner,
+            ProviderAccountId = account.Id,
+            SourceProviderId = "spotify",
+            SourcePlaylistId = "weekly",
+            SourcePlaylistIdHash = Hash("weekly"),
+            TargetProtocol = user.BackendType,
+            TargetBackendInstanceId = user.BackendInstanceId,
+            Enabled = true,
+            RuleVersion = "1",
+            PolicyVersion = "1",
+            Mode = PlaylistLinkMode.Virtual
+        });
         await db.SaveChangesAsync();
         var input = MixCoverInput.From(card);
         var context = new DefaultHttpContext();
