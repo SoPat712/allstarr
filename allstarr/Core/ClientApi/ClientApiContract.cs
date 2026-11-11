@@ -53,7 +53,17 @@ public sealed record ClientFeatures
     [JsonPropertyName("historyRecheck")] public bool HistoryRecheck { get; init; }
     [JsonPropertyName("libraryAdditions")] public bool LibraryAdditions { get; init; } = true;
     [JsonPropertyName("preferences")] public bool Preferences { get; init; } = true;
+    [JsonPropertyName("karaokeModel")] public bool KaraokeModel { get; init; }
 }
+
+public sealed record KaraokeModelMetadata(
+    [property: JsonPropertyName("version")] string Version,
+    [property: JsonPropertyName("sha256")] string Sha256,
+    [property: JsonPropertyName("sizeBytes")] long SizeBytes,
+    [property: JsonPropertyName("computeUnits")] string ComputeUnits,
+    [property: JsonPropertyName("format")] string Format,
+    [property: JsonPropertyName("url")] string Url,
+    [property: JsonPropertyName("license")] string License);
 
 public sealed record ClientApiError(
     [property: JsonPropertyName("code")] string Code,
@@ -61,7 +71,7 @@ public sealed record ClientApiError(
 {
     public static int NormalizeStatus(int status) => status switch
     {
-        400 or 401 or 403 or 404 or 409 => status,
+        400 or 401 or 403 or 404 or 409 or 416 => status,
         405 or 406 or 413 or 415 or 422 => 400,
         _ => 503
     };
@@ -73,6 +83,7 @@ public sealed record ClientApiError(
         403 => new("forbidden", "This token is not bound to an available listener."),
         404 => new("not_found", "The requested resource was not found."),
         409 => new("conflict", "The request conflicts with the current state."),
+        416 => new("range_not_satisfiable", "The requested range cannot be satisfied."),
         _ => new("unavailable", "The service is temporarily unavailable.")
     };
 

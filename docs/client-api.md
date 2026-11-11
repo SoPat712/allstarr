@@ -27,7 +27,8 @@ before using optional routes.
 `similarAlbums`, `playlistKinds`, `history`, `playCounts`, `libraryAdditions`,
 `preferences`, `searchStream`, `searchStreamScores`, `searchStreamRanked`, and `searchStreamRankedLibrary` are available.
 `stats`, `taste`, `sound`, `playActivity`, `historyImports`, and `historyRecheck`
-are true when their respective services are registered. `dashboardLink` is false.
+are true when their respective services are registered. `karaokeModel` is true while
+a valid on-device karaoke model is present. `dashboardLink` is false.
 When `Admin:Oidc:PublicUrl` is configured, capabilities also includes
 `dashboard: {url}` with that public control-panel address, including its base
 path. The app can open it in a browser for normal sign-in. The object is omitted
@@ -849,3 +850,15 @@ listener. Other listeners' personal source content and pins are excluded. Cached
 routed account revision; retained canonical IDs also require a playable source
 or the caller's retained-file access. The index follows personal and household pin
 changes immediately without rereading songs.
+
+`GET /allstarr/v1/models/karaoke` returns metadata for the newest valid on-device
+karaoke model: `{version,sha256,sizeBytes,computeUnits,format,url,license}` where
+`url` is `/allstarr/v1/models/karaoke/{version}/file`. If no valid model is available,
+it returns 404 in the API's standard `not_found` error shape. The capability flag
+is `features.karaokeModel`.
+
+`GET /allstarr/v1/models/karaoke/{version}/file` (and `HEAD`) streams the model file
+with `Range` support (206 and 416), `ETag: "<sha256>"`, `Content-Type: application/octet-stream`,
+`Cache-Control: private, max-age=31536000, immutable`, and `Content-Disposition: attachment; filename="..."`.
+Unknown or invalid versions return 404 `not_found`. Model files stream from disk and
+are never loaded into memory.

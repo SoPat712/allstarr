@@ -1352,6 +1352,184 @@
         }
       }
     },
+    "/allstarr/v1/models/karaoke": {
+      "get": {
+        "tags": [
+          "KaraokeModel"
+        ],
+        "operationId": "getKaraokeModel",
+        "responses": {
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KaraokeModelMetadata"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/allstarr/v1/models/karaoke/{version}/file": {
+      "get": {
+        "tags": [
+          "KaraokeModel"
+        ],
+        "operationId": "getKaraokeModelFile",
+        "parameters": [
+          {
+            "name": "version",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "byte"
+                }
+              },
+              "application/json": {}
+            }
+          },
+          "206": {
+            "description": "Partial Content",
+            "content": {
+              "application/json": {}
+            }
+          }
+        }
+      }
+    },
     "/allstarr/v1/library/additions": {
       "get": {
         "tags": [
@@ -4205,6 +4383,9 @@
           },
           "preferences": {
             "type": "boolean"
+          },
+          "karaokeModel": {
+            "type": "boolean"
           }
         }
       },
@@ -5936,6 +6117,42 @@
           }
         }
       },
+      "KaraokeModelMetadata": {
+        "required": [
+          "version",
+          "sha256",
+          "sizeBytes",
+          "computeUnits",
+          "format",
+          "url",
+          "license"
+        ],
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "string"
+          },
+          "sha256": {
+            "type": "string"
+          },
+          "sizeBytes": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "computeUnits": {
+            "type": "string"
+          },
+          "format": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "license": {
+            "type": "string"
+          }
+        }
+      },
       "ListeningHistoryImportPreview": {
         "required": [
           "format",
@@ -7359,6 +7576,9 @@
     },
     {
       "name": "ItemMatch"
+    },
+    {
+      "name": "KaraokeModel"
     },
     {
       "name": "LibraryAdditions"

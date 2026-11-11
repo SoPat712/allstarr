@@ -10,7 +10,8 @@ namespace allstarr.Controllers.ClientApi;
 
 [Route("allstarr/v1/capabilities")]
 public sealed class CapabilitiesController(LibraryProviderResolver library, IDurableRuntimeSettings settings,
-    IServiceProviderIsService services, ClientLibraryAdditions additions, ListeningStatsService? stats = null, TasteService? taste = null) : ClientApiControllerBase
+    IServiceProviderIsService services, ClientLibraryAdditions additions, IKaraokeModelService? karaoke = null,
+    ListeningStatsService? stats = null, TasteService? taste = null) : ClientApiControllerBase
 {
     [HttpGet]
     [EndpointName("getCapabilities")]
@@ -25,7 +26,8 @@ public sealed class CapabilitiesController(LibraryProviderResolver library, IDur
             Sound = services.IsService(typeof(SoundProfileService)),
             PlayActivity = services.IsService(typeof(PlayTraceService)),
             HistoryImports = services.IsService(typeof(ListeningHistoryImportService)),
-            HistoryRecheck = services.IsService(typeof(ListeningHistoryResolution))
+            HistoryRecheck = services.IsService(typeof(ListeningHistoryResolution)),
+            KaraokeModel = karaoke?.IsAvailable ?? false
         },
             await library.ResolveAsync(HttpContext, HttpContext.GetProtocolExecutionContext()!),
             await additions.CapabilitiesAsync(Execution, HttpContext.RequestAborted),
