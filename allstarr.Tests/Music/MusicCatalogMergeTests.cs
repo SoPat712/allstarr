@@ -1,3 +1,5 @@
+using allstarr.Core.Identity;
+using allstarr.Core.Matching;
 using allstarr.Core.Music;
 using allstarr.Core.Protocols;
 using allstarr.Models.Domain;
@@ -10,6 +12,12 @@ public sealed class MusicCatalogMergeTests
 {
     private readonly ProtocolExecutionContext _context = new(
         ProtocolKind.Subsonic, "backend", "principal", null, "merge-test",
+        DateTimeOffset.UtcNow.AddMinutes(1), CancellationToken.None);
+
+    private static readonly Guid Listener = Guid.CreateVersion7();
+    private readonly ProtocolExecutionContext _listener = new(
+        ProtocolKind.Subsonic, "backend", Listener.ToString(),
+        new AllstarrPrincipal(Listener, "subsonic", "backend", Listener.ToString(), "Listener", false), "merge-test",
         DateTimeOffset.UtcNow.AddMinutes(1), CancellationToken.None);
 
     [Fact]
@@ -92,7 +100,7 @@ public sealed class MusicCatalogMergeTests
     }
 
     [Fact]
-    public async Task ArtistAlbums_LibraryArtistWithoutAlbumsTakesTheBestKnownNamesake()
+    public async Task ArtistAlbums_LibraryArtistWithoutAlbumsNeverJoinsANamesakeByName()
     {
         var gateway = ArtistGateway(
             [ProviderArtist("smaller", "Grimes", 2), ProviderArtist("larger", "Grimes", 9)],
@@ -102,10 +110,62 @@ public sealed class MusicCatalogMergeTests
                 ["larger"] = [ProviderAlbum("l1", "Visions"), ProviderAlbum("l2", "Art Angels")]
             });
 
-        var albums = await new MusicCatalogMerge(gateway.Object).MissingArtistAlbumsAsync(_context, "Grimes", []);
+        Assert.Empty(await new MusicCatalogMerge(gateway.Object).MissingArtistAlbumsAsync(_context, "Grimes", []));
+        gateway.Verify(item => item.GetArtistAlbumsAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), It.IsAny<string>()), Times.Never);
+    }
 
-        Assert.Equal(["ext-deezer-album-l1", "ext-deezer-album-l2"], albums.Select(album => album.Id));
-        gateway.Verify(item => item.GetArtistAlbumsAsync(_context, "deezer", "smaller"), Times.Never);
+    [Fact]
+    public async Task ArtistAlbums_SongLinkedServicesEachAddTheirAlbums()
+    {
+        var links = Links(new("deezer", "linked"), new("apple-musickit", "apple"));
+        var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        gateway.Setup(item => item.SearchAsync(_listener, "Grimes", 0, 0, 20, null))
+            .ReturnsAsync(new SearchResult { Artists = [ProviderArtist("namesake", "Grimes", 50)] });
+        gateway.Setup(item => item.GetArtistAlbumsAsync(_listener, "deezer", "linked"))
+            .ReturnsAsync([ProviderAlbum("r1", "Visions"), ProviderAlbum("r2", "Art Angels")]);
+        gateway.Setup(item => item.GetArtistAlbumsAsync(_listener, "apple-musickit", "apple"))
+            .ReturnsAsync([AppleAlbum("a1", "Art Angels"), AppleAlbum("a2", "Miss Anthropocene")]);
+
+        var albums = await new MusicCatalogMerge(gateway.Object, links.Object).MissingArtistAlbumsAsync(_listener, "Grimes", [NativeAlbum("Visions")]);
+
+        // Apple's copy of Art Angels has no barcode but agrees on everything else, so Deezer's copy stands for both.
+        Assert.Equal(["ext-deezer-album-r2", "ext-applemusic-album-a2"], albums.Select(album => album.Id));
+        gateway.Verify(item => item.GetArtistAlbumsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "namesake"), Times.Never);
+        links.Verify(item => item.RequestAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ArtistAlbums_WithoutSongLinksQueueMatchingAndStillUseASharedAlbum()
+    {
+        var links = Links();
+        var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        gateway.Setup(item => item.SearchAsync(_listener, "Grimes", 0, 0, 20, null))
+            .ReturnsAsync(new SearchResult { Artists = [ProviderArtist("real", "Grimes", 8), AppleArtist("apple", "Grimes", 5)] });
+        gateway.Setup(item => item.GetArtistAlbumsAsync(_listener, "deezer", "real"))
+            .ReturnsAsync([ProviderAlbum("r1", "Visions"), ProviderAlbum("r2", "Art Angels")]);
+        gateway.Setup(item => item.GetArtistAlbumsAsync(_listener, "applemusic", "apple"))
+            .ReturnsAsync([AppleAlbum("a1", "Visions"), AppleAlbum("a3", "Halfaxa Demos")]);
+
+        var albums = await new MusicCatalogMerge(gateway.Object, links.Object).MissingArtistAlbumsAsync(_listener, "Grimes", [NativeAlbum("Visions")]);
+
+        Assert.Equal(["ext-deezer-album-r2", "ext-applemusic-album-a3"], albums.Select(album => album.Id));
+        links.Verify(item => item.RequestAsync(_listener.Actor!.EffectiveUserId!.Value, "Grimes", It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ArtistAlbums_OneFailingServiceKeepsTheOthersAlbums()
+    {
+        var links = Links(new("deezer", "linked"), new("apple-musickit", "apple"));
+        var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        gateway.Setup(item => item.SearchAsync(_listener, "Grimes", 0, 0, 20, null)).ReturnsAsync(new SearchResult());
+        gateway.Setup(item => item.GetArtistAlbumsAsync(_listener, "deezer", "linked"))
+            .ReturnsAsync([ProviderAlbum("r1", "Visions"), ProviderAlbum("r2", "Art Angels")]);
+        gateway.Setup(item => item.GetArtistAlbumsAsync(_listener, "apple-musickit", "apple"))
+            .ThrowsAsync(new HttpRequestException("Apple is down"));
+
+        var albums = await new MusicCatalogMerge(gateway.Object, links.Object).MissingArtistAlbumsAsync(_listener, "Grimes", [NativeAlbum("Visions")]);
+
+        Assert.Equal(["ext-deezer-album-r2"], albums.Select(album => album.Id));
     }
 
     [Fact]
@@ -222,6 +282,31 @@ public sealed class MusicCatalogMergeTests
             .ReturnsAsync(new Album { Title = "Visions", Artist = "Grimes", Songs = songs });
         return gateway;
     }
+
+    private static Mock<ILibraryArtistLinks> Links(params LibraryArtistLink[] found)
+    {
+        var links = new Mock<ILibraryArtistLinks>();
+        links.Setup(item => item.ReadAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(found);
+        return links;
+    }
+
+    private static Artist AppleArtist(string id, string name, int albumCount) => new()
+    {
+        Id = $"ext-applemusic-artist-{id}",
+        Name = name,
+        AlbumCount = albumCount,
+        ExternalProvider = "applemusic",
+        ExternalId = id
+    };
+
+    private static Album AppleAlbum(string id, string title) => new()
+    {
+        Id = $"ext-applemusic-album-{id}",
+        Title = title,
+        Artist = "Grimes",
+        ExternalProvider = "applemusic",
+        ExternalId = id
+    };
 
     private static Artist ProviderArtist(string id, string name, int albumCount) => new()
     {

@@ -58,7 +58,7 @@ public partial class JellyfinController
                 var owned = await ReadAllNativeCatalogRowsAsync(endpoint, envelope, original);
                 if (owned == null) return new ProtocolRelayResponseResult(upstream);
                 var titles = owned.Select(row => row["Name"]?.GetValue<string>() ?? "").ToArray();
-                var merge = new MusicCatalogMerge(_providerGateway);
+                var merge = HttpContext.RequestServices.GetService<MusicCatalogMerge>() ?? new MusicCatalogMerge(_providerGateway);
                 var additions = new List<Dictionary<string, object?>>();
                 if (artistAlbums)
                 {

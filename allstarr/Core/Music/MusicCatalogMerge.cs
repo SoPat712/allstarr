@@ -1,4 +1,6 @@
+using allstarr.Core.Matching;
 using allstarr.Core.Protocols;
+using allstarr.Core.Providers.AppleMusicKit;
 using allstarr.Models.Domain;
 using allstarr.Services.Common;
 
@@ -6,11 +8,11 @@ namespace allstarr.Core.Music;
 
 /// <summary>
 /// Extends native artists and albums with what providers hold beyond the library.
-/// A provider artist joins only when it shares an album with the library artist, so a
-/// namesake's discography never leaks in; a library artist without albums takes the
-/// best-known provider artist of the same name.
+/// A service artist joins a library artist when their songs match. Without matched songs, a same-named
+/// artist joins only when it shares an album with the library, so a namesake's discography never leaks in.
+/// Every linked service contributes, and names alone never link.
 /// </summary>
-public sealed class MusicCatalogMerge(IProtocolProviderGateway providers)
+public sealed class MusicCatalogMerge(IProtocolProviderGateway providers, ILibraryArtistLinks? links = null)
 {
     private const int CandidateArtists = 5;
 
@@ -22,22 +24,75 @@ public sealed class MusicCatalogMerge(IProtocolProviderGateway providers)
         var artistKey = FuzzyMatcher.NormalizeForMatching(artistName);
         if (artistKey.Length == 0) return [];
         var owned = libraryAlbums.Select(album => FuzzyMatcher.NormalizeForMatching(album.Title)).ToHashSet(StringComparer.Ordinal);
-        var candidates = (await providers.SearchAsync(context, artistName, 0, 0, 20)).Artists
-            .Where(artist => !string.IsNullOrEmpty(artist.ExternalId) && !string.IsNullOrEmpty(artist.ExternalProvider) &&
-                             FuzzyMatcher.NormalizeForMatching(artist.Name) == artistKey)
-            .OrderByDescending(artist => artist.AlbumCount ?? 0)
-            .Take(CandidateArtists);
-        foreach (var candidate in candidates)
+        var linked = await SongLinksAsync(context, artistName);
+        var services = linked.Select(link => Service(link.ProviderId)).ToHashSet(StringComparer.Ordinal);
+        var albums = (await Task.WhenAll(linked.Select(link => AlbumsAsync(context, link.ProviderId, link.ArtistId))))
+            .SelectMany(found => found).ToList();
+        if (owned.Count > 0)
         {
-            var albums = await providers.GetArtistAlbumsAsync(context, candidate.ExternalProvider!, candidate.ExternalId!);
-            var titles = albums.Select(album => FuzzyMatcher.NormalizeForMatching(album.Title)).ToList();
-            if (owned.Count > 0 && !titles.Any(owned.Contains)) continue;
-            var nativeIds = libraryAlbums.Select(album => album.Id).ToHashSet(StringComparer.Ordinal);
-            return MusicAlbumReleases.Collapse(libraryAlbums.Concat(albums))
-                .Where(album => !album.IsLocal || !nativeIds.Contains(album.Id)).ToList();
+            var candidates = (await providers.SearchAsync(context, artistName, 0, 0, 20)).Artists
+                .Where(artist => !string.IsNullOrEmpty(artist.ExternalId) && !string.IsNullOrEmpty(artist.ExternalProvider) &&
+                                 FuzzyMatcher.NormalizeForMatching(artist.Name) == artistKey &&
+                                 !services.Contains(Service(artist.ExternalProvider)))
+                .OrderByDescending(artist => artist.AlbumCount ?? 0)
+                .Take(CandidateArtists);
+            foreach (var candidate in candidates)
+            {
+                if (services.Contains(Service(candidate.ExternalProvider!))) continue;
+                var catalog = await AlbumsAsync(context, candidate.ExternalProvider!, candidate.ExternalId!);
+                if (!catalog.Any(album => owned.Contains(FuzzyMatcher.NormalizeForMatching(album.Title)))) continue;
+                services.Add(Service(candidate.ExternalProvider!));
+                albums.AddRange(catalog);
+            }
         }
-        return [];
+        if (albums.Count == 0) return [];
+        var nativeIds = libraryAlbums.Select(album => album.Id).ToHashSet(StringComparer.Ordinal);
+        return WithoutRepeats(MusicAlbumReleases.Collapse(libraryAlbums.Concat(albums)))
+            .Where(album => !album.IsLocal || !nativeIds.Contains(album.Id)).ToList();
     }
+
+    private async Task<IReadOnlyList<LibraryArtistLink>> SongLinksAsync(ProtocolExecutionContext context, string artistName)
+    {
+        if (links == null || context.Actor?.EffectiveUserId is not { } owner) return [];
+        // Links only add albums; when they can't be read the page falls back to shared albums.
+        try
+        {
+            var found = await links.ReadAsync(owner, artistName, context.CancellationToken);
+            // Matching runs in the background, so the next visit can use songs instead of names.
+            if (found.Count == 0) await links.RequestAsync(owner, artistName, context.CancellationToken);
+            return found;
+        }
+        catch (Exception error) when (error is not OperationCanceledException) { return []; }
+    }
+
+    // One service failing leaves the others' albums on the page.
+    private async Task<List<Album>> AlbumsAsync(ProtocolExecutionContext context, string provider, string artistId)
+    {
+        try { return await providers.GetArtistAlbumsAsync(context, provider, artistId); }
+        catch (Exception error) when (error is not OperationCanceledException) { return []; }
+    }
+
+    private static string Service(string provider) => AppleMusicClient.NormalizeProviderId(provider);
+
+    // Without a barcode or track list the same album from two services survives Collapse. On one artist's page an owned
+    // album, or the first service's copy, stands in for another service's copy with the same title, edition and
+    // explicitness (and, between services, the same year and length).
+    private static IEnumerable<Album> WithoutRepeats(IReadOnlyList<Album> albums)
+    {
+        var kept = new List<Album>();
+        foreach (var album in albums)
+        {
+            if (!album.IsLocal && kept.Any(other => MusicAlbumReleases.FamilyKey(other) == MusicAlbumReleases.FamilyKey(album) &&
+                    Agree(other.IsExplicit, album.IsExplicit) && (other.IsLocal ||
+                    !string.Equals(Service(other.ExternalProvider ?? ""), Service(album.ExternalProvider ?? ""), StringComparison.Ordinal) &&
+                    Agree(other.Year, album.Year) && Agree(other.SongCount, album.SongCount))))
+                continue;
+            kept.Add(album);
+        }
+        return kept;
+    }
+
+    private static bool Agree<T>(T? first, T? second) where T : struct => first is null || second is null || first.Value.Equals(second.Value);
 
     /// <summary>
     /// Provider songs missing from a library album: the provider album must have the same
