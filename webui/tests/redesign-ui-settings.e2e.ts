@@ -140,6 +140,21 @@ test("Settings changes save with Undo and restart changes wait for confirmation"
   await expect(page.getByText("Set in your deployment")).toBeVisible();
 });
 
+test("Settings search results open above the section links", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await fixture(page);
+  await page.goto("/#/settings/library");
+  await page.getByRole("navigation", { name: "Settings sections" }).getByRole("searchbox", { name: "Find a setting" }).fill("Libraries");
+  const results = page.getByRole("navigation", { name: "Settings sections" }).getByRole("list", { name: "Matching settings" });
+  await expect(results.getByRole("link").first()).toBeVisible();
+  for (const result of await results.getByRole("listitem").all()) {
+    const box = (await result.boundingBox())!;
+    const onTop = await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.closest(".settings-find-results") !== null,
+      { x: box.x + box.width / 2, y: box.y + box.height / 2 });
+    expect(onTop).toBe(true);
+  }
+});
+
 test("Single sign-on fields and browser access stay folded until needed", async ({ page }) => {
   await fixture(page);
   await page.goto("/#/settings/people");

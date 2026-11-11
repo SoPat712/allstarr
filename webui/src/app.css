@@ -9611,6 +9611,11 @@
   z-index: 1;
 }
 
+/* The settings search sits first in the nav; lift it so its results open over the links below. */
+.settings-nav[data-indicator] > .settings-find {
+  z-index: 2;
+}
+
 .desktop-navigation a,
 .settings-nav > a,
 .mobile-navigation :is(a, button) {
