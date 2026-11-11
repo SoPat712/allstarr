@@ -381,8 +381,15 @@ test("Lyrics source order can be dragged and saves the new order", async ({ page
   ] }));
   await page.goto("/#/preferences");
   const region = page.getByRole("region", { name: "Lyrics source order", exact: true });
-  await region.getByRole("listitem").filter({ hasText: "Spotify" }).dragTo(region.getByRole("listitem").first());
+  const spotify = region.getByRole("listitem").filter({ hasText: "Spotify" });
+  await expect(spotify).toHaveAttribute("draggable", "true");
+  // Headless Chromium can miss the start of an HTML drag on a busy machine; dropping Spotify on the first row again changes nothing.
+  await expect(async () => {
+    await spotify.dragTo(region.getByRole("listitem").first());
+    await expect(region.getByRole("listitem").first()).toContainText("Spotify", { timeout: 1_000 });
+  }).toPass({ timeout: 15_000 });
   await expect.poll(() => writes[0]?.lyricsOrder).toBe("spotify,backend,kept,lrclib,lyricsplus");
+  expect(writes).toHaveLength(1);
   await expect(region.getByRole("listitem")).toHaveText(["Spotify", "Media server lyrics", "Kept LRC", "LRCLIB", "LyricsPlus"]);
   await expect(page.getByRole("status").filter({ hasText: "Order saved" })).toBeVisible();
 });
