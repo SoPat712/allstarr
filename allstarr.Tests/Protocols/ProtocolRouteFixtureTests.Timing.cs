@@ -39,7 +39,7 @@ public sealed partial class ProtocolRouteFixtureTests
             ($"/Items/{playlist}", ["build", "serialize"]),
             ($"/Playlists/{playlist}/Items", ["build", "serialize"]),
             ($"/Items/{playlist}/Images/Primary", ["resolve", "fetch", "render"]),
-            ($"/allstarr/v1/mixes/{mix.Id}/cover", ["build", "resolve", "fetch", "render"])
+            ($"/allstarr/v1/mixes/{mix.Id}/cover", ["resolve", "fetch", "render"])
         })
         {
             using var response = await client.GetAsync(path);

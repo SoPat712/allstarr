@@ -59,6 +59,64 @@ public sealed class MixCoverDiskCacheTests(ITestOutputHelper output) : IDisposab
         Assert.Equal(2, fetches);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task VersionLookupKeepsOldBytesAndHeadersAcrossRestartAndSeparatesImageVariants(bool serviceArtwork)
+    {
+        var id = Guid.NewGuid();
+        var owner = Guid.NewGuid();
+        var input = new MixCoverInput(id.ToString(), 1, serviceArtwork ? "external" : "daily", Count: 1,
+            Art: ["library:album"], ServiceArtwork: serviceArtwork ? "saved-art" : null);
+        var version = MixCoverImageService.Version(input);
+        using var cache = Cache();
+        var original = new MixCoverImageService(_ => [9], (_, _) => Task.FromResult<byte[]?>(Picture()), cache: cache,
+            serviceArt: (_, _, _) => Task.FromResult<ResolvedMediaAsset?>(new(Picture(), "image/png", "hash", null, null, false)));
+        var firstContext = new DefaultHttpContext();
+        firstContext.Request.QueryString = new("?width=300&format=jpeg");
+        var first = Assert.IsType<FileContentResult>(await original.CreateResponseAsync(input, firstContext, version, owner));
+        await original.CreateResponseAsync(input with { Generation = 2 }, new DefaultHttpContext(), owner: owner);
+        using var restartedCache = Cache();
+        var restarted = new MixCoverImageService(_ => throw new InvalidOperationException("Unexpected render"),
+            (_, _) => throw new InvalidOperationException("Unexpected artwork read"), cache: restartedCache,
+            serviceArt: (_, _, _) => throw new InvalidOperationException("Unexpected service read"));
+        var context = new DefaultHttpContext();
+        context.Request.QueryString = new("?width=300&format=jpeg");
+        var result = Assert.IsType<FileContentResult>(await restarted.TryCreateCachedResponseAsync(id, owner, version, context));
+        Assert.Equal(first.FileContents, result.FileContents);
+        Assert.Equal(first.ContentType, result.ContentType);
+        Assert.Equal(firstContext.Response.Headers.ETag, context.Response.Headers.ETag);
+        Assert.Equal(serviceArtwork ? "private, max-age=300" : "private, max-age=31536000, immutable", context.Response.Headers.CacheControl);
+        context.Request.Headers.IfNoneMatch = context.Response.Headers.ETag;
+        Assert.Equal(304, Assert.IsType<StatusCodeResult>(await restarted.TryCreateCachedResponseAsync(id, owner, version, context)).StatusCode);
+        Assert.Null(await restarted.TryCreateCachedResponseAsync(id, Guid.NewGuid(), version, context));
+        Assert.Null(await restarted.TryCreateCachedResponseAsync(id, owner, "missing", context));
+        context.Request.QueryString = new("?width=600&format=jpeg");
+        Assert.Null(await restarted.TryCreateCachedResponseAsync(id, owner, version, context));
+        context.Request.QueryString = new("?width=300&format=png");
+        Assert.Null(await restarted.TryCreateCachedResponseAsync(id, owner, version, context));
+    }
+
+    [Fact]
+    public async Task VersionLookupWithoutArtworkKeepsShortCachingAndExpiresWithTheImage()
+    {
+        var id = Guid.NewGuid();
+        var owner = Guid.NewGuid();
+        var input = new MixCoverInput(id.ToString(), 1, "daily", Count: 17);
+        using var cache = Cache();
+        var service = new MixCoverImageService(_ => [9], cache: cache);
+        var version = MixCoverImageService.Version(input);
+        var first = Assert.IsType<FileContentResult>(await service.CreateResponseAsync(input, new DefaultHttpContext(), version, owner));
+        var context = new DefaultHttpContext();
+        context.Request.Headers.IfNoneMatch = $"\"{MixCoverImageService.GetTag(input)}\"";
+        var cached = Assert.IsType<FileContentResult>(await service.TryCreateCachedResponseAsync(id, owner, version, context));
+        Assert.Equal(first.FileContents, cached.FileContents);
+        Assert.Equal("private, max-age=60", context.Response.Headers.CacheControl);
+        Assert.False(context.Response.Headers.ContainsKey("ETag"));
+        _clock.UtcNow += TimeSpan.FromSeconds(61);
+        Assert.Null(await service.TryCreateCachedResponseAsync(id, owner, version, new DefaultHttpContext()));
+    }
+
     [Fact]
     public async Task CompleteCoverSurvivesRestartAndVersionChangeRendersAgain()
     {

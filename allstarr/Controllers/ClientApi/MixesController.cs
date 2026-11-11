@@ -25,7 +25,13 @@ public sealed class MixesController(MixReader reader, MixCoverImageService cover
     [ProducesResponseType(304)]
     public async Task<IActionResult> Cover(Guid mixId, [FromQuery(Name = "v")] string? version = null)
     {
-        try { return await covers.CreateResponseAsync(await reader.CoverAsync(Execution, mixId), HttpContext, version, Execution.RequireActor().EffectiveUserId); }
+        try
+        {
+            await reader.EnsureCoverAccessAsync(Execution, mixId);
+            var owner = Execution.RequireActor().EffectiveUserId!.Value;
+            if (version != null && await covers.TryCreateCachedResponseAsync(mixId, owner, version, HttpContext) is { } cached) return cached;
+            return await covers.CreateResponseAsync(await reader.CoverAsync(Execution, mixId), HttpContext, version, owner);
+        }
         catch (UnauthorizedAccessException) { return NotFound(); }
         catch (KeyNotFoundException) { return NotFound(); }
         catch (ArgumentException) { return BadRequest(); }

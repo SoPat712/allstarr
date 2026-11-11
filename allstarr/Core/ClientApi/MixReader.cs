@@ -20,6 +20,8 @@ public sealed class MixReader(PersonalMixService mixes, IDbContextFactory<Allsta
     IProtocolProviderGateway providers, JellyfinProxyService jellyfin, LibraryProviderResolver libraryProvider,
     IApplicationCache cache, ApplicationCacheRequestCoalescer readCoalescer, IPlatformClock clock)
 {
+    private sealed record CoverInputEntry(MixCoverInput Input, long LibraryRevision);
+
     public async Task<ClientMixes> ListAsync(HttpContext http, ProtocolExecutionContext execution, string? timeZoneId)
     {
         using var building = RequestTiming.Current?.Stage("build");
@@ -158,15 +160,42 @@ public sealed class MixReader(PersonalMixService mixes, IDbContextFactory<Allsta
         return new(mix.Id, mix.UpdatedAt, result);
     }
 
+    public Task EnsureCoverAccessAsync(ProtocolExecutionContext execution, Guid mixId) =>
+        mixes.EnsureCoverAccessAsync(execution.RequireActor().EffectiveUserId!.Value, mixId, execution.CancellationToken);
+
     public async Task<MixCoverInput> CoverAsync(ProtocolExecutionContext execution, Guid mixId)
     {
-        using var resolving = RequestTiming.Current?.Stage("resolve");
-        using var building = RequestTiming.Current?.Stage("build");
+        await using var db = await factory.CreateDbContextAsync(execution.CancellationToken);
+        var access = await libraryAccess.ResolveAsync(execution, execution.CancellationToken);
+        var key = db.FeedReadKey(execution, "mix-cover-input:" + mixId, access);
+        if (await CachedAsync() is { } cached) return cached;
+        return await readCoalescer.RunAsync(key, async () =>
+        {
+            if (await CachedAsync() is { } shared) return shared;
+            using var resolving = RequestTiming.Current?.Stage("resolve");
+            using var building = RequestTiming.Current?.Stage("build");
+            var owner = execution.RequireActor().EffectiveUserId!.Value;
+            var mix = await mixes.GetCoverAsync(owner, mixId, execution.CancellationToken);
+            var input = (await CoverInputsAsync(execution, [mix]))[mix.Id];
+            if (mix.Kind == "external" && input.Source.Length == 0) throw new KeyNotFoundException("The synced mix's playlist is unavailable.");
+            return input;
+        }, CancellationToken.None);
+
+        async Task<MixCoverInput?> CachedAsync() => await cache.GetAsync<CoverInputEntry>(key) is { } entry &&
+            entry.LibraryRevision == db.FeedReadLibraryRevisionFor(execution.Actor?.EffectiveUserId) ? entry.Input : null;
+    }
+
+    private async Task RememberCoverInputsAsync(ProtocolExecutionContext execution, Dictionary<Guid, MixCoverInput> inputs)
+    {
+        await using var db = await factory.CreateDbContextAsync(execution.CancellationToken);
         var owner = execution.RequireActor().EffectiveUserId!.Value;
-        var mix = await mixes.GetCoverAsync(owner, mixId, execution.CancellationToken);
-        var input = (await CoverInputsAsync(execution, [mix]))[mix.Id];
-        if (mix.Kind == "external" && input.Source.Length == 0) throw new KeyNotFoundException("The synced mix's playlist is unavailable.");
-        return input;
+        var access = await libraryAccess.ResolveAsync(execution, execution.CancellationToken);
+        foreach (var (id, input) in inputs)
+        {
+            await cache.SetAsync(db.FeedReadKey(execution, "mix-cover-input:" + id, access),
+                new CoverInputEntry(input, db.FeedReadLibraryRevisionFor(owner)), TimeSpan.FromSeconds(60));
+            await MixCoverImageService.RememberInputAsync(cache, input, owner);
+        }
     }
 
     // The list and the cover itself describe a mix's cover the same way, so the list's versioned URL matches the image served.
@@ -174,13 +203,16 @@ public sealed class MixReader(PersonalMixService mixes, IDbContextFactory<Allsta
     {
         var inputs = stored.ToDictionary(mix => mix.Id, MixCoverInput.From);
         var external = stored.Where(mix => mix.Kind == "external").Select(mix => mix.Id).ToArray();
-        if (external.Length == 0) return inputs;
         var owner = execution.RequireActor().EffectiveUserId!.Value;
-        await using var db = await factory.CreateDbContextAsync(execution.CancellationToken);
-        var links = await db.PlaylistLinks.AsNoTracking().Where(item => external.Contains(item.Id) && item.OwnerUserId == owner)
-            .Select(item => new { item.Id, item.SourceProviderId, item.SourcePlaylistId }).ToArrayAsync(execution.CancellationToken);
-        foreach (var link in links)
-            inputs[link.Id] = inputs[link.Id] with { Source = link.SourceProviderId, SourcePlaylistId = link.SourcePlaylistId };
+        if (external.Length > 0)
+        {
+            await using var db = await factory.CreateDbContextAsync(execution.CancellationToken);
+            var links = await db.PlaylistLinks.AsNoTracking().Where(item => external.Contains(item.Id) && item.OwnerUserId == owner)
+                .Select(item => new { item.Id, item.SourceProviderId, item.SourcePlaylistId }).ToArrayAsync(execution.CancellationToken);
+            foreach (var link in links)
+                inputs[link.Id] = inputs[link.Id] with { Source = link.SourceProviderId, SourcePlaylistId = link.SourcePlaylistId };
+        }
+        await RememberCoverInputsAsync(execution, inputs);
         return inputs;
     }
 

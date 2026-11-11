@@ -41,6 +41,27 @@ public sealed partial class PersonalMixService
             ?? throw new KeyNotFoundException();
     }
 
+    internal async Task EnsureCoverAccessAsync(Guid owner, Guid id, CancellationToken token)
+    {
+        await using var db = await factory.CreateDbContextAsync(token);
+        var user = await UserAsync(db, owner, token);
+        var row = await RowAsync(db, user, token);
+        if (row != null)
+        {
+            using var document = JsonDocument.Parse(row.PayloadJson);
+            if (document.RootElement.TryGetProperty("Mixes", out var stored) &&
+                stored.EnumerateObject().Any(mix => mix.Value.GetProperty("Id").GetGuid() == id)) return;
+        }
+        var cards = await ServiceFeedCardsAsync(user, token, refresh: false, queuePreparation: false);
+        if (cards.Any(card => card.Id == id)) return;
+        var link = await ExternalLinks(db, user).AsNoTracking().SingleOrDefaultAsync(link => link.Id == id, token);
+        if (link != null && (IsExternalLink(link) || (link.SourceProviderId is "spotify" or "apple-musickit") &&
+                ((await PlaylistSourceKinds.LatestAsync(db, [id], token)).GetValueOrDefault(id) == PlaylistSourceKinds.Feed ||
+                 cards.Any(card => (card.ProviderAccountId == link.ProviderAccountId || link.ProviderAccountId == null) &&
+                     card.Source == link.SourceProviderId && card.SourcePlaylistId == link.SourcePlaylistId)))) return;
+        throw new KeyNotFoundException();
+    }
+
     private static string ServiceArtworkUrl(Guid? account, string provider, string playlist, string revision) =>
         (account.HasValue ? $"/api/admin/playlist-sources/{account}/playlists/{Uri.EscapeDataString(playlist)}/artwork"
             : $"/api/admin/playlist-sources/public/{Uri.EscapeDataString(provider)}/playlists/{Uri.EscapeDataString(playlist)}/artwork") +

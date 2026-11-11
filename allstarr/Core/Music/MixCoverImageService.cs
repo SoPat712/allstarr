@@ -51,9 +51,44 @@ public sealed class MixCoverImageService
     // A short form of the tag that apps can put in the cover URL.
     public static string Version(MixCoverInput input) => GetTag(input)[..16].ToLowerInvariant();
 
+    private static string InputKey(string id, Guid owner, string version) =>
+        CacheKeyBuilder.BuildImageVariantKey("mix-cover-input", id, owner, version);
+
+    // Keep the original input beside the image so a versioned URL can find its bytes without matching songs again.
+    internal static Task<bool> RememberInputAsync(IApplicationCache cache, MixCoverInput input, Guid owner) =>
+        cache.SetAsync(InputKey(input.Id, owner, Version(input)), input, TimeSpan.FromDays(365));
+
+    public async Task<IActionResult?> TryCreateCachedResponseAsync(Guid id, Guid owner, string version, HttpContext context)
+    {
+        if (_cache == null || await _cache.GetAsync<MixCoverInput>(InputKey(id.ToString(), owner, version)) is not { } input ||
+            input.Id != id.ToString() || Version(input) != version) return null;
+        var key = CacheKey(input, context, input.ServiceArtwork != null ? owner : null);
+        if (await _cache.GetAsync<MediaAssetSource>(key) is not { } image) return null;
+        RequestTiming.Current?.NoteCache(true);
+        if (input.ServiceArtwork != null)
+            return ServiceResponse(image, context);
+        if ((input.Art is not { Count: > 0 } || _loadArt == null) && input.Count > 0)
+        {
+            context.Response.Headers.CacheControl = "private, max-age=60";
+            return new FileContentResult(image.Bytes, image.ContentType);
+        }
+        var etag = $"\"{GetTag(input)}\"";
+        SetCaching(context, etag, true);
+        return ImageConditionalRequestHelper.MatchesIfNoneMatch(context.Request.Headers, etag)
+            ? new StatusCodeResult(StatusCodes.Status304NotModified) : new FileContentResult(image.Bytes, image.ContentType);
+    }
+
     // Service covers stay intact. Otherwise show song covers or a gradient. A collage missing a picture has no validator,
     // so apps ask again later instead of keeping it.
     public async Task<IActionResult> CreateResponseAsync(MixCoverInput input, HttpContext context, string? version = null, Guid? owner = null, string? cacheVariant = null)
+    {
+        var response = await CreateCoreAsync(input, context, version, owner, cacheVariant);
+        if (_cache != null && owner.HasValue && response is FileContentResult or StatusCodeResult { StatusCode: 304 })
+            await RememberInputAsync(_cache, input, owner.Value);
+        return response;
+    }
+
+    private async Task<IActionResult> CreateCoreAsync(MixCoverInput input, HttpContext context, string? version, Guid? owner, string? cacheVariant)
     {
         if (input.ServiceArtwork != null)
         {
@@ -70,11 +105,7 @@ public sealed class MixCoverImageService
                 context.Response.Headers.CacheControl = "private, no-store";
                 return new NotFoundResult();
             }
-            var serviceTag = ImageConditionalRequestHelper.ComputeStrongETag(asset.Bytes);
-            context.Response.Headers.CacheControl = "private, max-age=300";
-            context.Response.Headers.ETag = serviceTag;
-            return ImageConditionalRequestHelper.MatchesIfNoneMatch(context.Request.Headers, serviceTag)
-                ? new StatusCodeResult(StatusCodes.Status304NotModified) : new FileContentResult(asset.Bytes, asset.ContentType);
+            return ServiceResponse(asset, context);
         }
         var tag = GetTag(input);
         var etag = $"\"{tag}\"";
@@ -124,6 +155,15 @@ public sealed class MixCoverImageService
         if (ImageConditionalRequestHelper.MatchesIfNoneMatch(context.Request.Headers, etag))
             return new StatusCodeResult(StatusCodes.Status304NotModified);
         return new FileContentResult(bytes, contentType);
+    }
+
+    private static IActionResult ServiceResponse(MediaAssetSource asset, HttpContext context)
+    {
+        var tag = ImageConditionalRequestHelper.ComputeStrongETag(asset.Bytes);
+        context.Response.Headers.CacheControl = "private, max-age=300";
+        context.Response.Headers.ETag = tag;
+        return ImageConditionalRequestHelper.MatchesIfNoneMatch(context.Request.Headers, tag)
+            ? new StatusCodeResult(StatusCodes.Status304NotModified) : new FileContentResult(asset.Bytes, asset.ContentType);
     }
 
     private static string CacheKey(MixCoverInput input, HttpContext context, Guid? owner = null, string? variant = null) =>
