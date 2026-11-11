@@ -92,20 +92,6 @@ public sealed class ListeningPreferencesControllerTests
     }
 
     [Fact]
-    public async Task LyricsOrderUsesTheSignedInListenerAndTheExistingRevision()
-    {
-        var user = Guid.NewGuid();
-        var settings = new Mock<IDurableRuntimeSettings>(MockBehavior.Strict);
-        settings.Setup(item => item.UpdatePreferencesAsync(user,
-                new ListeningPreferences("All", true, true, "lyricsplus,spotify,lrclib", null, null), "revision", It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PersonalListeningPreferences(new(), new(), false, "next"));
-        var controller = Controller(settings.Object, user, false);
-        Assert.IsType<OkObjectResult>(await controller.Update(new("All", true, true, "revision", "lyricsplus,spotify,lrclib"), default));
-        settings.VerifyAll();
-        settings.VerifyNoOtherCalls();
-    }
-
-    [Fact]
     public async Task PlaybackStartUsesOnlyTheSignedInListenerAndTheExistingRevision()
     {
         var user = Guid.CreateVersion7();

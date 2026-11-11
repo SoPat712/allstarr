@@ -32,10 +32,14 @@
   const toggleScore = (key: string) => { scoreOpen = !(scoreOpen && openScore === key); openScore = scoreOpen ? key : ""; };
   const scoreFor = (providerId: string) => scores.find((item) => item.providerId.toLowerCase() === providerId.toLowerCase());
 
+  // Audio quality only describes the sources that deliver audio; lyrics from the library or kept files have no score.
+  const audioGroups = new Set(["streaming", "download"]);
+  const localLyrics = new Set(["kept", "backend"]);
+
   // Manual sources sink to the bottom whatever their score.
   function sortByScore(group: PriorityGroup) {
     const order = orders[group.id] ?? group.providers;
-    const fixed: string[] = order.filter((id) => id === "kept" || id === "backend");
+    const fixed: string[] = order.filter((id) => localLyrics.has(id));
     const sorted = orderByScore(order.filter((id) => !fixed.includes(id)),
       (id) => capabilityScore(scoreFor(id), group.id), (id) => isRanked(provider(id)?.useMode));
     changeOrder(group, [...fixed, ...sorted]);
@@ -192,7 +196,7 @@
       {#each groups.filter((item) => item.id === shown) as group}
         <section class="settings-card routing-group">
           <p class="sr-only" role="status">{moveAnnouncement?.groupId === group.id ? moveAnnouncement.message : ""}</p>
-          <header><div><div class="settings-card-title"><h3>{tabNames[group.id] ?? group.label.replace(/ order$/i, "")} source order</h3><span class="scope-tag" data-scope="everyone">Everyone</span></div><small>Drag to reorder. Saves as you drop.</small></div>{#if scores.length && group.id !== "lyrics"}<Button variant="text" onclick={() => sortByScore(group)}>Sort by score</Button>{/if}</header>
+          <header><div><div class="settings-card-title"><h3>{tabNames[group.id] ?? group.label.replace(/ order$/i, "")} source order</h3><span class="scope-tag" data-scope="everyone">Everyone</span></div><small>Drag to reorder. Saves as you drop.</small></div>{#if scores.length}<Button variant="text" onclick={() => sortByScore(group)}>Sort by score</Button>{/if}</header>
           <div class="routing-tabs">
             {#if groups.length > 1}
               <FilterSegments label="Source orders" options={groups.map(item => ({ id: item.id, label: tabNames[item.id] ?? item.label, count: (orders[item.id] ?? item.providers).length }))}
@@ -225,8 +229,9 @@
                 <span class="routing-index" aria-hidden="true"><GripVertical size={16} />{index + 1}</span>
                 <ProviderArtwork id={providerId} definition={definition} label={label} />
                 <span class="routing-copy"><strong>{label}</strong><small>{definition ? sourceOriginLabel(definition) : providerId === "backend" ? "Media server" : providerId === "kept" ? "Kept lyrics" : "Source"}</small></span>
-                <span class="routing-quality-label">{scoreFor(providerId)?.quality?.typical ?? "—"}</span>
-                {#if scoreFor(providerId)}
+                {#if audioGroups.has(group.id)}<span class="routing-quality-label">{scoreFor(providerId)?.quality?.typical ?? "—"}</span>{/if}
+                {#if localLyrics.has(providerId)}<span class="score-unavailable">Local</span>
+                {:else if scoreFor(providerId)}
                   {@const ranked = isRanked(definition?.useMode)}
                   {@const value = ranked ? capabilityScore(scoreFor(providerId), group.id) : null}
                   <button type="button" class="score-toggle" aria-expanded={scoreOpen && openScore === scoreKey}

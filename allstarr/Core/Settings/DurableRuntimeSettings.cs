@@ -541,9 +541,6 @@ public sealed partial class DurableRuntimeSettingsService : BackgroundService, I
             if (overrides.QualityLimit != null)
                 writes.Add(new(ListeningPreferenceKeys.QualityLimit, overrides.QualityLimit,
                     existingRevisions.GetValueOrDefault(ListeningPreferenceKeys.QualityLimit)));
-            if (overrides.LyricsOrder != null)
-                writes.Add(new(ListeningPreferenceKeys.LyricsOrder, overrides.LyricsOrder,
-                    existingRevisions.GetValueOrDefault(ListeningPreferenceKeys.LyricsOrder)));
             if (overrides.ProviderModes != null)
                 writes.Add(new(ProviderUsePolicy.SettingKey,
                     ProviderUsePolicy.SerializeModes(overrides.ProviderModes.Select(item =>
@@ -665,7 +662,8 @@ public sealed partial class DurableRuntimeSettingsService : BackgroundService, I
         var cleanOnlyLocked = lockRow != null && (bool)FromRecord(lockRow, RuntimeSettingCatalog.Require(lockRow.Key)).Value;
         var householdRows = rows.Where(item => item.OwnerUserId == null && item.Key != lockKey)
             .ToDictionary(item => item.Key, StringComparer.OrdinalIgnoreCase);
-        var personalRows = rows.Where(item => item.OwnerUserId == userId && userId.HasValue)
+        // The lyrics order is the household's alone; a personal one saved by an earlier version no longer applies.
+        var personalRows = rows.Where(item => item.OwnerUserId == userId && userId.HasValue && item.Key != ListeningPreferenceKeys.LyricsOrder)
             .ToDictionary(item => item.Key, StringComparer.OrdinalIgnoreCase);
         var householdSettings = ListeningPreferenceKeys.All.ToDictionary(
             key => key,

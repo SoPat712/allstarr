@@ -186,6 +186,8 @@ test("background refreshes never show Saving or lock the controls when nothing c
   await expect(external).toBeEnabled();
   await expect(page.locator(".preferences-view")).not.toHaveAttribute("aria-busy", "true");
   expect(writes).toBe(0);
+  // The lyrics order is the household's, set in the source orders; there is no personal copy here.
+  await expect(page.getByRole("region", { name: "Lyrics source order" })).toHaveCount(0);
 });
 
 test("administrator reloads a 409 conflict before saving against the refreshed revision", async ({ page }) => {
@@ -229,77 +231,6 @@ test("administrator reloads a 409 conflict before saving against the refreshed r
   expect(putBodies[0].expectedRevision).toBe("revision-1");
   expect(putBodies[1].expectedRevision).toBe("revision-server");
 });
-
-for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
-  test(`personal lyrics order saves and resets at ${width}px ${theme}`, async ({ page }) => {
-    await page.setViewportSize({ width, height: 844 });
-    await page.addInitScript(value => localStorage.setItem("allstarr.theme", value), theme);
-    let state: PreferenceState = { explicitFilter: "All", showExternalLabel: true, showExplicitLabel: true,
-      lyricsOrder: "spotify,lrclib,lyricsplus", revision: "initial", usesHouseholdDefaults: true };
-    const writes: Record<string, unknown>[] = [];
-    await mockShell(page, false, async route => {
-      if (route.request().method() === "GET") return fulfillJson(route, response(state));
-      const body = route.request().postDataJSON() as Record<string, unknown>;
-      writes.push(body);
-      if (route.request().method() === "PUT") {
-        state = { ...state, lyricsOrder: String(body.lyricsOrder), revision: "saved", usesHouseholdDefaults: false };
-      } else {
-        expect(body).toEqual({ expectedRevision: "saved" });
-        state = { ...state, lyricsOrder: "spotify,lrclib,lyricsplus", revision: "reset", usesHouseholdDefaults: true };
-      }
-      return fulfillJson(route, response(state));
-    });
-    await page.route("**/api/admin/ui/schema", route => fulfillJson(route, { providers: [
-      { id: "spotify", name: "Spotify", categories: ["lyrics"] },
-      { id: "lrclib", name: "LRCLIB", categories: ["lyrics"] },
-      { id: "lyricsplus", name: "LyricsPlus", categories: ["lyrics"] },
-    ] }));
-    await page.goto("/#/preferences");
-    const region = page.getByRole("region", { name: "Lyrics source order" });
-    await expect(region).toBeVisible();
-    await expect(region.getByRole("listitem")).toHaveText(["Media server lyrics", "Kept LRC", "Spotify", "LRCLIB", "LyricsPlus"]);
-    await expect(region.getByRole("button", { name: "Move Spotify up", exact: true })).toBeEnabled();
-    await expect(region.getByRole("button", { name: "Move Kept LRC up", exact: true })).toBeEnabled();
-    await expect(region.getByRole("button", { name: "Move Kept LRC down", exact: true })).toBeEnabled();
-    await region.getByRole("button", { name: "Move Kept LRC down", exact: true }).click();
-    await region.getByRole("button", { name: "Move Media server lyrics down", exact: true }).focus();
-    await page.keyboard.press("Enter");
-    await expect(region.getByRole("listitem")).toHaveText(["Spotify", "Media server lyrics", "Kept LRC", "LRCLIB", "LyricsPlus"]);
-    await expect(page.getByRole("button", { name: "Save preferences", exact: true })).toHaveCount(0);
-    await expect.poll(() => writes[0]).toEqual({ explicitFilter: "All", showExternalLabel: true, showExplicitLabel: true,
-      playbackStart: "Balanced", lyricsOrder: "spotify,backend,kept,lrclib,lyricsplus", expectedRevision: "initial" });
-    const savedToast = page.getByRole("status").filter({ hasText: "Order saved" });
-    await expect(savedToast).toBeVisible();
-    await expect(savedToast.getByRole("button", { name: "Undo", exact: true })).toBeVisible();
-    await expect(page.getByText("Personal choices", { exact: true })).toBeVisible();
-    await page.getByRole("button", { name: "Reset to household defaults", exact: true }).click();
-    await expect(region.getByRole("listitem")).toHaveText(["Media server lyrics", "Kept LRC", "Spotify", "LRCLIB", "LyricsPlus"]);
-    while (await page.getByRole("button", { name: "Dismiss notification", exact: true }).count())
-      await page.getByRole("button", { name: "Dismiss notification", exact: true }).first().click();
-    await page.getByRole("heading", { name: "Lyrics source order", exact: true }).click();
-    if (width < 600) await expectContainedMobileGeometry(page);
-    await page.evaluate(() => window.scrollTo(0, 0));
-    await page.screenshot({ path: `test-results/lyrics-movable-local-${width}-${theme}.png`, fullPage: true });
-    await expect(page.getByText("Using household defaults", { exact: true })).toBeVisible();
-    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-    for (const button of await region.getByRole("button").all()) {
-      const box = await button.boundingBox();
-      expect(box).not.toBeNull();
-      if (width === 1280) {
-        expect(box!.width).toBe(36);
-        expect(box!.height).toBe(36);
-        expect(await button.evaluate(element => {
-          const target = getComputedStyle(element, "::after");
-          return parseFloat(target.minWidth) >= 44 && parseFloat(target.minHeight) >= 44;
-        })).toBe(true);
-      } else {
-        expect(box!.width).toBeGreaterThanOrEqual(44);
-        expect(box!.height).toBeGreaterThanOrEqual(44);
-      }
-    }
-  });
-}
-
 
 test("Undo restores one preference without replacing later choices", async ({ page }) => {
   let state: PreferenceState = { explicitFilter: "All", showExternalLabel: true, showExplicitLabel: true,
@@ -361,38 +292,6 @@ for (const administrator of [false, true]) {
   });
 }
 
-
-test("Lyrics source order can be dragged and saves the new order", async ({ page }) => {
-  let state: PreferenceState = { explicitFilter: "All", showExternalLabel: true, showExplicitLabel: true,
-    lyricsOrder: "spotify,lrclib,lyricsplus", revision: "initial", usesHouseholdDefaults: true };
-  const writes: Record<string, unknown>[] = [];
-  await mockShell(page, false, async route => {
-    if (route.request().method() === "PUT") {
-      const body = route.request().postDataJSON() as Record<string, unknown>;
-      writes.push(body);
-      state = { ...state, lyricsOrder: String(body.lyricsOrder), revision: "saved", usesHouseholdDefaults: false };
-    }
-    return fulfillJson(route, response(state));
-  });
-  await page.route("**/api/admin/ui/schema", route => fulfillJson(route, { providers: [
-    { id: "spotify", name: "Spotify", categories: ["lyrics"] },
-    { id: "lrclib", name: "LRCLIB", categories: ["lyrics"] },
-    { id: "lyricsplus", name: "LyricsPlus", categories: ["lyrics"] },
-  ] }));
-  await page.goto("/#/preferences");
-  const region = page.getByRole("region", { name: "Lyrics source order", exact: true });
-  const spotify = region.getByRole("listitem").filter({ hasText: "Spotify" });
-  await expect(spotify).toHaveAttribute("draggable", "true");
-  // Headless Chromium can miss the start of an HTML drag on a busy machine; dropping Spotify on the first row again changes nothing.
-  await expect(async () => {
-    await spotify.dragTo(region.getByRole("listitem").first());
-    await expect(region.getByRole("listitem").first()).toContainText("Spotify", { timeout: 1_000 });
-  }).toPass({ timeout: 15_000 });
-  await expect.poll(() => writes[0]?.lyricsOrder).toBe("spotify,backend,kept,lrclib,lyricsplus");
-  expect(writes).toHaveLength(1);
-  await expect(region.getByRole("listitem")).toHaveText(["Spotify", "Media server lyrics", "Kept LRC", "LRCLIB", "LyricsPlus"]);
-  await expect(page.getByRole("status").filter({ hasText: "Order saved" })).toBeVisible();
-});
 
 async function chooseFilter(page: Page, label: string) {
   await page.getByRole("button", { name: "Explicit songs", exact: true }).click();

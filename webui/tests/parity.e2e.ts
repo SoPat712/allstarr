@@ -9237,6 +9237,9 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
       }
       return route.fulfill({ json: { ...(responses["/api/admin/config"] as object), providers: { lyricsOrder: order } } });
     });
+    const lyricsScore = (providerId: string, score: number) => ({ providerId, score, uptimePercent: 100, checks: 12, days: [], quality: null,
+      capabilities: [{ capability: "lyrics", score, uptimePercent: 100, checks: 12, failures: 0, typicalLatencyMilliseconds: 300, lastFailureCode: null }] });
+    await page.route("**/api/admin/providers/scores", route => route.fulfill({ json: { providers: [lyricsScore("lrclib", 41), lyricsScore("paxsenix", 88)] } }));
     await page.goto("#/integrations/routing");
     const group = page.locator(".routing-group").filter({ has: page.getByRole("heading", { name: "Lyrics source order", exact: true }) });
     await expect(group.locator("li strong")).toHaveText(["Media server lyrics", "LRCLib", "Kept LRC", "Paxsenix"]);
@@ -9258,6 +9261,12 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
     await expect(group.locator("li strong")).toHaveText(["LRCLib", "Media server lyrics", "Kept LRC", "Paxsenix"]);
     await expect(group.locator("header")).toContainText("Drag to reorder. Saves as you drop.");
     await expect(group).not.toContainText("gets 5 confidence points");
+    // Lyrics sources are scored too; audio quality means nothing for them, and local lyrics stay first when sorting.
+    await expect(group.locator(".routing-quality-label")).toHaveCount(0);
+    await expect(group.locator("li").filter({ hasText: "Kept LRC" })).toContainText("Local");
+    await group.getByRole("button", { name: "Sort by score", exact: true }).click();
+    await expect(group.locator("li strong")).toHaveText(["Media server lyrics", "Kept LRC", "Paxsenix", "LRCLib"]);
+    await expect.poll(() => saved).toEqual({ MULTI_PROVIDER_LYRICS_ORDER: "backend,kept,paxsenix,lrclib" });
     while (await page.getByRole("button", { name: "Dismiss notification", exact: true }).count())
       await page.getByRole("button", { name: "Dismiss notification", exact: true }).first().click();
     await group.getByRole("heading", { name: "Lyrics source order", exact: true }).click();

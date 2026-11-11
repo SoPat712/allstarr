@@ -85,7 +85,8 @@ public sealed class DurableRuntimeSettingsTests : IAsyncLifetime
         }
         var service = CreateService([]);
         var preferences = await service.GetPreferencesAsync(_userId);
-        Assert.Equal("lrclib,lyricsplus", preferences.Values.LyricsOrder);
+        // A personal lyrics order from an earlier version no longer applies; the household's does.
+        Assert.Equal(personal ? preferences.HouseholdDefaults.LyricsOrder : "lrclib,lyricsplus", preferences.Values.LyricsOrder);
         Assert.Equal(new KeyValuePair<string, string>("lyricsplus", "manualOnly"), Assert.Single(preferences.Values.ProviderModes!));
         var policy = await new EffectiveProviderPolicyResolver(service).ResolveForUserAsync(_userId);
         Assert.DoesNotContain("binilyrics", policy.GetProviderOrder(ProviderCapabilityKind.Lyrics));

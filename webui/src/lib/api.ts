@@ -2204,7 +2204,6 @@ export const listeningPreferences = {
     showExternalLabel: boolean;
     showExplicitLabel: boolean;
     playbackStart?: PlaybackStart;
-    lyricsOrder?: string;
     expectedRevision: string;
   }) => json<PersonalListeningPreferences>("/api/admin/preferences", {
     method: "PUT",

@@ -17,7 +17,7 @@ public sealed class ListeningPreferencesController(IDurableRuntimeSettings setti
     [HttpPut]
     public Task<IActionResult> Update([FromBody] UpdateListeningPreferencesRequest request, CancellationToken cancellationToken) => ExecuteAsync(
         userId => settings.UpdatePreferencesAsync(userId,
-            new(request.ExplicitFilter, request.ShowExternalLabel, request.ShowExplicitLabel, request.LyricsOrder,
+            new(request.ExplicitFilter, request.ShowExternalLabel, request.ShowExplicitLabel,
                 PlaybackStart: request.PlaybackStart, QualityLimit: request.QualityLimit),
             request.ExpectedRevision, cancellationToken));
 
@@ -53,6 +53,6 @@ public sealed class ListeningPreferencesController(IDurableRuntimeSettings setti
 
 public sealed record UpdateListeningPreferencesRequest(
     string ExplicitFilter, bool ShowExternalLabel, bool ShowExplicitLabel, string ExpectedRevision,
-    string? LyricsOrder = null, string? PlaybackStart = null, string? QualityLimit = null);
+    string? PlaybackStart = null, string? QualityLimit = null);
 public sealed record ResetListeningPreferencesRequest(string ExpectedRevision);
 public sealed record UpdateCleanOnlyLockRequest(bool Locked, string ExpectedRevision);

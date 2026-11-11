@@ -219,43 +219,40 @@ public sealed class PersonalListeningPreferencesTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task PersonalLyricsOrderPersistsForOnlyTheListenerAndResetRevealsLatestHouseholdOrder()
+    public async Task LyricsOrderIsTheHouseholdsAndAnEarlierPersonalOrderNoLongerApplies()
     {
         var service = CreateService();
-        var initial = await service.GetPreferencesAsync(_userA);
-        var saved = await service.UpdatePreferencesAsync(_userA,
-            new("All", true, true, "lrclib,lyricsplus,spotify"), initial.Revision);
-        Assert.Equal("lrclib,lyricsplus,spotify", saved.Values.LyricsOrder);
-        Assert.Equal(new[] { "lrclib", "lyricsplus", "spotify" },
-            (await new EffectiveProviderPolicyResolver(CreateService()).ResolveForUserAsync(_userA))
-                .GetProviderOrder(allstarr.Core.Capabilities.ProviderCapabilityKind.Lyrics));
-        var other = await service.GetPreferencesAsync(_userB);
-        Assert.Equal(initial.HouseholdDefaults.LyricsOrder, other.Values.LyricsOrder);
-        Assert.NotEqual(saved.Values.LyricsOrder, other.Values.LyricsOrder);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.RuntimeSettings.Add(new()
+            {
+                Id = Guid.CreateVersion7(),
+                OwnerUserId = _userA,
+                Key = "Providers:LyricsOrder",
+                ValueType = RuntimeSettingValueType.StringList,
+                ValueJson = "[\"lrclib\",\"lyricsplus\",\"spotify\"]",
+                Source = "fixture",
+                Revision = 1,
+                CreatedAt = DateTimeOffset.UtcNow,
+                UpdatedAt = DateTimeOffset.UtcNow
+            });
+            await db.SaveChangesAsync();
+        }
+        var stale = await service.GetPreferencesAsync(_userA);
+        Assert.Equal(stale.HouseholdDefaults.LyricsOrder, stale.Values.LyricsOrder);
+        Assert.True(stale.UsesHouseholdDefaults);
         await service.ApplyBatchAsync([new("Providers:LyricsOrder", "musixmatch,lrclib,spotify")], "webui", _userB);
         var current = await service.GetPreferencesAsync(_userA);
-        Assert.Equal(saved.Values.LyricsOrder, current.Values.LyricsOrder);
-        Assert.Equal("musixmatch,lrclib,spotify", current.HouseholdDefaults.LyricsOrder);
-        var reset = await service.UpdatePreferencesAsync(_userA, null, current.Revision);
-        Assert.Equal("musixmatch,lrclib,spotify", reset.Values.LyricsOrder);
+        Assert.Equal("musixmatch,lrclib,spotify", current.Values.LyricsOrder);
+        Assert.Equal(new[] { "musixmatch", "lrclib", "spotify" },
+            (await new EffectiveProviderPolicyResolver(CreateService()).ResolveForUserAsync(_userA))
+                .GetProviderOrder(allstarr.Core.Capabilities.ProviderCapabilityKind.Lyrics));
+        var updated = await service.UpdatePreferencesAsync(_userA, new("All", true, true, "spotify,lrclib"), current.Revision);
+        Assert.Equal("musixmatch,lrclib,spotify", updated.Values.LyricsOrder);
+        var reset = await service.UpdatePreferencesAsync(_userA, null, updated.Revision);
         Assert.True(reset.UsesHouseholdDefaults);
-    }
-
-    [Fact]
-    public async Task LegacyDisplayUpdatePreservesPersonalLyricsOrderAndInvalidOrderCannotPartiallyWrite()
-    {
-        var service = CreateService();
-        var initial = await service.GetPreferencesAsync(_userA);
-        var ordered = await service.UpdatePreferencesAsync(_userA,
-            new("All", true, true, "spotify,lrclib"), initial.Revision);
-        var display = await service.UpdatePreferencesAsync(_userA,
-            new("CleanOnly", false, false), ordered.Revision);
-        Assert.Equal("spotify,lrclib", display.Values.LyricsOrder);
-        foreach (var invalid in new[] { "spotify,SPOTIFY", "spotify,https://private.example", new string('x', 101) })
-            await Assert.ThrowsAsync<ArgumentException>(() => service.UpdatePreferencesAsync(_userA,
-                new("ExplicitOnly", true, true, invalid), display.Revision));
-        Assert.Equal(display.Values, (await service.GetPreferencesAsync(_userA)).Values);
-        Assert.Equal(display.Revision, (await service.GetPreferencesAsync(_userA)).Revision);
+        await using var read = await _factory.CreateDbContextAsync();
+        Assert.False(await read.RuntimeSettings.AnyAsync(item => item.OwnerUserId == _userA));
     }
 
     [Fact]
