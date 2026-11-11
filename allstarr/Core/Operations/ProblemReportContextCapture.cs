@@ -6,6 +6,7 @@ using allstarr.Core.Identity;
 using allstarr.Core.Matching;
 using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
+using allstarr.Models.Domain;
 using allstarr.Services.Common;
 using Microsoft.EntityFrameworkCore;
 
@@ -14,10 +15,11 @@ namespace allstarr.Core.Operations;
 public sealed partial class ProblemReportService
 {
     private async Task<ProblemReportContext> CaptureAsync(AllstarrDbContext db, UserRecord actor,
-        ProblemReportSelector? selector, CancellationToken token)
+        ProblemReportSelector? selector, CancellationToken token, ProtocolExecutionContext? execution = null)
     {
         var now = clock.UtcNow;
         if (selector == null) return new(1, now, null, null, null, null, null, []);
+        var selectedItemId = selector.ItemId;
         var owner = actor;
         PlaybackActivityState? activity = null;
         if (selector.Playback is { } selected)
@@ -27,7 +29,7 @@ public sealed partial class ProblemReportService
                 item.BackendType == actor.BackendType && item.BackendInstanceId == actor.BackendInstanceId, token)
                 ?? throw ProblemReportException.Missing();
             activity = playbackSources.SelectMany(source => source.GetActivePlaybackStates(TimeSpan.FromMinutes(5)))
-                .Where(item => item.UserId == owner.Id && item.DeviceId == selected.DeviceId && SameItem(item.ItemId, selector.ItemId!) &&
+                .Where(item => item.UserId == owner.Id && item.DeviceId == selected.DeviceId && SameItem(item.ItemId, selectedItemId!) &&
                     item.LastActivity.ToUniversalTime() >= now.AddMinutes(-5).UtcDateTime && item.LastActivity.ToUniversalTime() <= now.UtcDateTime)
                 .OrderByDescending(item => item.LastActivity).FirstOrDefault() ?? throw ProblemReportException.Missing();
         }
@@ -36,7 +38,7 @@ public sealed partial class ProblemReportService
             item.Protocol == actor.BackendType && item.BackendInstanceId == actor.BackendInstanceId);
         var metadataOwner = owner;
         ExternalMetadataSnapshotRecord? snapshot;
-        var external = selector.ItemId == null ? null : ExternalPlaybackMetadataResolver.ParseTrackIdentity(selector.ItemId);
+        var external = selectedItemId == null ? null : ExternalPlaybackMetadataResolver.ParseTrackIdentity(selectedItemId);
         if (selector.ExternalSnapshotId.HasValue)
         {
             snapshot = await snapshotQuery.SingleOrDefaultAsync(item => item.Id == selector.ExternalSnapshotId &&
@@ -75,22 +77,35 @@ public sealed partial class ProblemReportService
             await ManualTrackOverrides.ReadAsync(db, snapshot, owner.Id, token);
 
         LibraryTrackRecord? library = null;
-        var nativeSelection = external == null && selector.ItemId != null;
-        if (nativeSelection)
+        var nativeSelection = external == null && selectedItemId != null;
+        if (nativeSelection && selectedItemId != null)
         {
-            var access = await libraryAccess.ResolveUserAsync(actor.Id, token);
-            if (access.Context?.Principal?.UserId != actor.Id || access.Context.BackendInstanceId != actor.BackendInstanceId ||
-                access.Context.VerifiedBackendPrincipalId != actor.BackendPrincipalId ||
-                access.Context.Protocol.ToString().ToLowerInvariant() != actor.BackendType) throw ProblemReportException.Missing();
-            var accessible = LibraryTrackAccess.Query(db, access);
-            library = await accessible.FirstOrDefaultAsync(item => item.BackendItemId == selector.ItemId, token);
+            try
+            {
+                using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token);
+                timeout.CancelAfter(TimeSpan.FromSeconds(1));
+                var access = await libraryAccess.ResolveUserAsync(actor.Id, timeout.Token);
+                if (access.Context?.Principal?.UserId == actor.Id && access.Context.BackendInstanceId == actor.BackendInstanceId &&
+                    access.Context.VerifiedBackendPrincipalId == actor.BackendPrincipalId &&
+                    access.Context.Protocol.ToString().ToLowerInvariant() == actor.BackendType)
+                {
+                    var accessible = LibraryTrackAccess.Query(db, access);
+                    var candidateIds = Guid.TryParse(selectedItemId, out var parsedNative)
+                        ? new[] { selectedItemId, parsedNative.ToString("N"), parsedNative.ToString("D") }
+                        : [selectedItemId];
+                    library = await accessible.FirstOrDefaultAsync(item => candidateIds.Contains(item.BackendItemId), timeout.Token);
+                }
+            }
+            catch (Exception error) when (error is not (OutOfMemoryException or ProblemReportException))
+            {
+            }
             if (library == null && external == null && snapshot == null) throw ProblemReportException.Missing();
         }
         Guid? canonical = library?.CanonicalRecordingId ?? decision?.CanonicalRecordingId ?? identity?.CanonicalRecordingId;
         ProblemReportContext? canonicalContext = null;
         if (external?.Provider == "allstarr")
         {
-            var recording = await db.CanonicalRecordings.AsNoTracking().SingleOrDefaultAsync(item => item.PublicId == selector.ItemId, token);
+            var recording = await db.CanonicalRecordings.AsNoTracking().SingleOrDefaultAsync(item => item.PublicId == selectedItemId, token);
             if (recording == null) throw ProblemReportException.Missing();
             // Resolve only evidence belonging to the viewer; a public recording ID is not account access.
             var ownedSnapshot = await snapshotQuery.Where(item => item.OwnerUserId == owner.Id && item.BackendPrincipalId == owner.BackendPrincipalId &&
@@ -106,7 +121,7 @@ public sealed partial class ProblemReportService
 
         var metadata = snapshot == null ? (null, null, null, (long?)null) : Metadata(snapshot.PayloadJson);
         var catalogProvider = snapshot?.ProviderId ?? external?.Provider ?? actor.BackendType;
-        var song = canonicalContext?.Song is { } canonicalSong ? canonicalSong with { ItemId = selector.ItemId } : new ProblemReportSong(selector.ItemId, snapshot?.Id, canonical, nativeSelection ? library?.Id : null,
+        var song = canonicalContext?.Song is { } canonicalSong ? canonicalSong with { ItemId = selectedItemId } : new ProblemReportSong(selectedItemId, snapshot?.Id, canonical, nativeSelection ? library?.Id : null,
             ProblemReportText.Clean(nativeSelection ? library?.Title : metadata.Item1), ProblemReportText.Clean(nativeSelection ? library?.Artist : metadata.Item2),
             ProblemReportText.Clean(nativeSelection ? library?.Album : metadata.Item3), nativeSelection ? library?.DurationMilliseconds : metadata.Item4,
             SafeProvider(catalogProvider));
@@ -123,6 +138,47 @@ public sealed partial class ProblemReportService
                 DurationMilliseconds = song.DurationMilliseconds ?? cached.Facts.DurationMilliseconds,
                 CanonicalRecordingId = song.CanonicalRecordingId ?? cached.Facts.CanonicalRecordingId
             };
+        }
+        if (execution != null && providerGateway != null && cacheExternalId != null &&
+            (song.Title == null || song.Artist == null || song.Album == null || song.DurationMilliseconds == null))
+        {
+            try
+            {
+                using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token);
+                timeout.CancelAfter(TimeSpan.FromSeconds(1));
+                var lookupContext = new ProtocolExecutionContext(
+                    execution.Protocol,
+                    execution.BackendInstanceId,
+                    execution.VerifiedBackendPrincipalId,
+                    execution.Principal,
+                    execution.CorrelationId,
+                    execution.Deadline,
+                    timeout.Token,
+                    execution.Client)
+                {
+                    Policy = execution.Policy,
+                    IsReadOnly = execution.IsReadOnly
+                };
+                var resolvedSong = await providerGateway.GetStoredSongAsync(lookupContext, catalogProvider, cacheExternalId);
+                resolvedSong ??= await providerGateway.GetSongAsync(lookupContext, catalogProvider, cacheExternalId);
+                if (resolvedSong != null)
+                {
+                    var duration = resolvedSong.PreciseDuration.HasValue
+                        ? (long?)resolvedSong.PreciseDuration.Value.TotalMilliseconds
+                        : (resolvedSong.Duration is > 0 and <= 604800 ? resolvedSong.Duration.Value * 1000L : null);
+                    song = song with
+                    {
+                        Title = song.Title ?? ProblemReportText.Clean(resolvedSong.Title),
+                        Artist = song.Artist ?? ProblemReportText.Clean(resolvedSong.Artist),
+                        Album = song.Album ?? ProblemReportText.Clean(resolvedSong.Album),
+                        DurationMilliseconds = song.DurationMilliseconds ?? duration,
+                        CanonicalRecordingId = song.CanonicalRecordingId ?? resolvedSong.CanonicalRecordingId
+                    };
+                }
+            }
+            catch (Exception error) when (error is not OutOfMemoryException)
+            {
+            }
         }
         ProblemReportMatch? match = canonicalContext?.Match;
         if (snapshot != null && (decision != null || authority.Effective != null))

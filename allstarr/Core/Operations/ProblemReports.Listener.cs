@@ -48,7 +48,7 @@ public sealed partial class ProblemReportService
             }
         }
         return await CreateCoreAsync((db, cancellation) => RequireListenerActorAsync(db, execution, cancellation),
-            normalized, captured, token);
+            normalized, captured, token, execution);
     }
 
     private async Task<UserRecord> RequireListenerActorAsync(AllstarrDbContext db, ProtocolExecutionContext execution,

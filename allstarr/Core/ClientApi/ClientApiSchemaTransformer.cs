@@ -42,7 +42,14 @@ public sealed class ClientApiSchemaTransformer : IOpenApiDocumentTransformer
         }
 
         if (schema.Properties is { } properties)
+        {
+            if (properties.TryGetValue("playbackRequestId", out var requestProp) && requestProp is OpenApiSchema requestPropSchema && requestPropSchema.Type == null)
+            {
+                requestPropSchema.Type = JsonSchemaType.String | JsonSchemaType.Null;
+                requestPropSchema.Format = "uuid";
+            }
             foreach (var property in properties.Values) Normalize(property, visited);
+        }
         if (schema.Items is { } items) Normalize(items, visited);
         if (schema.AdditionalProperties is { } additionalProperties) Normalize(additionalProperties, visited);
         if (schema.AllOf is { } allOf)

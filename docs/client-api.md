@@ -583,7 +583,8 @@ limit as dashboard reports.
 
 Playback context is captured on the server. An explicit request ID must belong
 to this listener and device, follow the same retention rules as playback lookup,
-and agree with `itemId` when both are provided. Unknown, expired, or foreign IDs
+and agree with `itemId` when both are provided. Both hyphenated GUIDs and
+32-hex header forms are accepted. Unknown, expired, or foreign IDs
 return 404 `not_found`. Without a request ID, the caller's recent playback on
 this device supplies context when available; an optional item ID restricts that
 selection. Other listeners' or devices' playback cannot be attached, including

@@ -66,7 +66,7 @@ public sealed partial class ProblemReportService(
     }
 
     private async Task<ProblemReportReceipt> CreateCoreAsync(Func<AllstarrDbContext, CancellationToken, Task<UserRecord>> resolveActor,
-        CreateProblemReportRequest request, ProblemReportContext? captured, CancellationToken token)
+        CreateProblemReportRequest request, ProblemReportContext? captured, CancellationToken token, ProtocolExecutionContext? execution = null)
     {
         var normalized = NormalizeRequest(request);
         var fingerprint = Convert.ToHexStringLower(SHA256.HashData(captured == null ? JsonSerializer.SerializeToUtf8Bytes(normalized, JsonOptions) :
@@ -86,7 +86,7 @@ public sealed partial class ProblemReportService(
                         throw new ProblemReportException(409, "report_request_conflict", "This request was already used for another problem report.");
                     return new(existing.Id, existing.Status, existing.CreatedAt, true);
                 }
-                var context = captured ?? await CaptureAsync(db, actor, normalized.Selector, token);
+                var context = captured ?? await CaptureAsync(db, actor, normalized.Selector, token, execution);
                 var contextJson = JsonSerializer.Serialize(context, JsonOptions);
                 if (Encoding.UTF8.GetByteCount(contextJson) > 32768) throw ProblemReportException.Invalid();
                 var record = new ProblemReportRecord
