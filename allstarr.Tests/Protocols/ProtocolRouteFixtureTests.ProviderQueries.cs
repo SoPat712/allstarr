@@ -61,7 +61,7 @@ public sealed partial class ProtocolRouteFixtureTests
     [InlineData("Items", 0, 1, "ext-deezer-artist-a")]
     [InlineData("Items", 1, 1, "native-artist")]
     [InlineData("Items", 0, 0, "")]
-    public async Task JellyfinFinampArtistSearch_DeduplicatesSortsAndPagesMergedPrefix(string endpoint, int start, int limit, string expected)
+    public async Task JellyfinFinampArtistSearch_DeduplicatesIdsSortsAndPagesMergedPrefix(string endpoint, int start, int limit, string expected)
     {
         const string native = """{"Id":"native-artist","Name":"Query Beta","Type":"MusicArtist","Future" : { "keep" : [1, true], "text":"Björk" },"ProviderIds":{"MusicBrainzArtist":"same"}}""";
         var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
@@ -79,7 +79,8 @@ public sealed partial class ProtocolRouteFixtureTests
         using var response = await client.GetAsync($"/{endpoint}?IncludeItemTypes=MusicArtist&SearchTerm=Query&SortBy=SortName&SortOrder=Ascending&StartIndex={start}&Limit={limit}&Fields=ProviderIds,Genres,SortName&api_key=fixture-key");
         using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        AssertQueryPage(body.RootElement, start, 2, expected.Length == 0 ? [] : [expected]);
+        // The repeated Alpha id collapses; the same-named Beta has no matched songs, so it stays after the library's Beta.
+        AssertQueryPage(body.RootElement, start, 3, expected.Length == 0 ? [] : [expected]);
         if (expected == "native-artist") Assert.Equal(native, body.RootElement.GetProperty("Items")[0].GetRawText());
         gateway.Verify(item => item.SearchAsync(It.IsAny<ProtocolExecutionContext>(), "Query", 0, 0, It.Is<int>(count => count >= 20), null), Times.Once);
         gateway.Verify(item => item.SearchPlaylistsAsync(It.IsAny<ProtocolExecutionContext>(), "Query", It.IsAny<int>()), Times.AtMostOnce);

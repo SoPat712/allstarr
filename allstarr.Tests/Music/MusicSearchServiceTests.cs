@@ -1,3 +1,4 @@
+using allstarr.Core.Identity;
 using allstarr.Core.Matching;
 using allstarr.Core.Music;
 using allstarr.Core.Protocols;
@@ -512,20 +513,53 @@ public sealed class MusicSearchServiceTests
     }
 
     [Fact]
-    public async Task ProviderArtistsNamedLikeNativeArtistsCanBeHidden()
+    public async Task OnlySongLinkedServiceArtistsHideBehindALibraryArtist()
     {
+        var listener = ListenerContext();
         var gateway = Gateway(new SearchResult
         {
-            Artists = [new Artist { Id = "ext-artist-1", Name = "daft punk" }, new Artist { Id = "ext-artist-2", Name = "Justice" }]
-        });
+            Artists =
+            [
+                new Artist { Id = "ext-deezer-artist-linked", Name = "daft punk", ExternalProvider = "deezer", ExternalId = "linked" },
+                new Artist { Id = "ext-applemusic-artist-namesake", Name = "Daft Punk", ExternalProvider = "applemusic", ExternalId = "namesake" },
+                new Artist { Id = "ext-deezer-artist-other", Name = "Justice", ExternalProvider = "deezer", ExternalId = "other" }
+            ]
+        }, context: listener);
         var native = new FakeNative([new NativeMusicItem<string>(MusicItemKind.Artist, "native-artist", "Daft Punk", null, "native")]);
-        var service = new MusicSearchService(gateway.Object);
+        var links = new Mock<ILibraryArtistLinks>();
+        links.Setup(item => item.ReadSavedAsync(It.IsAny<Guid>(), It.IsAny<IReadOnlyCollection<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Dictionary<string, IReadOnlyList<LibraryArtistLink>> { ["Daft Punk"] = [new("deezer", "linked")] });
+        var service = new MusicSearchService(gateway.Object, artistLinks: links.Object);
 
-        var hidden = await service.SearchAsync(_context, Request("punk") with { HideProviderArtistsNamedLikeNative = true }, native);
-        var shown = await service.SearchAsync(_context, Request("punk"), native);
+        var hidden = await service.SearchAsync(listener, Request("punk") with { HideLinkedProviderArtists = true }, native);
+        var shown = await service.SearchAsync(listener, Request("punk"), native);
 
-        Assert.Equal(["ext-artist-2", "native-artist"], hidden.Artists.Select(Id).Order(StringComparer.Ordinal));
-        Assert.Equal(["ext-artist-1", "ext-artist-2", "native-artist"], shown.Artists.Select(Id).Order(StringComparer.Ordinal));
+        // Apple's same-named artist has no song links, so it stays beside the library artist.
+        Assert.Equal(["ext-applemusic-artist-namesake", "ext-deezer-artist-other", "native-artist"],
+            hidden.Artists.Select(Id).Order(StringComparer.Ordinal));
+        Assert.Equal(["ext-applemusic-artist-namesake", "ext-deezer-artist-linked", "ext-deezer-artist-other", "native-artist"],
+            shown.Artists.Select(Id).Order(StringComparer.Ordinal));
+        links.Verify(item => item.RequestAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ASameNamedServiceArtistWithoutLinksStaysAndQueuesSongMatching()
+    {
+        var listener = ListenerContext();
+        var gateway = Gateway(new SearchResult
+        {
+            Artists = [new Artist { Id = "ext-deezer-artist-1", Name = "Say Now", ExternalProvider = "deezer", ExternalId = "1" }]
+        }, context: listener);
+        var native = new FakeNative([new NativeMusicItem<string>(MusicItemKind.Artist, "native-artist", "say now", null, "native")]);
+        var links = new Mock<ILibraryArtistLinks>();
+        links.Setup(item => item.ReadSavedAsync(It.IsAny<Guid>(), It.IsAny<IReadOnlyCollection<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Dictionary<string, IReadOnlyList<LibraryArtistLink>>());
+
+        var result = await new MusicSearchService(gateway.Object, artistLinks: links.Object)
+            .SearchAsync(listener, Request("say now") with { HideLinkedProviderArtists = true }, native);
+
+        Assert.Equal(["ext-deezer-artist-1", "native-artist"], result.Artists.Select(Id).Order(StringComparer.Ordinal));
+        links.Verify(item => item.RequestAsync(listener.Actor!.EffectiveUserId!.Value, "say now", It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -543,6 +577,14 @@ public sealed class MusicSearchServiceTests
         gateway.Verify(item => item.SearchPlaylistsAsync(_context, "Road trip", 2), Times.Once);
     }
 
+    private static ProtocolExecutionContext ListenerContext()
+    {
+        var listener = Guid.CreateVersion7();
+        return new(ProtocolKind.Subsonic, "backend", listener.ToString(),
+            new AllstarrPrincipal(listener, "subsonic", "backend", listener.ToString(), "Listener", false), "search-test",
+            DateTimeOffset.UtcNow.AddMinutes(1), CancellationToken.None);
+    }
+
     private static MusicSearchRequest Request(string query) => new(
         query,
         new MusicSearchWindow(20),
@@ -550,13 +592,14 @@ public sealed class MusicSearchServiceTests
         new MusicSearchWindow(20),
         MusicSearchWindow.None);
 
-    private Mock<IProtocolProviderGateway> Gateway(SearchResult result, List<ExternalPlaylist>? playlists = null)
+    private Mock<IProtocolProviderGateway> Gateway(SearchResult result, List<ExternalPlaylist>? playlists = null,
+        ProtocolExecutionContext? context = null)
     {
         var gateway = new Mock<IProtocolProviderGateway>();
-        gateway.Setup(item => item.SearchAsync(_context, It.IsAny<string>(), It.IsAny<int>(), It.IsAny<int>(),
+        gateway.Setup(item => item.SearchAsync(context ?? _context, It.IsAny<string>(), It.IsAny<int>(), It.IsAny<int>(),
                 It.IsAny<int>(), null))
             .ReturnsAsync(result);
-        gateway.Setup(item => item.SearchPlaylistsAsync(_context, It.IsAny<string>(), It.IsAny<int>()))
+        gateway.Setup(item => item.SearchPlaylistsAsync(context ?? _context, It.IsAny<string>(), It.IsAny<int>()))
             .ReturnsAsync(playlists ?? []);
         return gateway;
     }

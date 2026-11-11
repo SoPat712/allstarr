@@ -218,7 +218,7 @@ public partial class SubsonicController : ControllerBase
                 new MusicSearchWindow(window.AlbumCount > 0 ? window.AlbumFetchCount : 0, Take: window.AlbumOffset == 0 ? window.AlbumCount : null),
                 new MusicSearchWindow(window.ArtistCount > 0 ? window.ArtistFetchCount : 0, Take: window.ArtistOffset == 0 ? window.ArtistCount : null),
                 playlists,
-                HideProviderArtistsNamedLikeNative: true),
+                HideLinkedProviderArtists: true),
             native,
             HttpContext.RequestAborted);
         var paginationScope = System.Text.Json.JsonSerializer.Serialize(new { Method = method, native.IsJson, MusicFolderId = parameters.GetValueOrDefault("musicFolderId") });

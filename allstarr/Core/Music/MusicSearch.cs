@@ -1,6 +1,7 @@
 using allstarr.Core.Operations;
 using allstarr.Core.Matching;
 using allstarr.Core.Protocols;
+using allstarr.Core.Providers.AppleMusicKit;
 using allstarr.Core.Settings;
 using allstarr.Core.Storage;
 using Microsoft.EntityFrameworkCore;
@@ -71,7 +72,7 @@ public sealed record MusicSearchRequest(
     MusicSearchWindow Artists,
     MusicSearchWindow Playlists,
     bool IncludeProviders = true,
-    bool HideProviderArtistsNamedLikeNative = false)
+    bool HideLinkedProviderArtists = false)
 {
     public bool LimitProviderWait { get; init; }
 }
@@ -120,8 +121,10 @@ public sealed partial class MusicSearchService(
     SavedLibraryReader? savedLibrary = null,
     ILogger<MusicSearchService>? logger = null,
     TimeProvider? timeProvider = null, IRuntimeSettingsChangeSignal? settings = null,
-    IDbContextFactory<AllstarrDbContext>? factory = null)
+    IDbContextFactory<AllstarrDbContext>? factory = null, ILibraryArtistLinks? artistLinks = null)
 {
+    private const int LinkedArtistLookups = 50;
+
     private readonly Dictionary<string, OwnedSearchLookup> ownedSearchLookups = new(StringComparer.Ordinal);
     private sealed record OwnedSearchLookup(DateTimeOffset ExpiresAt, Lazy<Task<IReadOnlyDictionary<string, string>>> Work);
 
@@ -269,7 +272,7 @@ public sealed partial class MusicSearchService(
                 item.Kind == MusicItemKind.Album && context.Policy?.Preferences.ExplicitFilter != "CleanOnly" ||
                 context.Policy?.Includes(item.ExplicitContentLyrics) != false),
                 request.Songs.Apply(ready.Songs), request.Albums.Apply(MusicAlbumReleases.Collapse(ready.Albums)),
-                request.Artists.Apply(ready.Artists), request.Playlists.Apply(readyPlaylists), request.HideProviderArtistsNamedLikeNative);
+                request.Artists.Apply(ready.Artists), request.Playlists.Apply(readyPlaylists), null);
         }
 
         async Task<MusicSearchResult<TPayload>> ComposeAsync()
@@ -308,7 +311,7 @@ public sealed partial class MusicSearchService(
                 return Merge(request.Query, nativeRows.Where(item => item.Kind == MusicItemKind.Artist ||
                     item.Kind == MusicItemKind.Album && context.Policy?.Preferences.ExplicitFilter != "CleanOnly" ||
                     context.Policy?.Includes(item.ExplicitContentLyrics) != false), originalSongs,
-                    request.Albums.Apply(MusicAlbumReleases.Collapse(originalAlbums)), artists, playlists, request.HideProviderArtistsNamedLikeNative);
+                    request.Albums.Apply(MusicAlbumReleases.Collapse(originalAlbums)), artists, playlists, null);
             }
 
             async Task<MusicSearchResult<TPayload>> EnrichAsync()
@@ -327,6 +330,11 @@ public sealed partial class MusicSearchService(
                 savedAt = Elapsed();
                 using (RequestTiming.Current?.Stage("owned"))
                     await PreferOwnedSongsAsync(context, songs, nativeSongs, native, enrichmentToken);
+                IReadOnlySet<string>? linkedArtists = null;
+                if (request.HideLinkedProviderArtists)
+                    using (RequestTiming.Current?.Stage("artists"))
+                        linkedArtists = await LinkedProviderArtistsAsync(context, nativeArtists.Select(item => item.Name).ToArray(),
+                            artists, enrichmentToken);
                 logger?.LogInformation("Search timing: library {Library} ms, sources {Sources} ms, playlists {Playlists} ms, saved songs {Saved} ms, owned songs {Owned} ms, total {Total} ms",
                     phases[0], phases[1], phases[2], savedAt - gathered, Elapsed() - savedAt, Elapsed());
                 return Merge(
@@ -336,10 +344,50 @@ public sealed partial class MusicSearchService(
                     albums,
                     artists,
                     playlists,
-                    request.HideProviderArtistsNamedLikeNative);
+                    linkedArtists);
             }
         }
     }
+
+    /// <summary>
+    /// Service artists that matched songs prove to be one of these library artists. Search hides only those: a
+    /// same-named artist without links stays visible and gets song matching queued, so a name alone never hides one.
+    /// </summary>
+    public async Task<IReadOnlySet<string>> LinkedProviderArtistsAsync(ProtocolExecutionContext context,
+        IReadOnlyCollection<string> libraryArtists, IReadOnlyCollection<Artist> providerArtists, CancellationToken cancellationToken)
+    {
+        var linked = new HashSet<string>(StringComparer.Ordinal);
+        if (artistLinks == null || context.Actor?.EffectiveUserId is not { } owner) return linked;
+        var serviceNames = providerArtists.Where(artist => ArtistKey(artist) != null)
+            .Select(artist => FuzzyMatcher.NormalizeForMatching(artist.Name)).ToHashSet(StringComparer.Ordinal);
+        if (serviceNames.Count == 0) return linked;
+        var names = libraryArtists.Where(name => !string.IsNullOrWhiteSpace(name)).Distinct(StringComparer.Ordinal)
+            .Take(LinkedArtistLookups).ToArray();
+        try
+        {
+            var saved = await artistLinks.ReadSavedAsync(owner, names, cancellationToken);
+            foreach (var name in names)
+            {
+                var links = saved.GetValueOrDefault(name) ?? [];
+                foreach (var link in links) linked.Add(ArtistKey(link.ProviderId, link.ArtistId));
+                if (links.Count == 0 && serviceNames.Contains(FuzzyMatcher.NormalizeForMatching(name)))
+                    await artistLinks.RequestAsync(owner, name, cancellationToken);
+            }
+        }
+        // Without links every service artist stays visible.
+        catch (Exception error) when (error is not OperationCanceledException) { }
+        return linked;
+    }
+
+    internal static string ArtistKey(string provider, string artistId) =>
+        AppleMusicClient.NormalizeProviderId(provider) + ":" + artistId;
+
+    internal static string? ArtistKey(Artist artist) =>
+        string.IsNullOrEmpty(artist.ExternalProvider) || string.IsNullOrEmpty(artist.ExternalId)
+            ? null : ArtistKey(artist.ExternalProvider, artist.ExternalId);
+
+    public static bool IsLinked(Artist artist, IReadOnlySet<string>? linkedProviderArtists) =>
+        linkedProviderArtists != null && ArtistKey(artist) is { } key && linkedProviderArtists.Contains(key);
 
     /// <summary>Ranks native and provider rows of each kind; native rows win ties.</summary>
     public static MusicSearchResult<TPayload> Merge<TPayload>(
@@ -349,7 +397,7 @@ public sealed partial class MusicSearchService(
         IEnumerable<Album> albums,
         IEnumerable<Artist> artists,
         IEnumerable<ExternalPlaylist> playlists,
-        bool hideProviderArtistsNamedLikeNative)
+        IReadOnlySet<string>? linkedProviderArtists)
     {
         using var merging = RequestTiming.Current?.Stage("merge");
         var native = nativeRows.ToList();
@@ -363,9 +411,6 @@ public sealed partial class MusicSearchService(
             .Any(owned => MusicAlbumReleases.Compatible(owned, album)));
         var mergedAlbums = MusicAlbumReleases.Collapse(unownedAlbums.Concat(nativeAlbums.Select(item => item.AlbumMetadata).OfType<Album>()))
             .Where(album => !album.IsLocal || !nativeAlbumIds.Contains(album.Id));
-        var nativeArtistNames = hideProviderArtistsNamedLikeNative
-            ? nativeArtists.Select(item => FuzzyMatcher.NormalizeForMatching(item.Name)).ToHashSet(StringComparer.Ordinal)
-            : [];
         return new MusicSearchResult<TPayload>(
             RankSongs(query, native.Where(item => item.Kind == MusicItemKind.Song)
                 .Select(item => new MusicSearchEntry<TPayload> { Native = item })
@@ -377,7 +422,7 @@ public sealed partial class MusicSearchService(
                     new MusicSearchEntry<TPayload> { Playlist = playlist },
                     SearchRelevanceRanker.Score(query, playlist.Name, playlist.CuratorName))))),
             Rank(query, nativeArtists, artists
-                .Where(artist => !nativeArtistNames.Contains(FuzzyMatcher.NormalizeForMatching(artist.Name)))
+                .Where(artist => !IsLinked(artist, linkedProviderArtists))
                 .Select(artist => (
                     new MusicSearchEntry<TPayload> { Artist = artist },
                     SearchRelevanceRanker.Score(query, artist.Name)))));

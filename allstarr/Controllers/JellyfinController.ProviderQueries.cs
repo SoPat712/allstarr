@@ -1,5 +1,6 @@
 using System.Text.Json;
 using allstarr.Core.Favorites;
+using allstarr.Core.Music;
 using allstarr.Core.Protocols;
 using allstarr.Models.Domain;
 using allstarr.Services.Jellyfin;
@@ -46,8 +47,11 @@ public partial class JellyfinController
             if (native != null) CaptureNativeQueryRows(native.RootElement);
             var rows = native != null && native.RootElement.TryGetProperty("Items", out var items)
                 ? items.EnumerateArray().Select(item => item.Deserialize<Dictionary<string, object?>>() ?? []).ToList() : [];
-            var names = rows.Select(item => FuzzyMatcher.NormalizeForMatching(JellyfinProviderQuery.Text(item, "Name"))).ToHashSet(StringComparer.Ordinal);
-            rows.AddRange((await providerTask).Artists.Where(artist => !names.Contains(FuzzyMatcher.NormalizeForMatching(artist.Name)))
+            // A service artist hides behind a library artist only when matched songs link them; names alone never do.
+            var providerArtists = (await providerTask).Artists;
+            var linked = await _musicSearch.LinkedProviderArtistsAsync(HttpContext.RequireProtocolExecutionContext(),
+                rows.Select(item => JellyfinProviderQuery.Text(item, "Name")).ToArray(), providerArtists, HttpContext.RequestAborted);
+            rows.AddRange(providerArtists.Where(artist => !MusicSearchService.IsLinked(artist, linked))
                 .Select(_responseBuilder.ConvertArtistForQuery));
             return await ShapeProviderQueryAsync(rows, "SortName", nativeAlreadyFiltered: true, defaultLimit: limit);
         }

@@ -86,7 +86,7 @@ public sealed class MusicAlbumReleaseTests
         var clean = Album("clean", "apple-download", "012345678912", false);
         var other = Album("other", "deezer", null, null);
         other.Artist = "Another artist";
-        var result = MusicSearchService.Merge<object>("PRIMA", [], [], [explicitAlbum, clean, other], [], [], false);
+        var result = MusicSearchService.Merge<object>("PRIMA", [], [], [explicitAlbum, clean, other], [], [], null);
 
         Assert.Equal(["explicit", "clean", "other"], result.Albums.Select(item => item.Album!.Id));
         Assert.Equal(["explicit", "clean", "other"], MusicSearchService.RankTogether("PRIMA", result).Select(item => item.Album!.Id));
@@ -102,7 +102,7 @@ public sealed class MusicAlbumReleaseTests
             """)!;
         var native = JellyfinController.ToNativeSearchItem(payload)!;
         var result = MusicSearchService.Merge<Dictionary<string, object?>>("PRIMA", [native], [],
-            [Album("provider", "deezer", "012345678905", true)], [], [], false);
+            [Album("provider", "deezer", "012345678905", true)], [], [], null);
 
         Assert.Same(payload, Assert.Single(result.Albums).Native!.Payload);
         Assert.True(((JsonElement)payload["UnfamiliarField"]!).GetProperty("keep").GetBoolean());
@@ -128,14 +128,14 @@ public sealed class MusicAlbumReleaseTests
             };
         var native = SubsonicModelMapper.ToNativeItem(payload, MusicItemKind.Album);
         var result = MusicSearchService.Merge<object>("PRIMA", [native], [],
-            [Album("provider", "deezer", "012345678905", true)], [], [], false);
+            [Album("provider", "deezer", "012345678905", true)], [], [], null);
 
         Assert.Same(payload, Assert.Single(result.Albums).Native!.Payload);
         Assert.Contains("keep", xml ? ((XElement)payload).ToString() : JsonSerializer.Serialize(payload));
     }
 
     private static IReadOnlyList<Album> Merge(params Album[] albums) => MusicSearchService.Merge<object>(
-        "PRIMA", [], [], albums, [], [], false).Albums.Select(item => item.Album!).ToArray();
+        "PRIMA", [], [], albums, [], [], null).Albums.Select(item => item.Album!).ToArray();
 
     private static Album Album(string id, string provider, string? upc, bool? isExplicit) => new()
     {

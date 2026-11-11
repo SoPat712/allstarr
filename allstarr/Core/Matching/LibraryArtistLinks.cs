@@ -11,6 +11,10 @@ public interface ILibraryArtistLinks
 {
     Task<IReadOnlyList<LibraryArtistLink>> ReadAsync(Guid owner, string name, CancellationToken token);
 
+    /// <summary>The last saved links for each name, keyed by the name as given; names never checked are absent.</summary>
+    Task<IReadOnlyDictionary<string, IReadOnlyList<LibraryArtistLink>>> ReadSavedAsync(Guid owner,
+        IReadOnlyCollection<string> names, CancellationToken token);
+
     /// <summary>Queues background song matching for an artist with no links yet, at most once a day.</summary>
     Task RequestAsync(Guid owner, string name, CancellationToken token);
 }
@@ -23,6 +27,9 @@ public sealed class LibraryArtistLinks(LibraryArtistIndex index, DurableJobQueue
 
     public Task<IReadOnlyList<LibraryArtistLink>> ReadAsync(Guid owner, string name, CancellationToken token) =>
         index.ReadAsync(owner, name, token);
+
+    public Task<IReadOnlyDictionary<string, IReadOnlyList<LibraryArtistLink>>> ReadSavedAsync(Guid owner,
+        IReadOnlyCollection<string> names, CancellationToken token) => index.ReadSavedAsync(owner, names, token);
 
     public async Task RequestAsync(Guid owner, string name, CancellationToken token)
     {

@@ -201,7 +201,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         Assert.DoesNotContain(result.Songs, song => song.ExternalId == "unknown");
         Assert.Contains(result.Songs[0].SearchRoutes, route => route.Value == "unknown");
 
-        var merged = MusicSearchService.Merge<object>(query, [], result.Songs, [], [], [], false);
+        var merged = MusicSearchService.Merge<object>(query, [], result.Songs, [], [], [], null);
         Assert.Equal(result.Songs.Select(song => song.ExternalId), merged.Songs.Select(row => row.Song!.ExternalId));
         Assert.Equal("album", MusicSearchService.RankTogether(query, merged).First().Song!.ExternalId);
         foreach (var capability in capabilities)
@@ -275,7 +275,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         var native = NativeRecordingSearchRow(protocol, "native", "Get Lucky", "Daft Punk", 369);
         var cover = NativeRecordingSearchRow(protocol, "cover", "Get Lucky (Daft Punk)", "Someone Else", 240);
 
-        var result = MusicSearchService.Merge("Get Lucky Daft Punk", [cover, native], [original], [], [], [], false);
+        var result = MusicSearchService.Merge("Get Lucky Daft Punk", [cover, native], [original], [], [], [], null);
 
         Assert.Equal(["native", "original", "cover"], result.Songs.Select(row => row.Native?.Id ?? row.Song!.Id));
         Assert.Equal(["native", "original", "cover"], MusicSearchService.RankTogether("Get Lucky Daft Punk", result)
@@ -295,7 +295,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
             NativeRecordingSearchRow(protocol, "album", "Get Lucky", "Daft Punk", 369)
         };
 
-        var result = MusicSearchService.Merge<object>("Get Lucky Daft Punk", native, [], [], [], [], false);
+        var result = MusicSearchService.Merge<object>("Get Lucky Daft Punk", native, [], [], [], [], null);
 
         Assert.Equal("album", result.Songs[0].Native!.Id);
         Assert.Equal(4, result.Songs.Count);

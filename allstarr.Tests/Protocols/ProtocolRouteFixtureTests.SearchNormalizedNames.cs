@@ -18,7 +18,7 @@ public sealed partial class ProtocolRouteFixtureTests
     [Theory]
     [InlineData("Charli xcx")]
     [InlineData("Charli-xcx")]
-    public async Task Search_NormalizedNativeAlbumAndArtistNamesPreferTheLibraryCopy(string nativeArtist)
+    public async Task Search_NormalizedNativeAlbumNamesPreferTheLibraryCopyWhileAnUnlinkedArtistStays(string nativeArtist)
     {
         var gateway = new Mock<IProtocolProviderGateway>();
         gateway.Setup(service => service.SearchAsync(It.IsAny<ProtocolExecutionContext>(), "charli", 0, 20, 20, null))
@@ -49,12 +49,15 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
         var rows = body.RootElement.GetProperty("Items").EnumerateArray().ToArray();
-        Assert.Equal(new[] { "native-artist", "native-charli", "ext-deezer-album-deluxe" }, rows.Select(row => row.GetProperty("Id").GetString()));
-        Assert.Equal(NativeCharliAlbum, rows[1].GetRawText());
+        // The same-named service artist has no matched songs behind it, so it stays beside the library artist.
+        Assert.Equal(new[] { "native-artist", "ext-deezer-artist-charli", "native-charli", "ext-deezer-album-deluxe" },
+            rows.Select(row => row.GetProperty("Id").GetString()));
+        Assert.Equal(NativeCharliAlbum, rows[2].GetRawText());
         using var artistsResponse = await client.GetAsync("/Artists?api_key=fixture&SearchTerm=charli&Limit=20");
         Assert.Equal(HttpStatusCode.OK, artistsResponse.StatusCode);
         using var artistsBody = JsonDocument.Parse(await artistsResponse.Content.ReadAsStringAsync());
-        Assert.Equal("native-artist", Assert.Single(artistsBody.RootElement.GetProperty("Items").EnumerateArray()).GetProperty("Id").GetString());
+        Assert.Equal(["ext-deezer-artist-charli", "native-artist"], artistsBody.RootElement.GetProperty("Items").EnumerateArray()
+            .Select(row => row.GetProperty("Id").GetString()).Order(StringComparer.Ordinal));
     }
 
     [Fact]

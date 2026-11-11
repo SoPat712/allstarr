@@ -127,6 +127,33 @@ public sealed class LibraryArtistIndex(IDbContextFactory<AllstarrDbContext> fact
         finally { Gate.Release(); }
     }
 
+    // The last saved links for each name, without rechecking the songs behind them, for hot paths such as search.
+    public async Task<IReadOnlyDictionary<string, IReadOnlyList<LibraryArtistLink>>> ReadSavedAsync(Guid owner,
+        IReadOnlyCollection<string> names, CancellationToken token = default)
+    {
+        var result = new Dictionary<string, IReadOnlyList<LibraryArtistLink>>(StringComparer.Ordinal);
+        var valid = names.Where(name => !string.IsNullOrWhiteSpace(name) && name.Length <= 300 && !name.Any(char.IsControl))
+            .Distinct(StringComparer.Ordinal).ToArray();
+        if (valid.Length == 0) return result;
+        var access = await libraryAccess.ResolveUserAsync(owner, token);
+        if (access.Context == null || !access.Access.Succeeded) return result;
+        var keys = valid.ToDictionary(name => name, name => Key(access.Context, name), StringComparer.Ordinal);
+        var hashes = keys.Values.Distinct(StringComparer.Ordinal).ToArray();
+        await using var db = await factory.CreateDbContextAsync(token);
+        var saved = (await db.ExternalMetadataSnapshots.AsNoTracking().Where(item => item.OwnerUserId == owner &&
+                item.ProviderId == "allstarr" && item.ResourceKind == IndexKind && hashes.Contains(item.ExternalIdHash))
+            .Select(item => new { item.ExternalIdHash, item.SnapshotVersion, item.PayloadJson }).ToArrayAsync(token))
+            .GroupBy(item => item.ExternalIdHash, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.MaxBy(item => item.SnapshotVersion)!.PayloadJson, StringComparer.Ordinal);
+        foreach (var (name, key) in keys)
+        {
+            if (!saved.TryGetValue(key, out var payload)) continue;
+            try { result[name] = JsonSerializer.Deserialize<LibraryArtistLink[]>(payload) ?? []; }
+            catch (JsonException) { }
+        }
+        return result;
+    }
+
     // The daily release job visits followed artists first. Continuations share the five-song allowance.
     public async Task<int> BackfillAsync(Guid owner, string name, Guid jobId, CancellationToken token)
     {

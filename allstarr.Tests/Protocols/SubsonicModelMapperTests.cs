@@ -238,7 +238,7 @@ public class SubsonicModelMapperTests
     }
 
     [Fact]
-    public void MergeSearchResults_Json_CaseInsensitiveDeduplication()
+    public void MergeSearchResults_Json_HidesASongLinkedArtistButNotANamesake()
     {
         var localArtists = new List<object>
         {
@@ -250,14 +250,17 @@ public class SubsonicModelMapperTests
             Albums = new List<Album>(),
             Artists = new List<Artist>
             {
-                new Artist { Id = "ext1", Name = "test artist" } // Different case - should still be filtered
+                new Artist { Id = "ext1", Name = "test artist", ExternalProvider = "deezer", ExternalId = "1" }
             }
         };
 
-        var (mergedSongs, mergedAlbums, mergedArtists) = Merge(
+        var (_, _, linkedArtists) = Merge(new List<object>(), new List<object>(), localArtists, externalResult,
+            new List<ExternalPlaylist>(), true, linked: new HashSet<string> { MusicSearchService.ArtistKey("deezer", "1") });
+        var (_, _, namesakes) = Merge(
             new List<object>(), new List<object>(), localArtists, externalResult, new List<ExternalPlaylist>(), true);
 
-        Assert.Single(mergedArtists); // Only the local artist
+        Assert.Single(linkedArtists); // Matched songs prove it is the local artist
+        Assert.Equal(2, namesakes.Count); // A shared name alone hides nothing
     }
 
     [Fact]
@@ -297,15 +300,15 @@ public class SubsonicModelMapperTests
             Albums = new List<Album>(),
             Artists = new List<Artist>
             {
-                new Artist { Id = "ext1", Name = "Test Artist" }, // Same name - should be filtered
+                new Artist { Id = "ext1", Name = "Test Artist", ExternalProvider = "deezer", ExternalId = "1" }, // Linked - filtered
                 new Artist { Id = "ext2", Name = "Different Artist" } // Different name - should be included
             }
         };
 
-        var (mergedSongs, mergedAlbums, mergedArtists) = Merge(
-            new List<object>(), new List<object>(), localArtists, externalResult, new List<ExternalPlaylist>(), false);
+        var (mergedSongs, mergedAlbums, mergedArtists) = Merge(new List<object>(), new List<object>(), localArtists, externalResult,
+            new List<ExternalPlaylist>(), false, linked: new HashSet<string> { MusicSearchService.ArtistKey("deezer", "1") });
 
-        Assert.Equal(2, mergedArtists.Count); // 1 local + 1 external (duplicate filtered)
+        Assert.Equal(2, mergedArtists.Count); // 1 local + 1 external (linked duplicate filtered)
     }
 
     [Fact]
@@ -378,7 +381,8 @@ public class SubsonicModelMapperTests
         SearchResult external,
         List<ExternalPlaylist> playlists,
         bool isJson,
-        string query = "") =>
+        string query = "",
+        IReadOnlySet<string>? linked = null) =>
         _mapper.RenderSearchResult(MusicSearchService.Merge(
             query,
             localSongs.Select(item => SubsonicModelMapper.ToNativeItem(item, MusicItemKind.Song))
@@ -388,5 +392,5 @@ public class SubsonicModelMapperTests
             external.Albums,
             external.Artists,
             playlists,
-            hideProviderArtistsNamedLikeNative: true), isJson);
+            linked), isJson);
 }
