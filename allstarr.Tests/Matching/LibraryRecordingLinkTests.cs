@@ -49,12 +49,13 @@ public sealed partial class TrackIdentityServiceTests
             new(gateway.Object, new(), Microsoft.Extensions.Logging.Abstractions.NullLogger<TrackMatchPlayableSearch>.Instance), gateway.Object, _service);
 
         Assert.Empty(await index.ReadAsync(_userA, "FLO"));
-        Assert.Equal(2, await index.BackfillAsync(_userA, "FLO", Guid.CreateVersion7(), default));
+        // One verified song credited as FLO links the artist, so the run stops there.
+        Assert.Equal(1, await index.BackfillAsync(_userA, "FLO", Guid.CreateVersion7(), default));
 
         Assert.Equal(new LibraryArtistLink("deezer", "flo"), Assert.Single(await index.ReadAsync(_userA, "FLO")));
         await using var db = await _factory.CreateDbContextAsync();
-        Assert.All(await db.LibraryTracks.ToArrayAsync(), song => Assert.NotNull(song.CanonicalRecordingId));
-        Assert.Equal(2, await db.ProviderTrackIdentities.CountAsync(item => item.Verification == ProviderIdentityVerification.Verified));
+        Assert.Single(await db.LibraryTracks.ToArrayAsync(), song => song.CanonicalRecordingId != null);
+        Assert.Equal(1, await db.ProviderTrackIdentities.CountAsync(item => item.Verification == ProviderIdentityVerification.Verified));
     }
 
     [Theory]

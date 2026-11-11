@@ -32,6 +32,38 @@ public sealed partial class NewReleasesTests
     }
 
     [Fact]
+    public async Task LibraryIndex_artist_links_on_one_song_when_the_service_credits_the_same_name()
+    {
+        await ArtistSongAsync("Only", "solo");
+
+        Assert.Equal(new LibraryArtistLink("deezer", "solo"), Assert.Single(await ArtistIndex().ReadAsync(_first, "Artist")));
+    }
+
+    [Fact]
+    public async Task LibraryIndex_artist_credited_under_another_name_needs_two_songs()
+    {
+        // A CD rip tagged differently from the service still links once two of its songs match.
+        var first = await ArtistSongAsync("First", null);
+        await ArtistIdentityAsync(first, "renamed", creditedAs: "Artiste");
+        Assert.Empty(await ArtistIndex().ReadAsync(_first, "Artist"));
+
+        var second = await ArtistSongAsync("Second", null);
+        await ArtistIdentityAsync(second, "renamed", creditedAs: "Artiste");
+        Assert.Equal("renamed", Assert.Single(await ArtistIndex().ReadAsync(_first, "Artist")).ArtistId);
+    }
+
+    [Fact]
+    public async Task LibraryIndex_artist_skips_an_ambiguous_song_instead_of_the_whole_service()
+    {
+        var first = await ArtistSongAsync("First", "winner");
+        await ArtistIdentityAsync(first, "conflict");
+        await ArtistSongAsync("Second", "winner");
+        await ArtistSongAsync("Third", "winner");
+
+        Assert.Equal("winner", Assert.Single(await ArtistIndex().ReadAsync(_first, "Artist")).ArtistId);
+    }
+
+    [Fact]
     public async Task LibraryIndex_artist_conflicting_track_identities_leave_the_service_unlinked()
     {
         var first = await ArtistSongAsync("First", "winner");
@@ -82,19 +114,19 @@ public sealed partial class NewReleasesTests
     public async Task LibraryIndex_artist_refreshes_after_a_song_link_or_metadata_changes_and_reuses_unchanged_snapshots()
     {
         var first = await ArtistSongAsync("First", "winner");
-        await ArtistSongAsync("Second", "winner");
+        var second = await ArtistSongAsync("Second", "winner");
         var index = ArtistIndex();
         Assert.Single(await index.ReadAsync(_first, "Artist"));
         Assert.Single(await index.ReadAsync(_first, "Artist"));
         await using (var db = _factory.CreateDbContext())
         {
             Assert.Single(await db.ExternalMetadataSnapshots.Where(row => row.ResourceKind == "library-artist-index").ToArrayAsync());
-            var link = await db.ProviderTrackIdentities.SingleAsync(row => row.CanonicalRecordingId == first.CanonicalRecordingId);
-            link.VerificationMethod = "superseded";
+            foreach (var link in await db.ProviderTrackIdentities.ToArrayAsync()) link.VerificationMethod = "superseded";
             await db.SaveChangesAsync();
         }
         Assert.Empty(await index.ReadAsync(_first, "Artist"));
         await ArtistIdentityAsync(first, "winner");
+        await ArtistIdentityAsync(second, "winner");
         Assert.Single(await ArtistIndex().ReadAsync(_first, "Artist"));
         await using (var db = _factory.CreateDbContext())
         {
@@ -131,8 +163,7 @@ public sealed partial class NewReleasesTests
         Assert.Single(await ArtistIndex().ReadAsync(_second, "Artist"));
         await using (var db = _factory.CreateDbContext())
         {
-            var link = await db.ProviderTrackIdentities.SingleAsync(row => row.CanonicalRecordingId == second.CanonicalRecordingId);
-            link.VerificationMethod = "automatic-suggestion";
+            foreach (var link in await db.ProviderTrackIdentities.ToArrayAsync()) link.VerificationMethod = "automatic-suggestion";
             await db.SaveChangesAsync();
         }
         Assert.Empty(await ArtistIndex().ReadAsync(_first, "Artist"));
@@ -229,9 +260,10 @@ public sealed partial class NewReleasesTests
 
         Assert.Equal("verified", Assert.Single(await service.ListAsync(_first)).ArtistId);
         Assert.Equal(1, _calls);
-        gateway.Verify(value => value.RememberTrackAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>()), Times.Exactly(2));
+        // The first matched song credits the same name, so the link holds and the rest of the run is skipped.
+        gateway.Verify(value => value.RememberTrackAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>()), Times.Once);
         identities.Verify(value => value.LinkLibraryRecordingsAsync(It.IsAny<ProviderActorContext>(), It.IsAny<string>(), null,
-            It.IsAny<Guid?>(), It.IsAny<CancellationToken>()), Times.Exactly(2));
+            It.IsAny<Guid?>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -300,7 +332,7 @@ public sealed partial class NewReleasesTests
     }
 
     private async Task ArtistIdentityAsync(LibraryTrackRecord song, string artistId, string provider = "deezer", string? publicProvider = null,
-        Guid? accountId = null)
+        Guid? accountId = null, string? creditedAs = null)
     {
         await using var db = _factory.CreateDbContext();
         var external = Guid.CreateVersion7().ToString();
@@ -333,7 +365,7 @@ public sealed partial class NewReleasesTests
             ExternalIdHash = link.ExternalIdHash,
             SnapshotVersion = 1,
             ProviderRevision = "1",
-            PayloadJson = JsonSerializer.Serialize(new { song.Title, song.Artist, ArtistId = $"ext-{publicProvider ?? provider}-artist-{artistId}" }),
+            PayloadJson = JsonSerializer.Serialize(new { song.Title, Artist = creditedAs ?? song.Artist, ArtistId = $"ext-{publicProvider ?? provider}-artist-{artistId}" }),
             PayloadSha256 = new string('a', 64),
             Protocol = "subsonic",
             BackendInstanceId = "main",
