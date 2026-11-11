@@ -2644,11 +2644,12 @@ public sealed partial class ProtocolRouteFixtureTests
             JsonDocument.Parse(body).RootElement.GetRawText());
     }
 
-    // getSong never consults providers; getArtist and getAlbum ask them for missing
-    // children and must keep the native body byte for byte when none are found.
+    // getSong never consults providers, and neither does getArtist for a library artist without albums (without
+    // matched songs there is nothing to link it by); getAlbum asks them for missing children. The native body stays
+    // byte for byte when none are found.
     [Theory]
     [InlineData("getSong", "song", "local-song", false)]
-    [InlineData("getArtist", "artist", "local-artist", true)]
+    [InlineData("getArtist", "artist", "local-artist", false)]
     [InlineData("getAlbum", "album", "local-album", true)]
     public async Task SubsonicNativeMusicDetail_IsRelayedUnchangedWithoutProviderAdditions(
         string endpoint,
