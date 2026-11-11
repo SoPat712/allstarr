@@ -356,33 +356,49 @@ public sealed partial class MusicSearchService(
     public async Task<IReadOnlySet<string>> LinkedProviderArtistsAsync(ProtocolExecutionContext context,
         IReadOnlyCollection<string> libraryArtists, IReadOnlyCollection<Artist> providerArtists, CancellationToken cancellationToken)
     {
-        var linked = new HashSet<string>(StringComparer.Ordinal);
-        if (artistLinks == null || context.Actor?.EffectiveUserId is not { } owner) return linked;
         var serviceNames = providerArtists.Where(artist => ArtistKey(artist) != null)
             .Select(artist => FuzzyMatcher.NormalizeForMatching(artist.Name)).ToHashSet(StringComparer.Ordinal);
-        if (serviceNames.Count == 0) return linked;
-        var names = libraryArtists.Where(name => !string.IsNullOrWhiteSpace(name)).Distinct(StringComparer.Ordinal)
-            .Take(LinkedArtistLookups).ToArray();
-        try
-        {
-            var saved = await artistLinks.ReadSavedAsync(owner, names, cancellationToken);
-            foreach (var name in names)
-            {
-                var links = saved.GetValueOrDefault(name) ?? [];
-                foreach (var link in links) linked.Add(ArtistKey(link.ProviderId, link.ArtistId));
-                if (links.Count == 0 && serviceNames.Contains(FuzzyMatcher.NormalizeForMatching(name)))
-                    await artistLinks.RequestAsync(owner, name, cancellationToken);
-            }
-        }
-        // Without links every service artist stays visible.
-        catch (Exception error) when (error is not OperationCanceledException) { }
-        return linked;
+        if (serviceNames.Count == 0) return new HashSet<string>(StringComparer.Ordinal);
+        var saved = await SavedArtistLinksAsync(context, libraryArtists, cancellationToken);
+        foreach (var name in libraryArtists.Where(name => !saved.ContainsKey(name) &&
+                     serviceNames.Contains(FuzzyMatcher.NormalizeForMatching(name))).Distinct(StringComparer.Ordinal))
+            await QueueArtistLinkAsync(context, name, cancellationToken);
+        return LinkedKeys(saved);
     }
 
-    internal static string ArtistKey(string provider, string artistId) =>
+    /// <summary>Saved song links for each library artist that has any, keyed by the name as given.</summary>
+    public async Task<IReadOnlyDictionary<string, IReadOnlyList<LibraryArtistLink>>> SavedArtistLinksAsync(
+        ProtocolExecutionContext context, IReadOnlyCollection<string> libraryArtists, CancellationToken cancellationToken)
+    {
+        var none = new Dictionary<string, IReadOnlyList<LibraryArtistLink>>(StringComparer.Ordinal);
+        if (artistLinks == null || context.Actor?.EffectiveUserId is not { } owner) return none;
+        var names = libraryArtists.Where(name => !string.IsNullOrWhiteSpace(name)).Distinct(StringComparer.Ordinal)
+            .Take(LinkedArtistLookups).ToArray();
+        if (names.Length == 0) return none;
+        // Without links every service artist stays visible.
+        try
+        {
+            return (await artistLinks.ReadSavedAsync(owner, names, cancellationToken))
+                .Where(item => item.Value.Count > 0).ToDictionary(item => item.Key, item => item.Value, StringComparer.Ordinal);
+        }
+        catch (Exception error) when (error is not OperationCanceledException) { return none; }
+    }
+
+    /// <summary>Queues background song matching for a library artist, at most once a day.</summary>
+    public async Task QueueArtistLinkAsync(ProtocolExecutionContext context, string libraryArtist, CancellationToken cancellationToken)
+    {
+        if (artistLinks == null || context.Actor?.EffectiveUserId is not { } owner) return;
+        try { await artistLinks.RequestAsync(owner, libraryArtist, cancellationToken); }
+        catch (Exception error) when (error is not OperationCanceledException) { }
+    }
+
+    public static IReadOnlySet<string> LinkedKeys(IReadOnlyDictionary<string, IReadOnlyList<LibraryArtistLink>> saved) =>
+        saved.Values.SelectMany(links => links).Select(link => ArtistKey(link.ProviderId, link.ArtistId)).ToHashSet(StringComparer.Ordinal);
+
+    public static string ArtistKey(string provider, string artistId) =>
         AppleMusicClient.NormalizeProviderId(provider) + ":" + artistId;
 
-    internal static string? ArtistKey(Artist artist) =>
+    public static string? ArtistKey(Artist artist) =>
         string.IsNullOrEmpty(artist.ExternalProvider) || string.IsNullOrEmpty(artist.ExternalId)
             ? null : ArtistKey(artist.ExternalProvider, artist.ExternalId);
 

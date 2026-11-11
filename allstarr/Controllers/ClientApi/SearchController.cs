@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using allstarr.Core.Capabilities;
 using allstarr.Core.ClientApi;
+using allstarr.Core.Matching;
 using allstarr.Core.Music;
 using allstarr.Core.Protocols;
 using allstarr.Filters;
@@ -24,6 +25,7 @@ public sealed class SearchController(IProtocolProviderGateway providers, MusicSe
     [EndpointName("streamSearch")]
     [EndpointDescription("Streams external Jellyfin-shaped items with a lowercase numeric score from the merged search relevance scorer. " +
         "Every item also has source, the provider id that produced it or the library id for library items, and sourceName, its display name. Same-named library and service artists or albums are separate items. " +
+        "In ranked snapshots, a library artist that matched songs tie to service artists has alsoOn, an array of {source, sourceName, id}, and those service artists are not listed separately. " +
         "The default shape emits {provider,items} batches and a final {done:true,late} line. " +
         "With shape=ranked, every line replaces the previous snapshot: {revision,done,providers,top,items,sections}, including library (Jellyfin) matches in top, items and sections ranked by merged search relevance scorer rules. " +
         "Revisions increase from 1; sections contains only requested songs, albums, artists and playlists, each capped at limit. " +
@@ -72,8 +74,13 @@ public sealed class SearchController(IProtocolProviderGateway providers, MusicSe
         using var publishingStop = CancellationTokenSource.CreateLinkedTokenSource(disconnected);
         RankedSearchSnapshots? snapshots = null;
         Task? libraryTask = null;
+        Task<IReadOnlyDictionary<string, IReadOnlyList<LibraryArtistLink>>>? savedLinks = null;
+        var queuedLinks = new HashSet<string>(StringComparer.Ordinal);
         if (ranked)
         {
+            // Service artists that matched songs tie to a library artist are listed on it as alsoOn rather than as rows.
+            savedLinks = Task.Run(async () => await music.SavedArtistLinksAsync(Execution, (await nativeTask)
+                .Where(item => item.Kind == MusicItemKind.Artist).Select(item => item.Name).ToArray(), token), token);
             var capability = requested.SetEquals(["Playlist"]) ? ProviderCapabilityKind.Playlist : ProviderCapabilityKind.Metadata;
             var available = providers.GetProviderOrder(capability) ?? [];
             var preferred = (Execution.Policy?.ApplyProviderAvailability(capability, available) ?? available).FirstOrDefault();
@@ -95,9 +102,10 @@ public sealed class SearchController(IProtocolProviderGateway providers, MusicSe
                     var owned = await nativeTask;
                     if (owned.Count > 0)
                     {
-                        var libraryRows = BuildLibraryRows(query, owned, requested, limit, library);
+                        var links = await savedLinks!;
+                        var libraryRows = BuildLibraryRows(query, owned, requested, limit, library, links);
                         if (libraryRows.Count > 0)
-                            await snapshots.AddLibraryAsync(libraryRows, token);
+                            await snapshots.AddLibraryAsync(libraryRows, token, MusicSearchService.LinkedKeys(links));
                     }
                 }
                 catch (OperationCanceledException) when (token.IsCancellationRequested) { }
@@ -136,6 +144,14 @@ public sealed class SearchController(IProtocolProviderGateway providers, MusicSe
                         knownDurationTitles.Contains(SearchRelevanceRanker.RecordingTitle(song.Title, song.Artist, song.AlbumArtist)));
                     var items = new List<RankedSearchRow>();
                     var providerName = registry.TryGet(provider, out var descriptor) ? descriptor!.DisplayName : provider;
+                    if (savedLinks is { IsCompletedSuccessfully: true })
+                    {
+                        // A same-named library artist without links gets song matching queued so a later search can tie them.
+                        var serviceNames = results.Artists.Select(artist => Normalize(artist.Name)).ToHashSet(StringComparer.Ordinal);
+                        foreach (var name in owned.Where(item => item.Kind == MusicItemKind.Artist && !savedLinks.Result.ContainsKey(item.Name) &&
+                                     serviceNames.Contains(Normalize(item.Name))).Select(item => item.Name))
+                            if (queuedLinks.Add(name)) await music.QueueArtistLinkAsync(Execution, name, cancellation);
+                    }
                     void Add(Dictionary<string, object?> item, double score, string section, Song? song = null, Artist? artist = null,
                         Album? album = null, ExternalPlaylist? playlist = null)
                     {
@@ -216,7 +232,8 @@ public sealed class SearchController(IProtocolProviderGateway providers, MusicSe
 
     private List<RankedSearchRow> BuildLibraryRows(string query,
         IReadOnlyList<NativeMusicItem<Dictionary<string, object?>>> owned,
-        HashSet<string> requested, int limit, ItemDetailsProvider source)
+        HashSet<string> requested, int limit, ItemDetailsProvider source,
+        IReadOnlyDictionary<string, IReadOnlyList<LibraryArtistLink>> links)
     {
         var rows = new List<RankedSearchRow>();
         if (requested.Contains("Audio"))
@@ -257,6 +274,13 @@ public sealed class SearchController(IProtocolProviderGateway providers, MusicSe
                 itemNode["score"] = score;
                 itemNode["source"] = source.Id;
                 itemNode["sourceName"] = source.Name;
+                if (links.GetValueOrDefault(artist.Name) is { Count: > 0 } alsoOn)
+                    itemNode["alsoOn"] = JsonSerializer.SerializeToNode(alsoOn.Select(link => new
+                    {
+                        source = link.ProviderId,
+                        sourceName = registry.TryGet(link.ProviderId, out var descriptor) ? descriptor!.DisplayName : link.ProviderId,
+                        id = ProtocolProviderGateway.ProtocolItemId(new(link.ProviderId, ProviderResourceKind.Artist, link.ArtistId))
+                    }));
                 rows.Add(new(itemNode, "artists", Native: AsObjectPayload(artist)));
             }
         }

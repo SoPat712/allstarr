@@ -41,7 +41,7 @@ internal sealed class RankedSearchSnapshots(string query, int limit, IReadOnlyLi
     Func<IReadOnlyList<RankedSearchRow>, CancellationToken, Task>? refresh = null)
 {
     private sealed record Update(string? Provider, IReadOnlyList<RankedSearchRow> Rows,
-        IReadOnlyList<string>? Late, TaskCompletionSource? Accepted = null);
+        IReadOnlyList<string>? Late, TaskCompletionSource? Accepted = null, IReadOnlySet<string>? Linked = null);
     private readonly Channel<Update> updates = Channel.CreateUnbounded<Update>(new() { SingleReader = true });
     private readonly Dictionary<string, List<RankedSearchRow>> sections = requested.ToDictionary(section => section, _ => new List<RankedSearchRow>());
     private readonly List<string> providers = [];
@@ -49,6 +49,8 @@ internal sealed class RankedSearchSnapshots(string query, int limit, IReadOnlyLi
     private RankedSearchRow? pinned;
     private RankedSearchRow? top;
     private int revision;
+    // Service artists that matched songs tie to a library artist; they live in that artist's alsoOn instead.
+    private IReadOnlySet<string> linked = new HashSet<string>();
 
     internal async Task AddAsync(string provider, IReadOnlyList<RankedSearchRow> rows, CancellationToken token)
     {
@@ -57,10 +59,11 @@ internal sealed class RankedSearchSnapshots(string query, int limit, IReadOnlyLi
         await accepted.Task.WaitAsync(token);
     }
 
-    internal async Task AddLibraryAsync(IReadOnlyList<RankedSearchRow> rows, CancellationToken token)
+    internal async Task AddLibraryAsync(IReadOnlyList<RankedSearchRow> rows, CancellationToken token,
+        IReadOnlySet<string>? linkedArtists = null)
     {
         var accepted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        await updates.Writer.WriteAsync(new(null, rows, null, accepted), token);
+        await updates.Writer.WriteAsync(new(null, rows, null, accepted, linkedArtists), token);
         await accepted.Task.WaitAsync(token);
     }
 
@@ -81,10 +84,11 @@ internal sealed class RankedSearchSnapshots(string query, int limit, IReadOnlyLi
             while (updates.Reader.TryRead(out var update))
             {
                 if (update.Provider is { } provider && !providers.Contains(provider, StringComparer.Ordinal)) providers.Add(provider);
+                if (update.Linked is { Count: > 0 } artists) linked = artists;
                 if (update.Provider == null && update.Rows.Count > 0)
                     PruneExternalDuplicates(update.Rows);
                 foreach (var row in update.Rows)
-                    if (sections.TryGetValue(row.Section, out var rows)) rows.Add(row);
+                    if (!IsLinked(row) && sections.TryGetValue(row.Section, out var rows)) rows.Add(row);
                 late = update.Late ?? late;
                 dirty = true;
                 update.Accepted?.TrySetResult();
@@ -117,8 +121,17 @@ internal sealed class RankedSearchSnapshots(string query, int limit, IReadOnlyLi
         }
     }
 
+    private bool IsLinked(RankedSearchRow row) => row.Native == null && row.Artist != null && MusicSearchService.IsLinked(row.Artist, linked);
+
     private void PruneExternalDuplicates(IReadOnlyList<RankedSearchRow> libraryRows)
     {
+        if (linked.Count > 0)
+        {
+            if (sections.TryGetValue("artists", out var artistRows)) artistRows.RemoveAll(IsLinked);
+            mixed.RemoveAll(IsLinked);
+            if (pinned != null && IsLinked(pinned)) pinned = null;
+            if (top != null && IsLinked(top)) top = null;
+        }
         // Same-named artists and albums stay separate rows; only a matching recording of a library song is a duplicate.
         var nativeSongs = libraryRows.Where(r => r.Native?.Kind == MusicItemKind.Song).Select(r => new Song
         {

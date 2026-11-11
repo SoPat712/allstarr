@@ -177,6 +177,42 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.Empty(lines[^1]["late"]!.AsArray());
     }
 
+    [Fact]
+    public async Task ClientApi_SearchStreamRankedListsASongLinkedServiceArtistOnTheLibraryArtist()
+    {
+        var libraryItemsJson = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            Items = new object[] { new { Id = "lib-artist-juice", Name = "Juice WRLD", Type = "MusicArtist" } }
+        });
+        var result = new SearchResult
+        {
+            Artists =
+            [
+                new Artist { Id = "ext-deezer-artist-same", Name = "Juice WRLD", ExternalProvider = "deezer", ExternalId = "same" },
+                new Artist { Id = "ext-deezer-artist-999", Name = "Juice WRLD 999", ExternalProvider = "deezer", ExternalId = "999" }
+            ]
+        };
+        var links = new Mock<ILibraryArtistLinks>();
+        links.Setup(item => item.ReadSavedAsync(It.IsAny<Guid>(), It.IsAny<IReadOnlyCollection<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Dictionary<string, IReadOnlyList<LibraryArtistLink>> { ["Juice WRLD"] = [new("deezer", "same")] });
+
+        var lines = await ReadSearchStreamLinesAsync(result, [], "juice wrld", 20, "ranked", nativeItemsJson: libraryItemsJson,
+            artistLinks: links.Object);
+
+        var final = lines[^1];
+        var artists = final["sections"]!["artists"]!.AsArray();
+        // Matched songs prove Deezer's Juice WRLD is the library's, so it rides on the library artist instead of its own row.
+        Assert.DoesNotContain(artists, item => item!["Id"]!.GetValue<string>() == "ext-deezer-artist-same");
+        Assert.DoesNotContain(final["items"]!.AsArray(), item => item!["Id"]!.GetValue<string>() == "ext-deezer-artist-same");
+        var library = Assert.Single(artists, item => item!["Id"]!.GetValue<string>() == "lib-artist-juice")!;
+        var alsoOn = Assert.Single(library["alsoOn"]!.AsArray())!;
+        Assert.Equal("deezer", alsoOn["source"]!.GetValue<string>());
+        Assert.Equal("ext-deezer-artist-same", alsoOn["id"]!.GetValue<string>());
+        Assert.False(string.IsNullOrWhiteSpace(alsoOn["sourceName"]!.GetValue<string>()));
+        Assert.Contains(artists, item => item!["Id"]!.GetValue<string>() == "ext-deezer-artist-999");
+        links.Verify(item => item.RequestAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
     [Theory]
     [InlineData(null, 20)]
     [InlineData("ranked", 40)]
@@ -332,7 +368,7 @@ public sealed partial class ProtocolRouteFixtureTests
 
     private static async Task<JsonNode[]> ReadSearchStreamLinesAsync(SearchResult result,
         IReadOnlyList<ExternalPlaylist> playlists, string query, int limit, string? shape, bool omitLimit = false,
-        string? nativeItemsJson = null)
+        string? nativeItemsJson = null, ILibraryArtistLinks? artistLinks = null)
     {
         var gateway = new Mock<IProtocolProviderGateway>();
         gateway.Setup(item => item.StreamSearchAsync(It.IsAny<ProtocolExecutionContext>(), query, limit, true, true, true, true,
@@ -359,6 +395,11 @@ public sealed partial class ProtocolRouteFixtureTests
             services.AddSingleton(gateway.Object);
             services.RemoveAll<ILibraryIndexService>();
             services.AddSingleton(index.Object);
+            if (artistLinks != null)
+            {
+                services.RemoveAll<ILibraryArtistLinks>();
+                services.AddSingleton(artistLinks);
+            }
         });
         using var client = CreateClientApiClient(factory);
         client.DefaultRequestHeaders.Add("X-Emby-Token", "listener-token");
