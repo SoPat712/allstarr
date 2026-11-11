@@ -214,7 +214,28 @@ public partial class JellyfinController
             if (album == null) return null;
             var excludedArtists = JellyfinProviderQuery.Values(Request.Query["ExcludeArtistIds"].ToString());
             if (album.ArtistId != null && excludedArtists.Contains(album.ArtistId, JellyfinItemIdComparer.Instance)) return [];
-            return album.Songs.Select(QuerySong).ToList();
+            var requestedAlbumId = selectedArtistId ?? $"ext-{provider}-album-{externalId}";
+            var albumName = !string.IsNullOrWhiteSpace(album.Title)
+                ? (ExternalTrackPresentation.Name(album.Title, ExternalTrackPresentation.Preferences(HttpContext)) ?? album.Title)
+                : null;
+            var rows = new List<Dictionary<string, object?>>();
+            for (var index = 0; index < album.Songs.Count; index++)
+            {
+                var song = album.Songs[index];
+                var trackNumber = song.Track is > 0 ? song.Track.Value : (index + 1);
+                var discNumber = song.DiscNumber is > 0 ? song.DiscNumber.Value : 1;
+                var row = QuerySong(song);
+                row["AlbumId"] = requestedAlbumId;
+                if (!string.IsNullOrWhiteSpace(albumName))
+                    row["Album"] = albumName;
+                row["ParentId"] = requestedAlbumId;
+                row["IndexNumber"] = trackNumber;
+                row["ParentIndexNumber"] = discNumber;
+                if (!row.ContainsKey("AlbumPrimaryImageTag") || row["AlbumPrimaryImageTag"] == null)
+                    row["AlbumPrimaryImageTag"] = JellyfinItemArtwork.AlbumImageTag(requestedAlbumId, false);
+                rows.Add(row);
+            }
+            return rows;
         }
         if (type != "artist") return [];
         var includeAlbums = unspecified || types!.Contains("MusicAlbum", StringComparer.OrdinalIgnoreCase);

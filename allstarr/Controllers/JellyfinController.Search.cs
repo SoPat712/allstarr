@@ -123,7 +123,7 @@ public partial class JellyfinController
             {
                 _logger.LogDebug("Fetching children for external parent: {Provider}/{Type}/{ExternalId}",
                     provider, type, externalId);
-                return await GetExternalChildItems(provider!, type!, externalId!, includeItemTypes, HttpContext.RequestAborted);
+                return await GetExternalChildItems(provider!, type!, externalId!, includeItemTypes, HttpContext.RequestAborted, parentId);
             }
 
             var isMusicLibrary = parentId == _settings.LibraryId;

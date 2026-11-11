@@ -465,6 +465,177 @@ public sealed partial class ProtocolRouteFixtureTests
         return gateway;
     }
 
+    [Fact]
+    public async Task JellyfinFeishinAlbumQuery_SingleProviderAlbum_KeepsEveryTrackInTrackOrder()
+    {
+        const string feishinFields = "Fields=Genres&Fields=DateCreated&Fields=MediaSources&Fields=ParentId&Fields=Tags&Fields=SortName&Fields=ProviderIds";
+        const string feishinQuery = $"EnableUserData=true&{feishinFields}&IncludeItemTypes=Audio&Recursive=true&SortBy=ParentIndexNumber%2CIndexNumber%2CSortName&SortOrder=Ascending&StartIndex=0";
+        const string albumId = "ext-apple-download-album-1847721296";
+
+        var track1 = new Song
+        {
+            Id = "ext-apple-download-song-1847721297",
+            ExternalProvider = "apple-download",
+            ExternalId = "1847721297",
+            Title = "Song One",
+            Artist = "Artist",
+            ArtistId = "ext-apple-download-artist-1",
+            Track = 1,
+            DiscNumber = 1
+        };
+        var track2 = new Song
+        {
+            Id = "ext-apple-download-song-1847721298",
+            ExternalProvider = "apple-download",
+            ExternalId = "1847721298",
+            Title = "Song Two",
+            Artist = "Artist",
+            ArtistId = "ext-apple-download-artist-1",
+            Track = 2,
+            DiscNumber = 1
+        };
+        var track3 = new Song
+        {
+            Id = "ext-apple-download-song-1847721299",
+            ExternalProvider = "apple-download",
+            ExternalId = "1847721299",
+            Title = "Song Three",
+            Artist = "Artist",
+            ArtistId = "ext-apple-download-artist-1",
+            Track = null,
+            DiscNumber = null
+        };
+
+        var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        gateway.Setup(item => item.GetAlbumAsync(It.IsAny<ProtocolExecutionContext>(), "apple-download", "1847721296"))
+            .ReturnsAsync(new Album
+            {
+                Id = albumId,
+                Title = "My Lover",
+                Artist = "Artist",
+                ArtistId = "ext-apple-download-artist-1",
+                Songs = [track1, track2, track3]
+            });
+
+        using var factory = ProviderQueryFactory(gateway.Object);
+        using var client = factory.CreateClient();
+
+        using var response = await client.GetAsync($"/Users/user-1/Items?{feishinQuery}&ParentId={albumId}&UserId=user-1&api_key=fixture-key");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var items = body.RootElement.GetProperty("Items").EnumerateArray().ToList();
+        Assert.Equal(3, items.Count);
+
+        var albumIdSet = new HashSet<string>(StringComparer.Ordinal) { albumId };
+        var kept = items.Where(item => item.TryGetProperty("AlbumId", out var a) && albumIdSet.Contains(a.GetString()!)).ToList();
+        Assert.Equal(3, kept.Count);
+
+        for (var index = 0; index < kept.Count; index++)
+        {
+            var item = kept[index];
+            Assert.Equal(albumId, item.GetProperty("AlbumId").GetString());
+            Assert.Equal(ExternalTrackPresentation.Name("My Lover"), item.GetProperty("Album").GetString());
+            Assert.Equal(albumId, item.GetProperty("ParentId").GetString());
+            Assert.Equal(index + 1, item.GetProperty("IndexNumber").GetInt32());
+            Assert.Equal(1, item.GetProperty("ParentIndexNumber").GetInt32());
+        }
+
+        gateway.Verify(item => item.GetAlbumAsync(It.IsAny<ProtocolExecutionContext>(), "apple-download", "1847721296"), Times.Once);
+        gateway.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task JellyfinFeishinAlbumQuery_CanonicalResolvedTrack_KeepsTrackWithAlbumMetadataInTrackOrder()
+    {
+        const string feishinFields = "Fields=Genres&Fields=DateCreated&Fields=MediaSources&Fields=ParentId&Fields=Tags&Fields=SortName&Fields=ProviderIds";
+        const string feishinQuery = $"EnableUserData=true&{feishinFields}&IncludeItemTypes=Audio&Recursive=true&SortBy=ParentIndexNumber%2CIndexNumber%2CSortName&SortOrder=Ascending&StartIndex=0";
+        const string albumId = "ext-deezer-album-779670391";
+        const string canonicalId = "ext-allstarr-song-01a19c59-0941-7b1c-b834-d29394433158";
+
+        var lucySong = new Song
+        {
+            Id = canonicalId,
+            ExternalProvider = "deezer",
+            ExternalId = "779670391",
+            Title = "Lucy",
+            Artist = "Artist",
+            ArtistId = "ext-deezer-artist-1",
+            Album = "My Lover",
+            AlbumId = "ext-apple-download-album-1847721296",
+            CanonicalRecordingId = Guid.Parse("01a19c59-0941-7b1c-b834-d29394433158"),
+            Track = null,
+            DiscNumber = null
+        };
+
+        var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        gateway.Setup(item => item.GetAlbumAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "779670391"))
+            .ReturnsAsync(new Album
+            {
+                Id = albumId,
+                Title = "Lucy",
+                Artist = "Artist",
+                ArtistId = "ext-deezer-artist-1",
+                Songs = [lucySong]
+            });
+
+        using var factory = ProviderQueryFactory(gateway.Object);
+        using var client = factory.CreateClient();
+
+        using var response = await client.GetAsync($"/Users/user-1/Items?{feishinQuery}&ParentId={albumId}&UserId=user-1&api_key=fixture-key");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var items = body.RootElement.GetProperty("Items").EnumerateArray().ToList();
+        Assert.Single(items);
+
+        var albumIdSet = new HashSet<string>(StringComparer.Ordinal) { albumId };
+        var kept = items.Where(item => item.TryGetProperty("AlbumId", out var a) && albumIdSet.Contains(a.GetString()!)).ToList();
+        Assert.Single(kept);
+
+        var item = kept[0];
+        Assert.Equal(canonicalId, item.GetProperty("Id").GetString());
+        Assert.Equal(albumId, item.GetProperty("AlbumId").GetString());
+        Assert.Equal(ExternalTrackPresentation.Name("Lucy"), item.GetProperty("Album").GetString());
+        Assert.Equal(albumId, item.GetProperty("ParentId").GetString());
+        Assert.Equal(1, item.GetProperty("IndexNumber").GetInt32());
+        Assert.Equal(1, item.GetProperty("ParentIndexNumber").GetInt32());
+
+        gateway.Verify(item => item.GetAlbumAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "779670391"), Times.Once);
+        gateway.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task JellyfinFeishinAlbumQuery_WhenFieldsOmitsParentId_ParentIdIsOmittedPerSemantics()
+    {
+        const string feishinFields = "Fields=Genres&Fields=DateCreated&Fields=MediaSources&Fields=Tags&Fields=SortName&Fields=ProviderIds";
+        const string feishinQuery = $"EnableUserData=true&{feishinFields}&IncludeItemTypes=Audio&Recursive=true&SortBy=ParentIndexNumber%2CIndexNumber%2CSortName&SortOrder=Ascending&StartIndex=0";
+        const string albumId = "ext-deezer-album-one";
+
+        var gateway = ProviderQueryGateway();
+        using var factory = ProviderQueryFactory(gateway.Object);
+        using var client = factory.CreateClient();
+
+        using var response = await client.GetAsync($"/Users/user-1/Items?{feishinQuery}&ParentId={albumId}&UserId=user-1&api_key=fixture-key");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var items = body.RootElement.GetProperty("Items").EnumerateArray().ToList();
+        Assert.Equal(2, items.Count);
+
+        var albumIdSet = new HashSet<string>(StringComparer.Ordinal) { albumId };
+        var kept = items.Where(item => item.TryGetProperty("AlbumId", out var a) && albumIdSet.Contains(a.GetString()!)).ToList();
+        Assert.Equal(2, kept.Count);
+
+        foreach (var item in kept)
+        {
+            Assert.Equal(albumId, item.GetProperty("AlbumId").GetString());
+            Assert.False(item.TryGetProperty("ParentId", out _));
+        }
+
+        gateway.VerifyNoOtherCallsAfterAlbumReads();
+    }
+
     private ProtocolFactory ProviderQueryFactory(IProtocolProviderGateway gateway, Func<HttpRequestMessage, string>? native = null) =>
         new("Jellyfin", request => request.RequestUri!.AbsolutePath == "/Users/Me"
             ? Json(200, """{"Id":"user-1"}""")
