@@ -46,6 +46,7 @@ using allstarr.Core.Playback;
 using allstarr.Core.Settings;
 using allstarr.Core.Configuration;
 using allstarr.Core.ClientApi;
+using allstarr.Core.ClientApiV2;
 using allstarr.Controllers.ClientApi;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Extensions.Http;
@@ -427,6 +428,18 @@ builder.Services.AddOpenApi("v1", options =>
         return Task.CompletedTask;
     });
 });
+builder.Services.AddOpenApi("v2", options =>
+{
+    options.ShouldInclude = description => description.GroupName == V2Contract.GroupName;
+    options.AddDocumentTransformer<ClientApiSchemaTransformer>();
+    options.AddDocumentTransformer((document, context, cancellationToken) =>
+    {
+        document.Info.Title = "Allstarr Client API";
+        document.Info.Version = "2";
+        document.Servers = [];
+        return Task.CompletedTask;
+    });
+});
 builder.Services.AddHttpContextAccessor();
 var dataProtectionKeysPath = Path.Combine(builder.Configuration["Storage:DataDirectory"] ?? "/app/data", "data-protection");
 var dataProtectionKeysDirectory = new DirectoryInfo(dataProtectionKeysPath);
@@ -457,6 +470,7 @@ builder.Services.AddHttpClient(LibraryBackendBrandResolver.HttpClientName, clien
 builder.Services.AddScoped<LibraryBackendBrandResolver>();
 builder.Services.AddScoped<LibraryProviderResolver>();
 builder.Services.AddScoped<ItemDetailsReader>();
+builder.Services.AddScoped<V2TrackReader>();
 builder.Services.AddScoped<ClientListeningHistory>();
 builder.Services.AddSingleton<ClientLibraryAdditions>();
 builder.Services.AddScoped<ItemLyricsReader>();
@@ -786,6 +800,7 @@ app.UseMiddleware<allstarr.Middleware.AdminNetworkAllowlistMiddleware>();
 app.UseMiddleware<allstarr.Middleware.AdminBasePathMiddleware>();
 // Recheck the namespace after the dashboard prefix has been normalized.
 app.UseMiddleware<ClientApiMiddleware>();
+app.UseMiddleware<V2RequestMiddleware>();
 // Select endpoints after stripping the admin prefix, before authentication.
 app.UseRouting();
 app.UseRateLimiter();
@@ -810,6 +825,12 @@ if (backendType == BackendType.Jellyfin)
 {
     app.MapGet("/allstarr/v1/openapi.json", async (
         [FromKeyedServices("v1")] IOpenApiDocumentProvider documents, CancellationToken cancellationToken) =>
+    {
+        var document = await documents.GetOpenApiDocumentAsync(cancellationToken);
+        return Results.Content(await document.SerializeAsJsonAsync(OpenApiSpecVersion.OpenApi3_1, cancellationToken), "application/json");
+    }).AllowAnonymous().ExcludeFromDescription();
+    app.MapGet("/allstarr/v2/openapi.json", async (
+        [FromKeyedServices("v2")] IOpenApiDocumentProvider documents, CancellationToken cancellationToken) =>
     {
         var document = await documents.GetOpenApiDocumentAsync(cancellationToken);
         return Results.Content(await document.SerializeAsJsonAsync(OpenApiSpecVersion.OpenApi3_1, cancellationToken), "application/json");

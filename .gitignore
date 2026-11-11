@@ -110,6 +110,7 @@ apis/specifications/*
 !apis/specifications/allstarr/
 apis/specifications/allstarr/*
 !apis/specifications/allstarr/client-v1.json
+!apis/specifications/allstarr/client-v2.json
 !apis/specifications/jellyfin/
 apis/specifications/jellyfin/*
 !apis/specifications/jellyfin/openapi-12.0.0.json

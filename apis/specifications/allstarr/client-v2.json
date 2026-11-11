@@ -1,0 +1,714 @@
+{
+  "openapi": "3.1.1",
+  "info": {
+    "title": "Allstarr Client API",
+    "version": "2"
+  },
+  "paths": {
+    "/allstarr/v2/tracks": {
+      "get": {
+        "tags": [
+          "Tracks"
+        ],
+        "description": "Reads up to 100 tracks in the order asked. Any id spelling is accepted: a track id, a library item id or an `ext-` service id. Two spellings of one song return it once, with both in `aliases`. Ids that are unknown or hidden for this listener are listed in `missing`.",
+        "operationId": "getTracks",
+        "parameters": [
+          {
+            "name": "ids",
+            "in": "query",
+            "description": "Comma-separated ids, at most 100.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "include",
+            "in": "query",
+            "description": "Comma-separated extras. `album` adds an `albums` map keyed by album id.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V2TracksResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/allstarr/v2/tracks/{id}": {
+      "get": {
+        "tags": [
+          "Tracks"
+        ],
+        "description": "Reads one track by any id spelling.",
+        "operationId": "getTrack",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "include",
+            "in": "query",
+            "description": "Comma-separated extras. `album` adds an `albums` map keyed by album id.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V2TrackResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ClientApiError": {
+        "required": [
+          "code",
+          "error"
+        ],
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "error": {
+            "type": "string"
+          }
+        }
+      },
+      "V2AlbumSummary": {
+        "required": [
+          "id",
+          "title",
+          "artists",
+          "year",
+          "isExternal",
+          "artwork"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "artists": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/V2Ref"
+            }
+          },
+          "year": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int32"
+          },
+          "isExternal": {
+            "type": "boolean"
+          },
+          "artwork": {
+            "type": [
+              "null",
+              "object"
+            ],
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/V2Artwork"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "V2Artwork": {
+        "required": [
+          "url"
+        ],
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string"
+          }
+        }
+      },
+      "V2Format": {
+        "required": [
+          "container",
+          "codec",
+          "bitrate",
+          "sampleRate",
+          "bitDepth",
+          "channels",
+          "isLossless"
+        ],
+        "type": "object",
+        "properties": {
+          "container": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "codec": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "bitrate": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int32"
+          },
+          "sampleRate": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int32"
+          },
+          "bitDepth": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int32"
+          },
+          "channels": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int32"
+          },
+          "isLossless": {
+            "type": [
+              "null",
+              "boolean"
+            ]
+          }
+        }
+      },
+      "V2Keep": {
+        "required": [
+          "state",
+          "progress"
+        ],
+        "type": "object",
+        "properties": {
+          "state": {
+            "type": "string"
+          },
+          "progress": {
+            "type": [
+              "null",
+              "number"
+            ],
+            "format": "double"
+          }
+        }
+      },
+      "V2LyricsAvailability": {
+        "required": [
+          "available",
+          "format",
+          "source"
+        ],
+        "type": "object",
+        "properties": {
+          "available": {
+            "type": "boolean"
+          },
+          "format": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "source": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
+      "V2Match": {
+        "required": [
+          "state",
+          "confidence",
+          "authority"
+        ],
+        "type": "object",
+        "properties": {
+          "state": {
+            "type": "string"
+          },
+          "confidence": {
+            "type": [
+              "null",
+              "number"
+            ],
+            "format": "double"
+          },
+          "authority": {
+            "type": "string"
+          }
+        }
+      },
+      "V2Provider": {
+        "required": [
+          "id",
+          "name",
+          "iconUrl",
+          "glyphUrl"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "iconUrl": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "glyphUrl": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
+      "V2Ref": {
+        "required": [
+          "id",
+          "name"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "V2Track": {
+        "required": [
+          "id",
+          "aliases",
+          "isExternal",
+          "libraryItemId",
+          "provider",
+          "externalIds",
+          "title",
+          "artists",
+          "albumArtists",
+          "album",
+          "disc",
+          "track",
+          "durationMs",
+          "year",
+          "explicit",
+          "artwork",
+          "format",
+          "trackGainDb",
+          "albumGainDb",
+          "saved",
+          "playCount",
+          "lastPlayedAt",
+          "keep",
+          "match",
+          "lyrics"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Stable id. `trk_` plus the recording when the song has one, so it survives keeping, adding to the library and rematching."
+          },
+          "aliases": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Other ids this track answers to, including the ones in the request."
+          },
+          "isExternal": {
+            "type": "boolean"
+          },
+          "libraryItemId": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "description": "The media server item when the song is in the library."
+          },
+          "provider": {
+            "type": [
+              "null",
+              "object"
+            ],
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/V2Provider"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "externalIds": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Known identifiers such as `isrc`, `musicbrainzRecording` and the service's own id under its name."
+          },
+          "title": {
+            "type": "string"
+          },
+          "artists": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/V2Ref"
+            }
+          },
+          "albumArtists": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/V2Ref"
+            }
+          },
+          "album": {
+            "type": [
+              "null",
+              "object"
+            ],
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/V2Ref"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "disc": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int32"
+          },
+          "track": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int32"
+          },
+          "durationMs": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int64"
+          },
+          "year": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int32"
+          },
+          "explicit": {
+            "type": [
+              "null",
+              "boolean"
+            ]
+          },
+          "artwork": {
+            "type": [
+              "null",
+              "object"
+            ],
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/V2Artwork"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "format": {
+            "type": [
+              "null",
+              "object"
+            ],
+            "anyOf": [
+              {
+                "description": "The stored or measured file, not what a stream will deliver.",
+                "$ref": "#/components/schemas/V2Format"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "trackGainDb": {
+            "type": [
+              "null",
+              "number"
+            ],
+            "description": "ReplayGain track gain in dB.",
+            "format": "double"
+          },
+          "albumGainDb": {
+            "type": [
+              "null",
+              "number"
+            ],
+            "format": "double"
+          },
+          "saved": {
+            "type": "boolean"
+          },
+          "playCount": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int64"
+          },
+          "lastPlayedAt": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "date-time"
+          },
+          "keep": {
+            "$ref": "#/components/schemas/V2Keep"
+          },
+          "match": {
+            "type": [
+              "null",
+              "object"
+            ],
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/V2Match"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "lyrics": {
+            "$ref": "#/components/schemas/V2LyricsAvailability"
+          }
+        }
+      },
+      "V2TrackResponse": {
+        "required": [
+          "track"
+        ],
+        "type": "object",
+        "properties": {
+          "track": {
+            "$ref": "#/components/schemas/V2Track"
+          },
+          "albums": {
+            "type": [
+              "null",
+              "object"
+            ],
+            "additionalProperties": {
+              "$ref": "#/components/schemas/V2AlbumSummary"
+            }
+          }
+        }
+      },
+      "V2TracksResponse": {
+        "required": [
+          "tracks",
+          "missing"
+        ],
+        "type": "object",
+        "properties": {
+          "tracks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/V2Track"
+            }
+          },
+          "missing": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "albums": {
+            "type": [
+              "null",
+              "object"
+            ],
+            "additionalProperties": {
+              "$ref": "#/components/schemas/V2AlbumSummary"
+            }
+          }
+        }
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "Tracks"
+    }
+  ]
+}
