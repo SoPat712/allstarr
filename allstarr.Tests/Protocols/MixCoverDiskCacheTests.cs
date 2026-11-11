@@ -76,6 +76,8 @@ public sealed class MixCoverDiskCacheTests(ITestOutputHelper output) : IDisposab
         firstContext.Request.QueryString = new("?width=300&format=jpeg");
         var first = Assert.IsType<FileContentResult>(await original.CreateResponseAsync(input, firstContext, version, owner));
         await original.CreateResponseAsync(input with { Generation = 2 }, new DefaultHttpContext(), owner: owner);
+        // Disk writes are queued to a background writer; let them land before the simulated restart reads the disk.
+        await cache.FlushWritesAsync();
         using var restartedCache = Cache();
         var restarted = new MixCoverImageService(_ => throw new InvalidOperationException("Unexpected render"),
             (_, _) => throw new InvalidOperationException("Unexpected artwork read"), cache: restartedCache,

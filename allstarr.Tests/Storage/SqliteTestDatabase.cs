@@ -115,11 +115,22 @@ internal sealed class SqliteTestDatabase : IAsyncDisposable
         }
     }
 
-    public ValueTask DisposeAsync()
+    public async ValueTask DisposeAsync()
     {
         foreach (var suffix in new[] { "", "-wal", "-shm", "-journal" })
             File.Delete(DatabasePath + suffix);
-        Directory.Delete(Path.GetDirectoryName(DatabasePath)!, recursive: true);
-        return ValueTask.CompletedTask;
+        // The media cache's background writer can still be finishing a file when a test host shuts down.
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                Directory.Delete(Path.GetDirectoryName(DatabasePath)!, recursive: true);
+                return;
+            }
+            catch (IOException) when (attempt < 10)
+            {
+                await Task.Delay(50);
+            }
+        }
     }
 }
