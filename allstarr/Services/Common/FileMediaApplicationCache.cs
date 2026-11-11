@@ -1027,8 +1027,13 @@ public sealed partial class HybridApplicationCache(
         return deleted;
     }
     public async Task<bool> ExistsAsync(string key) => await GetStringAsync(key) is not null;
-    public async Task<int> DeleteByPatternAsync(string pattern) =>
-        await metadata.DeleteByPatternAsync(pattern) + await media.DeleteByPatternAsync(pattern);
+    public async Task<int> DeleteByPatternAsync(string pattern)
+    {
+        var deleted = await metadata.DeleteByPatternAsync(pattern);
+        if (ApplicationCachePayloadPolicy.CanPatternTouchDisk(pattern))
+            deleted += await media.DeleteByPatternAsync(pattern);
+        return deleted;
+    }
 
     public async Task<ApplicationCacheDiagnosticsSnapshot> GetDiagnosticsAsync(CancellationToken cancellationToken = default)
     {

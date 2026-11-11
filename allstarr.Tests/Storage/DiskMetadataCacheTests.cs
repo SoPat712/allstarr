@@ -207,6 +207,136 @@ public sealed class DiskMetadataCacheTests : IDisposable
         Assert.Null(await Create().Cache.GetStringAsync(key));
     }
 
+    [Fact]
+    public async Task MemoryTierPatternDeleteSkipsDiskWhileWriterBackloggedAndGateHeld()
+    {
+        var first = Create();
+        for (var i = 0; i < 5; i++)
+        {
+            var searchKey = CacheKeyBuilder.BuildProviderSearchKey("fixture", null, null, listener.ToString(), $"song{i}", 10, true, false, false);
+            await first.Cache.SetStringAsync(searchKey, Body);
+        }
+
+        var backendKey = "backend:libraries:v1:digest123:libraries";
+        await first.Cache.SetStringAsync(backendKey, Body);
+        Assert.Equal(Body, await first.Memory.GetStringAsync(backendKey));
+
+        var gate = (SemaphoreSlim)typeof(FileMediaApplicationCache)
+            .GetField("_gate", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetValue(first.Disk)!;
+
+        var pendingField = typeof(FileMediaApplicationCache)
+            .GetField("_pendingCount", BindingFlags.Instance | BindingFlags.NonPublic)!;
+
+        var evictionsField = typeof(FileMediaApplicationCache)
+            .GetField("_evictions", BindingFlags.Instance | BindingFlags.NonPublic)!;
+
+        await gate.WaitAsync();
+        try
+        {
+            var pendingBefore = (int)pendingField.GetValue(first.Disk)!;
+            Assert.True(pendingBefore > 0, "Pending queue should have pending writes");
+            var evictionsBefore = (long)evictionsField.GetValue(first.Disk)!;
+
+            var pattern = "backend:libraries:v1:digest123:*";
+            var deleted = await first.Cache.DeleteByPatternAsync(pattern);
+
+            Assert.Equal(1, deleted);
+            Assert.Null(await first.Memory.GetStringAsync(backendKey));
+
+            var pendingAfter = (int)pendingField.GetValue(first.Disk)!;
+            Assert.True(pendingAfter > 0, "Pending writes should not have been flushed");
+            Assert.Equal(0, gate.CurrentCount);
+            Assert.Equal(evictionsBefore, (long)evictionsField.GetValue(first.Disk)!);
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    [Theory]
+    [InlineData("search:v4:*")]
+    [InlineData("protocol:metadata:*")]
+    [InlineData("artwork:image:v1:*")]
+    public async Task DiskEligiblePatternDeletesDiskEntries(string pattern)
+    {
+        var first = Create();
+        string key = pattern switch
+        {
+            "search:v4:*" => CacheKeyBuilder.BuildProviderSearchKey("fixture", null, null, listener.ToString(), "album-query", 10, true, true, false),
+            "protocol:metadata:*" => CacheKeyBuilder.BuildProtocolMetadataKey("fixture", listener.ToString(), "album", "1"),
+            "artwork:image:v1:*" => "artwork:image:v1:testimg",
+            _ => throw new ArgumentException(pattern)
+        };
+
+        await first.Cache.SetStringAsync(key, Body);
+        await first.Disk.FlushWritesAsync();
+
+        if (pattern == "artwork:image:v1:*")
+        {
+            Assert.Equal(Body, await first.Disk.GetStringAsync(key));
+            await first.Cache.DeleteByPatternAsync(pattern);
+            Assert.Null(await first.Disk.GetStringAsync(key));
+        }
+        else
+        {
+            Assert.Equal(Body, await Create().Cache.GetStringAsync(key));
+            await first.Cache.DeleteByPatternAsync(pattern);
+            Assert.Null(await Create().Cache.GetStringAsync(key));
+        }
+    }
+
+    [Fact]
+    public async Task MemoryTierPatternRemovesMemoryEntries()
+    {
+        var first = Create();
+        await first.Cache.SetStringAsync("backend:libraries:v1:digest:1", Body);
+        await first.Cache.SetStringAsync("backend:libraries:v1:digest:2", Body);
+        await first.Cache.SetStringAsync("backend:libraries:v1:other:1", Body);
+        await first.Cache.SetStringAsync("feed:read:v1:entry1", Body);
+
+        Assert.Equal(Body, await first.Memory.GetStringAsync("backend:libraries:v1:digest:1"));
+        Assert.Equal(Body, await first.Memory.GetStringAsync("backend:libraries:v1:digest:2"));
+        Assert.Equal(Body, await first.Memory.GetStringAsync("backend:libraries:v1:other:1"));
+        Assert.Equal(Body, await first.Memory.GetStringAsync("feed:read:v1:entry1"));
+
+        var deleted = await first.Cache.DeleteByPatternAsync("backend:libraries:v1:digest:*");
+        Assert.Equal(2, deleted);
+        Assert.Null(await first.Memory.GetStringAsync("backend:libraries:v1:digest:1"));
+        Assert.Null(await first.Memory.GetStringAsync("backend:libraries:v1:digest:2"));
+        Assert.Equal(Body, await first.Memory.GetStringAsync("backend:libraries:v1:other:1"));
+
+        var deletedFeed = await first.Cache.DeleteByPatternAsync("feed:read:v1:*");
+        Assert.Equal(1, deletedFeed);
+        Assert.Null(await first.Memory.GetStringAsync("feed:read:v1:entry1"));
+    }
+
+    [Theory]
+    [InlineData("backend:libraries:v1:abc:*", false)]
+    [InlineData("backend:libraries:v1:*", false)]
+    [InlineData("backend:libraries:*", true)]
+    [InlineData("playlist:discovery:v3:*", false)]
+    [InlineData("playlist:discovery:v3:*:id:*", false)]
+    [InlineData("feed:read:v1:*", false)]
+    [InlineData("search:v2:*", false)]
+    [InlineData("search:v3:*", true)]
+    [InlineData("search:v4:*", true)]
+    [InlineData("search:*", true)]
+    [InlineData("protocol:metadata:*", true)]
+    [InlineData("protocol:metadata:v1:*", true)]
+    [InlineData("protocol:metadata:v2:*", true)]
+    [InlineData("media:descriptor:v5:*", true)]
+    [InlineData("artwork:image:v1:*", true)]
+    [InlineData("lyrics:v2:*", true)]
+    [InlineData("*", true)]
+    [InlineData("", true)]
+    [InlineData("?", true)]
+    public void CanPatternTouchDisk_ClassifiesPatternsCorrectly(string pattern, bool expected)
+    {
+        Assert.Equal(expected, ApplicationCachePayloadPolicy.CanPatternTouchDisk(pattern));
+    }
+
     private (HybridApplicationCache Cache, MemoryApplicationCache Memory, FileMediaApplicationCache Disk) Create(long maximumBytes = 65536, Guid? owner = null)
     {
         var memory = new MemoryApplicationCache(clock);
