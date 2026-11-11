@@ -28,7 +28,11 @@ public sealed class V2TrackReader(
         { "flac", "alac", "wav", "aiff", "ape", "wavpack", "pcm_s16le", "pcm_s24le", "pcm_s32le" };
 
     public async Task<V2TracksResponse> ReadAsync(HttpContext http, ProtocolExecutionContext execution, IReadOnlyList<string> ids,
-        bool includeAlbums)
+        bool includeAlbums) => (await ReadWithSourcesAsync(http, execution, ids, includeAlbums)).Response;
+
+    /// <summary>Also returns, for each returned track id, the library or service item it was read from.</summary>
+    internal async Task<(V2TracksResponse Response, IReadOnlyDictionary<string, string> Sources)> ReadWithSourcesAsync(HttpContext http,
+        ProtocolExecutionContext execution, IReadOnlyList<string> ids, bool includeAlbums)
     {
         var token = execution.CancellationToken;
         var requested = ids.Distinct(StringComparer.Ordinal).ToArray();
@@ -72,6 +76,7 @@ public sealed class V2TrackReader(
         var albums = includeAlbums ? new Dictionary<string, V2AlbumSummary>(StringComparer.Ordinal) : null;
         var missing = new List<string>();
         var returned = new Dictionary<string, int>(StringComparer.Ordinal);
+        var readFrom = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var id in requested)
         {
             var target = targets.GetValueOrDefault(id);
@@ -90,10 +95,11 @@ public sealed class V2TrackReader(
             else
             {
                 returned[built.Id] = tracks.Count;
+                readFrom[built.Id] = target!;
                 tracks.Add(built with { Aliases = aliases });
             }
         }
-        return new(tracks, missing) { Albums = albums };
+        return (new(tracks, missing) { Albums = albums }, readFrom);
     }
 
     private static bool IsExternal(string id) => id.StartsWith("ext-", StringComparison.Ordinal);

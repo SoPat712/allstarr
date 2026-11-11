@@ -894,6 +894,19 @@ that are unknown or hidden for this listener are listed in `missing`.
 is null until measured; `bitrate` is in bits per second and `sampleRate` in Hz.
 `GET /allstarr/v2/tracks/{id}` returns `{track}` for one id, or 404.
 
+`views=` on a single track adds server-computed facts under `views`: `lyrics`,
+`lyricsSources` and `match`, each the same answer as its v1 item route.
+`viewStatus` gives each requested view as `ok`, `none` when the track has nothing
+for it, or `unavailable` when it should be retried later. A view never fails the
+track. Unknown or repeated view names return 400.
+
+`POST /allstarr/v2/batch` runs up to 20 v2 reads in one round trip:
+`{requests: [{id, path}]}` returns `{responses: {id: {status, body}}}`, where
+`body` is what that route returns on its own, or its `{code,error}`. Paths are v2
+GET routes with their query, such as `/allstarr/v2/tracks/trk_…?views=lyrics`.
+Anything else answers 404 inside the batch. One failing read never fails the
+others. Request ids must be unique.
+
 `artwork.url` is `/allstarr/v2/artwork/{key}`; add `?w=` with the pixel width you
 draw at (32 to 2048, default 600). The url changes when the picture does, so it
 can be cached for as long as the app likes. Artwork urls work without a token, like

@@ -23,20 +23,10 @@ public abstract class ClientApiV2ControllerBase : ControllerBase
 {
     protected ProtocolExecutionContext Execution => HttpContext.RequireProtocolExecutionContext();
 
-    /// <summary>Reads a comma-separated list of ids; false when it is empty, too long or has an empty entry.</summary>
-    protected static bool TryIds(string? value, out string[] ids)
+    /// <summary>Writes a shared route's answer; errors become the API's <c>{code,error}</c> shape.</summary>
+    protected IActionResult Respond(V2Result result)
     {
-        ids = value?.Split(',', StringSplitOptions.TrimEntries) ?? [];
-        return ids.Length is > 0 and <= V2Contract.MaximumIdsPerRequest && ids.All(id => id.Length > 0);
-    }
-
-    /// <summary>Reads <c>include=</c>; an unknown name is an error so a typo never looks like missing data.</summary>
-    protected static bool TryInclude(string? value, IReadOnlySet<string> allowed, out HashSet<string> include)
-    {
-        include = new HashSet<string>(StringComparer.Ordinal);
-        if (string.IsNullOrEmpty(value)) return true;
-        foreach (var name in value.Split(',', StringSplitOptions.TrimEntries))
-            if (!allowed.Contains(name) || !include.Add(name)) return false;
-        return true;
+        Response.Headers.CacheControl = "no-store";
+        return result.Status == 200 && result.Body != null ? Ok(result.Body) : StatusCode(result.Status);
     }
 }

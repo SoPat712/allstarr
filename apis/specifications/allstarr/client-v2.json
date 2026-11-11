@@ -5,6 +5,97 @@
     "version": "2"
   },
   "paths": {
+    "/allstarr/v2/batch": {
+      "post": {
+        "tags": [
+          "Batch"
+        ],
+        "description": "Runs up to 20 v2 reads in one round trip and returns each one's status and body by its `id`. Only v2 GET routes can be batched. One failing read never fails the others.",
+        "operationId": "batch",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/V2BatchRequest"
+              }
+            },
+            "text/json": {
+              "schema": {
+                "$ref": "#/components/schemas/V2BatchRequest"
+              }
+            },
+            "application/*+json": {
+              "schema": {
+                "$ref": "#/components/schemas/V2BatchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V2BatchResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/allstarr/v2/tracks": {
       "get": {
         "tags": [
@@ -100,7 +191,7 @@
         "tags": [
           "Tracks"
         ],
-        "description": "Reads one track by any id spelling.",
+        "description": "Reads one track by any id spelling, with any requested views.",
         "operationId": "getTrack",
         "parameters": [
           {
@@ -115,6 +206,14 @@
             "name": "include",
             "in": "query",
             "description": "Comma-separated extras. `album` adds an `albums` map keyed by album id.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "views",
+            "in": "query",
+            "description": "Comma-separated views: `lyrics`, `lyricsSources`, `match`. `viewStatus` says how each one went.",
             "schema": {
               "type": "string"
             }
@@ -202,6 +301,464 @@
           }
         }
       },
+      "ClientItemMatch": {
+        "required": [
+          "state",
+          "confidence",
+          "authority",
+          "current",
+          "candidates",
+          "revision"
+        ],
+        "type": "object",
+        "properties": {
+          "state": {
+            "type": "string"
+          },
+          "confidence": {
+            "type": [
+              "null",
+              "number"
+            ],
+            "format": "double"
+          },
+          "authority": {
+            "type": "string"
+          },
+          "current": {
+            "type": [
+              "null",
+              "object"
+            ],
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ClientMatchCandidate"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "candidates": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ClientMatchCandidate"
+            }
+          },
+          "revision": {
+            "type": "string"
+          }
+        }
+      },
+      "ClientLyricsChosen": {
+        "required": [
+          "sourceId",
+          "layer"
+        ],
+        "type": "object",
+        "properties": {
+          "sourceId": {
+            "type": "string"
+          },
+          "layer": {
+            "type": "string"
+          }
+        }
+      },
+      "ClientLyricsRevision": {
+        "type": "object",
+        "properties": {
+          "personal": {
+            "type": [
+              "null",
+              "object"
+            ],
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ClientLyricsStamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "household": {
+            "type": [
+              "null",
+              "object"
+            ],
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ClientLyricsStamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "ClientLyricsSource": {
+        "required": [
+          "sourceId",
+          "format",
+          "preview",
+          "providerId",
+          "providerName",
+          "title",
+          "artist",
+          "album",
+          "durationMs"
+        ],
+        "type": "object",
+        "properties": {
+          "sourceId": {
+            "type": "string"
+          },
+          "format": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "preview": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "providerId": {
+            "type": "string"
+          },
+          "providerName": {
+            "type": "string"
+          },
+          "title": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "artist": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "album": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "durationMs": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int64"
+          },
+          "state": {
+            "type": "string"
+          },
+          "score": {
+            "type": [
+              "null",
+              "number"
+            ],
+            "format": "double"
+          },
+          "rank": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int32"
+          },
+          "reasons": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "lyrics": {
+            "type": [
+              "null",
+              "object"
+            ],
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RichLyrics"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "ClientLyricsSources": {
+        "required": [
+          "sources",
+          "chosen",
+          "revision"
+        ],
+        "type": "object",
+        "properties": {
+          "sources": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ClientLyricsSource"
+            }
+          },
+          "chosen": {
+            "type": [
+              "null",
+              "object"
+            ],
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ClientLyricsChosen"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "revision": {
+            "$ref": "#/components/schemas/ClientLyricsRevision"
+          }
+        }
+      },
+      "ClientLyricsStamp": {
+        "required": [
+          "id",
+          "revision"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "ClientMatchCandidate": {
+        "required": [
+          "candidateId",
+          "title",
+          "artist",
+          "album",
+          "durationMs",
+          "isrc",
+          "provider",
+          "isExternal",
+          "confidence",
+          "reasons"
+        ],
+        "type": "object",
+        "properties": {
+          "candidateId": {
+            "type": "string"
+          },
+          "title": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "artist": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "album": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "durationMs": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int64"
+          },
+          "isrc": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "provider": {
+            "$ref": "#/components/schemas/ItemDetailsProvider"
+          },
+          "isExternal": {
+            "type": "boolean"
+          },
+          "confidence": {
+            "type": [
+              "null",
+              "number"
+            ],
+            "format": "double"
+          },
+          "reasons": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "ItemDetailsProvider": {
+        "required": [
+          "id",
+          "name",
+          "iconUrl"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "iconUrl": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "glyphUrl": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
+      "RichLyrics": {
+        "required": [
+          "source",
+          "format",
+          "lines"
+        ],
+        "type": "object",
+        "properties": {
+          "source": {
+            "$ref": "#/components/schemas/RichLyricsSource"
+          },
+          "format": {
+            "type": "string"
+          },
+          "lines": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RichLyricsLine"
+            }
+          }
+        }
+      },
+      "RichLyricsLine": {
+        "required": [
+          "startMs",
+          "endMs",
+          "text",
+          "part",
+          "words"
+        ],
+        "type": "object",
+        "properties": {
+          "startMs": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int64"
+          },
+          "endMs": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int64"
+          },
+          "text": {
+            "type": "string"
+          },
+          "part": {
+            "type": "string"
+          },
+          "words": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RichLyricsWord"
+            }
+          },
+          "voice": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "singer": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
+      "RichLyricsSource": {
+        "required": [
+          "id",
+          "name"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "RichLyricsWord": {
+        "required": [
+          "startMs",
+          "endMs",
+          "text"
+        ],
+        "type": "object",
+        "properties": {
+          "startMs": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "endMs": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int64"
+          },
+          "text": {
+            "type": "string"
+          }
+        }
+      },
       "V2AlbumSummary": {
         "required": [
           "id",
@@ -260,6 +817,70 @@
           "url": {
             "type": "string"
           }
+        }
+      },
+      "V2BatchItem": {
+        "required": [
+          "id",
+          "path"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "type": "string"
+          },
+          "path": {
+            "maxLength": 8192,
+            "minLength": 1,
+            "type": "string",
+            "description": "A v2 GET path with its query, such as `/allstarr/v2/tracks/trk_…?views=lyrics`."
+          }
+        }
+      },
+      "V2BatchRequest": {
+        "required": [
+          "requests"
+        ],
+        "type": "object",
+        "properties": {
+          "requests": {
+            "maxItems": 20,
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/V2BatchItem"
+            }
+          }
+        }
+      },
+      "V2BatchResponse": {
+        "required": [
+          "responses"
+        ],
+        "type": "object",
+        "properties": {
+          "responses": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/V2BatchResult"
+            }
+          }
+        }
+      },
+      "V2BatchResult": {
+        "required": [
+          "status",
+          "body"
+        ],
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "body": {}
         }
       },
       "V2Format": {
@@ -682,6 +1303,29 @@
             "additionalProperties": {
               "$ref": "#/components/schemas/V2AlbumSummary"
             }
+          },
+          "views": {
+            "type": [
+              "null",
+              "object"
+            ],
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/V2TrackViews"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "viewStatus": {
+            "type": [
+              "null",
+              "object"
+            ],
+            "additionalProperties": {
+              "type": "string"
+            }
           }
         }
       },
@@ -714,10 +1358,60 @@
             }
           }
         }
+      },
+      "V2TrackViews": {
+        "type": "object",
+        "properties": {
+          "lyrics": {
+            "type": [
+              "null",
+              "object"
+            ],
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RichLyrics"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "lyricsSources": {
+            "type": [
+              "null",
+              "object"
+            ],
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ClientLyricsSources"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "match": {
+            "type": [
+              "null",
+              "object"
+            ],
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ClientItemMatch"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
       }
     }
   },
   "tags": [
+    {
+      "name": "Batch"
+    },
     {
       "name": "Tracks"
     }

@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using allstarr.Core.Capabilities;
@@ -247,6 +248,148 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.Equal(2, images.Count);
         Assert.Equal("120", Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(images[1].Query)["maxWidth"].ToString());
         Assert.DoesNotContain("listener-token", imageAuthorizations[1] ?? "");
+    }
+
+    [Fact]
+    public async Task ClientApiV2_TrackViewsUseTheSameReadersAsTheItemRoutes()
+    {
+        var gateway = new Mock<IProtocolProviderGateway>();
+        gateway.Setup(service => service.GetPlayableProviderOrderAsync(It.IsAny<ProviderActorContext>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(["deezer"]);
+        gateway.Setup(service => service.GetStoredSongAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), It.IsAny<string>()))
+            .ReturnsAsync(() => new Song { Id = "ext-deezer-song-known", Title = "Stored song", Artist = "Stored artist", ExternalProvider = "deezer", ExternalId = "known" });
+        using var factory = ClientDetailsFactory(request => request.RequestUri!.AbsolutePath == "/Users/Me"
+            ? Json(200, """{"Id":"listener"}""") : throw new InvalidOperationException("Unexpected upstream request"), services =>
+            {
+                services.RemoveAll<IProtocolProviderGateway>();
+                services.AddSingleton(gateway.Object);
+            });
+        using var client = CreateClientApiClient(factory);
+        client.DefaultRequestHeaders.Authorization = new("Bearer", "listener-token");
+        var recording = await SeedClientDetailsAsync(factory, "listener", "known", personal: true);
+        using var response = await client.GetAsync("/allstarr/v2/tracks/ext-deezer-song-known?views=match,lyrics,lyricsSources");
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.True(response.StatusCode == HttpStatusCode.OK, body);
+        var json = JsonNode.Parse(body)!;
+        Assert.Equal(V2Ids.Track(recording), json["track"]!["id"]!.GetValue<string>());
+        var status = json["viewStatus"]!.AsObject();
+        Assert.Equal(["lyrics", "lyricsSources", "match"], status.Select(item => item.Key).Order().ToArray());
+        // Each view answers exactly as its v1 item route does for the same song.
+        using var v1 = CreateClientApiClient(factory);
+        v1.DefaultRequestHeaders.Add("X-Emby-Token", "listener-token");
+        foreach (var (view, path) in new[] { ("lyrics", "lyrics"), ("lyricsSources", "lyrics/sources"), ("match", "match") })
+        {
+            using var item = await v1.GetAsync($"/allstarr/v1/items/ext-deezer-song-known/{path}");
+            var itemBody = await item.Content.ReadAsStringAsync();
+            if (item.StatusCode == HttpStatusCode.OK)
+            {
+                Assert.Equal("ok", status[view]!.GetValue<string>());
+                Assert.True(JsonNode.DeepEquals(JsonNode.Parse(itemBody), json["views"]![view]), $"{view}: {itemBody} vs {json["views"]![view]}");
+            }
+            else
+            {
+                Assert.Equal(HttpStatusCode.NotFound, item.StatusCode);
+                Assert.Equal("none", status[view]!.GetValue<string>());
+                Assert.Null(json["views"]![view]);
+            }
+        }
+        Assert.True(status.Any(item => item.Value!.GetValue<string>() == "ok"), status.ToJsonString());
+
+        using var plain = await client.GetAsync("/allstarr/v2/tracks/ext-deezer-song-known");
+        using var plainJson = JsonDocument.Parse(await plain.Content.ReadAsStringAsync());
+        Assert.False(plainJson.RootElement.TryGetProperty("views", out _));
+        Assert.False(plainJson.RootElement.TryGetProperty("viewStatus", out _));
+        foreach (var invalid in new[] { "lyric", "lyrics,lyrics", "playback" })
+        {
+            using var rejected = await client.GetAsync($"/allstarr/v2/tracks/ext-deezer-song-known?views={invalid}");
+            await AssertClientApiError(rejected, 400, "invalid_request");
+        }
+    }
+
+    [Fact]
+    public async Task ClientApiV2_BatchRunsOnlyV2ReadsAndKeepsFailuresSeparate()
+    {
+        using var factory = ClientDetailsFactory(request =>
+        {
+            if (request.RequestUri!.AbsolutePath == "/Users/Me") return Json(200, """{"Id":"listener"}""");
+            Assert.Equal("/Users/listener/Items", request.RequestUri.AbsolutePath);
+            return Json(200, V2LibrarySong);
+        });
+        using var fixtures = new ProviderIconFiles();
+        using var client = CreateClientApiClient(factory);
+        fixtures.Use(factory.Services);
+        client.DefaultRequestHeaders.Authorization = new("Bearer", "listener-token");
+        var requests = new[]
+        {
+            new { id = "list", path = "/allstarr/v2/tracks?ids=native1&include=album" },
+            new { id = "one", path = "/allstarr/v2/tracks/native1" },
+            new { id = "badView", path = "/allstarr/v2/tracks/native1?views=bogus" },
+            new { id = "token", path = "/allstarr/v2/tracks/native1?api_key=listener-token" },
+            new { id = "repeated", path = "/allstarr/v2/tracks?ids=native1&ids=native2" },
+            new { id = "unknown", path = "/allstarr/v2/tracks/unknown" },
+            new { id = "artwork", path = "/allstarr/v2/artwork/bmF0aXZlMQ" },
+            new { id = "v1", path = "/allstarr/v1/capabilities" },
+            new { id = "escape", path = "/allstarr/v2/tracks/a%2Fb" },
+            new { id = "outside", path = "https://example.test/allstarr/v2/tracks/native1" }
+        };
+        using var response = await client.PostAsJsonAsync("/allstarr/v2/batch", new { requests });
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.True(response.StatusCode == HttpStatusCode.OK, body);
+        Assert.Equal("no-store", response.Headers.CacheControl?.ToString());
+        using var json = JsonDocument.Parse(body);
+        var responses = json.RootElement.GetProperty("responses");
+        Assert.Equal(requests.Select(item => item.id).Order(), responses.EnumerateObject().Select(item => item.Name).Order());
+        Assert.Equal(200, responses.GetProperty("list").GetProperty("status").GetInt32());
+        var listed = responses.GetProperty("list").GetProperty("body");
+        Assert.Equal(V2Ids.TrackSource("native1"), Assert.Single(listed.GetProperty("tracks").EnumerateArray()).GetProperty("id").GetString());
+        Assert.True(listed.GetProperty("albums").TryGetProperty(V2Ids.Album("album1"), out _));
+        Assert.Equal("Library song", responses.GetProperty("one").GetProperty("body").GetProperty("track").GetProperty("title").GetString());
+        foreach (var (id, status, code) in new[] { ("badView", 400, "invalid_request"), ("token", 400, "invalid_request"), ("repeated", 400, "invalid_request"),
+                     ("unknown", 404, "not_found"), ("artwork", 404, "not_found"), ("v1", 404, "not_found"), ("escape", 404, "not_found"), ("outside", 404, "not_found") })
+        {
+            var result = responses.GetProperty(id);
+            Assert.Equal(status, result.GetProperty("status").GetInt32());
+            Assert.Equal(code, result.GetProperty("body").GetProperty("code").GetString());
+        }
+    }
+
+    [Fact]
+    public async Task ClientApiV2_BatchReadsRunSideBySideWithTheirOwnRequestState()
+    {
+        using var factory = ClientDetailsFactory(request =>
+        {
+            if (request.RequestUri!.AbsolutePath == "/Users/Me") return Json(200, """{"Id":"listener"}""");
+            return Json(200, V2LibrarySong);
+        });
+        using var fixtures = new ProviderIconFiles();
+        using var client = CreateClientApiClient(factory);
+        fixtures.Use(factory.Services);
+        client.DefaultRequestHeaders.Authorization = new("Bearer", "listener-token");
+        var requests = Enumerable.Range(0, V2Contract.MaximumBatchRequests).Select(index => new { id = $"r{index}", path = "/allstarr/v2/tracks/native1" }).ToArray();
+        using var response = await client.PostAsJsonAsync("/allstarr/v2/batch", new { requests });
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.True(response.StatusCode == HttpStatusCode.OK, body);
+        using var json = JsonDocument.Parse(body);
+        foreach (var result in json.RootElement.GetProperty("responses").EnumerateObject())
+        {
+            Assert.Equal(200, result.Value.GetProperty("status").GetInt32());
+            Assert.True(result.Value.GetProperty("body").GetProperty("track").GetProperty("saved").GetBoolean());
+        }
+    }
+
+    [Theory]
+    [InlineData(0, false)]
+    [InlineData(21, false)]
+    [InlineData(2, true)]
+    public async Task ClientApiV2_BatchRejectsEmptyOversizedAndDuplicateRequests(int count, bool duplicate)
+    {
+        using var factory = ClientDetailsFactory(request => request.RequestUri!.AbsolutePath == "/Users/Me"
+            ? Json(200, """{"Id":"listener"}""") : throw new InvalidOperationException("Unexpected upstream request"));
+        using var client = CreateClientApiClient(factory);
+        client.DefaultRequestHeaders.Authorization = new("Bearer", "listener-token");
+        var requests = Enumerable.Range(0, count).Select(index => new { id = duplicate ? "same" : $"r{index}", path = "/allstarr/v2/tracks/native1" });
+        using var response = await client.PostAsJsonAsync("/allstarr/v2/batch", new { requests });
+        await AssertClientApiError(response, 400, "invalid_request");
     }
 
     [Theory]

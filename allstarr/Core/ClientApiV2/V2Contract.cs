@@ -1,5 +1,8 @@
 using System.ComponentModel;
+using System.ComponentModel.DataAnnotations;
 using System.Text.Json.Serialization;
+using allstarr.Core.Capabilities;
+using allstarr.Core.ClientApi;
 
 namespace allstarr.Core.ClientApiV2;
 
@@ -7,6 +10,7 @@ public static class V2Contract
 {
     public const string GroupName = "allstarr-client-v2";
     public const int MaximumIdsPerRequest = 100;
+    public const int MaximumBatchRequests = 20;
 }
 
 /// <summary>One track shape for every list, queue, history entry and detail in the native client API.</summary>
@@ -105,4 +109,52 @@ public sealed record V2TrackResponse([property: JsonPropertyName("track")] V2Tra
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     [JsonPropertyName("albums")]
     public IReadOnlyDictionary<string, V2AlbumSummary>? Albums { get; init; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    [JsonPropertyName("views")]
+    public V2TrackViews? Views { get; init; }
+
+    /// <summary>For each requested view: <c>ok</c>, <c>none</c> when the track has nothing for it, or <c>unavailable</c> to retry later.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    [JsonPropertyName("viewStatus")]
+    public IReadOnlyDictionary<string, string>? ViewStatus { get; init; }
 }
+
+/// <summary>Server-computed facts about one track. Only requested views that have data are present.</summary>
+public sealed record V2TrackViews
+{
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    [JsonPropertyName("lyrics")]
+    public RichLyrics? Lyrics { get; init; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    [JsonPropertyName("lyricsSources")]
+    public ClientLyricsSources? LyricsSources { get; init; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    [JsonPropertyName("match")]
+    public ClientItemMatch? Match { get; init; }
+}
+
+public sealed record V2BatchRequest
+{
+    [Required, MinLength(1), MaxLength(V2Contract.MaximumBatchRequests), JsonPropertyName("requests")]
+    public required V2BatchItem[] Requests { get; init; }
+}
+
+public sealed record V2BatchItem
+{
+    [Required, StringLength(64, MinimumLength = 1), JsonPropertyName("id")]
+    public required string Id { get; init; }
+
+    [Required, StringLength(8192, MinimumLength = 1), JsonPropertyName("path"), Description("A v2 GET path with its query, such as `/allstarr/v2/tracks/trk_…?views=lyrics`.")]
+    public required string Path { get; init; }
+}
+
+public sealed record V2BatchResponse(
+    [property: JsonPropertyName("responses")] IReadOnlyDictionary<string, V2BatchResult> Responses);
+
+/// <summary>One sub-request's answer: the body that route returns on its own, or its <c>{code,error}</c>.</summary>
+public sealed record V2BatchResult(
+    [property: JsonPropertyName("status")] int Status,
+    [property: JsonPropertyName("body")] object Body);
