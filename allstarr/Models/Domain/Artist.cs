@@ -16,4 +16,6 @@ public class Artist
     public bool IsLocal { get; set; }
     public string? ExternalProvider { get; set; }
     public string? ExternalId { get; set; }
+    public List<string> TopAlbumTitles { get; set; } = [];
+    public List<string> TopTrackTitles { get; set; } = [];
 }

@@ -791,12 +791,46 @@ public partial class JellyfinController : ControllerBase
     private async Task<string?> ResolveArtistImageUrlAsync(string provider, string id, CancellationToken token)
     {
         if (await ArtistArtworkCache.ReadResourceAsync(_cache, provider, id) is { } stored)
-            return await ArtistArtworkCache.ResolveAsync(_cache, ImageContext(token), stored);
+        {
+            var resolved = await ArtistArtworkCache.ResolveAsync(_cache, ImageContext(token), stored);
+            if (resolved != null) return resolved;
+            var lookupResult = await LookupArtistReleasesAsync(ImageContext(token), provider, id, token);
+            if (lookupResult != null)
+            {
+                await ArtistArtworkCache.PrepareSearchAsync(_cache, ImageContext(token)!, [], [stored], lookupResult.Value.Albums, lookupResult.Value.Tracks);
+                return await ArtistArtworkCache.ResolveAsync(_cache, ImageContext(token), stored);
+            }
+            return null;
+        }
         var url = await GetProviderImageUrlAsync(provider, "artist", id, token);
-        if (await ArtistArtworkCache.ReadResourceAsync(_cache, provider, id) == null)
-            await ArtistArtworkCache.RememberAsync(_cache, ImageContext(token), new Artist
-            { Id = $"ext-{provider}-artist-{id}", ExternalProvider = provider, ExternalId = id, ImageUrl = url });
+        var created = await ArtistArtworkCache.ReadResourceAsync(_cache, provider, id) ?? new Artist
+        { Id = $"ext-{provider}-artist-{id}", ExternalProvider = provider, ExternalId = id, ImageUrl = url };
+        var lookup = await LookupArtistReleasesAsync(ImageContext(token), provider, id, token);
+        if (lookup != null)
+            await ArtistArtworkCache.PrepareSearchAsync(_cache, ImageContext(token)!, [], [created], lookup.Value.Albums, lookup.Value.Tracks);
+        else
+            await ArtistArtworkCache.RememberAsync(_cache, ImageContext(token), created);
         return await ArtistArtworkCache.ResolveResourceAsync(_cache, ImageContext(token), provider, id, url);
+    }
+
+    private async Task<(List<Album> Albums, List<Song> Tracks)?> LookupArtistReleasesAsync(
+        ProtocolExecutionContext? protocol, string provider, string externalId, CancellationToken token)
+    {
+        if (protocol == null) return null;
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(token, timeout.Token);
+        try
+        {
+            var albumsTask = _providerGateway.GetArtistAlbumsAsync(protocol, provider, externalId, 10);
+            var tracksTask = _providerGateway.GetArtistTracksAsync(protocol, provider, externalId, 10);
+            await Task.WhenAll(albumsTask, tracksTask).WaitAsync(linked.Token);
+            return (await albumsTask, await tracksTask);
+        }
+        catch (Exception error) when (error is not OperationCanceledException || timeout.IsCancellationRequested)
+        {
+            _logger.LogDebug("Artist release lookup was unavailable for {Provider}/{Id} ({Error})", provider, externalId, error.GetType().Name);
+            return null;
+        }
     }
 
     private ProtocolExecutionContext? ImageContext(CancellationToken token)

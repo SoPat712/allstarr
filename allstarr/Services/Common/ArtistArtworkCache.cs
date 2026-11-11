@@ -19,8 +19,12 @@ internal static class ArtistArtworkCache
     internal static string ImageTag(Artist artist) => artist.Id + "-art-v4-" + Hash(artist.ImageUrl ?? "")[..12];
 
     internal static async Task PrepareSearchAsync(IApplicationCache? cache, ProtocolExecutionContext protocol,
-        IEnumerable<Dictionary<string, object?>> nativeArtists, IReadOnlyList<Artist> artists)
+        IEnumerable<Dictionary<string, object?>> nativeArtists, IReadOnlyList<Artist> artists,
+        IReadOnlyList<Album>? albums = null, IReadOnlyList<Song>? songs = null)
     {
+        foreach (var artist in artists)
+            PopulateTopResults(artist, albums, songs);
+
         if (cache?.IsEnabled != true)
         {
             foreach (var artist in artists)
@@ -46,6 +50,81 @@ internal static class ArtistArtworkCache
         }
         foreach (var artist in artists) await RememberAsync(cache, protocol, artist);
         foreach (var artist in artists) artist.ImageUrl = await ResolveAsync(cache, protocol, artist);
+        foreach (var artist in artists)
+        {
+            if (artist.ExternalProvider is { } provider && artist.ExternalId is { } id &&
+                artist.ImageUrl?.StartsWith("/Items/", StringComparison.Ordinal) != true)
+                await cache.SetAsync(Key(provider, "artist", id), artist, TimeSpan.FromHours(24));
+        }
+    }
+
+    internal static void PopulateTopResults(Artist artist, IReadOnlyList<Album>? albums, IReadOnlyList<Song>? songs)
+    {
+        if (albums != null && albums.Count > 0 && artist.TopAlbumTitles.Count == 0)
+        {
+            artist.TopAlbumTitles = albums
+                .Where(album => IsCredited(artist, album))
+                .Select(album => album.Title)
+                .Where(title => !string.IsNullOrWhiteSpace(title))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Take(10)
+                .ToList();
+        }
+        if (songs != null && songs.Count > 0 && artist.TopTrackTitles.Count == 0)
+        {
+            artist.TopTrackTitles = songs
+                .Where(song => IsCredited(artist, song))
+                .Select(song => song.Title)
+                .Where(title => !string.IsNullOrWhiteSpace(title))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Take(10)
+                .ToList();
+        }
+    }
+
+    private static bool IsCredited(Artist artist, Album album)
+    {
+        if (!string.IsNullOrWhiteSpace(artist.ExternalProvider) && !string.IsNullOrWhiteSpace(album.ExternalProvider) &&
+            !string.Equals(allstarr.Core.Providers.AppleMusicKit.AppleMusicClient.NormalizeProviderId(artist.ExternalProvider),
+                allstarr.Core.Providers.AppleMusicKit.AppleMusicClient.NormalizeProviderId(album.ExternalProvider), StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        if (!string.IsNullOrWhiteSpace(artist.ExternalId) &&
+            (album.ArtistId == artist.ExternalId || album.Artists.Any(a => a.ExternalId == artist.ExternalId || a.Id == artist.Id)))
+            return true;
+
+        if (string.IsNullOrWhiteSpace(artist.Name)) return false;
+        var normArtistName = FuzzyMatcher.NormalizeForMatching(artist.Name);
+        if (!string.IsNullOrWhiteSpace(album.Artist) && FuzzyMatcher.NormalizeForMatching(album.Artist) == normArtistName)
+            return true;
+
+        return album.Artists.Any(a => !string.IsNullOrWhiteSpace(a.Name) && FuzzyMatcher.NormalizeForMatching(a.Name) == normArtistName);
+    }
+
+    private static bool IsCredited(Artist artist, Song song)
+    {
+        if (!string.IsNullOrWhiteSpace(artist.ExternalProvider) && !string.IsNullOrWhiteSpace(song.ExternalProvider) &&
+            !string.Equals(allstarr.Core.Providers.AppleMusicKit.AppleMusicClient.NormalizeProviderId(artist.ExternalProvider),
+                allstarr.Core.Providers.AppleMusicKit.AppleMusicClient.NormalizeProviderId(song.ExternalProvider), StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        if (!string.IsNullOrWhiteSpace(artist.ExternalId) &&
+            (song.ArtistId == artist.ExternalId || song.ArtistIds.Contains(artist.ExternalId) ||
+             song.AlbumArtists.Any(a => a.ExternalId == artist.ExternalId || a.Id == artist.Id)))
+            return true;
+
+        if (string.IsNullOrWhiteSpace(artist.Name)) return false;
+        var normArtistName = FuzzyMatcher.NormalizeForMatching(artist.Name);
+        if (!string.IsNullOrWhiteSpace(song.Artist) && FuzzyMatcher.NormalizeForMatching(song.Artist) == normArtistName)
+            return true;
+
+        if (!string.IsNullOrWhiteSpace(song.AlbumArtist) && FuzzyMatcher.NormalizeForMatching(song.AlbumArtist) == normArtistName)
+            return true;
+
+        if (song.Artists.Any(a => !string.IsNullOrWhiteSpace(a) && FuzzyMatcher.NormalizeForMatching(a) == normArtistName))
+            return true;
+
+        return song.AlbumArtists.Any(a => !string.IsNullOrWhiteSpace(a.Name) && FuzzyMatcher.NormalizeForMatching(a.Name) == normArtistName);
     }
 
     internal static async Task RememberAsync(IApplicationCache? cache, ProtocolExecutionContext? protocol, Artist artist)
@@ -149,6 +228,19 @@ internal static class ArtistArtworkCache
         if (right.ExternalProvider is { } rp && right.ExternalId is { } ri) b.TryAdd(rp, ri);
         if (a.TryGetValue("musicbrainz", out var am) && b.TryGetValue("musicbrainz", out var bm) &&
             Guid.TryParse(am, out var ag) && Guid.TryParse(bm, out var bg)) return ag == bg;
-        return a.Any(item => item.Key != "musicbrainz" && !string.IsNullOrWhiteSpace(item.Value) && b.TryGetValue(item.Key, out var value) && value == item.Value);
+        if (a.Any(item => item.Key != "musicbrainz" && !string.IsNullOrWhiteSpace(item.Value) && b.TryGetValue(item.Key, out var value) && value == item.Value))
+            return true;
+
+        if (right.IsLocal) return false;
+
+        var leftTitles = left.TopAlbumTitles.Concat(left.TopTrackTitles)
+            .Select(FuzzyMatcher.NormalizeAlbumForMatching)
+            .Where(t => !string.IsNullOrWhiteSpace(t));
+        var rightTitles = right.TopAlbumTitles.Concat(right.TopTrackTitles)
+            .Select(FuzzyMatcher.NormalizeAlbumForMatching)
+            .Where(t => !string.IsNullOrWhiteSpace(t))
+            .ToHashSet(StringComparer.Ordinal);
+
+        return leftTitles.Any(rightTitles.Contains);
     }
 }

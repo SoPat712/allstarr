@@ -1034,7 +1034,15 @@ public partial class SubsonicController : ControllerBase
             case "artist":
                 var artist = await GetProviderArtistAsync(coverProvider!, coverExternalId!);
                 if (artist != null)
+                {
                     await ArtistArtworkCache.PrepareSearchAsync(_cache, CurrentProtocolContext, [], [artist]);
+                    if (artist.ImageUrl == null && !string.IsNullOrWhiteSpace(artist.ExternalProvider) && !string.IsNullOrWhiteSpace(artist.ExternalId))
+                    {
+                        var lookup = await LookupArtistReleasesAsync(CurrentProtocolContext, artist.ExternalProvider, artist.ExternalId, HttpContext.RequestAborted);
+                        if (lookup != null)
+                            await ArtistArtworkCache.PrepareSearchAsync(_cache, CurrentProtocolContext, [], [artist], lookup.Value.Albums, lookup.Value.Tracks);
+                    }
+                }
                 if (artist?.ImageUrl != null)
                 {
                     coverUrl = artist.ImageUrl;
@@ -1144,6 +1152,26 @@ public partial class SubsonicController : ControllerBase
             },
             MaximumArtworkBytes,
             HttpContext.RequestAborted);
+    }
+
+    private async Task<(List<Album> Albums, List<Song> Tracks)?> LookupArtistReleasesAsync(
+        ProtocolExecutionContext? protocol, string provider, string externalId, CancellationToken token)
+    {
+        if (protocol == null) return null;
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(token, timeout.Token);
+        try
+        {
+            var albumsTask = _providerGateway.GetArtistAlbumsAsync(protocol, provider, externalId, 10);
+            var tracksTask = _providerGateway.GetArtistTracksAsync(protocol, provider, externalId, 10);
+            await Task.WhenAll(albumsTask, tracksTask).WaitAsync(linked.Token);
+            return (await albumsTask, await tracksTask);
+        }
+        catch (Exception error) when (error is not OperationCanceledException || timeout.IsCancellationRequested)
+        {
+            _logger.LogDebug("Artist release lookup was unavailable for {Provider}/{Id} ({Error})", provider, externalId, error.GetType().Name);
+            return null;
+        }
     }
 
     #region Helper Methods

@@ -469,6 +469,7 @@ public sealed partial class ProtocolProviderGateway(
             (long)clock.GetElapsedTime(searchStarted).TotalMilliseconds, searchTasks.Count(task => task.IsCompleted), searchTasks.Length,
             string.Join(", ", plan.Candidates.Where((_, index) => !searchTasks[index].IsCompleted).Select(candidate => candidate.Provider.Id)));
 
+        var searchSongs = new List<Song>();
         for (var index = 0; index < searchTasks.Length; index++)
         {
             if (!searchTasks[index].IsCompletedSuccessfully) continue;
@@ -489,9 +490,11 @@ public sealed partial class ProtocolProviderGateway(
             }
             routed.Albums.AddRange(result.Albums);
             routed.Artists.AddRange(result.Artists);
+            searchSongs.AddRange(result.Songs);
         }
 
-        await ArtistArtworkCache.PrepareSearchAsync(applicationCache, protocol, [], routed.Artists);
+        await ArtistArtworkCache.PrepareSearchAsync(applicationCache, protocol, [], routed.Artists,
+            routed.Albums, searchSongs);
 
         if (albumLimit > 0 && routed.Albums.Count > 1 && effectivePolicy?.Preferences.ExplicitFilter != "CleanOnly")
             routed.Albums = await EnrichAlbumReleasesAsync(protocol, routed.Albums, plan.Candidates);

@@ -99,4 +99,77 @@ public sealed class ArtistArtworkCacheTests
         await ArtistArtworkCache.PrepareSearchAsync(cache, context, [], rows);
         Assert.All(rows, row => Assert.NotNull(row.ImageUrl));
     }
+
+    [Fact]
+    public async Task ArtistWithPlaceholderGetsAnotherProviderPhotoThroughOverlappingAlbumWhenNoIdentifiersExist()
+    {
+        var cache = new TestMemoryApplicationCache();
+        var context = Context();
+        var missing = Photo("tidal", "one", "Say Now", "https://images.example.test/default_artist.png");
+        missing.TopAlbumTitles = ["S.O.S."];
+        var other = Photo("deezer", "real", "say now", "https://images.example.test/real.png");
+        other.TopAlbumTitles = ["S.O.S."];
+        await ArtistArtworkCache.PrepareSearchAsync(cache, context, [], [missing, other]);
+        Assert.Equal(other.ImageUrl, missing.ImageUrl);
+        Assert.Equal(other.ImageUrl, await ArtistArtworkCache.ResolveResourceAsync(cache, context, "tidal", "one", null));
+    }
+
+    [Fact]
+    public async Task ArtistWithPlaceholderGetsAnotherProviderPhotoThroughOverlappingTrackOrAlbumPassedToPrepareSearch()
+    {
+        var cache = new TestMemoryApplicationCache();
+        var context = Context();
+        var missing = Photo("tidal", "one", "Say Now", "https://images.example.test/default_artist.png");
+        var other = Photo("deezer", "real", "say now", "https://images.example.test/real.png");
+        var tidalAlbum = new Album { ExternalProvider = "tidal", Artist = "Say Now", Title = "Trouble" };
+        var deezerAlbum = new Album { ExternalProvider = "deezer", Artist = "say now", Title = "trouble - Single" };
+        await ArtistArtworkCache.PrepareSearchAsync(cache, context, [], [missing, other], albums: [tidalAlbum, deezerAlbum]);
+        Assert.Equal(other.ImageUrl, missing.ImageUrl);
+    }
+
+    [Fact]
+    public async Task ArtistNameOnlyMatchesWithoutAnyOverlapAreStillRejected()
+    {
+        var cache = new TestMemoryApplicationCache();
+        var context = Context();
+        var missing = Photo("tidal", "one", "Say Now", "https://images.example.test/default_artist.png");
+        missing.TopAlbumTitles = ["Album One"];
+        var namesake = Photo("deezer", "real", "say now", "https://images.example.test/real.png");
+        namesake.TopAlbumTitles = ["Album Two"];
+        await ArtistArtworkCache.PrepareSearchAsync(cache, context, [], [missing, namesake]);
+        Assert.Null(missing.ImageUrl);
+        Assert.Null(await ArtistArtworkCache.ResolveResourceAsync(cache, context, "tidal", "one", null));
+    }
+
+    [Fact]
+    public async Task ArtistWithNothingAtAllHasNoImage()
+    {
+        var cache = new TestMemoryApplicationCache();
+        var context = Context();
+        var missing = Photo("tidal", "one", "Say Now", "https://images.example.test/default_artist.png");
+        await ArtistArtworkCache.PrepareSearchAsync(cache, context, [], [missing]);
+        Assert.Null(missing.ImageUrl);
+        Assert.Null(await ArtistArtworkCache.ResolveResourceAsync(cache, context, "tidal", "one", null));
+    }
+
+    [Fact]
+    public void ArtistImageTagsChangeAccordingly()
+    {
+        var artist = Photo("tidal", "one", "Say Now", "https://images.example.test/default_artist.png");
+        var tagPlaceholder = ArtistArtworkCache.ImageTag(artist);
+        artist.ImageUrl = "https://images.example.test/real-photo.png";
+        var tagPhoto = ArtistArtworkCache.ImageTag(artist);
+        Assert.NotEqual(tagPlaceholder, tagPhoto);
+    }
+
+    [Fact]
+    public async Task ArtistWithRealPhotoIsUnchanged()
+    {
+        var cache = new TestMemoryApplicationCache();
+        var context = Context();
+        var artist = Photo("tidal", "one", "Say Now", "https://images.example.test/real-photo.png");
+        await ArtistArtworkCache.PrepareSearchAsync(cache, context, [], [artist]);
+        Assert.Equal("https://images.example.test/real-photo.png", artist.ImageUrl);
+        Assert.Equal("https://images.example.test/real-photo.png", await ArtistArtworkCache.ResolveResourceAsync(cache, context, "tidal", "one", artist.ImageUrl));
+    }
 }

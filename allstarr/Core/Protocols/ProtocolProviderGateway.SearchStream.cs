@@ -90,7 +90,8 @@ public sealed partial class ProtocolProviderGateway
                 var index = pending.FindIndex(item => item.Work == completed);
                 var batch = await completed;
                 token.ThrowIfCancellationRequested();
-                await ArtistArtworkCache.PrepareSearchAsync(applicationCache, protocol, [], batch.Items.Artists);
+                await ArtistArtworkCache.PrepareSearchAsync(applicationCache, protocol, [], batch.Items.Artists,
+                    batch.Items.Albums, batch.Items.Songs);
                 await writeBatch(pending[index].Provider, batch.Items, batch.Playlists, token).WaitAsync(token);
                 pending.RemoveAt(index);
             }

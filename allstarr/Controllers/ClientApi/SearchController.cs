@@ -78,7 +78,9 @@ public sealed class SearchController(IProtocolProviderGateway providers, MusicSe
             snapshots = new(query, limit, sections, preferred, clock, WriteAsync, async (rows, cancellation) =>
             {
                 var artists = rows.Where(row => row.Artist != null).Select(row => row.Artist!).ToArray();
-                await ArtistArtworkCache.PrepareSearchAsync(cache, Execution, [], artists).WaitAsync(cancellation);
+                var albums = rows.Where(row => row.Album != null).Select(row => row.Album!).ToArray();
+                var songs = rows.Where(row => row.Song != null).Select(row => row.Song!).ToArray();
+                await ArtistArtworkCache.PrepareSearchAsync(cache, Execution, [], artists, albums, songs).WaitAsync(cancellation);
                 foreach (var row in rows.Where(row => row.Artist != null))
                     row.Item["ImageTags"] = JsonSerializer.SerializeToNode(builder.ConvertArtistToJellyfinItem(row.Artist!).GetValueOrDefault("ImageTags"));
             });
@@ -110,7 +112,8 @@ public sealed class SearchController(IProtocolProviderGateway providers, MusicSe
                         ? (nativeTask.IsCompletedSuccessfully ? nativeTask.Result : [])
                         : await nativeTask.WaitAsync(cancellation);
                     await ArtistArtworkCache.PrepareSearchAsync(cache, Execution,
-                        owned.Where(item => item.Kind == MusicItemKind.Artist).Select(item => item.Payload), results.Artists);
+                        owned.Where(item => item.Kind == MusicItemKind.Artist).Select(item => item.Payload), results.Artists,
+                        results.Albums, results.Songs);
                     var nativeSongs = owned.Where(item => item.Kind == MusicItemKind.Song && Execution.Policy?.Includes(item.ExplicitContentLyrics) != false)
                         .Select(item => new Song
                         {
