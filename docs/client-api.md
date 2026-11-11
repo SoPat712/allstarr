@@ -25,7 +25,7 @@ before using optional routes.
 `titleMarkers`, `itemDetails`, `playback`, `lyricsRich`, `lyricsSources`, `lyricsVersions`,
 `fixesMatch`, `reports`, `mixes`, `releases`, `follow`, `events`, `appearances`,
 `similarAlbums`, `playlistKinds`, `history`, `playCounts`, `libraryAdditions`,
-`preferences`, `searchStream`, `searchStreamScores`, and `searchStreamRanked` are available.
+`preferences`, `searchStream`, `searchStreamScores`, `searchStreamRanked`, and `searchStreamRankedLibrary` are available.
 `stats`, `taste`, `sound`, `playActivity`, `historyImports`, and `historyRecheck`
 are true when their respective services are registered. `dashboardLink` is false.
 When `Admin:Oidc:PublicUrl` is configured, capabilities also includes
@@ -58,7 +58,7 @@ matches score 95–100. Songs and albums can match through their artist credits;
 their titles need not contain the query. Limits apply separately to playlists
 even though their item presentation uses `MusicAlbum`.
 
-Songbird can check `features.searchStreamRanked` and request `shape=ranked` to
+Songbird can check `features.searchStreamRankedLibrary` (or `features.searchStreamRanked`) and request `shape=ranked` to
 render the server's complete order without sorting in the app. Each line replaces
 the previous snapshot:
 
@@ -88,10 +88,16 @@ Each line is a complete replacement snapshot, with these field types:
 Missing keys mean empty: missing arrays or section keys are `[]`, a missing
 `sections` object is `{}`, and a missing or null `top` has no item. Earlier lines
 omit `late`; the done line includes it. Items retain the existing Jellyfin item
-JSON plus numeric `score`, keyed by a stable string `Id`. Render All as `top`
+JSON plus numeric `score`, keyed by a stable string `Id`. Library matches are included
+in `top`, `items`, and `sections` (songs, albums, artists, playlists), ranked by the same
+scorer and rules merged search uses for library rows; native rows win ties and an owned exact
+match wins `top` over external lookalikes. Library items keep their native library Ids.
+Library results are read once per request and included from revision 1 if ready, otherwise
+from the first snapshot after they arrive. Render All as `top`
 followed by `items`, deduplicated by `Id`, keeping the server's order.
 `features.searchStreamRanked` is advertised only when this ranked shape is
-available; an absent or false flag means the client should use provider batches.
+available; `features.searchStreamRankedLibrary` is advertised when library matches are included
+in ranked snapshots.
 
 Only sections selected by `types` are present, and each contains at most `limit`
 items across all providers. `items` mixes all requested types in the same relevance
@@ -117,7 +123,8 @@ Omitting `shape` keeps the existing per-provider envelope and final line.
 
 Searches run concurrently. Before emitting rows, the route searches the accessible
 native library to suppress matching songs, albums, and artist names, and checks
-known native recording links. Native rows are never emitted. Duplicate item IDs
+known native recording links. In default provider batches, native rows are not emitted;
+ranked snapshots include them. Duplicate item IDs
 and matching recordings already sent are suppressed; the first arriving provider
 wins. Album matching uses normalized title and artist. Native search can determine
 the first-batch latency. Saved-ID and owned-copy enrichment has a shared 50 ms

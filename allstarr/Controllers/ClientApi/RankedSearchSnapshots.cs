@@ -8,9 +8,32 @@ using allstarr.Services.Common;
 namespace allstarr.Controllers.ClientApi;
 
 internal sealed record RankedSearchRow(JsonObject Item, string Section, Song? Song = null, Artist? Artist = null,
-    Album? Album = null, ExternalPlaylist? Playlist = null)
+    Album? Album = null, ExternalPlaylist? Playlist = null, NativeMusicItem<object>? Native = null)
 {
-    internal double Score => Item["score"]!.GetValue<double>();
+    internal double Score
+    {
+        get
+        {
+            if (!Item.TryGetPropertyValue("score", out var node) || node is null)
+            {
+                return 0.0;
+            }
+            if (node is JsonValue val)
+            {
+                if (val.TryGetValue<double>(out var d))
+                {
+                    return d;
+                }
+                var obj = val.GetValue<object>();
+                if (obj is System.Text.Json.JsonElement elem && elem.ValueKind == System.Text.Json.JsonValueKind.Number)
+                {
+                    return elem.GetDouble();
+                }
+                return Convert.ToDouble(obj);
+            }
+            return 0.0;
+        }
+    }
 }
 
 internal sealed class RankedSearchSnapshots(string query, int limit, IReadOnlyList<string> requested,
@@ -34,6 +57,13 @@ internal sealed class RankedSearchSnapshots(string query, int limit, IReadOnlyLi
         await accepted.Task.WaitAsync(token);
     }
 
+    internal async Task AddLibraryAsync(IReadOnlyList<RankedSearchRow> rows, CancellationToken token)
+    {
+        var accepted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await updates.Writer.WriteAsync(new(null, rows, null, accepted), token);
+        await accepted.Task.WaitAsync(token);
+    }
+
     internal void Complete(IReadOnlyList<string> late)
     {
         updates.Writer.TryWrite(new(null, [], late));
@@ -51,6 +81,8 @@ internal sealed class RankedSearchSnapshots(string query, int limit, IReadOnlyLi
             while (updates.Reader.TryRead(out var update))
             {
                 if (update.Provider is { } provider && !providers.Contains(provider, StringComparer.Ordinal)) providers.Add(provider);
+                if (update.Provider == null && update.Rows.Count > 0)
+                    PruneExternalDuplicates(update.Rows);
                 foreach (var row in update.Rows)
                     if (sections.TryGetValue(row.Section, out var rows)) rows.Add(row);
                 late = update.Late ?? late;
@@ -85,31 +117,91 @@ internal sealed class RankedSearchSnapshots(string query, int limit, IReadOnlyLi
         }
     }
 
+    private void PruneExternalDuplicates(IReadOnlyList<RankedSearchRow> libraryRows)
+    {
+        var nativeArtists = libraryRows.Where(r => r.Native?.Kind == MusicItemKind.Artist)
+            .Select(r => Normalize(r.Native!.Name)).ToHashSet(StringComparer.Ordinal);
+        if (nativeArtists.Count > 0 && sections.TryGetValue("artists", out var artistRows))
+        {
+            artistRows.RemoveAll(r => r.Native == null && r.Artist != null &&
+                nativeArtists.Contains(Normalize(r.Artist.Name)));
+            mixed.RemoveAll(r => r.Native == null && r.Artist != null &&
+                nativeArtists.Contains(Normalize(r.Artist.Name)));
+            if (pinned != null && pinned.Native == null && pinned.Artist != null &&
+                nativeArtists.Contains(Normalize(pinned.Artist.Name)))
+                pinned = null;
+            if (top != null && top.Native == null && top.Artist != null &&
+                nativeArtists.Contains(Normalize(top.Artist.Name)))
+                top = null;
+        }
+
+        var nativeAlbums = libraryRows.Where(r => r.Native?.Kind == MusicItemKind.Album)
+            .Select(r => AlbumKey(r.Native!.Name, r.Native.AlbumMetadata?.Artist ?? r.Native.ArtistText)).ToHashSet(StringComparer.Ordinal);
+        if (nativeAlbums.Count > 0 && sections.TryGetValue("albums", out var albumRows))
+        {
+            albumRows.RemoveAll(r => r.Native == null && r.Album != null &&
+                nativeAlbums.Contains(AlbumKey(r.Album.Title, r.Album.Artist)));
+            mixed.RemoveAll(r => r.Native == null && r.Album != null &&
+                nativeAlbums.Contains(AlbumKey(r.Album.Title, r.Album.Artist)));
+        }
+
+        var nativeSongs = libraryRows.Where(r => r.Native?.Kind == MusicItemKind.Song).Select(r => new Song
+        {
+            Title = r.Native!.Name,
+            Artist = r.Native.ArtistText ?? "",
+            Album = r.Native.AlbumText ?? "",
+            PreciseDuration = r.Native.DurationSeconds is { } seconds ? TimeSpan.FromSeconds(seconds) : null,
+            ExplicitContentLyrics = r.Native.ExplicitContentLyrics
+        }).ToArray();
+        if (nativeSongs.Length > 0 && sections.TryGetValue("songs", out var songRows))
+        {
+            songRows.RemoveAll(r => r.Native == null && r.Song != null &&
+                nativeSongs.Any(known => MusicSearchService.MetadataRecordingsMatch(known, r.Song)));
+            mixed.RemoveAll(r => r.Native == null && r.Song != null &&
+                nativeSongs.Any(known => MusicSearchService.MetadataRecordingsMatch(known, r.Song)));
+        }
+    }
+
+    private static string Normalize(string? value) => FuzzyMatcher.NormalizeForMatching(value ?? "");
+    private static string AlbumKey(string title, string? artist) => Normalize(title) + "\u001f" + Normalize(artist);
+
     private async Task EmitAsync(IReadOnlyList<string>? late, CancellationToken token)
     {
         var all = sections.Values.SelectMany(rows => rows).ToArray();
         if (refresh != null) await refresh(all, token);
-        var knownDurationTitles = all.Where(row => (row.Song?.PreciseDuration?.TotalSeconds ?? row.Song?.Duration) is > 0)
-            .Select(row => SearchRelevanceRanker.RecordingTitle(row.Song!.Title, row.Song.Artist, row.Song.AlbumArtist)).ToHashSet(StringComparer.Ordinal);
-        foreach (var row in all.Where(row => row.Song != null))
-            row.Item["score"] = SearchRelevanceRanker.ScoreSong(query, row.Song!, knownDurationTitles.Contains(
-                SearchRelevanceRanker.RecordingTitle(row.Song!.Title, row.Song.Artist, row.Song.AlbumArtist)));
+        var knownDurationTitles = all.Where(row => (row.Song?.PreciseDuration?.TotalSeconds ?? row.Song?.Duration ?? row.Native?.DurationSeconds) is > 0)
+            .Select(row => SearchRelevanceRanker.RecordingTitle(row.Song?.Title ?? row.Native!.Name, row.Song?.Artist ?? row.Native?.ArtistText, row.Song?.AlbumArtist ?? row.Native?.AlbumArtistText)).ToHashSet(StringComparer.Ordinal);
+        foreach (var row in all)
+        {
+            if (row.Song != null)
+                row.Item["score"] = SearchRelevanceRanker.ScoreSong(query, row.Song!, knownDurationTitles.Contains(
+                    SearchRelevanceRanker.RecordingTitle(row.Song!.Title, row.Song.Artist, row.Song.AlbumArtist)));
+            else if (row.Native?.Kind == MusicItemKind.Song)
+                row.Item["score"] = SearchRelevanceRanker.ScoreSong(query, row.Native.Name, row.Native.ArtistText,
+                    row.Native.AlbumText, row.Native.AlbumArtistText, row.Native.DurationSeconds, provenRecording: true,
+                    hasKnownDurationVersion: knownDurationTitles.Contains(
+                        SearchRelevanceRanker.RecordingTitle(row.Native.Name, row.Native.ArtistText, row.Native.AlbumArtistText)));
+        }
         foreach (var rows in sections.Values) Rank(rows);
         var byEntry = new Dictionary<MusicSearchEntry<object>, RankedSearchRow>(ReferenceEqualityComparer.Instance);
         foreach (var row in all)
-            byEntry.Add(new() { Song = row.Song, Album = row.Album, Artist = row.Artist, Playlist = row.Playlist }, row);
+            byEntry.Add(new() { Song = row.Song, Album = row.Album, Artist = row.Artist, Playlist = row.Playlist, Native = row.Native }, row);
         MusicSearchEntry<object>[] Kind(string section) => byEntry.Where(pair => pair.Value.Section == section).Select(pair => pair.Key).ToArray();
         var merged = new MusicSearchResult<object>(Kind("songs"), Kind("albums").Concat(Kind("playlists")).ToArray(), Kind("artists"));
         var rankedMixed = MusicSearchService.RankTogether(query, merged).Select(entry => byEntry[entry]);
         mixed.AddRange(rankedMixed.Where(row => !mixed.Contains(row)));
         Rank(mixed);
-        bool Exact(RankedSearchRow row) => row.Artist != null &&
-            FuzzyMatcher.NormalizeForMatching(row.Artist.Name) == FuzzyMatcher.NormalizeForMatching(query);
-        pinned ??= all.Where(Exact).OrderByDescending(row => row.Score).FirstOrDefault();
-        var nearArtists = all.Where(row => row.Artist != null && row.Score >= 95).ToArray();
+        string? ArtistName(RankedSearchRow row) => row.Artist?.Name ?? (row.Native?.Kind == MusicItemKind.Artist ? row.Native.Name : null);
+        bool Exact(RankedSearchRow row) => ArtistName(row) is { } name &&
+            FuzzyMatcher.NormalizeForMatching(name) == FuzzyMatcher.NormalizeForMatching(query);
+        var exact = all.Where(Exact).OrderByDescending(row => row.Score).ThenBy(row => row.Native == null).FirstOrDefault();
+        if (exact != null && (pinned == null || exact.Native != null && pinned.Native == null))
+            pinned = exact;
+        pinned ??= exact;
+        var nearArtists = all.Where(row => ArtistName(row) != null && row.Score >= 95).ToArray();
         var candidates = nearArtists.Length > 0 ? nearArtists : all;
-        var best = candidates.OrderByDescending(row => row.Score).FirstOrDefault();
-        top = pinned ?? (top != null && candidates.Contains(top) && (best == null || best.Score < top.Score + 5) ? top : best);
+        var best = candidates.OrderByDescending(row => row.Score).ThenBy(row => row.Native == null).FirstOrDefault();
+        top = pinned ?? (top != null && candidates.Contains(top) && (best == null || !ShouldMoveUp(best, top)) ? top : best);
         var visible = sections.ToDictionary(pair => pair.Key, pair => pair.Value.Take(limit).Select(row => row.Item).ToArray());
         if (top != null && !visible[top.Section].Contains(top.Item))
             visible[top.Section] = visible[top.Section].Take(limit - 1).Append(top.Item).ToArray();
@@ -130,15 +222,22 @@ internal sealed class RankedSearchSnapshots(string query, int limit, IReadOnlyLi
     {
         if (revision == 0)
         {
-            var ranked = rows.OrderByDescending(row => row.Score).ToArray();
+            var ranked = rows.OrderByDescending(row => row.Score).ThenBy(row => row.Native == null).ToArray();
             rows.Clear();
             rows.AddRange(ranked);
             return;
         }
         // Five points is one band in the shared scorer; smaller evidence changes keep their place.
         for (var index = 1; index < rows.Count; index++)
-            for (var position = index; position > 0 && rows[position].Score >= rows[position - 1].Score + 5; position--)
+            for (var position = index; position > 0 && ShouldMoveUp(rows[position], rows[position - 1]); position--)
                 (rows[position - 1], rows[position]) = (rows[position], rows[position - 1]);
+    }
+
+    private static bool ShouldMoveUp(RankedSearchRow current, RankedSearchRow previous)
+    {
+        if (current.Native != null && previous.Native == null)
+            return current.Score >= previous.Score;
+        return current.Score >= previous.Score + 5;
     }
 
     private static TimeSpan MaxDelay(TimeSpan delay) => delay > TimeSpan.Zero ? delay : TimeSpan.Zero;

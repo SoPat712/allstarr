@@ -182,6 +182,133 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.True(lines[^1]["done"]!.GetValue<bool>());
     }
 
+    [Fact]
+    public async Task ClientApi_SearchStreamRankedIncludesLibraryArtistTopSongsAndAlbums()
+    {
+        const string query = "juice wrld";
+        var libraryArtist = new { Id = "lib-artist-juice", Name = "Juice WRLD", Type = "MusicArtist" };
+        var libraryAlbum = new { Id = "lib-album-goodbye", Name = "Goodbye & Good Riddance", AlbumArtist = "Juice WRLD", Artists = new[] { "Juice WRLD" }, Type = "MusicAlbum" };
+        var librarySong = new { Id = "lib-song-lucid", Name = "Lucid Dreams", Artist = "Juice WRLD", Album = "Goodbye & Good Riddance", RunTimeTicks = 2390000000L, Type = "Audio" };
+        var libraryItemsJson = System.Text.Json.JsonSerializer.Serialize(new { Items = new object[] { libraryArtist, libraryAlbum, librarySong } });
+
+        var lookalikes = new SearchResult
+        {
+            Artists =
+            [
+                new Artist { Id = "ext-artist-baby", Name = "BABY juice WRLD [A]" },
+                new Artist { Id = "ext-artist-999", Name = "Juice WRLD 999" },
+                new Artist { Id = "ext-artist-type", Name = "Juice WRLD Type Beat" },
+                new Artist { Id = "ext-artist-ai", Name = "Ai Juice Wrld" }
+            ],
+            Albums =
+            [
+                new Album { Id = "ext-album-tribute", Title = "Juice WRLD Tribute", Artist = "Tribute Band" }
+            ],
+            Songs =
+            [
+                new Song { Id = "ext-song-tribute", Title = "Juice WRLD Tribute Song", Artist = "Tribute Band", Duration = 200 }
+            ]
+        };
+
+        var lines = await ReadSearchStreamLinesAsync(lookalikes, [], query, 20, "ranked", nativeItemsJson: libraryItemsJson);
+        Assert.NotEmpty(lines);
+        var final = lines[^1];
+        Assert.True(final["done"]!.GetValue<bool>());
+
+        Assert.Equal("lib-artist-juice", final["top"]!["Id"]!.GetValue<string>());
+        Assert.Equal(100, final["top"]!["score"]!.GetValue<double>());
+
+        var artistsSection = final["sections"]!["artists"]!.AsArray();
+        Assert.Equal("lib-artist-juice", artistsSection[0]!["Id"]!.GetValue<string>());
+        Assert.True(artistsSection.Count > 1);
+
+        var albumsSection = final["sections"]!["albums"]!.AsArray();
+        Assert.Contains(albumsSection, item => item!["Id"]!.GetValue<string>() == "lib-album-goodbye");
+
+        var songsSection = final["sections"]!["songs"]!.AsArray();
+        Assert.Contains(songsSection, item => item!["Id"]!.GetValue<string>() == "lib-song-lucid");
+
+        var items = final["items"]!.AsArray();
+        Assert.Contains(items, item => item!["Id"]!.GetValue<string>() == "lib-artist-juice");
+        Assert.Contains(items, item => item!["Id"]!.GetValue<string>() == "lib-album-goodbye");
+        Assert.Contains(items, item => item!["Id"]!.GetValue<string>() == "lib-song-lucid");
+        var scores = items.Select(item => item!["score"]!.GetValue<double>()).ToArray();
+        Assert.Equal(scores.OrderDescending(), scores);
+    }
+
+    [Fact]
+    public async Task ClientApi_SearchStreamRankedSlowLibraryDoesNotDelayFirstExternalSnapshot()
+    {
+        var releaseLibrary = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var lookalikes = new SearchResult
+        {
+            Artists = [new Artist { Id = "ext-artist-fast", Name = "Fast External" }]
+        };
+
+        var gateway = new Mock<IProtocolProviderGateway>();
+        gateway.Setup(item => item.GetProviderOrder(It.IsAny<allstarr.Core.Capabilities.ProviderCapabilityKind>()))
+            .Returns(["deezer", "qobuz"]);
+        gateway.Setup(item => item.StreamSearchAsync(It.IsAny<ProtocolExecutionContext>(), "fast", 20, true, true, true, true,
+                It.IsAny<Func<string, SearchResult, IReadOnlyList<ExternalPlaylist>, CancellationToken, Task>>(), It.IsAny<CancellationToken>()))
+            .Returns(async (ProtocolExecutionContext _, string _, int _, bool _, bool _, bool _, bool _,
+                Func<string, SearchResult, IReadOnlyList<ExternalPlaylist>, CancellationToken, Task> write, CancellationToken token) =>
+            {
+                await write("deezer", lookalikes, [], token);
+                await write("qobuz", new SearchResult(), [], token);
+                return (IReadOnlyList<string>)[];
+            });
+
+        var index = new Mock<ILibraryIndexService>();
+        index.Setup(item => item.FindKnownRecordingTracksAsync(It.IsAny<ProtocolExecutionContext>(),
+                It.IsAny<IReadOnlyList<LibraryRecordingLookup>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Dictionary<string, string>());
+
+        using var factory = ClientApiFactory(request =>
+        {
+            if (request.RequestUri!.AbsolutePath == "/Users/Me") return Json(200, """{"Id":"listener"}""");
+            if (request.RequestUri.AbsolutePath == "/System/Info/Public") return Json(200, """{"Id":"native-server"}""");
+            if (request.RequestUri.AbsolutePath == "/Users/listener/Items")
+            {
+                try { releaseLibrary.Task.Wait(TimeSpan.FromSeconds(5)); }
+                catch (Exception) { }
+                return Json(200, """{"Items":[{"Id":"lib-artist-slow","Name":"Fast External","Type":"MusicArtist"}]}""");
+            }
+            return Json(404, "{}");
+        }, services =>
+        {
+            services.RemoveAll<IProtocolProviderGateway>();
+            services.AddSingleton(gateway.Object);
+            services.RemoveAll<ILibraryIndexService>();
+            services.AddSingleton(index.Object);
+        });
+
+        using var client = CreateClientApiClient(factory);
+        client.DefaultRequestHeaders.Add("X-Emby-Token", "listener-token");
+
+        using var response = await client.GetAsync("/allstarr/v1/search?q=fast&limit=20&shape=ranked", HttpCompletionOption.ResponseHeadersRead);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        using var stream = await response.Content.ReadAsStreamAsync();
+        using var reader = new System.IO.StreamReader(stream);
+
+        var firstLine = await reader.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.NotNull(firstLine);
+        var firstSnapshot = JsonNode.Parse(firstLine)!;
+        Assert.Equal(1, firstSnapshot["revision"]!.GetValue<int>());
+        Assert.False(firstSnapshot["done"]!.GetValue<bool>());
+        Assert.Equal("ext-artist-fast", firstSnapshot["top"]!["Id"]!.GetValue<string>());
+
+        releaseLibrary.TrySetResult();
+
+        var secondLine = await reader.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.NotNull(secondLine);
+        var secondSnapshot = JsonNode.Parse(secondLine)!;
+        Assert.Equal(2, secondSnapshot["revision"]!.GetValue<int>());
+        Assert.Equal("lib-artist-slow", secondSnapshot["top"]!["Id"]!.GetValue<string>());
+        Assert.True(secondSnapshot["done"]!.GetValue<bool>());
+    }
+
     private static async Task<JsonNode[]> ReadSearchStreamRowsAsync(SearchResult result,
         IReadOnlyList<ExternalPlaylist> playlists, string query, int limit = 20, string? shape = null)
     {
@@ -192,7 +319,8 @@ public sealed partial class ProtocolRouteFixtureTests
     }
 
     private static async Task<JsonNode[]> ReadSearchStreamLinesAsync(SearchResult result,
-        IReadOnlyList<ExternalPlaylist> playlists, string query, int limit, string? shape, bool omitLimit = false)
+        IReadOnlyList<ExternalPlaylist> playlists, string query, int limit, string? shape, bool omitLimit = false,
+        string? nativeItemsJson = null)
     {
         var gateway = new Mock<IProtocolProviderGateway>();
         gateway.Setup(item => item.StreamSearchAsync(It.IsAny<ProtocolExecutionContext>(), query, limit, true, true, true, true,
@@ -211,7 +339,7 @@ public sealed partial class ProtocolRouteFixtureTests
         {
             "/Users/Me" => Json(200, """{"Id":"listener"}"""),
             "/System/Info/Public" => Json(200, """{"Id":"native-server"}"""),
-            "/Users/listener/Items" => Json(200, """{"Items":[]}"""),
+            "/Users/listener/Items" => Json(200, nativeItemsJson ?? """{"Items":[]}"""),
             _ => Json(404, "{}")
         }, services =>
         {

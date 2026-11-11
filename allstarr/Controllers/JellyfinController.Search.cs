@@ -403,6 +403,7 @@ public partial class JellyfinController
             "Audio" => MusicItemKind.Song,
             "MusicAlbum" => MusicItemKind.Album,
             "MusicArtist" => MusicItemKind.Artist,
+            "Playlist" => MusicItemKind.Playlist,
             _ => null
         };
         return kind == null

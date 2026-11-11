@@ -133,6 +133,39 @@ public sealed class RankedSearchSnapshotsTests
         Assert.True((await emitted.Reader.ReadAsync())["done"]!.GetValue<bool>());
     }
 
+    [Fact]
+    public async Task RankedSnapshotsSlowLibrarySearchEmitsExternalFirstThenIncludesLibraryOnArrival()
+    {
+        var clock = new ManualTimeProvider();
+        var emitted = Channel.CreateUnbounded<JsonNode>();
+        var snapshots = new RankedSearchSnapshots("juice wrld", 20, ["artists"], "preferred", clock,
+            (value, _) => { emitted.Writer.TryWrite(JsonSerializer.SerializeToNode(value)!); return Task.CompletedTask; });
+        var running = snapshots.RunAsync(CancellationToken.None);
+
+        await clock.WaitForTimersAsync(TimeSpan.FromMilliseconds(400));
+        await snapshots.AddAsync("preferred", [Row("ext-baby", "artists", 95, "BABY juice WRLD [A]")], CancellationToken.None);
+        await snapshots.AddAsync("other", [], CancellationToken.None);
+
+        var first = await emitted.Reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(1, first["revision"]!.GetValue<int>());
+        Assert.Equal("ext-baby", first["top"]!["Id"]!.GetValue<string>());
+
+        var libraryArtist = new NativeMusicItem<object>(MusicItemKind.Artist, "lib-juice", "Juice WRLD", null, new object());
+        var libRow = new RankedSearchRow(new JsonObject { ["Id"] = "lib-juice", ["Name"] = "Juice WRLD", ["score"] = 100d },
+            "artists", Native: libraryArtist);
+        await snapshots.AddLibraryAsync([libRow], CancellationToken.None);
+
+        snapshots.Complete([]);
+        await clock.WaitForTimersAsync(TimeSpan.FromMilliseconds(250));
+        clock.Advance(TimeSpan.FromMilliseconds(250));
+        await running.WaitAsync(TimeSpan.FromSeconds(5));
+
+        var second = await emitted.Reader.ReadAsync();
+        Assert.Equal(2, second["revision"]!.GetValue<int>());
+        Assert.Equal("lib-juice", second["top"]!["Id"]!.GetValue<string>());
+        Assert.True(second["done"]!.GetValue<bool>());
+    }
+
     private static RankedSearchRow Row(string id, string section, double score, string? artistName = null,
         Song? song = null, Album? album = null, ExternalPlaylist? playlist = null) => new(
         new JsonObject { ["Id"] = id, ["Name"] = artistName ?? id, ["score"] = score }, section,

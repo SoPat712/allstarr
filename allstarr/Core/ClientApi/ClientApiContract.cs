@@ -36,6 +36,7 @@ public sealed record ClientFeatures
     [JsonPropertyName("lyricsSearch")] public bool LyricsSearch { get; init; } = true;
     [JsonPropertyName("searchStream")] public bool SearchStream { get; init; } = true;
     [JsonPropertyName("searchStreamRanked")] public bool SearchStreamRanked { get; init; } = true;
+    [JsonPropertyName("searchStreamRankedLibrary")] public bool SearchStreamRankedLibrary { get; init; } = true;
     [JsonPropertyName("searchStreamScores")] public bool SearchStreamScores { get; init; } = true;
     [JsonPropertyName("events")] public bool Events { get; init; } = true;
     [JsonPropertyName("appearances")] public bool Appearances { get; init; } = true;

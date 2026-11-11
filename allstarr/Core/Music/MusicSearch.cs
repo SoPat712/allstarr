@@ -18,7 +18,8 @@ public enum MusicItemKind
 {
     Song,
     Album,
-    Artist
+    Artist,
+    Playlist
 }
 
 /// <summary>
