@@ -121,7 +121,8 @@ public sealed partial class MusicSearchService(
     SavedLibraryReader? savedLibrary = null,
     ILogger<MusicSearchService>? logger = null,
     TimeProvider? timeProvider = null, IRuntimeSettingsChangeSignal? settings = null,
-    IDbContextFactory<AllstarrDbContext>? factory = null, ILibraryArtistLinks? artistLinks = null)
+    IDbContextFactory<AllstarrDbContext>? factory = null, ILibraryArtistLinks? artistLinks = null,
+    EmptyServiceArtists? emptyArtists = null)
 {
     private const int LinkedArtistLookups = 50;
 
@@ -330,6 +331,9 @@ public sealed partial class MusicSearchService(
                 savedAt = Elapsed();
                 using (RequestTiming.Current?.Stage("owned"))
                     await PreferOwnedSongsAsync(context, songs, nativeSongs, native, enrichmentToken);
+                // Service artists that open to nothing stay out; same-named ones are checked for next time.
+                ProbeArtists(context, artists, nativeArtists.Select(item => item.Name));
+                artists = artists.Where(artist => !IsEmptyArtist(artist)).ToList();
                 IReadOnlySet<string>? linkedArtists = null;
                 if (request.HideLinkedProviderArtists)
                     using (RequestTiming.Current?.Stage("artists"))
@@ -394,6 +398,12 @@ public sealed partial class MusicSearchService(
 
     public static IReadOnlySet<string> LinkedKeys(IReadOnlyDictionary<string, IReadOnlyList<LibraryArtistLink>> saved) =>
         saved.Values.SelectMany(links => links).Select(link => ArtistKey(link.ProviderId, link.ArtistId)).ToHashSet(StringComparer.Ordinal);
+
+    public bool IsEmptyArtist(Artist artist) => emptyArtists?.IsEmpty(artist) == true;
+
+    // The checks finish in the background; a later search sees what they found.
+    public void ProbeArtists(ProtocolExecutionContext context, IEnumerable<Artist> artists, IEnumerable<string>? libraryNames = null) =>
+        _ = emptyArtists?.Probe(providers, context, artists, libraryNames);
 
     public static string ArtistKey(string provider, string artistId) =>
         AppleMusicClient.NormalizeProviderId(provider) + ":" + artistId;

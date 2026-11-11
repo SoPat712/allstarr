@@ -72,6 +72,8 @@ public sealed class SearchController(IProtocolProviderGateway providers, MusicSe
         var sentSongs = new List<Song>();
         var sentAlbums = new HashSet<string>(StringComparer.Ordinal);
         var sentArtists = new List<Artist>();
+        var seenArtists = new List<Artist>();
+        var alsoOnSources = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
         var evidence = new List<Song>();
         using var publishingStop = CancellationTokenSource.CreateLinkedTokenSource(disconnected);
         RankedSearchSnapshots? snapshots = null;
@@ -147,6 +149,9 @@ public sealed class SearchController(IProtocolProviderGateway providers, MusicSe
                     var items = new List<RankedSearchRow>();
                     var alsoOn = new List<(string Id, JsonObject Entry)>();
                     evidence.AddRange(results.Songs);
+                    // Service artists that open to nothing stay out; same-named ones are checked for next time.
+                    seenArtists.AddRange(results.Artists);
+                    music.ProbeArtists(Execution, seenArtists, owned.Where(item => item.Kind == MusicItemKind.Artist).Select(item => item.Name));
                     var providerName = registry.TryGet(provider, out var descriptor) ? descriptor!.DisplayName : provider;
                     if (savedLinks is { IsCompletedSuccessfully: true })
                     {
@@ -179,13 +184,17 @@ public sealed class SearchController(IProtocolProviderGateway providers, MusicSe
                         // Library albums and artists never hide a same-named service result; only repeats from other services do.
                         if (sentAlbums.Add(AlbumKey(album.Title, album.Artist)) &&
                             sentIds.Add("MusicAlbum:" + album.Id)) Add(builder.ConvertAlbumToJellyfinItem(album), SearchRelevanceRanker.ScoreAlbum(query, album), "albums", album: album);
-                    foreach (var artist in results.Artists.OrderByDescending(artist => SearchRelevanceRanker.Score(query, artist.Name)).Take(limit))
+                    foreach (var artist in results.Artists.Where(artist => !music.IsEmptyArtist(artist))
+                                 .OrderByDescending(artist => SearchRelevanceRanker.Score(query, artist.Name)).Take(limit))
                     {
                         if (sentIds.Contains("MusicArtist:" + artist.Id)) continue;
                         // A same-named artist from another service joins the listed one only when a song proves it; otherwise it is its own row.
                         if (sentArtists.FirstOrDefault(sent => MusicSearchService.SameServiceArtist(sent, artist, evidence)) is { } twin)
                         {
-                            alsoOn.Add((twin.Id, new JsonObject { ["source"] = provider, ["sourceName"] = providerName, ["id"] = artist.Id }));
+                            // One entry per service: several same-named accounts on one service add nothing for the app to show.
+                            alsoOnSources.TryAdd(twin.Id, []);
+                            if (alsoOnSources[twin.Id].Add(provider))
+                                alsoOn.Add((twin.Id, new JsonObject { ["source"] = provider, ["sourceName"] = providerName, ["id"] = artist.Id }));
                             continue;
                         }
                         sentIds.Add("MusicArtist:" + artist.Id);

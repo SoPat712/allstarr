@@ -10,7 +10,8 @@ namespace allstarr.Core.Music;
 /// services. Another service's same-named artist joins only when it shares an album (barcode or title) with this one,
 /// so a namesake never leaks in. Links are kept for a few hours, and a first visit waits only briefly for them.
 /// </summary>
-public sealed class StreamingArtistCatalog(IProtocolProviderGateway providers, TimeProvider? clock = null)
+public sealed class StreamingArtistCatalog(IProtocolProviderGateway providers, TimeProvider? clock = null,
+    EmptyServiceArtists? emptyArtists = null)
 {
     private const int CandidatesPerService = 2, KeptLinks = 512;
     private static readonly TimeSpan LinkLifetime = TimeSpan.FromHours(6);
@@ -24,6 +25,8 @@ public sealed class StreamingArtistCatalog(IProtocolProviderGateway providers, T
         Task<Artist?> artistTask)
     {
         var own = MusicAlbumReleases.Collapse(await providers.GetArtistAlbumsAsync(context, provider, artistId));
+        // An artist that opens to nothing is left out of later searches.
+        emptyArtists?.Record(provider, artistId, own.Count);
         Artist? artist;
         try { artist = await artistTask; }
         catch (Exception error) when (error is not OperationCanceledException) { artist = null; }

@@ -229,17 +229,22 @@ public sealed partial class ProtocolRouteFixtureTests
             Duration = 200,
             Isrc = isrc
         };
-        Artist SayNow(string provider) => new()
+        Artist SayNow(string provider, string id = "saynow") => new()
         {
-            Id = $"ext-{provider}-artist-saynow",
+            Id = $"ext-{provider}-artist-{id}",
             Name = "Say Now",
             ExternalProvider = provider,
-            ExternalId = "saynow"
+            ExternalId = id
         };
         var batches = new List<(string, SearchResult)>
         {
             ("deezer", new SearchResult { Artists = [SayNow("deezer")], Songs = [Brick("deezer", "USX9P2300001")] }),
-            ("applemusic", new SearchResult { Artists = [SayNow("applemusic")], Songs = [Brick("applemusic", "USX9P2300001")] }),
+            // Apple has two same-named accounts with the song; Songbird gets one Apple entry, not two.
+            ("applemusic", new SearchResult
+            {
+                Artists = [SayNow("applemusic"), SayNow("applemusic", "reupload")],
+                Songs = [Brick("applemusic", "USX9P2300001")]
+            }),
             // Qobuz has an act with the same name but none of its songs, so nothing proves it is the same artist.
             ("qobuz", new SearchResult { Artists = [SayNow("qobuz")] })
         };

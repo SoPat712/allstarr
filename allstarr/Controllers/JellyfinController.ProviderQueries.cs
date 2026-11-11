@@ -48,9 +48,11 @@ public partial class JellyfinController
             var rows = native != null && native.RootElement.TryGetProperty("Items", out var items)
                 ? items.EnumerateArray().Select(item => item.Deserialize<Dictionary<string, object?>>() ?? []).ToList() : [];
             // A service artist hides behind a library artist only when matched songs link them; names alone never do.
-            var providerArtists = (await providerTask).Artists;
+            var libraryNames = rows.Select(item => JellyfinProviderQuery.Text(item, "Name")).ToArray();
+            _musicSearch.ProbeArtists(HttpContext.RequireProtocolExecutionContext(), (await providerTask).Artists, libraryNames);
+            var providerArtists = (await providerTask).Artists.Where(artist => !_musicSearch.IsEmptyArtist(artist)).ToList();
             var linked = await _musicSearch.LinkedProviderArtistsAsync(HttpContext.RequireProtocolExecutionContext(),
-                rows.Select(item => JellyfinProviderQuery.Text(item, "Name")).ToArray(), providerArtists, HttpContext.RequestAborted);
+                libraryNames, providerArtists, HttpContext.RequestAborted);
             rows.AddRange(providerArtists.Where(artist => !MusicSearchService.IsLinked(artist, linked))
                 .Select(_responseBuilder.ConvertArtistForQuery));
             return await ShapeProviderQueryAsync(rows, "SortName", nativeAlreadyFiltered: true, defaultLimit: limit);
