@@ -26,6 +26,7 @@ public sealed class SearchController(IProtocolProviderGateway providers, MusicSe
     [EndpointDescription("Streams external Jellyfin-shaped items with a lowercase numeric score from the merged search relevance scorer. " +
         "Every item also has source, the provider id that produced it or the library id for library items, and sourceName, its display name. Same-named library and service artists or albums are separate items. " +
         "In ranked snapshots, a library artist that matched songs tie to service artists has alsoOn, an array of {source, sourceName, id}, and those service artists are not listed separately. " +
+        "Same-named artists from different services are one item when one of their songs is the same recording (same ISRC, or same title and length): in ranked snapshots the others join its alsoOn, and the default shape leaves them out. Unproven namesakes stay separate items. " +
         "The default shape emits {provider,items} batches and a final {done:true,late} line. " +
         "With shape=ranked, every line replaces the previous snapshot: {revision,done,providers,top,items,sections}, including library (Jellyfin) matches in top, items and sections ranked by merged search relevance scorer rules. " +
         "Revisions increase from 1; sections contains only requested songs, albums, artists and playlists, each capped at limit. " +
@@ -70,7 +71,8 @@ public sealed class SearchController(IProtocolProviderGateway providers, MusicSe
         var sentIds = new HashSet<string>(StringComparer.Ordinal);
         var sentSongs = new List<Song>();
         var sentAlbums = new HashSet<string>(StringComparer.Ordinal);
-        var sentArtists = new HashSet<string>(StringComparer.Ordinal);
+        var sentArtists = new List<Artist>();
+        var evidence = new List<Song>();
         using var publishingStop = CancellationTokenSource.CreateLinkedTokenSource(disconnected);
         RankedSearchSnapshots? snapshots = null;
         Task? libraryTask = null;
@@ -143,6 +145,8 @@ public sealed class SearchController(IProtocolProviderGateway providers, MusicSe
                     double SongScore(Song song) => SearchRelevanceRanker.ScoreSong(query, song,
                         knownDurationTitles.Contains(SearchRelevanceRanker.RecordingTitle(song.Title, song.Artist, song.AlbumArtist)));
                     var items = new List<RankedSearchRow>();
+                    var alsoOn = new List<(string Id, JsonObject Entry)>();
+                    evidence.AddRange(results.Songs);
                     var providerName = registry.TryGet(provider, out var descriptor) ? descriptor!.DisplayName : provider;
                     if (savedLinks is { IsCompletedSuccessfully: true })
                     {
@@ -176,9 +180,19 @@ public sealed class SearchController(IProtocolProviderGateway providers, MusicSe
                         if (sentAlbums.Add(AlbumKey(album.Title, album.Artist)) &&
                             sentIds.Add("MusicAlbum:" + album.Id)) Add(builder.ConvertAlbumToJellyfinItem(album), SearchRelevanceRanker.ScoreAlbum(query, album), "albums", album: album);
                     foreach (var artist in results.Artists.OrderByDescending(artist => SearchRelevanceRanker.Score(query, artist.Name)).Take(limit))
-                        if (sentArtists.Add(Normalize(artist.Name)) && sentIds.Add("MusicArtist:" + artist.Id))
-                            Add(requested.SetEquals(["MusicArtist"]) ? builder.ConvertArtistForQuery(artist) : builder.ConvertArtistToJellyfinItem(artist),
-                                SearchRelevanceRanker.Score(query, artist.Name), "artists", artist: artist);
+                    {
+                        if (sentIds.Contains("MusicArtist:" + artist.Id)) continue;
+                        // A same-named artist from another service joins the listed one only when a song proves it; otherwise it is its own row.
+                        if (sentArtists.FirstOrDefault(sent => MusicSearchService.SameServiceArtist(sent, artist, evidence)) is { } twin)
+                        {
+                            alsoOn.Add((twin.Id, new JsonObject { ["source"] = provider, ["sourceName"] = providerName, ["id"] = artist.Id }));
+                            continue;
+                        }
+                        sentIds.Add("MusicArtist:" + artist.Id);
+                        sentArtists.Add(artist);
+                        Add(requested.SetEquals(["MusicArtist"]) ? builder.ConvertArtistForQuery(artist) : builder.ConvertArtistToJellyfinItem(artist),
+                            SearchRelevanceRanker.Score(query, artist.Name), "artists", artist: artist);
+                    }
                     foreach (var playlist in playlists.OrderByDescending(playlist => SearchRelevanceRanker.Score(query, playlist.Name, playlist.CuratorName)).Take(limit))
                         if (sentIds.Add("Playlist:" + playlist.Id)) Add(builder.ConvertPlaylistToAlbumItem(playlist),
                             SearchRelevanceRanker.Score(query, playlist.Name, playlist.CuratorName), "playlists", playlist: playlist);
@@ -191,7 +205,7 @@ public sealed class SearchController(IProtocolProviderGateway providers, MusicSe
                         var byId = items.ToDictionary(item => item.Item["Id"]!.GetValue<string>());
                         var prepared = rows!.AsArray().OfType<JsonObject>().Select(row =>
                             byId[row["Id"]!.GetValue<string>()] with { Item = row }).ToArray();
-                        await snapshots.AddAsync(provider, prepared, cancellation);
+                        await snapshots.AddAsync(provider, prepared, cancellation, alsoOn);
                     }
                 }, token);
             if (libraryTask != null)

@@ -214,6 +214,54 @@ public sealed partial class ProtocolRouteFixtureTests
     }
 
     [Theory]
+    [InlineData("ranked")]
+    [InlineData(null)]
+    public async Task ClientApi_SearchStreamJoinsSameNamedServiceArtistsOnlyWhenASongProvesIt(string? shape)
+    {
+        Song Brick(string provider, string isrc) => new()
+        {
+            Id = $"ext-{provider}-song-brick",
+            ExternalProvider = provider,
+            ExternalId = "brick",
+            Title = "Brick By Brick",
+            Artist = "Say Now",
+            Album = "Brick By Brick",
+            Duration = 200,
+            Isrc = isrc
+        };
+        Artist SayNow(string provider) => new()
+        {
+            Id = $"ext-{provider}-artist-saynow",
+            Name = "Say Now",
+            ExternalProvider = provider,
+            ExternalId = "saynow"
+        };
+        var batches = new List<(string, SearchResult)>
+        {
+            ("deezer", new SearchResult { Artists = [SayNow("deezer")], Songs = [Brick("deezer", "USX9P2300001")] }),
+            ("applemusic", new SearchResult { Artists = [SayNow("applemusic")], Songs = [Brick("applemusic", "USX9P2300001")] }),
+            // Qobuz has an act with the same name but none of its songs, so nothing proves it is the same artist.
+            ("qobuz", new SearchResult { Artists = [SayNow("qobuz")] })
+        };
+
+        var lines = await ReadSearchStreamLinesAsync(new(), [], "say now", 20, shape, batches: batches);
+
+        var artists = shape == "ranked"
+            ? lines[^1]["sections"]!["artists"]!.AsArray().Select(item => item!).ToArray()
+            : lines.Where(line => line["items"] != null).SelectMany(line => line["items"]!.AsArray())
+                .Where(item => item!["Type"]!.GetValue<string>() == "MusicArtist").Select(item => item!).ToArray();
+        Assert.Equal(["ext-deezer-artist-saynow", "ext-qobuz-artist-saynow"],
+            artists.Select(item => item["Id"]!.GetValue<string>()).Order(StringComparer.Ordinal));
+        if (shape == "ranked")
+        {
+            var deezer = artists.Single(item => item["Id"]!.GetValue<string>() == "ext-deezer-artist-saynow");
+            var apple = Assert.Single(deezer["alsoOn"]!.AsArray())!;
+            Assert.Equal("ext-applemusic-artist-saynow", apple["id"]!.GetValue<string>());
+            Assert.Equal("applemusic", apple["source"]!.GetValue<string>());
+        }
+    }
+
+    [Theory]
     [InlineData(null, 20)]
     [InlineData("ranked", 40)]
     public async Task ClientApi_SearchStreamOmittedLimitKeepsTheShapeSpecificDefault(string? shape, int expected)
@@ -368,7 +416,8 @@ public sealed partial class ProtocolRouteFixtureTests
 
     private static async Task<JsonNode[]> ReadSearchStreamLinesAsync(SearchResult result,
         IReadOnlyList<ExternalPlaylist> playlists, string query, int limit, string? shape, bool omitLimit = false,
-        string? nativeItemsJson = null, ILibraryArtistLinks? artistLinks = null)
+        string? nativeItemsJson = null, ILibraryArtistLinks? artistLinks = null,
+        IReadOnlyList<(string Provider, SearchResult Result)>? batches = null)
     {
         var gateway = new Mock<IProtocolProviderGateway>();
         gateway.Setup(item => item.StreamSearchAsync(It.IsAny<ProtocolExecutionContext>(), query, limit, true, true, true, true,
@@ -376,7 +425,8 @@ public sealed partial class ProtocolRouteFixtureTests
             .Returns(async (ProtocolExecutionContext _, string _, int _, bool _, bool _, bool _, bool _,
                 Func<string, SearchResult, IReadOnlyList<ExternalPlaylist>, CancellationToken, Task> write, CancellationToken token) =>
             {
-                await write("deezer", result, playlists, token);
+                foreach (var (provider, batch) in batches ?? [("deezer", result)])
+                    await write(provider, batch, provider == "deezer" ? playlists : [], token);
                 return (IReadOnlyList<string>)[];
             });
         var index = new Mock<ILibraryIndexService>();

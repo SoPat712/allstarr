@@ -563,6 +563,35 @@ public sealed class MusicSearchServiceTests
     }
 
     [Fact]
+    public void SameNamedServiceArtistsMergeOnlyWhenOneOfTheirSongsIsTheSameRecording()
+    {
+        Artist Artist(string provider, string id = "saynow") =>
+            new() { Id = $"ext-{provider}-artist-{id}", Name = "Say Now", ExternalProvider = provider, ExternalId = id };
+        Song Song(string provider, string? isrc, string album = "Brick By Brick") => new()
+        {
+            Id = $"ext-{provider}-song-brick",
+            ExternalProvider = provider,
+            Title = "Brick By Brick",
+            Artist = "Say Now",
+            Album = album,
+            Duration = 200,
+            Isrc = isrc
+        };
+
+        // Same ISRC, or the same title, length and album, proves one artist; Qobuz's act has no songs here.
+        var byIsrc = MusicSearchService.WithoutProvenServiceRepeats([Artist("deezer"), Artist("applemusic"), Artist("qobuz")],
+            [Song("deezer", "USX9P2300001", "Single"), Song("applemusic", "USX9P2300001", "Other title")]);
+        Assert.Equal(["ext-deezer-artist-saynow", "ext-qobuz-artist-saynow"], byIsrc.Select(artist => artist.Id));
+        var byRecording = MusicSearchService.WithoutProvenServiceRepeats([Artist("deezer"), Artist("applemusic")],
+            [Song("deezer", null), Song("applemusic", null)]);
+        Assert.Equal(["ext-deezer-artist-saynow"], byRecording.Select(artist => artist.Id));
+        // Two same-named artists on one service are different acts, and a name alone never merges anything.
+        Assert.Equal(2, MusicSearchService.WithoutProvenServiceRepeats([Artist("deezer"), Artist("deezer", "other")],
+            [Song("deezer", "USX9P2300001")]).Count);
+        Assert.Equal(2, MusicSearchService.WithoutProvenServiceRepeats([Artist("deezer"), Artist("applemusic")], []).Count);
+    }
+
+    [Fact]
     public async Task PlaylistsJoinAlbumsWithTheirOwnWindow()
     {
         var gateway = Gateway(new SearchResult(), [

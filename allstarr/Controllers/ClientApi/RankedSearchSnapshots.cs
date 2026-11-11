@@ -41,7 +41,8 @@ internal sealed class RankedSearchSnapshots(string query, int limit, IReadOnlyLi
     Func<IReadOnlyList<RankedSearchRow>, CancellationToken, Task>? refresh = null)
 {
     private sealed record Update(string? Provider, IReadOnlyList<RankedSearchRow> Rows,
-        IReadOnlyList<string>? Late, TaskCompletionSource? Accepted = null, IReadOnlySet<string>? Linked = null);
+        IReadOnlyList<string>? Late, TaskCompletionSource? Accepted = null, IReadOnlySet<string>? Linked = null,
+        IReadOnlyList<(string Id, JsonObject Entry)>? AlsoOn = null);
     private readonly Channel<Update> updates = Channel.CreateUnbounded<Update>(new() { SingleReader = true });
     private readonly Dictionary<string, List<RankedSearchRow>> sections = requested.ToDictionary(section => section, _ => new List<RankedSearchRow>());
     private readonly List<string> providers = [];
@@ -52,10 +53,12 @@ internal sealed class RankedSearchSnapshots(string query, int limit, IReadOnlyLi
     // Service artists that matched songs tie to a library artist; they live in that artist's alsoOn instead.
     private IReadOnlySet<string> linked = new HashSet<string>();
 
-    internal async Task AddAsync(string provider, IReadOnlyList<RankedSearchRow> rows, CancellationToken token)
+    /// <param name="alsoOn">Service artists proven to be an artist already listed; each joins that row's alsoOn.</param>
+    internal async Task AddAsync(string provider, IReadOnlyList<RankedSearchRow> rows, CancellationToken token,
+        IReadOnlyList<(string Id, JsonObject Entry)>? alsoOn = null)
     {
         var accepted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        await updates.Writer.WriteAsync(new(provider, rows, null, accepted), token);
+        await updates.Writer.WriteAsync(new(provider, rows, null, accepted, AlsoOn: alsoOn), token);
         await accepted.Task.WaitAsync(token);
     }
 
@@ -89,6 +92,12 @@ internal sealed class RankedSearchSnapshots(string query, int limit, IReadOnlyLi
                     PruneExternalDuplicates(update.Rows);
                 foreach (var row in update.Rows)
                     if (!IsLinked(row) && sections.TryGetValue(row.Section, out var rows)) rows.Add(row);
+                foreach (var (id, entry) in update.AlsoOn ?? [])
+                    if (sections.GetValueOrDefault("artists")?.FirstOrDefault(row => row.Item["Id"]?.GetValue<string>() == id) is { } listed)
+                    {
+                        if (listed.Item["alsoOn"] is not JsonArray also) listed.Item["alsoOn"] = also = [];
+                        also.Add(entry);
+                    }
                 late = update.Late ?? late;
                 dirty = true;
                 update.Accepted?.TrySetResult();

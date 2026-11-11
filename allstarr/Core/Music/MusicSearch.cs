@@ -417,6 +417,7 @@ public sealed partial class MusicSearchService(
     {
         using var merging = RequestTiming.Current?.Stage("merge");
         var native = nativeRows.ToList();
+        var providerSongs = songs.ToList();
         var nativeArtists = native.Where(item => item.Kind == MusicItemKind.Artist).ToList();
         var nativeAlbums = native.Where(item => item.Kind == MusicItemKind.Album).ToList();
         var nativeAlbumIds = nativeAlbums.Select(item => item.Id).ToHashSet(StringComparer.Ordinal);
@@ -430,15 +431,15 @@ public sealed partial class MusicSearchService(
         return new MusicSearchResult<TPayload>(
             RankSongs(query, native.Where(item => item.Kind == MusicItemKind.Song)
                 .Select(item => new MusicSearchEntry<TPayload> { Native = item })
-                .Concat(songs.Select(song => new MusicSearchEntry<TPayload> { Song = song }))),
+                .Concat(providerSongs.Select(song => new MusicSearchEntry<TPayload> { Song = song }))),
             Rank(query, nativeAlbums, mergedAlbums.Select(album => (
                     new MusicSearchEntry<TPayload> { Album = album },
                     SearchRelevanceRanker.ScoreAlbum(query, album)))
                 .Concat(playlists.Select(playlist => (
                     new MusicSearchEntry<TPayload> { Playlist = playlist },
                     SearchRelevanceRanker.Score(query, playlist.Name, playlist.CuratorName))))),
-            Rank(query, nativeArtists, artists
-                .Where(artist => !IsLinked(artist, linkedProviderArtists))
+            // Same-named artists from two services become one row only when one of their songs is the same recording.
+            Rank(query, nativeArtists, WithoutProvenServiceRepeats(artists.Where(artist => !IsLinked(artist, linkedProviderArtists)), providerSongs)
                 .Select(artist => (
                     new MusicSearchEntry<TPayload> { Artist = artist },
                     SearchRelevanceRanker.Score(query, artist.Name)))));
