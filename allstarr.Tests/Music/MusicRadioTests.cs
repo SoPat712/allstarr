@@ -127,6 +127,62 @@ public sealed class MusicRadioTests
     }
 
     [Fact]
+    public async Task Radio_BudgetExceeded_YieldsSongsGatheredBeforeTimeout()
+    {
+        var clock = new ManualTimeProvider(DateTimeOffset.UtcNow);
+        var gateway = Gateway();
+        var pending = new TaskCompletionSource<List<Song>>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        gateway.Setup(item => item.GetSimilarSongsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "seed", 50))
+            .Returns(() => { started.SetResult(); return pending.Task; });
+        var service = new MusicMixService(gateway.Object, timeProvider: clock);
+        var context = MusicObservationsTests.Context(true);
+        var boundedContext = new ProtocolExecutionContext(context.Protocol, context.BackendInstanceId,
+            context.VerifiedBackendPrincipalId, context.Principal, context.CorrelationId,
+            clock.GetUtcNow().AddMilliseconds(2700), default);
+
+        var request = Radio(service, boundedContext, 50);
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        clock.Advance(TimeSpan.FromMilliseconds(2700));
+        var result = await request.WaitAsync(TimeSpan.FromSeconds(10));
+        pending.SetResult([Song("late")]);
+
+        Assert.Equal("ext-deezer-song-seed", Assert.Single(result).Song!.Id);
+    }
+
+    [Fact]
+    public async Task Radio_TotalFailure_ReturnsEmptyMixWithoutThrowing()
+    {
+        var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        gateway.Setup(item => item.GetSongAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "seed"))
+            .ThrowsAsync(new HttpRequestException("network down"));
+        var service = new MusicMixService(gateway.Object);
+
+        var result = await Radio(service, Context(), 50);
+
+        Assert.Empty(result);
+    }
+
+    [Fact]
+    public async Task Radio_ClientAbortStopsWork()
+    {
+        var gateway = Gateway();
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var pending = new TaskCompletionSource<List<Song>>(TaskCreationOptions.RunContinuationsAsynchronously);
+        gateway.Setup(item => item.GetSimilarSongsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "seed", 50))
+            .Returns(() => { started.SetResult(); return pending.Task; });
+        var service = new MusicMixService(gateway.Object);
+        using var cts = new CancellationTokenSource();
+
+        var request = Radio(service, Context(), 50, cts.Token);
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        cts.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => request);
+        pending.SetResult([]);
+    }
+
+    [Fact]
     public async Task Radio_CleanOnlySkipsExplicitCandidatesBeforeQualification()
     {
         var gateway = Gateway();

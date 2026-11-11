@@ -1293,6 +1293,8 @@ public partial class JellyfinController : ControllerBase
                 return CreateProtocolResponse(_interactionProtocolAdapter.ShapeInstantMix([]));
             }
 
+            var clock = HttpContext.RequestServices.GetService<TimeProvider>() ?? TimeProvider.System;
+            var started = clock.GetTimestamp();
             try
             {
                 var shuffledMix = resourceType is "song" or "artist"
@@ -1303,7 +1305,14 @@ public partial class JellyfinController : ControllerBase
 
                 return CreateProtocolResponse(_interactionProtocolAdapter.ShapeInstantMix(shuffledMix));
             }
-            catch (Exception ex)
+            catch (OperationCanceledException ex) when (!HttpContext.RequestAborted.IsCancellationRequested)
+            {
+                var elapsed = clock.GetElapsedTime(started);
+                _logger.LogInformation(ex, "Instant mix for external song {ItemId} timed out after {ElapsedMilliseconds} ms; returning 0 songs",
+                    itemId, (long)elapsed.TotalMilliseconds);
+                return CreateProtocolResponse(_interactionProtocolAdapter.ShapeInstantMix([]));
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException || !HttpContext.RequestAborted.IsCancellationRequested)
             {
                 _logger.LogError(ex, "Failed to create instant mix for external song {ItemId}", itemId);
                 return CreateProtocolResponse(_interactionProtocolAdapter.ShapeInstantMix([]));

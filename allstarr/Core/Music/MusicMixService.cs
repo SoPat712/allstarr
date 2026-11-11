@@ -6,6 +6,7 @@ using allstarr.Core.Protocols;
 using allstarr.Core.Settings;
 using allstarr.Models.Domain;
 using allstarr.Services.Common;
+using Microsoft.Extensions.Logging;
 
 namespace allstarr.Core.Music;
 
@@ -15,7 +16,8 @@ namespace allstarr.Core.Music;
 /// </summary>
 public sealed partial class MusicMixService(IProtocolProviderGateway providers, LastFmSimilarTracks? lastFm = null,
     ListenBrainzSimilarTracks? listenBrainz = null, MusicSearchService? musicSearch = null,
-    IEffectiveProviderPolicyResolver? effectivePolicies = null, TimeProvider? timeProvider = null, TasteService? taste = null, IApplicationCache? applicationCache = null)
+    IEffectiveProviderPolicyResolver? effectivePolicies = null, TimeProvider? timeProvider = null, TasteService? taste = null, IApplicationCache? applicationCache = null,
+    ILogger<MusicMixService>? logger = null)
 {
     private const int SuggestionLookups = 10;
     private readonly ConcurrentDictionary<string, CachedItemMix> itemMixCache = new();

@@ -3,6 +3,7 @@ using allstarr.Core.Protocols;
 using allstarr.Models.Domain;
 using allstarr.Services.Common;
 using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.Logging;
 
 namespace allstarr.Core.Music;
 
@@ -17,10 +18,12 @@ public sealed partial class MusicMixService : IDisposable
         using var caller = CancellationTokenSource.CreateLinkedTokenSource(context.CancellationToken, cancellationToken);
         caller.Token.ThrowIfCancellationRequested();
         var clock = timeProvider ?? TimeProvider.System;
+        var started = clock.GetTimestamp();
         var deadline = clock.GetUtcNow().AddSeconds(5);
         if (context.Deadline < deadline) deadline = context.Deadline;
         if (deadline <= clock.GetUtcNow()) return [];
-        using var timeout = new CancellationTokenSource(deadline - clock.GetUtcNow(), clock);
+        var budgetDuration = deadline - clock.GetUtcNow();
+        using var timeout = new CancellationTokenSource(budgetDuration > TimeSpan.Zero ? budgetDuration : TimeSpan.Zero, clock);
         using var bounded = CancellationTokenSource.CreateLinkedTokenSource(caller.Token, timeout.Token);
         var token = bounded.Token;
         context = new(context.Protocol, context.BackendInstanceId, context.VerifiedBackendPrincipalId,
@@ -34,6 +37,10 @@ public sealed partial class MusicMixService : IDisposable
         string? cacheKey = null;
         var cached = false;
         string? seedArtist = null;
+        var budgetCanceled = false;
+
+        bool IsCallerAbort() => cancellationToken.IsCancellationRequested ||
+            (context.CancellationToken.IsCancellationRequested && !timeout.IsCancellationRequested && clock.GetUtcNow() < deadline);
         try
         {
             if (effectivePolicies != null)
@@ -67,15 +74,15 @@ public sealed partial class MusicMixService : IDisposable
                 if (seed == null) return [];
                 seedArtist = seed.Artist;
                 await AddAsync([seed]);
-                if (result.Count < limit)
+                if (result.Count < limit && !token.IsCancellationRequested)
                     await AddAsync(await ReadRadioSourceAsync(providers.GetSimilarSongsAsync(context, providerId, externalId, limit), token) ?? []);
-                if (result.Count < limit && lastFm != null)
+                if (result.Count < limit && !token.IsCancellationRequested && lastFm != null)
                 {
                     var suggestions = await lastFm.FindAsync(context, seed.Artist, seed.Title,
                         Math.Min(limit, SuggestionLookups), token).WaitAsync(token);
                     foreach (var suggestion in suggestions)
                     {
-                        if (result.Count >= limit) break;
+                        if (result.Count >= limit || token.IsCancellationRequested) break;
                         var found = await ReadRadioSourceAsync(providers.SearchAsync(context,
                             $"{suggestion.Artist} {suggestion.Title}", 3, 0, 0), token);
                         await AddAsync(found?.Songs.Where(song =>
@@ -89,12 +96,12 @@ public sealed partial class MusicMixService : IDisposable
                 var seed = await providers.GetArtistAsync(context, providerId, externalId).WaitAsync(token);
                 if (seed == null) return [];
                 await AddAsync((await ReadRadioSourceAsync(providers.GetArtistTracksAsync(context, providerId, externalId), token) ?? []).Take(10).ToArray());
-                if (result.Count < limit)
+                if (result.Count < limit && !token.IsCancellationRequested)
                 {
                     var related = await ReadRadioSourceAsync(providers.GetSimilarArtistsAsync(context, providerId, externalId, 5), token) ?? [];
                     foreach (var artist in related.Take(5))
                     {
-                        if (result.Count >= limit) break;
+                        if (result.Count >= limit || token.IsCancellationRequested) break;
                         if (string.IsNullOrWhiteSpace(artist.ExternalId) || string.IsNullOrWhiteSpace(artist.ExternalProvider)) continue;
                         await AddAsync((await ReadRadioSourceAsync(providers.GetArtistTracksAsync(context,
                             artist.ExternalProvider, artist.ExternalId), token) ?? []).Take(10).ToArray());
@@ -102,31 +109,67 @@ public sealed partial class MusicMixService : IDisposable
                 }
             }
         }
-        catch (OperationCanceledException) when (!caller.IsCancellationRequested) { }
+        catch (OperationCanceledException) when (!IsCallerAbort())
+        {
+            budgetCanceled = true;
+        }
         catch (Exception) when (!token.IsCancellationRequested) { }
-        caller.Token.ThrowIfCancellationRequested();
+
+        if (IsCallerAbort())
+        {
+            caller.Token.ThrowIfCancellationRequested();
+        }
+
         if (!cached && cacheKey != null && candidates.Count > 0)
             radioCache.Set(cacheKey, new CachedRadio(clock.GetUtcNow().AddMinutes(1), candidates.ToArray(), seedArtist),
                 new MemoryCacheEntryOptions { Size = 1, AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(1) });
-        if (taste != null && context.Actor?.EffectiveUserId is { } listener)
+        if (taste != null && context.Actor?.EffectiveUserId is { } listener && accepted.Count > 0)
         {
-            var ranked = await taste.RankAsync(listener, accepted, seedArtist, caller.Token);
-            return ranked.Select(song =>
+            try
             {
-                var row = result[accepted.FindIndex(item => item.Id == song.Id)];
-                return row with { TasteReason = song.TasteReason, Song = row.Song?.WithTasteReason(song.TasteReason) };
-            }).ToArray();
+                if (!budgetCanceled && !timeout.IsCancellationRequested && clock.GetUtcNow() < deadline)
+                {
+                    var ranked = await taste.RankAsync(listener, accepted, seedArtist, token);
+                    return ranked.Select(song =>
+                    {
+                        var row = result[accepted.FindIndex(item => item.Id == song.Id)];
+                        return row with { TasteReason = song.TasteReason, Song = row.Song?.WithTasteReason(song.TasteReason) };
+                    }).ToArray();
+                }
+            }
+            catch (OperationCanceledException) when (!IsCallerAbort())
+            {
+                budgetCanceled = true;
+            }
+            catch (Exception) { }
         }
+
+        if (budgetCanceled || timeout.IsCancellationRequested || clock.GetUtcNow() >= deadline)
+        {
+            var elapsed = clock.GetElapsedTime(started);
+            logger?.LogInformation("Instant mix for external song {ItemId} timed out after {ElapsedMilliseconds} ms; returning {SongCount} songs",
+                publicId, (long)elapsed.TotalMilliseconds, result.Count);
+        }
+
         return result;
 
         async Task AddAsync(IReadOnlyList<Song> songs)
         {
+            if (token.IsCancellationRequested) return;
             candidates.AddRange(songs.Take(50));
             if (taste != null && context.Actor?.EffectiveUserId is { } user)
-                songs = await taste.RankAsync(user, songs, seedArtist, token);
+            {
+                try { songs = await taste.RankAsync(user, songs, seedArtist, token); }
+                catch (OperationCanceledException) when (!IsCallerAbort()) { return; }
+                catch (Exception) { }
+            }
             foreach (var song in songs.Take(50))
             {
-                token.ThrowIfCancellationRequested();
+                if (token.IsCancellationRequested)
+                {
+                    if (IsCallerAbort()) caller.Token.ThrowIfCancellationRequested();
+                    break;
+                }
                 if (result.Count >= limit) break;
                 if (context.Policy?.Includes(song) == false || accepted.Any(other => SameRadioRecording(other, song))) continue;
                 try
@@ -134,12 +177,20 @@ public sealed partial class MusicMixService : IDisposable
                     var rows = await projection.ProjectSongsAsync(context, [song], native, token).WaitAsync(token);
                     var row = rows.FirstOrDefault();
                     if (row == null || row.Native == null && !await providers.CanPlaySongAsync(context, song).WaitAsync(token)) continue;
-                    token.ThrowIfCancellationRequested();
+                    if (token.IsCancellationRequested)
+                    {
+                        if (IsCallerAbort()) caller.Token.ThrowIfCancellationRequested();
+                        break;
+                    }
                     if (row.Native != null && result.Any(existing => existing.Native?.Id == row.Native.Id)) continue;
                     accepted.Add(song);
                     result.Add(row);
                     if (context.Actor?.EffectiveUserId != null)
                         await providers.RememberTrackAsync(context, song.Id).WaitAsync(token);
+                }
+                catch (OperationCanceledException) when (!IsCallerAbort())
+                {
+                    break;
                 }
                 catch (Exception) when (!token.IsCancellationRequested) { }
             }
@@ -149,6 +200,7 @@ public sealed partial class MusicMixService : IDisposable
     private static async Task<T?> ReadRadioSourceAsync<T>(Task<T> task, CancellationToken token)
     {
         try { return await task.WaitAsync(token); }
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { return default; }
         catch (Exception) when (!token.IsCancellationRequested) { return default; }
     }
 

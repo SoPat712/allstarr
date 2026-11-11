@@ -45,7 +45,6 @@ public partial class JellyfinController
             linked.Token, original.Client)
         { Policy = original.Policy, IsReadOnly = original.IsReadOnly };
         HttpContext.Items[ProtocolExecutionContextFactory.HttpContextItemKey] = bounded;
-        HttpContext.RequestAborted = linked.Token;
         try
         {
             var pending = read();
@@ -76,7 +75,6 @@ public partial class JellyfinController
         finally
         {
             HttpContext.Items[ProtocolExecutionContextFactory.HttpContextItemKey] = original;
-            HttpContext.RequestAborted = aborted;
         }
     }
 }
