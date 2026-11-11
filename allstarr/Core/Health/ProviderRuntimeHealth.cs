@@ -39,6 +39,9 @@ public interface IProviderOutcomeObserver
 
     bool IsPlaybackCoolingDown(ProviderExecutionContext context, ProviderExternalResourceId track,
         ProviderAudioQuality quality) => false;
+
+    ProviderError? GetPlaybackCooldownFailure(ProviderExecutionContext context, ProviderExternalResourceId track,
+        ProviderAudioQuality quality) => null;
 }
 
 public sealed record PlaybackStartObservation(TimeSpan MedianStart, ProviderMediaFormat? Media);
@@ -70,7 +73,7 @@ public sealed class ProviderRuntimeHealth : IProviderOutcomeObserver, ILyricsOut
     private readonly Dictionary<ProviderRuntimeStatusKey, ProviderHealthObservation> _observations = [];
     private readonly Dictionary<ProviderRuntimeStatusKey, List<ProviderCheckResult>> _recent = [];
     private readonly Dictionary<ProviderRuntimeStatusKey, List<ProviderHealthObservation>> _alertSamples = [];
-    private readonly Dictionary<PlaybackItemKey, DateTimeOffset> _playbackFailures = [];
+    private readonly Dictionary<PlaybackItemKey, PlaybackFailureRecord> _playbackFailures = [];
     private readonly Dictionary<PlaybackSourceKey, List<PlaybackStartSample>> _playbackStarts = [];
     private readonly Dictionary<string, SidecarStatus> _sidecars = new(StringComparer.OrdinalIgnoreCase);
     private readonly ProviderHealthOptions _options;
@@ -159,8 +162,8 @@ public sealed class ProviderRuntimeHealth : IProviderOutcomeObserver, ILyricsOut
             }
             var cooldown = TimeSpan.FromSeconds(Math.Clamp(error.RetryAfter?.TotalSeconds ?? 30, 5, 300));
             if (_playbackFailures.Count >= MaximumObservations && !_playbackFailures.ContainsKey(key))
-                _playbackFailures.Remove(_playbackFailures.MinBy(item => item.Value).Key);
-            _playbackFailures[key] = _clock.UtcNow.Add(cooldown);
+                _playbackFailures.Remove(_playbackFailures.MinBy(item => item.Value.Until).Key);
+            _playbackFailures[key] = new(_clock.UtcNow.Add(cooldown), error);
             if (error.Kind == ProviderErrorKind.IncompatibleMedia)
                 RecordCore(Key(context.ProviderId, context.Account?.AccountId, ProviderCapabilityKind.Streaming.ToString()),
                     context.Account?.Revision, false, (long)elapsed.TotalMilliseconds, error.Code, false, null, passive: true);
@@ -203,16 +206,21 @@ public sealed class ProviderRuntimeHealth : IProviderOutcomeObserver, ILyricsOut
     private readonly record struct PlaybackSourceKey(string Provider, Guid? Account, long? Revision, ProviderAudioQuality Quality);
     private sealed record PlaybackStartSample(DateTimeOffset At, TimeSpan Elapsed, ProviderMediaFormat? Media);
 
+    private sealed record PlaybackFailureRecord(DateTimeOffset Until, ProviderError Error);
+
     public bool IsPlaybackCoolingDown(ProviderExecutionContext context, ProviderExternalResourceId track,
+        ProviderAudioQuality quality) => GetPlaybackCooldownFailure(context, track, quality) != null;
+
+    public ProviderError? GetPlaybackCooldownFailure(ProviderExecutionContext context, ProviderExternalResourceId track,
         ProviderAudioQuality quality)
     {
         lock (_sync)
         {
             var key = PlaybackKey(context, track, quality);
-            if (!_playbackFailures.TryGetValue(key, out var until)) return false;
-            if (until > _clock.UtcNow) return true;
+            if (!_playbackFailures.TryGetValue(key, out var failure)) return null;
+            if (failure.Until > _clock.UtcNow) return failure.Error;
             _playbackFailures.Remove(key);
-            return false;
+            return null;
         }
     }
 

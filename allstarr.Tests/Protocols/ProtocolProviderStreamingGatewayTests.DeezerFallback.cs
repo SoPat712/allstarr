@@ -7,6 +7,7 @@ using allstarr.Core.Protocols;
 using allstarr.Core.Providers.Deezer;
 using allstarr.Core.Providers.Spotify;
 using allstarr.Core.Routing;
+using allstarr.Core.Settings;
 using allstarr.Core.Storage;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -42,6 +43,136 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         var fixture = new DeezerFallbackFixture(startPreference: true, alternative: false);
         var error = await Assert.ThrowsAsync<UnauthorizedAccessException>(() => fixture.Open());
         Assert.Equal((403, "External provider account is unavailable"), JellyfinController.MapExternalStreamException(error));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task DeezerAccountFailureImmediateRetryDuringCooldownPreservesForbiddenStatusAndBody(bool startPreference)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var clock = new PlaybackHealthClock(now);
+        var timeProvider = new ManualTimeProvider(now);
+        var health = new ProviderRuntimeHealth(clock: clock);
+        var attempts = 0;
+        var first = Streaming("deezer", (_, _) => Task.FromResult(AudioResponse()));
+        first.Setup(item => item.GetStreamLeaseAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderStreamLeaseRequest>()))
+            .Returns(() =>
+            {
+                attempts++;
+                return Task.FromResult(ProviderOutcome<ProviderStreamLease>.Failure(
+                    ProviderError.TrackUnavailable(ProviderErrorKind.Forbidden)));
+            });
+        var (gateway, _) = SingleGateway(first, outcomes: health, clock: timeProvider, startPreference: startPreference);
+        var context = TimedContext(timeProvider, startPreference);
+
+        // First request: tries source and fails with 403 Forbidden
+        var firstError = await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            gateway.OpenStreamAsync(context, "deezer", "3658406082", ProviderAudioQuality.Any, null));
+        var (firstStatus, firstMessage) = JellyfinController.MapExternalStreamException(firstError);
+        Assert.Equal(403, firstStatus);
+        Assert.Equal("External provider account is unavailable", firstMessage);
+        Assert.Equal(1, attempts);
+
+        // Advance 14s (while 30s cooldown lasts)
+        clock.UtcNow = clock.UtcNow.AddSeconds(14);
+        timeProvider.Advance(TimeSpan.FromSeconds(14));
+
+        // Retry 14s later: answers the exact same status and body without re-attempting the source
+        var retryError = await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            gateway.OpenStreamAsync(context, "deezer", "3658406082", ProviderAudioQuality.Any, null));
+        var (retryStatus, retryMessage) = JellyfinController.MapExternalStreamException(retryError);
+        Assert.Equal(firstStatus, retryStatus);
+        Assert.Equal(firstMessage, retryMessage);
+        Assert.Equal(1, attempts);
+
+        // After the back-off expires (31s from start, >30s cooldown)
+        clock.UtcNow = clock.UtcNow.AddSeconds(17);
+        timeProvider.Advance(TimeSpan.FromSeconds(17));
+
+        // After back-off expires: source is tried again!
+        var afterExpiryError = await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            gateway.OpenStreamAsync(context, "deezer", "3658406082", ProviderAudioQuality.Any, null));
+        var (expiredStatus, expiredMessage) = JellyfinController.MapExternalStreamException(afterExpiryError);
+        Assert.Equal(firstStatus, expiredStatus);
+        Assert.Equal(firstMessage, expiredMessage);
+        Assert.Equal(2, attempts);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SongWithAnotherEligibleSourcePlaysOnRetryWhileFirstSourceIsCoolingDown(bool startPreference)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var clock = new PlaybackHealthClock(now);
+        var timeProvider = new ManualTimeProvider(now);
+        var health = new ProviderRuntimeHealth(clock: clock);
+        var first = Streaming("deezer", (_, _) => Task.FromResult(AudioResponse()));
+        first.Setup(item => item.GetStreamLeaseAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderStreamLeaseRequest>()))
+            .ReturnsAsync(ProviderOutcome<ProviderStreamLease>.Failure(
+                ProviderError.TrackUnavailable(ProviderErrorKind.Forbidden)));
+        var second = Streaming("qobuz", (_, _) => Task.FromResult(AudioResponse()));
+        var (gateway, _) = FailoverGateway(first, second, outcomes: health, clock: timeProvider);
+        var context = TimedContext(timeProvider, startPreference);
+
+        // First attempt: deezer fails, advances to qobuz which plays
+        using var response1 = (await gateway.OpenStreamAsync(context, "deezer", "source-track", ProviderAudioQuality.Any, null))!.Response;
+        Assert.Equal("qobuz", Assert.Single(response1.Headers.GetValues("X-Allstarr-Provider")));
+
+        // Deezer is now cooling down
+        var execution = new ProviderExecutionContext(context.RequireActor(), "deezer", null,
+            new(new(ProviderAudioQuality.Any, ProviderAudioQuality.HighResolution, true),
+                ProviderExplicitContentPolicy.Allow, true, true, true, ["deezer"]), "playback", "retry", context.Deadline, default);
+        var quality = startPreference ? ProviderAudioQuality.HighResolution : ProviderAudioQuality.Any;
+        Assert.True(health.IsPlaybackCoolingDown(execution, new("deezer", ProviderResourceKind.Track, "source-track"), quality));
+
+        // Retry 14s later: deezer is cooling down, qobuz still plays on retry
+        clock.UtcNow = clock.UtcNow.AddSeconds(14);
+        timeProvider.Advance(TimeSpan.FromSeconds(14));
+
+        using var response2 = (await gateway.OpenStreamAsync(context, "deezer", "source-track", ProviderAudioQuality.Any, null))!.Response;
+        Assert.Equal("qobuz", Assert.Single(response2.Headers.GetValues("X-Allstarr-Provider")));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RateLimitedCooldownImmediateRetryPreservesRateLimitedStatusAndBody(bool startPreference)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var clock = new PlaybackHealthClock(now);
+        var timeProvider = new ManualTimeProvider(now);
+        var health = new ProviderRuntimeHealth(clock: clock);
+        var attempts = 0;
+        var first = Streaming("deezer", (_, _) => Task.FromResult(AudioResponse()));
+        first.Setup(item => item.GetStreamLeaseAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderStreamLeaseRequest>()))
+            .Returns(() =>
+            {
+                attempts++;
+                return Task.FromResult(ProviderOutcome<ProviderStreamLease>.Failure(
+                    new ProviderError(ProviderErrorKind.RateLimited, TimeSpan.FromSeconds(30))));
+            });
+        var (gateway, _) = SingleGateway(first, outcomes: health, clock: timeProvider, startPreference: startPreference);
+        var context = TimedContext(timeProvider, startPreference);
+
+        var firstError = await Assert.ThrowsAsync<HttpRequestException>(() =>
+            gateway.OpenStreamAsync(context, "deezer", "source-track", ProviderAudioQuality.Any, null));
+        var (firstStatus, firstMessage) = JellyfinController.MapExternalStreamException(firstError);
+        Assert.Equal(503, firstStatus);
+        Assert.Equal("External provider is rate limiting requests", firstMessage);
+        Assert.Equal(1, attempts);
+
+        // Immediate retry 14s later
+        clock.UtcNow = clock.UtcNow.AddSeconds(14);
+        timeProvider.Advance(TimeSpan.FromSeconds(14));
+
+        var retryError = await Assert.ThrowsAsync<HttpRequestException>(() =>
+            gateway.OpenStreamAsync(context, "deezer", "source-track", ProviderAudioQuality.Any, null));
+        var (retryStatus, retryMessage) = JellyfinController.MapExternalStreamException(retryError);
+        Assert.Equal(firstStatus, retryStatus);
+        Assert.Equal(firstMessage, retryMessage);
+        Assert.Equal(1, attempts);
     }
 
     [Fact]
@@ -181,6 +312,58 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         internal Task<ProtocolProviderStream?> Open(bool inspection = false) => gateway.OpenStreamAsync(
             inspection ? context with { IsReadOnly = true } : context,
             "deezer", "3610902262", ProviderAudioQuality.Any, null, headOnly: inspection);
+    }
+
+    private static ProtocolExecutionContext TimedContext(TimeProvider clock, bool startPreference)
+    {
+        if (startPreference) return StartPreferenceContext("Balanced", clock);
+        var original = ClientContext();
+        return new ProtocolExecutionContext(original.Protocol, original.BackendInstanceId, original.VerifiedBackendPrincipalId,
+            original.Principal, original.CorrelationId, clock.GetUtcNow().AddMinutes(1), original.CancellationToken,
+            original.Client);
+    }
+
+    private static (ProtocolProviderGateway Gateway, Mock<IProviderRouter> Router) SingleGateway(
+        Mock<IProviderStreamingCapability> first,
+        IProviderOutcomeObserver? outcomes = null, TimeProvider? clock = null,
+        bool startPreference = false)
+    {
+        var registry = Registry(first.Object);
+        var router = new Mock<IProviderRouter>(MockBehavior.Strict);
+        router.Setup(item => item.PlanAsync<IProviderStreamingCapability>(It.IsAny<ProviderRouteRequest>()))
+            .ReturnsAsync((ProviderRouteRequest request) => Plan(request, registry,
+                new[] { first.Object }
+                    .Where(item => request.ProviderPriority.Contains(item.ProviderId))
+                    .ToArray()));
+        router.Setup(item => item.EvaluateFallback(It.IsAny<ProviderRoutePlan<IProviderStreamingCapability>>(),
+                It.IsAny<int>(), It.IsAny<ProviderError>()))
+            .Returns((ProviderRoutePlan<IProviderStreamingCapability> plan, int index, ProviderError error) =>
+                new ProviderFallbackDecision<IProviderStreamingCapability>(
+                    ProviderFallbackDisposition.StopFailure,
+                    error.Code, null));
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["Providers:StreamingOrder"] = first.Object.ProviderId
+        }).Build();
+        IEffectiveProviderPolicyResolver? policies = null;
+        if (startPreference)
+        {
+            var resolver = new Mock<IEffectiveProviderPolicyResolver>(MockBehavior.Strict);
+            resolver.Setup(item => item.ResolveForUserAsync(
+                    It.IsAny<Guid>(),
+                    It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new EffectiveProviderPolicySnapshot(
+                    new Dictionary<ProviderCapabilityKind, ImmutableArray<string>>
+                    {
+                        [ProviderCapabilityKind.Streaming] = [first.Object.ProviderId]
+                    }.ToImmutableDictionary(),
+                    ImmutableHashSet<string>.Empty,
+                    AudioQualityPolicy.DefaultStep,
+                    0.07));
+            policies = resolver.Object;
+        }
+        return (new ProtocolProviderGateway(router.Object, registry, new HttpClientFactory(), configuration,
+            effectivePolicies: policies, outcomes: outcomes, timeProvider: clock, audioVerifier: FixtureAudioVerifier.Instance), router);
     }
 
     private sealed class MissingDeezerSecret : IProviderAccountSecretAccessor

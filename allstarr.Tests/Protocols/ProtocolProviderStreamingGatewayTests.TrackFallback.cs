@@ -85,7 +85,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         var second = Streaming("qobuz", (_, _) => Task.FromResult(AudioResponse(HttpStatusCode.BadGateway)));
         var (gateway, _) = FailoverGateway(first, second, outcomes: health);
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() => gateway.OpenStreamAsync(ClientContext(), "deezer", "source", ProviderAudioQuality.Any, null));
-        await Assert.ThrowsAsync<ProtocolProviderUnavailableException>(() => gateway.OpenStreamAsync(ClientContext(), "deezer", "source", ProviderAudioQuality.Any, null));
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => gateway.OpenStreamAsync(ClientContext(), "deezer", "source", ProviderAudioQuality.Any, null));
         first.Verify(item => item.GetStreamLeaseAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderStreamLeaseRequest>()), Times.Once);
     }
 

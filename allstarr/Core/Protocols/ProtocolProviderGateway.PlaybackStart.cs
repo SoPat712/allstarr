@@ -72,10 +72,14 @@ public sealed partial class ProtocolProviderGateway
             finally { checks.Release(); }
         }));
         var facts = gathered.OfType<PlaybackStartCandidate>().ToList();
+        var cooldownFailure = facts.Count == 0
+            ? eligible.Select(candidate => outcomes?.GetPlaybackCooldownFailure(candidate.Context, candidate.TrackId ?? requestedTrack, quality))
+                .FirstOrDefault(error => error != null)
+            : null;
         if (facts.Count == 0 && await resolveAvailability() is { } refreshedSources)
             return await OpenWithStartPreferenceAsync(protocol, refreshedSources, requestedTrack, quality, policy,
                 startDeadline, transferDeadline, requestedRange, startDeadlineCancellation, streamCancellation,
-                opened, resolveAvailability, attempted, originalFailure: originalFailure);
+                opened, resolveAvailability, attempted, originalFailure: originalFailure ?? cooldownFailure);
         Task<PlaybackStartCandidate?> StartFactsAsync(ProviderRouteCandidate<IProviderStreamingCapability> candidate, int index) =>
             ReadPlaybackStartCandidateAsync(protocol, candidate, requestedTrack, quality, index);
         var failing = eligible.Select(candidate => HasFailingPlaybackHealth(protocol, candidate)).ToArray();
@@ -140,7 +144,7 @@ public sealed partial class ProtocolProviderGateway
             fallbackReason = $"fallback-{lastFailure.Code}";
             if (hedged) index++;
         }
-        ThrowRouteFailure(originalFailure ?? lastFailure ?? new(ProviderErrorKind.TransientFailure));
+        ThrowRouteFailure(originalFailure ?? lastFailure ?? cooldownFailure ?? new(ProviderErrorKind.TransientFailure));
         return null;
 
         static bool Ready(PlaybackStartResult item) =>
@@ -209,8 +213,9 @@ public sealed partial class ProtocolProviderGateway
                         }
                     }
                 }
-                if (outcomes?.IsPlaybackCoolingDown(candidate.Context, track, quality) == true)
-                    return new(index, null, candidate.Context, track, new(ProviderErrorKind.TransientFailure), null);
+                var candidateCooldownFailure = outcomes?.GetPlaybackCooldownFailure(candidate.Context, track, quality);
+                if (candidateCooldownFailure != null)
+                    return new(index, null, candidate.Context, track, candidateCooldownFailure, null);
                 var deadline = startDeadline;
                 var remaining = deadline - clock.GetUtcNow();
                 if (remaining <= TimeSpan.Zero) throw new OperationCanceledException(cancellation);

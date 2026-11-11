@@ -1621,6 +1621,7 @@ public sealed partial class ProtocolProviderGateway(
         string? fallbackReason = null;
         ProviderError? lastFailure = null;
         ProviderError? originalFailure = null;
+        ProviderError? cooldownFailure = null;
         var sourceAttempts = 0;
         var attemptedRoutes = new HashSet<(string Provider, Guid? Account, string Track)>();
         for (var candidateIndex = 0; candidateIndex < plan.Candidates.Count; candidateIndex++)
@@ -1660,8 +1661,9 @@ public sealed partial class ProtocolProviderGateway(
                 if (protocol.IsPreparation) { cached.Response.Dispose(); return null; }
                 return await OpenedAsync(cached with { SelectionReason = $"{routeReason}:managed-cache" }, candidate.Context, servingTrack);
             }
-            if (!protocol.IsReadOnly && outcomes?.IsPlaybackCoolingDown(candidate.Context, servingTrack, quality) == true)
+            if (!protocol.IsReadOnly && outcomes?.GetPlaybackCooldownFailure(candidate.Context, servingTrack, quality) is { } coolingDownError)
             {
+                cooldownFailure ??= coolingDownError;
                 fallbackReason = "fallback-source-cooldown";
                 if (candidateIndex + 1 == plan.Candidates.Count && await ResolveAvailabilityAsync(afterFailure: true))
                     candidateIndex = -1;
@@ -1877,7 +1879,8 @@ public sealed partial class ProtocolProviderGateway(
         }
 
         if (protocol.IsReadOnly || protocol.IsPreparation) return null;
-        if (lastFailure != null) ThrowRouteFailure(originalFailure ?? lastFailure);
+        var failure = originalFailure ?? lastFailure ?? cooldownFailure;
+        if (failure != null) ThrowRouteFailure(failure);
         throw new ProtocolProviderUnavailableException(new(ProviderErrorKind.TransientFailure));
 
         async Task<ProtocolProviderStream> OpenedAsync(ProtocolProviderStream stream,
