@@ -25,7 +25,8 @@ before using optional routes.
 `titleMarkers`, `itemDetails`, `playback`, `lyricsRich`, `lyricsSources`, `lyricsVersions`,
 `fixesMatch`, `reports`, `mixes`, `releases`, `follow`, `events`, `appearances`,
 `similarAlbums`, `playlistKinds`, `history`, `playCounts`, `libraryAdditions`,
-`preferences`, `searchStream`, `searchStreamScores`, `searchStreamRanked`, and `searchStreamRankedLibrary` are available.
+`preferences`, `searchStream`, `searchStreamScores`, `searchStreamRanked`, `searchStreamRankedLibrary`,
+`v2Tracks` (the v2 tracks routes and artwork) and `v2Batch` (v2 track views and the batch call) are available.
 `stats`, `taste`, `sound`, `playActivity`, `historyImports`, and `historyRecheck`
 are true when their respective services are registered. `karaokeModel` is true while
 a valid on-device karaoke model is present. `dashboardLink` is false.

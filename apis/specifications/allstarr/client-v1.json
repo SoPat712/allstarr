@@ -4386,6 +4386,12 @@
           },
           "karaokeModel": {
             "type": "boolean"
+          },
+          "v2Tracks": {
+            "type": "boolean"
+          },
+          "v2Batch": {
+            "type": "boolean"
           }
         }
       },

@@ -54,6 +54,8 @@ public sealed record ClientFeatures
     [JsonPropertyName("libraryAdditions")] public bool LibraryAdditions { get; init; } = true;
     [JsonPropertyName("preferences")] public bool Preferences { get; init; } = true;
     [JsonPropertyName("karaokeModel")] public bool KaraokeModel { get; init; }
+    [JsonPropertyName("v2Tracks")] public bool V2Tracks { get; init; } = true;
+    [JsonPropertyName("v2Batch")] public bool V2Batch { get; init; } = true;
 }
 
 public sealed record KaraokeModelMetadata(
