@@ -227,6 +227,22 @@ public sealed class PromotionNamingTests
         Assert.Equal(9, error.Length);
     }
 
+    [Theory]
+    [InlineData(" ")]
+    [InlineData(" -  ")]
+    [InlineData("/%title%")]
+    [InlineData("$noop(extra)")]
+    public void NothingMayFollowTheFileExtension(string trailing)
+    {
+        const string script = "%artist%/%title%.%_extension%";
+        var error = Assert.Single(PromotionNaming.Validate(script + trailing));
+        Assert.Equal(script.Length, error.Position);
+        Assert.Equal(trailing.Length, error.Length);
+        Assert.Equal("Nothing may follow the file extension", error.Message);
+        Assert.Null(PromotionNaming.Render(script + trailing, Fields()).RelativePath);
+        Assert.Empty(PromotionNaming.Validate(script));
+    }
+
     [Fact]
     public void ResourceLimits_ReturnErrors()
     {

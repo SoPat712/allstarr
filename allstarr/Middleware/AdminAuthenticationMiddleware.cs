@@ -177,6 +177,7 @@ public class AdminAuthenticationMiddleware
         var promotionSegments = path.TrimEnd('/').Split('/', StringSplitOptions.RemoveEmptyEntries);
         if (promotionSegments.Length >= 3 && promotionSegments[2].Equals("library-promotions", StringComparison.OrdinalIgnoreCase))
             return promotionSegments.Length == 3 && (HttpMethods.IsGet(method) || HttpMethods.IsPost(method)) ||
+                promotionSegments.Length == 5 && promotionSegments[3] == "naming" && promotionSegments[4] == "detect" && HttpMethods.IsGet(method) ||
                 promotionSegments.Length == 4 && promotionSegments[3] == "requests" && (HttpMethods.IsGet(method) || HttpMethods.IsPost(method)) ||
                 promotionSegments.Length == 5 && promotionSegments[3] == "requests" && Guid.TryParse(promotionSegments[4], out _) && HttpMethods.IsGet(method) ||
                 promotionSegments.Length == 6 && promotionSegments[3] == "requests" && Guid.TryParse(promotionSegments[4], out _) &&
@@ -184,7 +185,7 @@ public class AdminAuthenticationMiddleware
                 promotionSegments.Length == 5 && promotionSegments[3] == "profiles" && (
                     promotionSegments[4] == "me" && (HttpMethods.IsGet(method) || HttpMethods.IsPut(method) || HttpMethods.IsDelete(method)) ||
                     promotionSegments[4] == "preview" && HttpMethods.IsPost(method)) ||
-                promotionSegments.Length == 4 && (promotionSegments[3] == "roots" && HttpMethods.IsGet(method) ||
+                promotionSegments.Length == 4 && (promotionSegments[3] is "roots" or "setup" && HttpMethods.IsGet(method) ||
                     promotionSegments[3] == "preview" && HttpMethods.IsPost(method) || Guid.TryParse(promotionSegments[3], out _) && HttpMethods.IsGet(method)) ||
                 promotionSegments.Length == 5 && Guid.TryParse(promotionSegments[3], out _) &&
                     promotionSegments[4] is "approve" or "cancel" && HttpMethods.IsPost(method) ||

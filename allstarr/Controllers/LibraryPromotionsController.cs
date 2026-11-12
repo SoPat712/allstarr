@@ -13,11 +13,12 @@ namespace allstarr.Controllers;
 [ServiceFilter(typeof(AdminPortFilter))]
 public sealed class LibraryPromotionsController(LibraryPromotionService promotions, PromotionRoots roots,
     AdminProtocolExecutionContextFactory contexts, ILogger<LibraryPromotionsController>? logger = null,
-    PromotionLibraryFolders? libraryFolders = null) : ControllerBase
+    PromotionLibraryFolders? libraryFolders = null, PromotionProfiles? profiles = null) : ControllerBase
 {
     [HttpGet("roots")]
-    public Task<IActionResult> Roots(CancellationToken token) => ExecuteAsync(token, async (session, _) =>
-        (await roots.ReadAsync(token)).Select(item => session.IsAdministrator
+    public Task<IActionResult> Roots(CancellationToken token) => ExecuteAsync(token, async (session, context) =>
+        (session.IsAdministrator || profiles == null ? await roots.ReadAsync(token) : await profiles.AccessibleRootsAsync(context, token))
+        .Select(item => session.IsAdministrator
             ? (object)new { item.Id, item.Name, item.Path, item.BackendPath }
             : new { item.Id, item.Name }));
 
@@ -30,7 +31,11 @@ public sealed class LibraryPromotionsController(LibraryPromotionService promotio
     });
 
     [HttpGet("setup")]
-    public Task<IActionResult> Setup(CancellationToken token) => ExecuteAsync(token, (_, _) => roots.SetupAsync(token: token));
+    public Task<IActionResult> Setup(CancellationToken token) => ExecuteAsync(token, async (session, context) =>
+    {
+        if (libraryFolders != null) await libraryFolders.EnsureLinkedAsync(session, token);
+        return profiles == null ? await roots.SetupAsync(token: token) : await profiles.SetupAsync(context, token);
+    });
 
     [HttpPut("roots")]
     public Task<IActionResult> SaveRoots([FromBody] PromotionRoot[] request, CancellationToken token) => ExecuteAsync(token,

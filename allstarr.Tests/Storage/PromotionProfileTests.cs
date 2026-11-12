@@ -7,12 +7,16 @@ using allstarr.Core.Enrichment;
 using allstarr.Core.Identity;
 using allstarr.Core.Operations;
 using allstarr.Core.Protocols;
+using allstarr.Core.Settings;
 using allstarr.Core.Storage;
 using allstarr.Middleware;
 using allstarr.Services.Admin;
+using allstarr.Services.Common;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
+using Moq;
 
 namespace allstarr.Tests;
 
@@ -149,6 +153,37 @@ public sealed class PromotionProfileTests : IAsyncLifetime
         await Assert.ThrowsAsync<ArgumentException>(() => profiles.SaveMineAsync(Context(listener), new() { QualityFloor = new("lossy", 0, 44100) }));
         await Assert.ThrowsAsync<ArgumentException>(() => profiles.SaveHouseholdAsync(Context(administrator), new(new(), "everyone")));
         Assert.True((await profiles.GetMineAsync(Context(listener))).UsesHouseholdDefault);
+    }
+
+    [Fact]
+    public async Task DetectionAllowsLinkedListenersAndRejectsSignedOutCallers()
+    {
+        var settings = new Mock<IDurableRuntimeSettings>();
+        settings.Setup(item => item.GetAsync(PromotionRoots.Key, It.IsAny<CancellationToken>())).ReturnsAsync(
+            new EffectiveRuntimeSetting(PromotionRoots.Key, RuntimeSettingValueType.String, "[]", "[]", RuntimeSettingOrigin.Durable, 1, "test", null, null));
+        var roots = new PromotionRoots(settings.Object, factory, new ConfigurationBuilder().Build());
+        var detection = new PromotionNamingDetectionService(factory, profiles, roots, access, null!, Mock.Of<IApplicationCache>());
+        var controller = Controller(listener, detection);
+        var result = Assert.IsType<PromotionNamingDetection>(Assert.IsType<OkObjectResult>(await controller.Detect(null, default)).Value);
+        Assert.Equal("no-folder", result.Reason);
+        Assert.IsType<UnauthorizedResult>(await Controller(detection: detection).Detect(null, default));
+        using var json = JsonDocument.Parse(JsonSerializer.Serialize(result, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+        Assert.Equal(new[] { "script", "matched", "sampled", "examples", "reason" }, json.RootElement.EnumerateObject().Select(item => item.Name));
+        Assert.Equal(ApplicationCacheCategory.DerivedProjection, ApplicationCachePolicyRegistry.Classify("promotion:naming-detection:v1:test"));
+    }
+
+    [Theory]
+    [InlineData("GET", "naming/detect", true)]
+    [InlineData("POST", "naming/detect", false)]
+    [InlineData("GET", "naming/detect/extra", false)]
+    [InlineData("GET", "setup", true)]
+    public void ListenerNamingDetectionAndSetupRoutePolicy(string method, string suffix, bool allowed)
+    {
+        var http = new DefaultHttpContext();
+        http.Request.Method = method;
+        http.Request.Path = "/api/admin/library-promotions/" + suffix;
+        var policy = typeof(AdminAuthenticationMiddleware).GetMethod("IsAllowedForNonAdministrator", BindingFlags.Static | BindingFlags.NonPublic)!;
+        Assert.Equal(allowed, policy.Invoke(null, [http.Request]));
     }
 
     [Fact]
@@ -317,7 +352,7 @@ public sealed class PromotionProfileTests : IAsyncLifetime
         return id;
     }
 
-    private PromotionProfilesController Controller(Guid? user = null)
+    private PromotionProfilesController Controller(Guid? user = null, PromotionNamingDetectionService? detection = null)
     {
         var http = new DefaultHttpContext();
         if (user.HasValue) http.Items[AdminAuthSessionService.HttpContextSessionItemKey] = new AdminAuthSession
@@ -333,7 +368,7 @@ public sealed class PromotionProfileTests : IAsyncLifetime
             ExpiresAtUtc = DateTime.UtcNow.AddHours(1),
             LastSeenUtc = DateTime.UtcNow
         };
-        return new(profiles, new(factory, profiles, access), new(factory, new SystemPlatformClock()))
+        return new(profiles, new(factory, profiles, access), new(factory, new SystemPlatformClock()), detection)
         { ControllerContext = new() { HttpContext = http } };
     }
 

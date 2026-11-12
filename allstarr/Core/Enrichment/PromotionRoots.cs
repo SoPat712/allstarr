@@ -12,6 +12,7 @@ public sealed class PromotionRoots(IDurableRuntimeSettings settings, IDbContextF
     IConfiguration configuration)
 {
     private readonly Func<string, long?>? readFreeBytes;
+    private readonly SemaphoreSlim gate = new(1, 1);
     public const string Key = "Promotion:Roots";
 
     internal PromotionRoots(IDurableRuntimeSettings settings, IDbContextFactory<AllstarrDbContext> factory,
@@ -24,22 +25,48 @@ public sealed class PromotionRoots(IDurableRuntimeSettings settings, IDbContextF
     public async Task SaveAsync(Guid actor, PromotionRoot[] roots, CancellationToken token = default,
         IReadOnlySet<string>? discoveredBackendPaths = null)
     {
-        await using var db = await factory.CreateDbContextAsync(token);
-        if (!await db.Users.AnyAsync(item => item.Id == actor && item.Enabled && item.IsAdmin, token))
-            throw new UnauthorizedAccessException("Administrator permissions required.");
-        if (roots.Length > 16 || roots.Select(item => item.Id).Distinct().Count() != roots.Length)
-            throw new ArgumentException("Choose at most sixteen distinct library roots.");
-        var approved = await ReadAsync(token);
-        foreach (var root in roots)
+        await gate.WaitAsync(token);
+        try
         {
-            if ((!AllowedBaseConfigured || !string.IsNullOrWhiteSpace(root.BackendPath)) &&
-                (string.IsNullOrWhiteSpace(root.BackendPath) || discoveredBackendPaths?.Contains(root.BackendPath) != true) &&
-                !approved.Any(item => SameLocation(item, root)))
-                throw new ArgumentException("Choose a discovered music folder before approving its local path.");
-            Validate(root);
+            await using var db = await factory.CreateDbContextAsync(token);
+            if (!await db.Users.AnyAsync(item => item.Id == actor && item.Enabled && item.IsAdmin, token))
+                throw new UnauthorizedAccessException("Administrator permissions required.");
+            if (roots.Length > 16 || roots.Select(item => item.Id).Distinct().Count() != roots.Length)
+                throw new ArgumentException("Choose at most sixteen distinct library roots.");
+            var approved = await ReadAsync(token);
+            foreach (var root in roots)
+            {
+                if ((!AllowedBaseConfigured || !string.IsNullOrWhiteSpace(root.BackendPath)) &&
+                    (string.IsNullOrWhiteSpace(root.BackendPath) || discoveredBackendPaths?.Contains(root.BackendPath) != true) &&
+                    !approved.Any(item => SameLocation(item, root)))
+                    throw new ArgumentException("Choose a discovered music folder before approving its local path.");
+                Validate(root);
+            }
+            var normalized = roots.Select(root => root with { Path = System.IO.Path.GetFullPath(root.Path) }).ToArray();
+            await settings.ApplyBatchAsync([new(Key, JsonSerializer.Serialize(normalized))], "promotion", actor, token);
         }
-        var normalized = roots.Select(root => root with { Path = System.IO.Path.GetFullPath(root.Path) }).ToArray();
-        await settings.ApplyBatchAsync([new(Key, JsonSerializer.Serialize(normalized))], "promotion", actor, token);
+        finally { gate.Release(); }
+    }
+
+    internal async Task<PromotionRoot[]> LinkDiscoveredAsync(PromotionRoot[] discovered, CancellationToken token)
+    {
+        await gate.WaitAsync(token);
+        try
+        {
+            var approved = (await ReadAsync(token)).ToList();
+            var count = approved.Count;
+            foreach (var root in discovered)
+            {
+                if (approved.Any(item => PromotionLibraryFolders.WithoutTrailingSeparator(item.BackendPath ?? item.Path) == root.BackendPath ||
+                    item.Path == root.Path)) continue;
+                Validate(root);
+                approved.Add(root);
+            }
+            if (approved.Count != count)
+                await settings.ApplyBatchAsync([new(Key, JsonSerializer.Serialize(approved))], "promotion", null, token);
+            return approved.ToArray();
+        }
+        finally { gate.Release(); }
     }
 
     internal static bool SameLocation(PromotionRoot left, PromotionRoot right) =>
@@ -49,7 +76,8 @@ public sealed class PromotionRoots(IDurableRuntimeSettings settings, IDbContextF
         string? backendLibraryId = null)
     {
         var approved = await ReadAsync(token);
-        if (approved.Length == 0) throw new PromotionException(PromotionFailure.LibraryFolderNotSet);
+        if (approved.Length == 0 || id == Guid.Empty && approved.Length != 1)
+            throw new PromotionException(PromotionFailure.LibraryFolderNotSet);
         var root = (id == Guid.Empty ? approved.FirstOrDefault() : approved.SingleOrDefault(item => item.Id == id))
             ?? throw new PromotionException(PromotionFailure.LibraryFolderUnavailable);
         if (backendLibraryId != null && root.BackendLibraryId != backendLibraryId)
@@ -92,6 +120,8 @@ public sealed class PromotionRoots(IDurableRuntimeSettings settings, IDbContextF
 
     public async Task<PromotionSetup> SetupAsync(Guid? rootId = null, CancellationToken token = default)
     {
+        if (rootId == Guid.Empty || rootId == null && (await ReadAsync(token)).Length != 1)
+            return new(false, AllowedBaseConfigured, "library-folder-not-set", null);
         try
         {
             var root = await RequireAsync(rootId ?? Guid.Empty, token);

@@ -34,19 +34,49 @@ public sealed class PromotionProfileValidationException(IReadOnlyList<PromotionN
     public IReadOnlyList<PromotionNamingError> Errors { get; } = errors;
 }
 
-public sealed class PromotionProfiles(IDbContextFactory<AllstarrDbContext> factory, PromotionRoots? roots = null)
+public sealed class PromotionProfiles(IDbContextFactory<AllstarrDbContext> factory, PromotionRoots? roots = null,
+    IBackendLibraryAccessResolver? libraryAccess = null)
 {
     private const string HouseholdKey = "household";
     private readonly SemaphoreSlim gate = new(1, 1);
 
-    public async Task<PersonalPromotionProfile> GetMineAsync(ProtocolExecutionContext context, CancellationToken token = default)
+    // effectiveRoot fills in the folder the listener's adds actually go to; the settings page reads the saved choice instead.
+    public async Task<PersonalPromotionProfile> GetMineAsync(ProtocolExecutionContext context, CancellationToken token = default,
+        bool effectiveRoot = true)
     {
         await using var db = await factory.CreateDbContextAsync(token);
         var user = await RequireUserAsync(db, context, token);
         var household = await ReadHouseholdAsync(db, token);
         var key = user.Id.ToString("N");
         var saved = await db.PromotionProfiles.AsNoTracking().SingleOrDefaultAsync(item => item.Key == key && item.OwnerUserId == user.Id, token);
-        return new(saved == null ? household.Values : JsonSerializer.Deserialize<PromotionProfile>(saved.PayloadJson)!, household, saved == null);
+        var values = saved == null ? household.Values : JsonSerializer.Deserialize<PromotionProfile>(saved.PayloadJson)!;
+        return new(effectiveRoot ? await WithEffectiveRootAsync(context, values, household, token) : values, household, saved == null);
+    }
+
+    internal async Task<PromotionRoot[]> AccessibleRootsAsync(ProtocolExecutionContext context, CancellationToken token)
+    {
+        if (roots == null || libraryAccess == null) return [];
+        var access = await libraryAccess.ResolveAsync(context, token);
+        var candidates = new List<PromotionRoot>();
+        foreach (var root in await roots.ReadAsync(token))
+        {
+            if (root.BackendLibraryId == null || !access.Allows(root.BackendLibraryId)) continue;
+            try { candidates.Add(await roots.RequireAsync(root.Id, token, checkFreeSpace: false)); }
+            catch (PromotionException) { }
+        }
+        return candidates.ToArray();
+    }
+
+    public async Task<PromotionSetup> SetupAsync(ProtocolExecutionContext context, CancellationToken token = default) =>
+        await roots!.SetupAsync((await GetMineAsync(context, token)).Values.LibraryRootId ?? Guid.Empty, token);
+
+    private async Task<PromotionProfile> WithEffectiveRootAsync(ProtocolExecutionContext context, PromotionProfile values,
+        HouseholdPromotionProfile household, CancellationToken token)
+    {
+        var rootId = values.LibraryRootId ?? household.Values.LibraryRootId;
+        if (rootId == null && await AccessibleRootsAsync(context, token) is { Length: 1 } candidates)
+            rootId = candidates[0].Id;
+        return values with { LibraryRootId = rootId };
     }
 
     public async Task<HouseholdPromotionProfile> GetHouseholdAsync(ProtocolExecutionContext context, CancellationToken token = default)

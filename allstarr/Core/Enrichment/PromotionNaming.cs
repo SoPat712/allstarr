@@ -310,6 +310,8 @@ public static class PromotionNaming
                     var name = script[position..end];
                     position = end + 1;
                     if (!IsSupportedVariable(name)) throw Error(start, position - start, "The variable is not supported.");
+                    if (name == "_extension" && start > 0 && script[start - 1] == '.' && position < script.Length)
+                        throw Error(position, script.Length - position, "Nothing may follow the file extension");
                     node = new FieldNode(start, position - start, name);
                 }
                 else if (character == '$') node = ParseCall(depth);

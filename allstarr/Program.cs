@@ -116,6 +116,7 @@ builder.Services.AddSingleton<PromotionRoots>();
 builder.Services.AddSingleton<PromotionLibraryFolders>();
 builder.Services.AddSingleton<PromotionProfiles>();
 builder.Services.AddSingleton<PromotionNamingPreviewService>();
+builder.Services.AddSingleton<PromotionNamingDetectionService>();
 builder.Services.AddSingleton<LibraryPromotionService>();
 builder.Services.AddSingleton<IPromotionCatalog, PromotionCatalog>();
 builder.Services.AddSingleton<IPromotionAcquisition, PromotionAcquisition>();

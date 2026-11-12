@@ -16,13 +16,20 @@ public sealed class PromotionLibraryFolders(JellyfinProxyService jellyfin, Promo
     public async Task<PromotionLibraryFolderDiscovery> DiscoverAsync(AdminAuthSession session, CancellationToken token = default)
     {
         RequireAdministrator(session);
+        return await DiscoverCoreAsync(session, token);
+    }
+
+    private async Task<PromotionLibraryFolderDiscovery> DiscoverCoreAsync(AdminAuthSession session, CancellationToken token)
+    {
         if (!session.BackendType.Equals("jellyfin", StringComparison.OrdinalIgnoreCase))
             return new(false, "backend-not-supported", []);
         if (string.IsNullOrWhiteSpace(session.JellyfinAccessToken)) return new(false, "backend-unavailable", []);
         try
         {
             var headers = new HeaderDictionary { ["Authorization"] = AuthHeaderHelper.CreateAuthHeader(session.JellyfinAccessToken) };
-            var (body, status) = await jellyfin.GetJsonAsync("Library/VirtualFolders", clientHeaders: headers, cancellationToken: token);
+            var (body, status) = session.IsAdministrator
+                ? await jellyfin.GetJsonAsync("Library/VirtualFolders", clientHeaders: headers, cancellationToken: token)
+                : await jellyfin.GetJsonAsyncInternal("Library/VirtualFolders");
             using (body)
             {
                 if (status is < 200 or >= 300 || body?.RootElement.ValueKind != JsonValueKind.Array)
@@ -63,7 +70,15 @@ public sealed class PromotionLibraryFolders(JellyfinProxyService jellyfin, Promo
 
     public async Task<PromotionLibraryFolderList> ReadAsync(AdminAuthSession session, CancellationToken token = default)
     {
-        var discovery = await DiscoverAsync(session, token);
+        RequireAdministrator(session);
+        return await ReadCoreAsync(session, token);
+    }
+
+    internal async Task EnsureLinkedAsync(AdminAuthSession session, CancellationToken token) => await ReadCoreAsync(session, token);
+
+    private async Task<PromotionLibraryFolderList> ReadCoreAsync(AdminAuthSession session, CancellationToken token)
+    {
+        var discovery = await DiscoverCoreAsync(session, token);
         var approved = await roots.ReadAsync(token);
         var folders = discovery.Folders.Select(source =>
         {
@@ -98,6 +113,14 @@ public sealed class PromotionLibraryFolders(JellyfinProxyService jellyfin, Promo
             return new PromotionLibraryFolder(source.Name, source.BackendPath, path,
                 path != source.BackendPath, reachable, writable, status, mapped?.Id, free,
                 followed != source.BackendPath && path == followed);
+        }).ToArray();
+        var linked = await roots.LinkDiscoveredAsync(folders.Where(folder => folder.Writable && folder.RootId == null)
+            .Select(folder => new PromotionRoot(Guid.NewGuid(), folder.Name[..Math.Min(folder.Name.Length, 100)], folder.Path, folder.BackendPath,
+                discovery.Folders.First(source => source.BackendPath == folder.BackendPath).BackendLibraryId)).ToArray(), token);
+        folders = folders.Select(folder => folder with
+        {
+            RootId = linked.FirstOrDefault(root => WithoutTrailingSeparator(root.BackendPath ?? root.Path) == folder.BackendPath ||
+                root.Path == folder.Path)?.Id
         }).ToArray();
         return new(discovery.Available, discovery.Reason ?? (folders.Any(folder => folder.Writable) ? null : "no-reachable-music-folder"), folders);
     }

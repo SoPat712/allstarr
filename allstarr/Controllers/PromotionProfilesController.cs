@@ -2,6 +2,7 @@ using allstarr.Core.Enrichment;
 using allstarr.Core.Protocols;
 using allstarr.Filters;
 using allstarr.Services.Admin;
+using allstarr.Services.Common;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -11,10 +12,10 @@ namespace allstarr.Controllers;
 [Route("api/admin/library-promotions/profiles")]
 [ServiceFilter(typeof(AdminPortFilter))]
 public sealed class PromotionProfilesController(PromotionProfiles profiles, PromotionNamingPreviewService preview,
-    AdminProtocolExecutionContextFactory contexts) : ControllerBase
+    AdminProtocolExecutionContextFactory contexts, PromotionNamingDetectionService? detection = null) : ControllerBase
 {
     [HttpGet("me")]
-    public Task<IActionResult> Mine(CancellationToken token) => ExecuteAsync(token, context => profiles.GetMineAsync(context, token));
+    public Task<IActionResult> Mine(CancellationToken token) => ExecuteAsync(token, context => profiles.GetMineAsync(context, token, effectiveRoot: false));
 
     [HttpPut("me")]
     public Task<IActionResult> SaveMine([FromBody] PromotionProfile request, CancellationToken token) =>
@@ -33,6 +34,14 @@ public sealed class PromotionProfilesController(PromotionProfiles profiles, Prom
     [HttpPost("preview")]
     public Task<IActionResult> Preview([FromBody] PromotionNamingPreviewRequest request, CancellationToken token) =>
         ExecuteAsync(token, context => preview.PreviewAsync(context, request, token));
+
+    [HttpGet("/api/admin/library-promotions/naming/detect")]
+    public Task<IActionResult> Detect([FromQuery] Guid? rootId, CancellationToken token) => ExecuteAsync(token, context =>
+        detection!.DetectAsync(context, rootId, new HeaderDictionary
+        {
+            ["Authorization"] = AuthHeaderHelper.CreateAuthHeader(
+                ((AdminAuthSession)HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey]!).JellyfinAccessToken)
+        }, token));
 
     private async Task<IActionResult> ExecuteAsync<T>(CancellationToken token, Func<ProtocolExecutionContext, Task<T>> action, bool administrator = false)
     {

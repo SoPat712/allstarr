@@ -44,6 +44,14 @@ public sealed partial class LibraryPromotionTests
         Assert.Equal("writable", reachable.Status);
         Assert.True(reachable.FreeBytes > 0);
         Assert.False(Assert.Single(result.Folders, folder => folder.BackendPath == missing).Writable);
+        var saved = Assert.Single(await configured.ReadAsync());
+        Assert.Equal("Music", saved.Name);
+        Assert.Equal(path, saved.Path);
+        Assert.Equal(path, saved.BackendPath);
+        Assert.Equal(saved.Id, reachable.RootId);
+        Assert.True((await configured.SetupAsync()).Ready);
+        await FolderDiscovery(configured, client).ReadAsync(FolderSession(true));
+        Assert.Equal(saved, Assert.Single(await configured.ReadAsync()));
         var full = await FolderDiscovery(FolderRoots([], minimumFree: long.MaxValue.ToString()), client).ReadAsync(FolderSession(true));
         Assert.Equal("almost-full", Assert.Single(full.Folders, folder => folder.BackendPath == path).Status);
         Assert.Empty(Directory.EnumerateFileSystemEntries(path));
@@ -101,6 +109,11 @@ public sealed partial class LibraryPromotionTests
         Assert.True(linked.Mapped);
         Assert.Equal("writable", linked.Status);
         Assert.Equal("unreachable", Assert.Single(folders, folder => folder.BackendPath == broken).Status);
+        var automatic = Assert.Single(await configured.ReadAsync());
+        Assert.Equal(real, automatic.Path);
+        Assert.Equal(link, automatic.BackendPath);
+        Assert.Equal("music", automatic.BackendLibraryId);
+        Assert.Equal(automatic.Id, linked.RootId);
 
         var root = new PromotionRoot(Guid.NewGuid(), linked.Name, linked.Path, linked.BackendPath, "music");
         Assert.IsType<OkObjectResult>(await FolderController(configured, discovery, true).SaveRoots([root], default));
@@ -212,6 +225,76 @@ public sealed partial class LibraryPromotionTests
         var administratorRoots = JsonSerializer.Serialize(Assert.IsType<OkObjectResult>(
             await FolderController(configured, discovery, true).Roots(default)).Value);
         Assert.Contains(root.Path, administratorRoots);
+    }
+
+    [Fact]
+    public async Task PromotionFolders_AutomaticLinkingPreservesManualRootsAndRejectsUnwritablePaths()
+    {
+        var allowed = Path.Combine(directory, "allowed");
+        var path = Path.Combine(allowed, "automatic");
+        var manualPath = Path.Combine(allowed, "manual");
+        var denied = Path.Combine(directory, "read-only");
+        Directory.CreateDirectory(path);
+        Directory.CreateDirectory(manualPath);
+        Directory.CreateDirectory(denied);
+        await File.WriteAllTextAsync(Path.Combine(denied, "unchanged.txt"), "keep");
+        var manual = new PromotionRoot(Guid.NewGuid(), "My chosen name", manualPath, manualPath, "music");
+        var configured = FolderRoots([manual], allowed);
+        using var client = new HttpClient(new FolderResponseHandler(JsonSerializer.Serialize(new[]
+            { new { ItemId = "music", Name = "Discovered name", CollectionType = "music", Locations = new[] { path, manualPath, denied } } })));
+        var discovery = FolderDiscovery(configured, client);
+        await Task.WhenAll(discovery.ReadAsync(FolderSession(true)), discovery.ReadAsync(FolderSession(true)));
+        var saved = await configured.ReadAsync();
+        Assert.Equal(2, saved.Length);
+        Assert.Contains(manual, saved);
+        Assert.DoesNotContain(saved, root => root.Path == denied);
+    }
+
+    [Theory]
+    [InlineData("music", true)]
+    [InlineData("music,private", false)]
+    [InlineData("private", true)]
+    [InlineData("denied", false)]
+    public async Task PromotionFolders_SetupUsesExactlyOneAccessibleRoot(string libraries, bool ready)
+    {
+        var first = Path.Combine(directory, "first-default");
+        var second = Path.Combine(directory, "second-default");
+        Directory.CreateDirectory(first);
+        Directory.CreateDirectory(second);
+        var configured = FolderRoots([]);
+        using var client = new HttpClient(new FolderResponseHandler(JsonSerializer.Serialize(new[]
+        {
+            new { ItemId = "music", Name = "Music", CollectionType = "music", Locations = new[] { first } },
+            new { ItemId = "private", Name = "Private", CollectionType = "music", Locations = new[] { second } }
+        })));
+        var discovery = FolderDiscovery(configured, client);
+        var access = new TestBackendLibraryAccess(factory, libraries.Split(','));
+        var profiles = new PromotionProfiles(factory, configured, access);
+        var http = new DefaultHttpContext();
+        http.Items[AdminAuthSessionService.HttpContextSessionItemKey] = FolderSession(false);
+        var controller = new LibraryPromotionsController(service, configured, new(factory, new SystemPlatformClock()),
+            libraryFolders: discovery, profiles: profiles)
+        { ControllerContext = new() { HttpContext = http } };
+        var setup = Assert.IsType<PromotionSetup>(Assert.IsType<OkObjectResult>(await controller.Setup(default)).Value);
+        Assert.Equal(ready, setup.Ready);
+        Assert.Equal(ready ? null : "library-folder-not-set", setup.Reason);
+        Assert.Equal(setup.RootId, (await profiles.GetMineAsync(Context)).Values.LibraryRootId);
+        var candidates = Assert.IsType<OkObjectResult>(await controller.Roots(default));
+        using var json = JsonDocument.Parse(JsonSerializer.Serialize(candidates.Value));
+        Assert.Equal(libraries == "denied" ? 0 : libraries.Split(',').Length, json.RootElement.GetArrayLength());
+        Assert.DoesNotContain(directory, JsonSerializer.Serialize(candidates.Value));
+    }
+
+    [Fact]
+    public async Task PromotionFolders_PersonalAndHouseholdSelectionsOverrideAutomaticDefaults()
+    {
+        await SetPromotionRoleAsync(true, false);
+        var configured = FolderRoots([new(rootId, "Music", Path.Combine(directory, "library", "music"), BackendLibraryId: "music")]);
+        var profiles = new PromotionProfiles(factory, configured, new TestBackendLibraryAccess(factory, "music"));
+        await profiles.SaveHouseholdAsync(Context, new(new() { LibraryRootId = rootId }));
+        await profiles.SaveMineAsync(Context, new() { NamingScript = "%title%.%_extension%" });
+        Assert.Equal(rootId, (await profiles.GetMineAsync(Context)).Values.LibraryRootId);
+        Assert.True((await profiles.SetupAsync(Context)).Ready);
     }
 
     private PromotionRoots FolderRoots(PromotionRoot[] approved, string? allowed = null, string? minimumFree = null)
