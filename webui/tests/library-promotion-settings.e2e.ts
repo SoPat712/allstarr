@@ -13,11 +13,13 @@ const songs = [
   { kind: "album", artist: "North", title: "Blue morning" }, { kind: "multi-disc", artist: "Willow", title: "Open skies" },
   { kind: "compilation", artist: "Various Artists", title: "Summer" }, { kind: "single", artist: "Cedar", title: "Home" },
 ];
-async function fixture(page: Page, admin = true, inherited = false) {
+type Detected = { script: string | null; matched: number; sampled: number; examples: { path: string }[]; reason: string | null };
+async function fixture(page: Page, admin = true, inherited = false, detected: Detected | null = null) {
   await mockForYou(page, { admin });
   const state = {
     personal: structuredClone(initialProfile), household: { values: { ...structuredClone(initialProfile), namingScript: "%album%/%title%.%_extension%" }, addWithoutApproval: "admins-and-trusted-listeners" } as HouseholdPromotionProfile,
     writes: [] as { scope: string; body: any }[], previews: [] as string[], householdReads: 0, setupReads: 0, failNextSave: false, usesHouseholdDefault: inherited,
+    detected, detectRoots: [] as (string | null)[],
   };
   if (inherited) state.personal = structuredClone(state.household.values);
   await page.route("**/api/admin/library-promotions/**", async route => {
@@ -29,6 +31,10 @@ async function fixture(page: Page, admin = true, inherited = false) {
         : route.fulfill({ status: 403, json: { error: "Administrator access required." } });
     }
     if (path.endsWith("/roots")) return route.fulfill({ json: [{ id: "00000000-0000-0000-0000-000000000001", name: "Music" }] });
+    if (path.endsWith("/naming/detect")) {
+      state.detectRoots.push(new URL(route.request().url()).searchParams.get("rootId"));
+      return state.detected ? route.fulfill({ json: state.detected }) : route.fulfill({ status: 404, json: { error: "Not found" } });
+    }
     if (path.endsWith("/preview")) {
       const { script } = route.request().postDataJSON(); state.previews.push(script);
       const errors = script.includes("%missing%") ? [{ position: script.indexOf("%missing%"), length: 9, message: "The variable is not supported." }] : [];
@@ -48,7 +54,7 @@ async function fixture(page: Page, admin = true, inherited = false) {
     return route.fulfill({ json: scope === "household" ? state.household : { values: state.usesHouseholdDefault ? state.household.values : state.personal, householdDefault: state.household, usesHouseholdDefault: state.usesHouseholdDefault } });
   });
   await page.goto("/#/settings/adding-to-library");
-  await expect(page.getByRole("heading", { name: "File names and folders" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "How added files are named" })).toBeVisible();
   await expect(page.getByText(inherited ? "Warm light/Blue morning.flac" : "North/Blue morning.flac", { exact: true })).toBeVisible();
   return state;
 }
@@ -124,13 +130,34 @@ test("Autosaves the quality, extras and placement groups through the personal pr
   await page.getByRole("switch", { name: "MusicBrainz tags", exact: true }).click();
   await select(page, "Cover art", "Embedded"); await select(page, "Synced lyrics", "Off");
   await page.getByRole("switch", { name: "ReplayGain", exact: true }).click();
-  await select(page, "Library folder", "Music");
+  const music = page.getByRole("list", { name: "Library folders", exact: true }).getByRole("listitem").filter({ hasText: "Music" });
+  await expect(music).toContainText("Adds go here"); await expect(music.getByRole("button")).toHaveCount(0);
   await page.getByRole("radio", { name: "Just the song", exact: true }).click();
   await expect(page.getByRole("switch", { name: "After adding", exact: true })).toHaveCount(0);
   await page.getByRole("switch", { name: "Remove kept copy", exact: true }).click();
-  await expect.poll(() => state.personal).toMatchObject({ qualityFloor: { codecFamily: "any", minBitDepth: 0, minSampleRate: 44100 }, hiResCeiling: { maxBitDepth: 24, maxSampleRate: 192000 }, allowLossy: true, fakeLosslessCheck: false, musicBrainzTags: false, coverMode: "embedded", lyricsMode: "off", replayGain: false, libraryRootId: "00000000-0000-0000-0000-000000000001", defaultUnit: "song", removeKeptCopy: false });
+  await expect.poll(() => state.personal).toMatchObject({ qualityFloor: { codecFamily: "any", minBitDepth: 0, minSampleRate: 44100 }, hiResCeiling: { maxBitDepth: 24, maxSampleRate: 192000 }, allowLossy: true, fakeLosslessCheck: false, musicBrainzTags: false, coverMode: "embedded", lyricsMode: "off", replayGain: false, libraryRootId: null, defaultUnit: "song", removeKeptCopy: false });
   expect(state.writes.every(write => write.scope === "me" && !("values" in write.body))).toBe(true);
   await page.reload(); await expect(page.getByRole("switch", { name: "ReplayGain", exact: true })).not.toBeChecked();
+});
+
+test("Offers the naming pattern the library folder already uses", async ({ page }) => {
+  const script = "%albumartist%/%album%/$num(%tracknumber%,2) - %title%.%_extension%";
+  const state = await fixture(page, true, false, { script, matched: 212, sampled: 240, examples: [{ path: "North/Warm light/01 - Blue morning.flac" }], reason: null });
+  const offer = page.getByRole("status").filter({ hasText: "Your library already names files like this" });
+  await expect(offer).toContainText("North/Warm light/01 - Blue morning.flac");
+  await expect(offer).toContainText("212 of 240 songs in this folder follow the same pattern");
+  expect(state.detectRoots).toContain("00000000-0000-0000-0000-000000000001");
+  await page.getByRole("region", { name: "How added files are named", exact: true }).screenshot({ path: test.info().outputPath("detected-pattern.png") });
+  await offer.getByRole("button", { name: "Use this pattern", exact: true }).click();
+  await expect.poll(() => state.personal.namingScript).toBe(script);
+  await expect(page.getByText("Matches how this folder already names its files.", { exact: true })).toBeVisible();
+  await expect(offer).toHaveCount(0);
+});
+
+test("Shows no pattern offer when the folder has no clear naming pattern", async ({ page }) => {
+  await fixture(page, true, false, { script: null, matched: 0, sampled: 40, examples: [], reason: "no-pattern" });
+  await expect(page.getByText("Your library already names files like this")).toHaveCount(0);
+  await expect(page.getByText("Matches how this folder already names its files.")).toHaveCount(0);
 });
 
 test("Only admins see household settings and only that profile edits approval roles", async ({ page }) => {
@@ -198,7 +225,7 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
   await expect(fold).toHaveAttribute("data-placement", "card");
   expect(await fold.locator("summary").evaluate(element => [getComputedStyle(element).listStyleType, getComputedStyle(element, "::after").borderRightStyle])).toEqual(["none", "solid"]);
   await scriptField(page);
-  const card = page.getByRole("region", { name: "File names and folders", exact: true });
+  const card = page.getByRole("region", { name: "How added files are named", exact: true });
   expect(Math.abs((await fold.boundingBox())!.x - (await card.boundingBox())!.x)).toBeLessThanOrEqual(1);
   await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
   await card.screenshot({ path: test.info().outputPath(`05-naming-script-${width}-${theme}.png`) });

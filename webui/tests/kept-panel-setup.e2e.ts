@@ -74,12 +74,12 @@ for (const width of [1280, 390]) {
     expect(calls.membership).toBe(1);
     await panel.getByRole("link", { name: "Open library settings", exact: true }).click();
     await expect(page.getByRole("heading", { name: "No library folder yet", exact: true })).toBeVisible();
-    const folders = page.getByRole("list", { name: "Jellyfin music folders", exact: true });
+    const folders = page.getByRole("list", { name: "Library folders", exact: true });
     await expect(folders.getByRole("listitem")).toHaveCount(1);
     await expect(folders.getByRole("listitem").first()).toContainText("Can't reach");
     await expect(page.getByText("- /media/music:/media/music", { exact: true })).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Quality", exact: true })).toBeVisible();
-    await expect(page.getByRole("heading", { name: "File names and folders", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Quality of added songs", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "How added files are named", exact: true })).toBeVisible();
     await capture(page, "library-no-folder", width, "dark");
   });
 }
@@ -116,32 +116,32 @@ test("Membership errors finish loading with the unavailable message", async ({ p
 
 test("An administrator maps and approves a discovered music folder without a required base", async ({ page }) => {
   const calls = await fixture(page); await page.goto("/#/settings/adding-to-library");
-  await page.getByRole("button", { name: "Map /media/music", exact: true }).click();
+  await page.getByRole("button", { name: "Set the path for Music", exact: true }).click();
   await page.getByRole("textbox", { name: "Path inside Allstarr", exact: true }).fill("/music");
-  await page.getByRole("button", { name: "Use this library folder", exact: true }).click();
-  const row = page.getByRole("list", { name: "Jellyfin music folders", exact: true }).getByRole("listitem");
-  await expect(row).toContainText("In use"); await expect(row).toContainText("Inside Allstarr: /music");
-  await expect(page.getByRole("button", { name: "Change /media/music", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Use this folder", exact: true }).click();
+  const row = page.getByRole("list", { name: "Library folders", exact: true }).getByRole("listitem");
+  await expect(row).toContainText("Adds go here"); await expect(row).toContainText("Allstarr writes to /music");
+  await expect(row.getByRole("button")).toHaveCount(0);
   expect(calls.roots).toHaveLength(1); expect(calls.roots[0]).toMatchObject({ path: "/music", backendPath: "/media/music", name: "Music" });
   await expect(page.getByRole("heading", { name: "No library folder yet", exact: true })).toHaveCount(0);
 });
 
 test("A linked music folder shows where it leads and is used there", async ({ page }) => {
   const calls = await fixture(page); calls.linked = true; await page.goto("/#/settings/adding-to-library");
-  const row = page.getByRole("list", { name: "Jellyfin music folders", exact: true }).getByRole("listitem");
-  await expect(row).toContainText("Ready"); await expect(row).toContainText("Link to /media/.music");
-  await page.getByRole("button", { name: "Use /media/music", exact: true }).click();
-  await expect(row).toContainText("In use");
+  const row = page.getByRole("list", { name: "Library folders", exact: true }).getByRole("listitem");
+  await expect(row).toContainText("Ready"); await expect(row).toContainText("Allstarr writes to /media/.music");
+  await page.getByRole("button", { name: "Add songs to Music", exact: true }).click();
+  await expect(row).toContainText("Adds go here");
   expect(calls.roots).toHaveLength(1); expect(calls.roots[0]).toMatchObject({ path: "/media/.music", backendPath: "/media/music", name: "Music" });
 });
 
 test("A folder mounted at Jellyfin's path is used in one click", async ({ page }) => {
   const calls = await fixture(page); calls.mounted = true; await page.goto("/#/settings/adding-to-library");
-  const row = page.getByRole("list", { name: "Jellyfin music folders", exact: true }).getByRole("listitem");
+  const row = page.getByRole("list", { name: "Library folders", exact: true }).getByRole("listitem");
   await expect(row).toContainText("Ready"); await expect(row).toContainText("33 GB free");
   await expect(page.getByText("- /media/music:/media/music", { exact: true })).toHaveCount(0);
-  await page.getByRole("button", { name: "Use /media/music", exact: true }).click();
-  await expect(row).toContainText("In use");
+  await page.getByRole("button", { name: "Add songs to Music", exact: true }).click();
+  await expect(row).toContainText("Adds go here");
   expect(calls.roots).toHaveLength(1); expect(calls.roots[0]).toMatchObject({ path: "/media/music", backendPath: "/media/music", name: "Music" });
   await expect(page.getByRole("textbox", { name: "Path inside Allstarr", exact: true })).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "No library folder yet", exact: true })).toHaveCount(0);

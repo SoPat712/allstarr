@@ -68,9 +68,13 @@
   let databaseBytes = $state<number | null>(null);
   let loading = $state(true), refreshing = $state(false), error = $state(""), action = $state("");
   let purgeOpen = $state(false), purgeTarget = $state("");
-  let addingOpen = $state(false), sendsOpen = $state(false);
+  let sendsOpen = $state(false);
   let scores = $state<ProviderScore[]>([]);
-  $effect(() => { if (section === "adding-to-library" && administrator) addingOpen = true; });
+  // The old address for these settings lands on them inside Library.
+  $effect(() => {
+    if (section !== "adding-to-library" || active !== "library" || loading) return;
+    void tick().then(() => document.getElementById("adding-to-library")?.scrollIntoView({ block: "start" }));
+  });
   let loadedSection = "";
   const fields = $derived((schema?.configSections ?? []).flatMap(item => item.fields));
   const sectionFor = (id: string) => schema?.configSections?.find(item => item.id === id)?.fields ?? [];
@@ -246,10 +250,9 @@
         </SettingsFields>{/if}
       {:else if active === "library"}
         {#each libraryGroups.slice(0, 1) as item (item.id)}<SettingsFields section={item} {config} onChanged={refresh} />{/each}
-        <section class="settings-card" aria-label="Adding songs to the library">
-          <header><h3>Adding songs to the library</h3></header>
-          <button type="button" class="settings-row settings-link-row" onclick={() => addingOpen = true}><div><strong>How added songs are saved</strong><small>Where they go, who adds without asking, quality, tags and file names.</small></div><span>Edit<ChevronRight size={18} aria-hidden="true" /></span></button>
-        </section>
+        <div id="adding-to-library" class="adding-inline">
+          {#await import("./LibraryPromotionSettings.svelte")}<RowsSkeleton count={4} />{:then { default: Promotion }}<Promotion {administrator} inline />{:catch}<ErrorState title="This settings page could not be opened" onretry={() => window.location.reload()} />{/await}
+        </div>
         {#each libraryGroups.slice(1) as item (item.id)}<SettingsFields section={item} {config} onChanged={refresh} />{/each}
       {:else if active === "apps"}
         {#each appsGroups as item (item.id)}<SettingsFields section={item} {config} onChanged={refresh}>
@@ -306,11 +309,6 @@
     {/if}
   </div>{/key}
 </section>
-{#if administrator}
-  <SidePanel bind:open={addingOpen} title="Adding songs to the library" description="Listeners without their own profile use this one." width={420} minimumContentWidth={560} wrapTitle browsable={false}>
-    {#if addingOpen}{#await import("./LibraryPromotionSettings.svelte") then { default: Promotion }}<Promotion {administrator} />{/await}{/if}
-  </SidePanel>
-{/if}
 <ConfirmDialog bind:open={purgeOpen} title="Remove cached files?" description="Temporary cached files will be removed. Kept songs, downloads and media-server files stay safe." confirmLabel="Remove cache" onConfirm={purge} />
 
 <style>

@@ -29,6 +29,8 @@ export type NamingPreview = {
 export type PromotionRoot = { id: string; name: string; path?: string; backendPath?: string | null };
 export type PromotionFolder = { name: string; backendPath: string; path: string; mapped: boolean; reachable: boolean; writable: boolean; status: string; rootId: string | null; freeBytes?: number | null; linked?: boolean };
 export type PromotionFolders = { available: boolean; reason: string | null; folders: PromotionFolder[] };
+/** The naming script that reproduces the files already in a library folder; script is null when none fits well. */
+export type NamingDetection = { script: string | null; matched: number; sampled: number; examples: { path: string }[]; reason: string | null };
 const base = "/api/admin/library-promotions/profiles";
 const put = (body: unknown): RequestInit => ({ method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 export const promotionProfiles = {
@@ -41,4 +43,6 @@ export const promotionProfiles = {
   folders: () => json<PromotionFolders>("/api/admin/library-promotions/folders"),
   setup: () => json<PromotionSetup>("/api/admin/library-promotions/setup"),
   saveRoots: (roots: (PromotionRoot & { path: string })[]) => json("/api/admin/library-promotions/roots", put(roots)),
+  detectNaming: (rootId: string | null, signal?: AbortSignal) =>
+    json<NamingDetection>(`/api/admin/library-promotions/naming/detect${rootId ? `?${new URLSearchParams({ rootId })}` : ""}`, { signal }),
 };
