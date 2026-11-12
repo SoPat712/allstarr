@@ -43,10 +43,10 @@ public sealed class LyricsTranslationTests
     }
 
     [Fact]
-    public async Task UnchangedAndOneWordEditsAreDroppedButShortTranslationsRemain()
+    public async Task UnchangedAndSpellingTweaksAreDroppedButShortTranslationsRemain()
     {
-        var service = Service(_ => Google("CAFE, AMOR!\nuno dos tres four\nOne", "es"));
-        var result = await service.TranslateAsync("trk_song", ["Café amor", "uno dos tres cuatro", "Uno"], "en", default);
+        var service = Service(_ => Google("CAFE, AMOR!\nuno dos tres amour\nOne", "es"));
+        var result = await service.TranslateAsync("trk_song", ["Café amor", "uno dos tres amor", "Uno"], "en", default);
         Assert.Null(result.Lines[0].Text);
         Assert.Null(result.Lines[1].Text);
         Assert.Equal("One", result.Lines[2].Text);
@@ -55,8 +55,33 @@ public sealed class LyricsTranslationTests
     [Theory]
     [InlineData("uno dos tres cuatro", "uno dos cuatro")]
     [InlineData("uno dos tres cuatro", "uno dos tres cuatro cinco")]
+    [InlineData("uno dos tres", "uno cinco dos tres")]
+    [InlineData("uno dos tres", "dos tres")]
     [InlineData("uno dos tres", "uno dos three")]
-    public async Task OneWordInsertionsDeletionsAndThreeWordEditsAreDropped(string source, string translated)
+    [InlineData("uno dos mi", "uno dos my")]
+    [InlineData("No, no, adiós", "No, no, goodbye")]
+    [InlineData("uno dos amor", "uno dos goodbye")]
+    [InlineData("uno dos amor", "uno dos axxx")]
+    [InlineData("uno dos amor", "uno dos amours")]
+    [InlineData("uno dos amor", "uno dos axxr")]
+    [InlineData("uno dos amor", "uno dos amo")]
+    [InlineData("uno dos beautiful", "uno dos beautifuxxx")]
+    [InlineData("uno dos tres", "one two tres")]
+    public async Task MeaningfulWordChangesAreShown(string source, string translated)
+    {
+        var service = Service(_ => Google(translated, "es"));
+        Assert.Equal(translated, Assert.Single((await service.TranslateAsync("trk_song", [source], "en", default)).Lines).Text);
+    }
+
+    [Theory]
+    [InlineData("uno dos corazon", "UNO DOS corazón")]
+    [InlineData("uno dos amor", "uno dos amour")]
+    [InlineData("uno dos beautiful", "uno dos beautifull")]
+    [InlineData("uno dos beautiful", "uno dos beautifuxx")]
+    [InlineData("uno dos amor", "uno dos amur")]
+    [InlineData("uno dos amor", "uno dos amor")]
+    [InlineData("uno dos amor", "")]
+    public async Task UnchangedEmptyAndNearIdenticalWordsAreHidden(string source, string translated)
     {
         var service = Service(_ => Google(translated, "es"));
         Assert.Null(Assert.Single((await service.TranslateAsync("trk_song", [source], "en", default)).Lines).Text);
@@ -166,6 +191,7 @@ public sealed class LyricsTranslationTests
         await service.TranslateAsync("trk_song", ["Uno"], "pt-BR", default);
         Assert.Equal(3, calls);
         Assert.Equal(3, stored.Count);
+        Assert.All(stored.Keys, key => Assert.StartsWith("lyrics:translation:v2:", key));
     }
 
     private static LyricsTranslation Service(Func<HttpRequestMessage, HttpResponseMessage> respond, string libre = "", IApplicationCache? cache = null)

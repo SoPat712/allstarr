@@ -46,7 +46,7 @@ public sealed class LyricsTranslation(IHttpClientFactory clients, IApplicationCa
 
     public async Task<V2LyricsTranslationResponse> TranslateAsync(string trackId, IReadOnlyList<string> lines, string to, CancellationToken token)
     {
-        var key = $"lyrics:translation:v1:{trackId}:{CanonicalCatalogKeys.Hash(JsonSerializer.Serialize(lines))}:{to}";
+        var key = $"lyrics:translation:v2:{trackId}:{CanonicalCatalogKeys.Hash(JsonSerializer.Serialize(lines))}:{to}";
         return await requests.RunAsync(key, async () =>
         {
             if (await cache.GetAsync<V2LyricsTranslationResponse>(key) is { } cached) return cached;
@@ -186,18 +186,33 @@ public sealed class LyricsTranslation(IHttpClientFactory clients, IApplicationCa
         var before = Words(source);
         var after = Words(translated);
         if (after.Length == 0 || string.Concat(before) == string.Concat(after)) return false;
-        if (before.Length < 3 || Math.Abs(before.Length - after.Length) > 1) return true;
-        var left = 0;
-        var right = 0;
-        var edits = 0;
-        while (left < before.Length && right < after.Length)
+        if (before.Length < 3 || before.Length != after.Length) return true;
+        var changed = -1;
+        for (var index = 0; index < before.Length; index++)
         {
-            if (before[left] == after[right]) { left++; right++; continue; }
-            if (++edits > 1) return true;
-            if (before.Length >= after.Length) left++;
-            if (after.Length >= before.Length) right++;
+            if (before[index] == after[index]) continue;
+            if (changed >= 0) return true;
+            changed = index;
         }
-        return edits + before.Length - left + after.Length - right > 1;
+        if (changed < 0) return false;
+        var left = before[changed];
+        var right = after[changed];
+        var limit = Math.Min(left.Length, right.Length) / 4;
+        if (Math.Abs(left.Length - right.Length) > limit) return true;
+        var distances = Enumerable.Range(0, right.Length + 1).ToArray();
+        for (var row = 1; row <= left.Length; row++)
+        {
+            var diagonal = distances[0];
+            distances[0] = row;
+            for (var column = 1; column <= right.Length; column++)
+            {
+                var previous = distances[column];
+                distances[column] = Math.Min(Math.Min(distances[column] + 1, distances[column - 1] + 1),
+                    diagonal + (left[row - 1] == right[column - 1] ? 0 : 1));
+                diagonal = previous;
+            }
+        }
+        return distances[right.Length] > limit;
     }
 
     private sealed record Translation(string Text, string? From);
