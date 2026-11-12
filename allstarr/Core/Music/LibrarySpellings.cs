@@ -2,6 +2,7 @@ using allstarr.Core.Matching;
 using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 
 namespace allstarr.Core.Music;
 
@@ -16,9 +17,10 @@ public interface ILibrarySpellings
     Task<string?> RespellAsync(ProtocolExecutionContext context, string query, CancellationToken token);
 }
 
-public sealed class LibrarySpellings(IDbContextFactory<AllstarrDbContext> factory, IBackendLibraryAccessResolver libraryAccess) : ILibrarySpellings
+public sealed class LibrarySpellings(IDbContextFactory<AllstarrDbContext> factory, IBackendLibraryAccessResolver libraryAccess,
+    ILogger<LibrarySpellings>? logger = null) : ILibrarySpellings
 {
-    private const int MinimumLength = 3, Scanned = 5000;
+    private const int MinimumLength = 3, Scanned = 500;
 
     public async Task<string?> RespellAsync(ProtocolExecutionContext context, string query, CancellationToken token)
     {
@@ -28,8 +30,11 @@ public sealed class LibrarySpellings(IDbContextFactory<AllstarrDbContext> factor
         if (access.Context == null || !access.Access.Succeeded) return null;
         await using var db = await factory.CreateDbContextAsync(token);
         var tracks = LibraryTrackAccess.Query(db, access);
-        // SQLite narrows by the first letter; the rest is compared here with the same characters dropped from both sides.
-        var pattern = compact[..1] + "%";
+        // SQLite keeps names that start with the query's letters in order, with anything between them ("c%y%b%e%r%s%e%x%"),
+        // which leaves only a handful even in a large library; the exact comparison happens here.
+        var letters = compact.Where(char.IsLetterOrDigit).ToArray();
+        if (letters.Length < MinimumLength) return null;
+        var pattern = string.Join("%", letters) + "%";
         var titles = await tracks.Where(track => EF.Functions.Like(track.Title, pattern)).Select(track => track.Title).Distinct().Take(Scanned).ToArrayAsync(token);
         var artists = await tracks.Where(track => EF.Functions.Like(track.Artist, pattern)).Select(track => track.Artist).Distinct().Take(Scanned).ToArrayAsync(token);
         var albums = await tracks.Where(track => track.Album != null && EF.Functions.Like(track.Album, pattern)).Select(track => track.Album!)
@@ -39,7 +44,9 @@ public sealed class LibrarySpellings(IDbContextFactory<AllstarrDbContext> factor
         var found = Exact(artists) ?? Exact(titles) ?? Exact(albums) ?? Prefix(titles) ?? Prefix(artists) ?? Prefix(albums);
         if (found == null) return null;
         var spelled = Spelling(found, compact);
-        return string.Equals(spelled.Trim(), query.Trim(), StringComparison.OrdinalIgnoreCase) ? null : spelled;
+        if (string.Equals(spelled.Trim(), query.Trim(), StringComparison.OrdinalIgnoreCase)) return null;
+        logger?.LogInformation("Search for {Query} also asks the media server for the library's spelling {Spelled}", query, spelled);
+        return spelled;
     }
 
     internal static string Compact(string value) => new(value.ToLowerInvariant().Where(character =>

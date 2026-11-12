@@ -99,6 +99,17 @@ public sealed partial class NewReleasesTests
     [Fact]
     public async Task LibrarySpellings_find_the_library_spelling_of_a_search_typed_without_spaces_or_punctuation()
     {
+        // A large library: plenty of titles start with the same letter, and the right one must still be found.
+        await using (var db = _factory.CreateDbContext())
+        {
+            db.LibraryTracks.AddRange(Enumerable.Range(0, 1200).Select(index => new LibraryTrackRecord
+            {
+                Id = Guid.CreateVersion7(), OwnerUserId = _first, Protocol = "subsonic", BackendInstanceId = "main", BackendLibraryId = "music",
+                BackendItemId = "filler" + index, FilePath = "/music/filler" + index, Title = "Cyan Song " + index, Artist = "Filler",
+                IndexedAt = _clock.UtcNow, SourceModifiedAt = _clock.UtcNow, UpdatedAt = _clock.UtcNow
+            }));
+            await db.SaveChangesAsync();
+        }
         await ArtistSongAsync("Cyber Sex", null, "Doja Cat");
         await ArtistSongAsync("Thunderstruck", null, "AC/DC");
         await ArtistSongAsync("Don't Start Now", null, "Dua Lipa");
