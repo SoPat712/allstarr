@@ -42,8 +42,11 @@ public sealed class RankedSearchSnapshotsPerformanceTests(ITestOutputHelper outp
             await snapshots.AddAsync("source-" + batch, Batch(rows, batch), CancellationToken.None);
             if (batch == 12) snapshots.Complete([]);
             var delay = TimeSpan.FromMilliseconds(batch == 0 ? 400 : 250);
-            await clock.WaitForTimersAsync(delay);
-            clock.Advance(delay);
+            if (batch != 12)
+            {
+                await clock.WaitForTimersAsync(delay);
+                clock.Advance(delay);
+            }
             var value = await emitted.Reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(30));
             Assert.Equal(batch + 1, value["revision"]!.GetValue<int>());
             Assert.Equal(batch == 12, value["done"]!.GetValue<bool>());

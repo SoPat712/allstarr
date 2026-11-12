@@ -36,8 +36,8 @@ public sealed class SearchController(IProtocolProviderGateway providers, MusicSe
         "Top selects an exact or near-exact artist, otherwise the best item, and also appears in its section; an owned exact match wins top over external lookalikes and an exact-name artist remains pinned. " +
         "Items retains top where scoring places it; clients rendering top separately skip that Id in items. " +
         "Items and sections rank by score with a five-point margin required to reorder existing items; native rows win ties. " +
-        "The first snapshot waits for the preferred provider plus another answer, or 400 ms; later snapshots are at least 250 ms apart. " +
-        "The final snapshot always flushes with done:true and late; earlier snapshots omit late. Provider work stops at ten seconds, " +
+        "The first snapshot waits for the preferred provider plus another answer, or 400 ms; intermediate snapshots are at least 250 ms apart. " +
+        "The final snapshot flushes immediately when all answers are in, with done:true and late; earlier snapshots omit late. Provider answers are accepted for 2.75 seconds, " +
         "with up to 250 ms more for the final flush. Stable item Ids allow clients to animate changes without sorting. " +
         "Snapshot types: revision is an integer, done is a boolean, providers and late are arrays of provider-id strings, " +
         "top is an item or null, items is an item array, and sections is an object whose songs, albums, artists and playlists values are item arrays. " +
@@ -57,7 +57,9 @@ public sealed class SearchController(IProtocolProviderGateway providers, MusicSe
             requested.Any(type => !new[] { "Audio", "MusicAlbum", "MusicArtist", "Playlist" }.Contains(type, StringComparer.OrdinalIgnoreCase)))
             return BadRequest();
         var disconnected = HttpContext.RequestAborted;
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10), clock);
+        using var deadline = new CancellationTokenSource(TimeSpan.FromMilliseconds(2750), clock);
+        // The final response can outlive provider work, but still stops when the client disconnects.
+        using var publishingDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(3), clock);
         using var stop = CancellationTokenSource.CreateLinkedTokenSource(disconnected, deadline.Token);
         var token = stop.Token;
         HttpContext.RequestAborted = token;
@@ -77,7 +79,7 @@ public sealed class SearchController(IProtocolProviderGateway providers, MusicSe
         var seenArtists = new List<Artist>();
         // Per listed artist row: the services already shown on it, its own first.
         var alsoOnSources = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
-        using var publishingStop = CancellationTokenSource.CreateLinkedTokenSource(token);
+        using var publishingStop = CancellationTokenSource.CreateLinkedTokenSource(disconnected, publishingDeadline.Token);
         RankedSearchSnapshots? snapshots = null;
         Task? libraryTask = null;
         Task<IReadOnlyDictionary<string, IReadOnlyList<LibraryArtistLink>>>? savedLinks = null;
@@ -239,8 +241,6 @@ public sealed class SearchController(IProtocolProviderGateway providers, MusicSe
                         await snapshots.AddAsync(provider, prepared, cancellation, alsoOn);
                     }
                 }, token);
-            await music.RecordArtistCandidatesAsync(Execution, (await nativeTask.WaitAsync(token))
-                .Where(item => item.Kind == MusicItemKind.Artist).Select(item => item.Name).ToArray(), seenArtists, token);
             if (libraryTask != null)
             {
                 try { await libraryTask.WaitAsync(token); }
@@ -251,8 +251,19 @@ public sealed class SearchController(IProtocolProviderGateway providers, MusicSe
             else
             {
                 snapshots.Complete(late);
-                await publishing!.WaitAsync(token);
+                await publishing!.WaitAsync(publishingStop.Token);
             }
+            if (!token.IsCancellationRequested)
+                Response.OnCompleted(async () =>
+                {
+                    try
+                    {
+                        if (nativeTask.IsCompletedSuccessfully)
+                            await music.RecordArtistCandidatesAsync(Execution, nativeTask.Result
+                                .Where(item => item.Kind == MusicItemKind.Artist).Select(item => item.Name).ToArray(), seenArtists, disconnected);
+                    }
+                    catch (OperationCanceledException) when (disconnected.IsCancellationRequested) { }
+                });
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested) { }
         catch (IOException) when (disconnected.IsCancellationRequested) { }

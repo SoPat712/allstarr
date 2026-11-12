@@ -44,8 +44,6 @@ public sealed class RankedSearchSnapshotsTests
         await snapshots.AddAsync("last", [Row("near-tie", "songs", 96, song:
             new Song { Id = "near-tie", Title = "Supermarket", Artist = "Say Now", Duration = 200, Isrc = "USAA12345678" })], CancellationToken.None);
         snapshots.Complete([]);
-        await clock.WaitForTimersAsync(TimeSpan.FromMilliseconds(250));
-        clock.Advance(TimeSpan.FromMilliseconds(250));
         await running.WaitAsync(TimeSpan.FromSeconds(5));
         var final = await emitted.Reader.ReadAsync();
         Assert.Equal(4, final["items"]!.AsArray().Count);
@@ -92,8 +90,6 @@ public sealed class RankedSearchSnapshotsTests
             Row("another-exact", "artists", 100, "SAY NOW")], CancellationToken.None);
         await snapshots.AddAsync("fourth", [], CancellationToken.None);
         snapshots.Complete(["late-provider"]);
-        await clock.WaitForTimersAsync(TimeSpan.FromMilliseconds(250));
-        clock.Advance(TimeSpan.FromMilliseconds(250));
         await running.WaitAsync(TimeSpan.FromSeconds(5));
         var final = await emitted.Reader.ReadAsync();
         Assert.Equal(3, final.Value["revision"]!.GetValue<int>());
@@ -105,7 +101,7 @@ public sealed class RankedSearchSnapshotsTests
         Assert.Equal(["songs", "artists"], final.Value["sections"]!.AsObject().Select(pair => pair.Key));
         Assert.All(final.Value["sections"]!.AsObject(), section => Assert.True(section.Value!.AsArray().Count <= 2));
         Assert.True(second.At - first.At >= TimeSpan.FromMilliseconds(250));
-        Assert.True(final.At - second.At >= TimeSpan.FromMilliseconds(250));
+        Assert.Equal(second.At, final.At);
     }
 
     [Fact]
@@ -127,8 +123,6 @@ public sealed class RankedSearchSnapshotsTests
         Assert.Equal(["songs"], first["sections"]!.AsObject().Select(pair => pair.Key));
         Assert.Single(first["sections"]!["songs"]!.AsArray());
         snapshots.Complete([]);
-        await clock.WaitForTimersAsync(TimeSpan.FromMilliseconds(250));
-        clock.Advance(TimeSpan.FromMilliseconds(250));
         await running.WaitAsync(TimeSpan.FromSeconds(5));
         Assert.True((await emitted.Reader.ReadAsync())["done"]!.GetValue<bool>());
     }
@@ -156,8 +150,6 @@ public sealed class RankedSearchSnapshotsTests
         await snapshots.AddLibraryAsync([libRow], CancellationToken.None);
 
         snapshots.Complete([]);
-        await clock.WaitForTimersAsync(TimeSpan.FromMilliseconds(250));
-        clock.Advance(TimeSpan.FromMilliseconds(250));
         await running.WaitAsync(TimeSpan.FromSeconds(5));
 
         var second = await emitted.Reader.ReadAsync();
@@ -180,11 +172,24 @@ public sealed class RankedSearchSnapshotsTests
         await emitted.Reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
         await snapshots.AddAsync("second", [Row("b", "songs", 64), Row("c", "songs", 68), Row("d", "songs", 72)], CancellationToken.None);
         snapshots.Complete([]);
-        await clock.WaitForTimersAsync(TimeSpan.FromMilliseconds(250));
-        clock.Advance(TimeSpan.FromMilliseconds(250));
         await running.WaitAsync(TimeSpan.FromSeconds(5));
         var final = await emitted.Reader.ReadAsync();
         Assert.Equal(["a", "b", "c", "d"], final["sections"]!["songs"]!.AsArray().Select(row => row!["Id"]!.GetValue<string>()));
+    }
+
+    [Fact]
+    public async Task RankedSnapshotsCompleteBeforeTheFirstPaintTimerWhenAllProvidersHaveAnswered()
+    {
+        var clock = new ManualTimeProvider();
+        var emitted = new List<JsonNode>();
+        var snapshots = new RankedSearchSnapshots("query", 10, ["songs"], "only", clock,
+            (value, _) => { emitted.Add(JsonSerializer.SerializeToNode(value)!); return Task.CompletedTask; });
+        var running = snapshots.RunAsync(CancellationToken.None);
+        await snapshots.AddAsync("only", [Row("song", "songs", 95)], CancellationToken.None);
+        snapshots.Complete([]);
+        await running.WaitAsync(TimeSpan.FromSeconds(4));
+        Assert.True(Assert.Single(emitted)["done"]!.GetValue<bool>());
+        Assert.Equal(DateTimeOffset.UnixEpoch, clock.GetUtcNow());
     }
 
     private static RankedSearchRow Row(string id, string section, double score, string? artistName = null,

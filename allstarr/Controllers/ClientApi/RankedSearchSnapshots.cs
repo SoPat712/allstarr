@@ -167,7 +167,7 @@ internal sealed partial class RankedSearchSnapshots(string query, int limit, IRe
                 }
                 var ready = providers.Count >= 2 && (preferred == null || providers.Contains(preferred, StringComparer.Ordinal));
                 var due = last?.AddMilliseconds(250) ?? (ready ? clock.GetUtcNow() : firstPaint);
-                if (dirty && clock.GetUtcNow() >= due)
+                if (dirty && (late != null || clock.GetUtcNow() >= due))
                 {
                     await EmitAsync(late, token);
                     last = clock.GetUtcNow();
@@ -177,11 +177,6 @@ internal sealed partial class RankedSearchSnapshots(string query, int limit, IRe
                 if (!dirty)
                 {
                     if (!await updates.Reader.WaitToReadAsync(token)) return;
-                    continue;
-                }
-                if (late != null)
-                {
-                    await Task.Delay(MaxDelay(due - clock.GetUtcNow()), clock, token);
                     continue;
                 }
                 using var wake = CancellationTokenSource.CreateLinkedTokenSource(token);
