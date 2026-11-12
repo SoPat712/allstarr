@@ -12,6 +12,7 @@ public static partial class SafeOperationalText
         }
 
         var sanitized = value.Replace('\r', ' ').Replace('\n', ' ').Trim();
+        sanitized = StreamTokenPattern().Replace(sanitized, "$1<redacted>");
         sanitized = UrlPattern().Replace(sanitized, match => SanitizeUrl(match.Value));
         sanitized = CredentialPattern().Replace(sanitized, "$1=<redacted>");
         return sanitized.Length <= maxLength ? sanitized : sanitized[..maxLength];
@@ -41,6 +42,9 @@ public static partial class SafeOperationalText
 
     [GeneratedRegex("https?://(?:[^\\s,;\\\"'<>?#]|<redacted>)+(?:[?#](?:[^\\s\\\"'<>]|<redacted>)*)?", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex UrlPattern();
+
+    [GeneratedRegex(@"(/allstarr/v2/stream/)[^\s/?#\""'<>]+", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex StreamTokenPattern();
 
     [GeneratedRegex(
         @"\b(token|password|secret|cookie|authorization|api[_-]?key|arl|code|state|nonce|code_verifier|client_secret)\s*[=:]\s*[^\s,;]+",

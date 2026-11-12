@@ -805,6 +805,18 @@ public class JellyfinProxyService : IDisposable
         }
     }
 
+    internal async Task<HttpResponseMessage> OpenAudioSourceAsync(string itemId, bool headOnly,
+        IHeaderDictionary? headers, CancellationToken cancellationToken)
+    {
+        var url = BuildUrl($"Audio/{Uri.EscapeDataString(itemId)}/stream", new() { ["static"] = "true" });
+        using var request = new HttpRequestMessage(headOnly ? HttpMethod.Head : HttpMethod.Get, url);
+        request.Headers.Add("Authorization", GetAuthorizationHeader());
+        if (headers != null)
+            foreach (var name in new[] { "Range", "If-Range" })
+                if (headers.TryGetValue(name, out var value)) request.Headers.TryAddWithoutValidation(name, value.ToArray());
+        return await SendBackendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+    }
+
     public async Task<IActionResult> StreamAudioAsync(
         string itemId,
         CancellationToken cancellationToken)

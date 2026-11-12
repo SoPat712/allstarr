@@ -121,7 +121,7 @@ public class RequestLoggingMiddleware
 
         // Log request details
         var requestLog = new StringBuilder();
-        var requestUrlForLog = $"{request.Scheme}://{request.Host}{request.Path}{queryStringForLog}";
+        var requestUrlForLog = $"{request.Scheme}://{request.Host}{SafeOperationalText.Sanitize(request.Path.Value)}{queryStringForLog}";
         requestLog.AppendLine($"📥 HTTP {request.Method} {requestUrlForLog}");
         requestLog.AppendLine($"   Host: {request.Host}");
         requestLog.AppendLine($"   Content-Type: {request.ContentType ?? "(none)"}");
@@ -196,10 +196,10 @@ public class RequestLoggingMiddleware
         var waited = (int)Stopwatch.GetElapsedTime(started, answered ?? Stopwatch.GetTimestamp()).TotalMilliseconds;
         if (answered == null && context.RequestAborted.IsCancellationRequested)
             _logger.LogWarning("Client gave up on {Method} {Path} after {WaitedMs} ms", context.Request.Method,
-                context.Request.Path.Value, waited);
+                SafeOperationalText.Sanitize(context.Request.Path.Value), waited);
         else if (context.Response.StatusCode >= 500 || waited >= SlowAnswer.TotalMilliseconds)
             _logger.LogWarning("Request {Method} {Path} answered {StatusCode} after {WaitedMs} ms", context.Request.Method,
-                context.Request.Path.Value, context.Response.StatusCode, waited);
+                SafeOperationalText.Sanitize(context.Request.Path.Value), context.Response.StatusCode, waited);
     }
 
     private static string MaskAuthHeader(string authHeader)

@@ -2053,7 +2053,7 @@ public class AdminUiController : ControllerBase
     private static List<AdminUiConfigSection> BuildConfigSections() =>
     [
         Section("operator", "Library and retention", OperatorSettingPolicy.Definitions
-            .Where(item => !item.Key.StartsWith("MusicBrainz:", StringComparison.Ordinal) && item.Key is not ("Debug:LogAllRequests" or "Gateway:PublicListenerUrl"))
+            .Where(item => !item.Key.StartsWith("MusicBrainz:", StringComparison.Ordinal) && !item.Key.StartsWith("Lyrics:", StringComparison.Ordinal) && item.Key is not ("Debug:LogAllRequests" or "Gateway:PublicListenerUrl"))
             .Select(item => Field(
                 LegacyEnvParser.DurableAliasKeys.First(key => LegacyEnvParser.TryGetDurableAlias(key, out var target) && target == item.Key),
                 OperatorSettingLabel(item.Key),
@@ -2119,6 +2119,13 @@ public class AdminUiController : ControllerBase
                 "toggle",
                 "scrobbling.localTracksEnabled",
                 helpText: "Off by default. Leave off when your server already scrobbles them (for example Jellyfin's Last.fm or ListenBrainz plugin), so each play counts once. Songs streamed through Allstarr are always scrobbled.")
+        ]),
+        Section("lyrics", "Lyrics",
+        [
+            Field("LYRICS_TRANSLATION_ENABLED", "Translate lyrics for apps", "toggle", "operatorSettings.Lyrics:Translation:Enabled",
+                helpText: "Translates lyrics on request and shares the result with everyone. Default: on."),
+            Field("LYRICS_TRANSLATION_LIBRETRANSLATE_URL", "Optional LibreTranslate URL", "url", "operatorSettings.Lyrics:Translation:LibreTranslateUrl",
+                helpText: "Optional HTTP or HTTPS address. Used when Google and MyMemory cannot translate the lyrics.")
         ]),
         Section("paths", "Library paths",
         [

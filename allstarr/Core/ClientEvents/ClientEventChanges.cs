@@ -151,7 +151,7 @@ public sealed class ClientEventChanges(IDbContextFactory<AllstarrDbContext> fact
     private static ClientLyricsStamp? Stamp(RecordingLyricsChoiceRecord? row) => row == null ? null : new(row.Id, row.Revision);
     private async Task SafelyAsync(Func<Task> publish)
     {
-        if (hub.ConnectionCount == 0) return;
+        if (hub.Listeners.Length == 0) return;
         try { await publish(); }
         catch (Exception exception) { logger.LogWarning(exception, "Could not publish a client update"); }
     }

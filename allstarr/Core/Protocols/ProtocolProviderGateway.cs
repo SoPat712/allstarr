@@ -215,6 +215,7 @@ public sealed record ProtocolProviderStream(
     internal PlaybackFileFacts FileFacts { get; init; } = new();
     internal Func<CancellationToken, Task<HttpResponseMessage>>? OpenOriginalResponseAsync { get; init; }
     public Guid? ServingManagedFileId { get; init; }
+    internal string? StoredFilePath { get; init; }
 }
 
 internal sealed class PlaybackFileFacts
@@ -1334,6 +1335,7 @@ public sealed partial class ProtocolProviderGateway(
             IsOriginalDownload = protocol.IsOriginalDownload,
             RetainOriginalMedia = protocol.RetainOriginalMedia,
             IsReadOnly = protocol.IsReadOnly,
+            UseStoredBackendCredentials = protocol.UseStoredBackendCredentials,
             AudioDelivery = protocol.IsOriginalDownload ? null : protocol.AudioDelivery
         };
         if (protocol.IsOriginalDownload) quality = ProviderAudioQuality.Any;

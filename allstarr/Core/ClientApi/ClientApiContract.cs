@@ -55,8 +55,12 @@ public sealed record ClientFeatures
     [JsonPropertyName("preferences")] public bool Preferences { get; init; } = true;
     [JsonPropertyName("karaokeModel")] public bool KaraokeModel { get; init; }
     [JsonPropertyName("v2Tracks")] public bool V2Tracks { get; init; } = true;
+    [JsonPropertyName("v2Playback")] public bool V2Playback { get; init; } = true;
     [JsonPropertyName("v2Batch")] public bool V2Batch { get; init; } = true;
+    [JsonPropertyName("v2LyricsTranslation")] public bool V2LyricsTranslation { get; init; } = true;
     [JsonPropertyName("v2ArtistLinks")] public bool V2ArtistLinks { get; init; } = true;
+    [JsonPropertyName("v2Events")] public bool V2Events { get; init; } = true;
+    [JsonPropertyName("v2Autoplay")] public bool V2Autoplay { get; init; } = true;
 }
 
 public sealed record KaraokeModelMetadata(

@@ -299,7 +299,7 @@ public sealed partial class ProtocolRouteFixtureTests
         using var plainJson = JsonDocument.Parse(await plain.Content.ReadAsStringAsync());
         Assert.False(plainJson.RootElement.TryGetProperty("views", out _));
         Assert.False(plainJson.RootElement.TryGetProperty("viewStatus", out _));
-        foreach (var invalid in new[] { "lyric", "lyrics,lyrics", "playback" })
+        foreach (var invalid in new[] { "lyric", "lyrics,lyrics", "playbacks" })
         {
             using var rejected = await client.GetAsync($"/allstarr/v2/tracks/ext-deezer-song-known?views={invalid}");
             await AssertClientApiError(rejected, 400, "invalid_request");

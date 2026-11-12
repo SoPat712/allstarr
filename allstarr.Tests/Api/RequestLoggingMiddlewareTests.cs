@@ -14,6 +14,23 @@ public sealed class RequestLoggingMiddlewareTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
+    public async Task PlaybackStreamTokensNeverAppearInRequestOrFailureLogs(bool verbose)
+    {
+        var logger = new StructuredLogger();
+        var context = new DefaultHttpContext();
+        context.Request.Path = "/allstarr/v2/stream/private-stream-token";
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        { ["Debug:LogAllRequests"] = verbose.ToString() }).Build();
+        await new RequestLoggingMiddleware(http => { http.Response.StatusCode = 503; return Task.CompletedTask; }, logger, configuration)
+            .InvokeAsync(context);
+        Assert.DoesNotContain(logger.Entries, entry => entry.Message.Contains("private-stream-token", StringComparison.Ordinal));
+        Assert.DoesNotContain(logger.Entries.SelectMany(entry => entry.Values.Values), value => value?.ToString()?.Contains("private-stream-token") == true);
+        Assert.DoesNotContain("private-stream-token", SafeOperationalText.Sanitize("GET https://music.test/allstarr/v2/stream/private-stream-token"));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
     public async Task TimingBreakdownIsStructuredAtDebugAndFailureWarningRemains(bool verbose)
     {
         var logger = new StructuredLogger();

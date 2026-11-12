@@ -86,8 +86,10 @@ public sealed partial class TrackIdentityService
                                 if (positions.TryGetValue(merged.Id, out var position) && position > positions[recording.Id])
                                     skipped.Add(merged.Id);
                         }
+                        var renames = PendingRenames(db);
                         await db.SaveChangesAsync(cancellationToken);
                         await transaction.CommitAsync(cancellationToken);
+                        PublishRenames(renames);
                         applied = true;
                     }
                 }

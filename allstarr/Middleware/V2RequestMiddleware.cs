@@ -27,6 +27,13 @@ public sealed class V2RequestMiddleware(RequestDelegate next)
         }
         // The media server reads only its own header format; a token-only header keeps the device the token belongs to.
         var authorization = request.Headers.Authorization.ToString();
+        if ((request.Path.StartsWithSegments("/allstarr/v2/events", StringComparison.OrdinalIgnoreCase) ||
+            request.Path.StartsWithSegments("/allstarr/v2/ping", StringComparison.OrdinalIgnoreCase)) &&
+            !authorization.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+        {
+            await ClientApiError.WriteAsync(context, 401);
+            return;
+        }
         if (authorization.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
         {
             var token = authorization["Bearer ".Length..].Trim();

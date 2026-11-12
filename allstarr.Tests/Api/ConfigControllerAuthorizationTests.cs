@@ -29,6 +29,27 @@ namespace allstarr.Tests;
 
 public class ConfigControllerAuthorizationTests : IAsyncLifetime
 {
+    [Fact]
+    public async Task TranslationSettingsSaveThroughTheExistingConfigFieldsWithoutRestart()
+    {
+        var controller = CreateController(CreateHttpContextWithSession(true));
+        var updated = Assert.IsType<OkObjectResult>(await controller.UpdateConfig(new()
+        {
+            Updates = new()
+            {
+                ["LYRICS_TRANSLATION_ENABLED"] = "false",
+                ["LYRICS_TRANSLATION_LIBRETRANSLATE_URL"] = "https://translate.invalid/base"
+            }
+        }));
+        using var response = JsonDocument.Parse(JsonSerializer.Serialize(updated.Value));
+        Assert.False(response.RootElement.GetProperty("requiresRestart").GetBoolean());
+        var config = Assert.IsType<OkObjectResult>(await controller.GetConfig());
+        using var body = JsonDocument.Parse(JsonSerializer.Serialize(config.Value));
+        var settings = body.RootElement.GetProperty("operatorSettings");
+        Assert.False(settings.GetProperty("Lyrics:Translation:Enabled").GetBoolean());
+        Assert.Equal("https://translate.invalid/base", settings.GetProperty("Lyrics:Translation:LibreTranslateUrl").GetString());
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

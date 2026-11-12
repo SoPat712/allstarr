@@ -40,7 +40,10 @@ public sealed record V2Track(
     [property: JsonPropertyName("lastPlayedAt")] DateTimeOffset? LastPlayedAt,
     [property: JsonPropertyName("keep")] V2Keep Keep,
     [property: JsonPropertyName("match")] V2Match? Match,
-    [property: JsonPropertyName("lyrics")] V2LyricsAvailability Lyrics);
+    [property: JsonPropertyName("lyrics")] V2LyricsAvailability Lyrics)
+{
+    internal string? SourceVersion { get; init; }
+}
 
 /// <summary>A named reference; <c>id</c> is null when the source names something it can't identify.</summary>
 public sealed record V2Ref(
@@ -86,6 +89,18 @@ public sealed record V2LyricsAvailability(
     [property: JsonPropertyName("format")] string? Format,
     [property: JsonPropertyName("source")] string? Source);
 
+public sealed record V2LyricsTranslationResponse(
+    [property: JsonPropertyName("trackId")] string TrackId,
+    [property: JsonPropertyName("to")] string To,
+    [property: JsonPropertyName("provider"), AllowedValues("google", "mymemory", "libretranslate", null)] string? Provider,
+    [property: JsonPropertyName("lines"), Description("One entry per lyrics view line, in the same order, including blank and untranslated lines.")] IReadOnlyList<V2LyricsTranslationLine> Lines);
+
+public sealed record V2LyricsTranslationLine(
+    [property: JsonPropertyName("index")] int Index,
+    [property: JsonPropertyName("source")] string Source,
+    [property: JsonPropertyName("text"), Description("Null when no translation is needed or the result was dropped.")] string? Text,
+    [property: JsonPropertyName("from")] string? From);
+
 /// <summary>An album summary returned alongside tracks with <c>include=album</c>.</summary>
 public sealed record V2AlbumSummary(
     [property: JsonPropertyName("id")] string Id,
@@ -114,7 +129,7 @@ public sealed record V2TrackResponse([property: JsonPropertyName("track")] V2Tra
     [JsonPropertyName("views")]
     public V2TrackViews? Views { get; init; }
 
-    /// <summary>For each requested view: <c>ok</c>, <c>none</c> when the track has nothing for it, or <c>unavailable</c> to retry later.</summary>
+    /// <summary>For each requested view: <c>ok</c>, <c>none</c> when empty, <c>partial</c> when autoplay needs more time, or <c>unavailable</c> to retry later.</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     [JsonPropertyName("viewStatus")]
     public IReadOnlyDictionary<string, string>? ViewStatus { get; init; }
@@ -123,6 +138,10 @@ public sealed record V2TrackResponse([property: JsonPropertyName("track")] V2Tra
 /// <summary>Server-computed facts about one track. Only requested views that have data are present.</summary>
 public sealed record V2TrackViews
 {
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    [JsonPropertyName("playback")]
+    public V2PlaybackResponse? Playback { get; init; }
+
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     [JsonPropertyName("lyrics")]
     public RichLyrics? Lyrics { get; init; }
@@ -134,7 +153,15 @@ public sealed record V2TrackViews
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     [JsonPropertyName("match")]
     public ClientItemMatch? Match { get; init; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    [JsonPropertyName("autoplay")]
+    public V2AutoplayResponse? Autoplay { get; init; }
 }
+
+public sealed record V2AutoplayResponse(
+    [property: JsonPropertyName("tracks")] IReadOnlyList<V2Track> Tracks,
+    [property: JsonPropertyName("next"), Description("Opaque continuation cursor; null when exhausted. A partial page can have no tracks and still have a next cursor.")] string? Next);
 
 public sealed record V2BatchRequest
 {

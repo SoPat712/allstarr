@@ -102,8 +102,10 @@ public sealed partial class TrackIdentityService
             AddAudit(db, actor, correlationId, "canonical-recording.enrich", "enriched",
                 new { canonicalRecordingId = recording.Id, identifierCount = recording.Identifiers.Count });
         }
+        var renames = PendingRenames(db);
         await db.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
+        PublishRenames(renames);
         await LinkLibraryRecordingsAsync(actor, correlationId, recording.Id, cancellationToken: cancellationToken);
         return await ResolveRecordingAsync(actor, recording.Id.ToString("D"), cancellationToken) ?? ToIdentity(recording);
     }

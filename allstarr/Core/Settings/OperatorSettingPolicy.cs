@@ -7,6 +7,8 @@ internal static class OperatorSettingPolicy
     internal static readonly RuntimeSettingDefinition[] Definitions =
     [
         new("Gateway:PublicListenerUrl", RuntimeSettingValueType.String, "Gateway:PublicListenerUrl", AllowEmpty: true, DefaultValue: "", MaximumLength: 2048),
+        new("Lyrics:Translation:Enabled", RuntimeSettingValueType.Boolean, "Lyrics:Translation:Enabled", DefaultValue: "true"),
+        new("Lyrics:Translation:LibreTranslateUrl", RuntimeSettingValueType.String, "Lyrics:Translation:LibreTranslateUrl", AllowEmpty: true, DefaultValue: "", MaximumLength: 2048),
         new("ChallengeSolver:Url", RuntimeSettingValueType.String, "ChallengeSolver:Url", AllowEmpty: true, DefaultValue: "", MaximumLength: 2048),
         new("ChallengeSolver:TimeoutSeconds", RuntimeSettingValueType.Integer, "ChallengeSolver:TimeoutSeconds", 10, 180, DefaultValue: "60"),
         new("MusicBrainz:SourceId", RuntimeSettingValueType.String, "MusicBrainz:SourceId", DefaultValue: "musicbrainz", MaximumLength: 100, RequiresRestart: true),
@@ -31,6 +33,9 @@ internal static class OperatorSettingPolicy
 
     internal static void Validate(string key, string value)
     {
+        if (key == "Lyrics:Translation:LibreTranslateUrl" && value.Length > 0 &&
+            (value.Any(char.IsControl) || !OutboundRequestGuard.TryCreateConfiguredServiceUri(value, out _, out _)))
+            throw new ArgumentException("Use an HTTP or HTTPS translation URL without credentials, query or fragment.");
         allstarr.Core.Storage.DurableBackupService.ValidatePolicyString(key, value);
         if (key is "Admin:Oidc:Authority" or "Admin:Oidc:PublicUrl" && value.Length > 0 &&
             !allstarr.Services.Admin.AdminOidcOptions.IsAllowedUrl(value, out _))

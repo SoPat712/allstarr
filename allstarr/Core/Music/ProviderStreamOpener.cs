@@ -83,8 +83,7 @@ public sealed class ProviderStreamOpener(
         string externalId,
         ProviderAudioDeliveryRequest request)
     {
-        var routed = await providers.OpenStreamAsync(context with { IsReadOnly = true, AudioDelivery = null },
-            providerId, externalId, request.Quality, null, true);
+        var routed = await InspectSourceAsync(context, providerId, externalId, request.Quality);
         if (routed == null) return request.Evaluate(null);
         using var response = routed.Response;
         return response.IsSuccessStatusCode
@@ -92,13 +91,18 @@ public sealed class ProviderStreamOpener(
             : request.Evaluate(null);
     }
 
+    internal Task<ProtocolProviderStream?> InspectSourceAsync(ProtocolExecutionContext context, string providerId,
+        string externalId, ProviderAudioQuality quality) => providers.OpenStreamAsync(
+            context with { IsReadOnly = true, AudioDelivery = null }, providerId, externalId, quality, null, true);
+
     public async Task<IActionResult> OpenAsync(
         HttpContext http,
         ProtocolExecutionContext context,
         string providerId,
         string externalId,
         ProviderAudioQuality quality,
-        ProviderAudioDeliveryRequest? delivery = null)
+        ProviderAudioDeliveryRequest? delivery = null,
+        bool preserveSourceBytes = false)
     {
         ArgumentNullException.ThrowIfNull(http);
         ArgumentNullException.ThrowIfNull(context);
@@ -224,7 +228,7 @@ public sealed class ProviderStreamOpener(
             try
             {
                 void Selected(string rung) => activity?.SeekRungSelected(context, itemId, routed.EffectiveQuality, routed, rung);
-                if (!context.IsOriginalDownload && (!headOnly || timeSeek)) StreamDurationGuidance.Attach(routed, Metadata, Selected);
+                if (!context.IsOriginalDownload && !preserveSourceBytes && (!headOnly || timeSeek)) StreamDurationGuidance.Attach(routed, Metadata, Selected);
                 if (cache != null)
                     await cache.WrapAsync(routed, context, routed.ServingProviderId, servingId, headOnly && !timeSeek, Metadata, http.RequestAborted);
                 if (!headOnly && (conversion != null || timeSeek))

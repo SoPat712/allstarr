@@ -368,9 +368,11 @@ public sealed partial class TrackMatchCommandService
                 record.DecidedAt,
                 decision.State == TrackMatchReviewState.Accepted && selected != null &&
                 existingSelection?.State == TrackMatchState.Accepted && !existingSelection.LibraryTrackId.HasValue));
+        var renames = TrackIdentityService.PendingRenames(db);
         try
         {
             await db.SaveChangesAsync(cancellationToken);
+            foreach (var (oldId, newId) in renames) nativeEvents?.Renamed(oldId, newId);
         }
         catch (DbUpdateException exception)
         {

@@ -284,7 +284,8 @@ public sealed partial class TrackMatchCommandService(
     IConfiguration? configuration = null, MatchLibrarySearch? librarySearch = null,
     ILibraryIndexService? libraryIndex = null,
     ILogger<TrackMatchCommandService>? logger = null,
-    allstarr.Core.ClientEvents.IClientEventChanges? events = null) : ITrackMatchRepository
+    allstarr.Core.ClientEvents.IClientEventChanges? events = null,
+    allstarr.Core.ClientApiV2.V2EventStream? nativeEvents = null) : ITrackMatchRepository
 {
     private const int ConcurrentWriteRetries = 3;
 

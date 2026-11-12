@@ -22,7 +22,7 @@ public sealed record ClientEvent(string Type, string Key, string Json)
     public static ClientEvent Playback(string itemId) => Create("playback.updated", itemId, new { itemId });
     public static ClientEvent LibraryAddition(ClientLibraryAddition value) => Create("libraryAddition.updated", value.Id.ToString("D"), value);
     public static ClientEvent LibraryRequest(ClientLibraryAddition value) => Create("libraryRequest.updated", value.Id.ToString("D"), value);
-    private static ClientEvent Create(string type, string key, object data) => new(type, key,
+    internal static ClientEvent Create(string type, string key, object data) => new(type, key,
         JsonSerializer.Serialize(data, ClientApiContract.JsonOptions));
 }
 

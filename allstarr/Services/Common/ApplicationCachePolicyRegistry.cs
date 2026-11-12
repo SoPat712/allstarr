@@ -66,7 +66,7 @@ public static class ApplicationCachePolicyRegistry
         if (CacheKeyBuilder.IsMediaAssetPayloadKey(key) ||
             StartsWithAny(key, "media:descriptor:v5:", "playlist:artwork-descriptor:v1:", "artwork:image:v1:"))
             category = ApplicationCacheCategory.Artwork;
-        if (StartsWithAny(key, "lyrics:v2:", "lyrics:v3:", "lyrics:v4:", "lyrics:id:v2:", "lrclib:automatic:v2:"))
+        if (StartsWithAny(key, "lyrics:v2:", "lyrics:v3:", "lyrics:v4:", "lyrics:id:v2:", "lyrics:translation:v1:", "lrclib:automatic:v2:"))
             category = ApplicationCacheCategory.Lyrics;
         if (StartsWithAny(
                 key,

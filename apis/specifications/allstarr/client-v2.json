@@ -373,6 +373,341 @@
         }
       }
     },
+    "/allstarr/v2/ping": {
+      "head": {
+        "tags": [
+          "Events"
+        ],
+        "description": "Checks reachability when the event stream is disconnected. Requires a Bearer token.",
+        "operationId": "ping",
+        "responses": {
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "No Content",
+            "content": {
+              "application/json": {}
+            }
+          }
+        }
+      }
+    },
+    "/allstarr/v2/events": {
+      "get": {
+        "tags": [
+          "Events"
+        ],
+        "description": "Streams listener-scoped JSON payloads with increasing id, event and data lines. Replay uses Last-Event-ID (preferred) or lastEventId, retaining at most 1,000 events for 10 minutes. An unknown or expired cursor starts with resync {}; refetch client state, then continue live. Comments ping every 25 seconds. Connections share the v1 limit: 8 per listener, 256 total; excess returns 503. Payloads: track.updated {track: V2Track}, lyrics.updated {trackId, revision} (read views=lyrics), match.updated {trackId, state}, keep.updated {trackId, state, progress}, mix.updated {mixId, playlistId}, releases.updated {count}, libraryAddition.updated {row}, track.renamed {old, new}. Renames reach currently connected v2 listeners. Requires a Bearer token.",
+        "operationId": "getV2Events",
+        "parameters": [
+          {
+            "name": "Last-Event-ID",
+            "in": "header",
+            "description": "The last received event id; takes precedence over the query parameter.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "lastEventId",
+            "in": "query",
+            "description": "Replay cursor for clients unable to set Last-Event-ID.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/allstarr/v2/playback/resolve": {
+      "post": {
+        "tags": [
+          "Playback"
+        ],
+        "description": "Selects a playback format and returns a signed stream URL valid for twelve hours. cacheKey hashes the track, tier, delivered format and source identity, never the listener or signed token. Source identity uses the library item\u0027s version stamp when available, a stored file\u0027s path, size and modification time, or the provider track and source format. Same inputs produce the same key. Only stored files and original/pass-through provider bytes can report seek=bytes and contentLength. Live transcodes report seek=none and contentLength=null; Range requests return 200 with the full stream. Clients may resume only streams reporting seek=bytes. Prefetch may move the source into cache without invalidating the URL.",
+        "operationId": "resolvePlayback",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/V2PlaybackRequest"
+              }
+            },
+            "text/json": {
+              "schema": {
+                "$ref": "#/components/schemas/V2PlaybackRequest"
+              }
+            },
+            "application/*\u002Bjson": {
+              "schema": {
+                "$ref": "#/components/schemas/V2PlaybackRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V2PlaybackResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/allstarr/v2/stream/{token}": {
+      "get": {
+        "tags": [
+          "Stream"
+        ],
+        "description": "Reads the track, delivered format and tier authorized by the signed URL without an authorization header. The source may move between a provider and cache after prefetch. Stored files and pass-through provider streams support byte ranges when advertised by resolve; live transcodes ignore Range and return 200 with the full stream. Bad, expired and foreign tokens return 404.",
+        "operationId": "streamPlayback",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "206": {
+            "description": "Partial Content"
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      },
+      "head": {
+        "tags": [
+          "Stream"
+        ],
+        "operationId": "headPlayback",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/allstarr/v2/tracks": {
       "get": {
         "tags": [
@@ -490,7 +825,15 @@
           {
             "name": "views",
             "in": "query",
-            "description": "Comma-separated views: \u0060lyrics\u0060, \u0060lyricsSources\u0060, \u0060match\u0060. \u0060viewStatus\u0060 says how each one went.",
+            "description": "Comma-separated views: \u0060lyrics\u0060, \u0060lyricsSources\u0060, \u0060match\u0060, \u0060autoplay\u0060, \u0060playback\u0060. \u0060viewStatus\u0060 says how each one went; autoplay returns 25 tracks by default.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tier",
+            "in": "query",
+            "description": "Playback tier: lossless, high (default), normal, low or original.",
             "schema": {
               "type": "string"
             }
@@ -553,6 +896,196 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/V2TrackResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/allstarr/v2/tracks/{id}/lyrics/translation": {
+      "get": {
+        "tags": [
+          "Tracks"
+        ],
+        "description": "Translates the same lines as \u0060views=lyrics\u0060, preserving their order for timing. Shared for 30 days per song, lyrics text and target language. Returns 404 when disabled or lyrics are absent.",
+        "operationId": "getLyricsTranslation",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "description": "Target BCP-47 language, such as \u0060en\u0060, \u0060es\u0060 or \u0060pt-BR\u0060. Defaults to \u0060en\u0060.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V2LyricsTranslationResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/allstarr/v2/tracks/{id}/autoplay": {
+      "get": {
+        "tags": [
+          "Tracks"
+        ],
+        "description": "Continues after a track: InstantMix or service radio, similar songs, the same artist, then the album. Follow \u0060next\u0060 to extend the queue without repeats; a partial page still has a cursor. Continuations retain at most a few hundred track identifiers.",
+        "operationId": "getTrackAutoplay",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Opaque cursor from the previous page.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Tracks per page, from 1 to 50; defaults to 25.",
+            "schema": {
+              "maximum": 50,
+              "minimum": 1,
+              "type": "integer",
+              "format": "int32",
+              "default": 25
+            }
+          }
+        ],
+        "responses": {
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V2AutoplayResponse"
                 }
               }
             }
@@ -925,6 +1458,42 @@
           }
         }
       },
+      "ProblemDetails": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "title": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "status": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int32"
+          },
+          "detail": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "instance": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
       "RichLyrics": {
         "required": [
           "source",
@@ -1171,6 +1740,28 @@
           }
         }
       },
+      "V2AutoplayResponse": {
+        "required": [
+          "tracks",
+          "next"
+        ],
+        "type": "object",
+        "properties": {
+          "tracks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/V2Track"
+            }
+          },
+          "next": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "description": "Opaque continuation cursor; null when exhausted. A partial page can have no tracks and still have a next cursor."
+          }
+        }
+      },
       "V2BatchItem": {
         "required": [
           "id",
@@ -1342,6 +1933,67 @@
           }
         }
       },
+      "V2LyricsTranslationLine": {
+        "required": [
+          "index",
+          "source",
+          "text",
+          "from"
+        ],
+        "type": "object",
+        "properties": {
+          "index": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "source": {
+            "type": "string"
+          },
+          "text": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "description": "Null when no translation is needed or the result was dropped."
+          },
+          "from": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
+      "V2LyricsTranslationResponse": {
+        "required": [
+          "trackId",
+          "to",
+          "provider",
+          "lines"
+        ],
+        "type": "object",
+        "properties": {
+          "trackId": {
+            "type": "string"
+          },
+          "to": {
+            "type": "string"
+          },
+          "provider": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "lines": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/V2LyricsTranslationLine"
+            },
+            "description": "One entry per lyrics view line, in the same order, including blank and untranslated lines."
+          }
+        }
+      },
       "V2Match": {
         "required": [
           "state",
@@ -1362,6 +2014,231 @@
           },
           "authority": {
             "type": "string"
+          }
+        }
+      },
+      "V2PlaybackClient": {
+        "required": [
+          "codecs"
+        ],
+        "type": "object",
+        "properties": {
+          "codecs": {
+            "maxItems": 16,
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "maxSampleRate": {
+            "maximum": 384000,
+            "minimum": 8000,
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int32"
+          },
+          "maxBitDepth": {
+            "maximum": 32,
+            "minimum": 8,
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int32"
+          },
+          "channels": {
+            "maximum": 8,
+            "minimum": 1,
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int32"
+          }
+        }
+      },
+      "V2PlaybackFormat": {
+        "required": [
+          "container",
+          "codec",
+          "bitrate",
+          "sampleRate",
+          "bitDepth",
+          "isLossless"
+        ],
+        "type": "object",
+        "properties": {
+          "container": {
+            "type": "string"
+          },
+          "codec": {
+            "type": "string"
+          },
+          "bitrate": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int32"
+          },
+          "sampleRate": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int32"
+          },
+          "bitDepth": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int32"
+          },
+          "isLossless": {
+            "type": "boolean"
+          }
+        }
+      },
+      "V2PlaybackProvider": {
+        "required": [
+          "id",
+          "name"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "V2PlaybackRequest": {
+        "required": [
+          "trackId",
+          "tier"
+        ],
+        "type": "object",
+        "properties": {
+          "trackId": {
+            "maxLength": 1024,
+            "minLength": 0,
+            "type": "string"
+          },
+          "tier": {
+            "pattern": "lossless|high|normal|low|original",
+            "type": "string"
+          },
+          "network": {
+            "pattern": "wifi|cellular",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "client": {
+            "type": [
+              "null",
+              "object"
+            ],
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/V2PlaybackClient"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "purpose": {
+            "pattern": "play|prefetch|download|cast",
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
+      "V2PlaybackResponse": {
+        "required": [
+          "url",
+          "expiresAt",
+          "playbackId",
+          "cacheKey",
+          "source",
+          "delivered",
+          "transcoded",
+          "contentLength",
+          "seek",
+          "trackGainDb",
+          "albumGainDb",
+          "provider",
+          "routeReason",
+          "loweredBy"
+        ],
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string"
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "playbackId": {
+            "type": "string"
+          },
+          "cacheKey": {
+            "type": "string"
+          },
+          "source": {
+            "$ref": "#/components/schemas/V2PlaybackFormat"
+          },
+          "delivered": {
+            "$ref": "#/components/schemas/V2PlaybackFormat"
+          },
+          "transcoded": {
+            "type": "boolean"
+          },
+          "contentLength": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int64"
+          },
+          "seek": {
+            "type": "string"
+          },
+          "trackGainDb": {
+            "type": [
+              "null",
+              "number"
+            ],
+            "format": "double"
+          },
+          "albumGainDb": {
+            "type": [
+              "null",
+              "number"
+            ],
+            "format": "double"
+          },
+          "provider": {
+            "$ref": "#/components/schemas/V2PlaybackProvider"
+          },
+          "routeReason": {
+            "type": "string"
+          },
+          "loweredBy": {
+            "type": [
+              "null",
+              "string"
+            ]
           }
         }
       },
@@ -1714,6 +2591,20 @@
       "V2TrackViews": {
         "type": "object",
         "properties": {
+          "playback": {
+            "type": [
+              "null",
+              "object"
+            ],
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/V2PlaybackResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "lyrics": {
             "type": [
               "null",
@@ -1755,6 +2646,20 @@
                 "type": "null"
               }
             ]
+          },
+          "autoplay": {
+            "type": [
+              "null",
+              "object"
+            ],
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/V2AutoplayResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         }
       }
@@ -1766,6 +2671,15 @@
     },
     {
       "name": "Batch"
+    },
+    {
+      "name": "Events"
+    },
+    {
+      "name": "Playback"
+    },
+    {
+      "name": "Stream"
     },
     {
       "name": "Tracks"

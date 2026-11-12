@@ -150,7 +150,8 @@ public sealed class V2TrackReader(
         if (format == null && item.Audio is { } audio) format = FormatOf(null, audio.Codec, audio.Bitrate, audio.SampleRate, audio.BitDepth, null);
         return Compose(TrackId(target, item.CanonicalRecordingId), item, target, externalIds, local.Title, local.Artists,
             local.AlbumArtists, album, local.Disc, local.Track, local.DurationMs, local.Year,
-            V2ArtworkUrls.For(target, local.ImageTag) ?? albumArtwork, format, local.TrackGain, null);
+            V2ArtworkUrls.For(target, local.ImageTag) ?? albumArtwork, format, local.TrackGain, null) with
+        { SourceVersion = local.SourceVersion };
     }
 
     private static V2Track FromSong(string target, Song song, ItemDetails item, Dictionary<string, V2AlbumSummary>? albums)
@@ -232,7 +233,7 @@ public sealed class V2TrackReader(
 
     private sealed record LibraryItem(string Title, IReadOnlyList<V2Ref> Artists, IReadOnlyList<V2Ref> AlbumArtists, string? AlbumId,
         string? Album, string? AlbumImageTag, string? ImageTag, int? Disc, int? Track, long? DurationMs, int? Year, V2Format? Format,
-        double? TrackGain, string? MusicBrainzRecording)
+        double? TrackGain, string? MusicBrainzRecording, string? SourceVersion)
     {
         internal static LibraryItem Read(string id, JsonElement element)
         {
@@ -246,7 +247,7 @@ public sealed class V2TrackReader(
             return new(String(element, "Name") ?? "", Refs(element, "ArtistItems"), Refs(element, "AlbumArtists"), String(element, "AlbumId"),
                 String(element, "Album"), String(element, "AlbumPrimaryImageTag"), imageTag, Int(element, "ParentIndexNumber"),
                 Int(element, "IndexNumber"), ticks / TimeSpan.TicksPerMillisecond, Int(element, "ProductionYear"), ReadFormat(element), gain,
-                musicBrainz);
+                musicBrainz, String(element, "DateModified"));
         }
 
         private static V2Format? ReadFormat(JsonElement element)

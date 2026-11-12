@@ -25,7 +25,7 @@ public sealed class PlaybackStartTimings(TimeProvider clock) : IDisposable
     private readonly object sync = new();
     private readonly long started = clock.GetTimestamp();
     private readonly DateTimeOffset startedAt = clock.GetUtcNow();
-    private readonly Guid id = Guid.CreateVersion7();
+    private Guid id = Guid.CreateVersion7();
     private readonly List<PlaybackStartPhaseTiming> phases = [];
     private bool closed;
     private int omitted;
@@ -39,6 +39,7 @@ public sealed class PlaybackStartTimings(TimeProvider clock) : IDisposable
     public static PlaybackStartTimings? Current => Ambient.Value;
     public bool Enabled { get; private set; }
     public Guid Id => id;
+    internal void Correlate(Guid playbackId) { if (!Enabled) id = playbackId; }
     private double Elapsed => Math.Max(0, clock.GetElapsedTime(started).TotalMilliseconds);
 
     public void Enter() => Ambient.Value = this;

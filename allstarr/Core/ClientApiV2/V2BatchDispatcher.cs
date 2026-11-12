@@ -15,7 +15,8 @@ public sealed class V2BatchDispatcher(IServiceScopeFactory scopes, ILogger<V2Bat
     private const string Prefix = "/allstarr/v2/";
     private const int Parallelism = 4;
     private static readonly string[] ListKeys = ["ids", "include"];
-    private static readonly string[] TrackKeys = ["include", "views"];
+    private static readonly string[] TrackKeys = ["include", "views", "tier"];
+    private static readonly string[] AutoplayKeys = ["cursor", "limit"];
 
     public async Task<V2BatchResponse> RunAsync(HttpContext http, ProtocolExecutionContext execution, IReadOnlyList<V2BatchItem> requests)
     {
@@ -61,7 +62,13 @@ public sealed class V2BatchDispatcher(IServiceScopeFactory scopes, ILogger<V2Bat
         return segments switch
         {
             ["tracks"] when Allowed(query, ListKeys) => await tracks.ListAsync(http, execution, Value(query, "ids"), Value(query, "include")),
-            ["tracks", var id] when Allowed(query, TrackKeys) => await tracks.GetAsync(http, execution, id, Value(query, "include"), Value(query, "views")),
+            ["tracks", var id] when Allowed(query, TrackKeys) => await tracks.GetAsync(http, execution, id, Value(query, "include"), Value(query, "views"), Value(query, "tier")),
+            ["tracks", var id, "lyrics", "translation"] when Allowed(query, ["to"]) => await tracks.TranslationAsync(http, execution, id, Value(query, "to")),
+            ["tracks", _, "lyrics", "translation"] => new(400, null),
+            ["tracks", var id, "autoplay"] when Allowed(query, AutoplayKeys) && int.TryParse(Value(query, "limit") ?? "25",
+                System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var limit) =>
+                await tracks.AutoplayAsync(http, execution, id, Value(query, "cursor"), limit),
+            ["tracks", _, "autoplay"] => new(400, null),
             ["tracks"] or ["tracks", _] => new(400, null),
             _ => new(404, null)
         };

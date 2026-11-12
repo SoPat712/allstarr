@@ -6,9 +6,13 @@ public sealed class ClientEventHub(ClientEventOptions options) : IClientEventPub
 {
     private readonly object _gate = new();
     private readonly HashSet<ClientEventSubscription> _subscriptions = [];
+    private readonly HashSet<Guid> _replayListeners = [];
+    internal event Action<Guid, ClientEvent>? Published;
     private bool _disposed;
     public int ConnectionCount { get { lock (_gate) return _subscriptions.Count; } }
-    public Guid[] Listeners { get { lock (_gate) return _subscriptions.Select(item => item.UserId).Distinct().ToArray(); } }
+    public Guid[] Listeners { get { lock (_gate) return _subscriptions.Select(item => item.UserId).Union(_replayListeners).ToArray(); } }
+    internal void RetainListener(Guid userId) { lock (_gate) _replayListeners.Add(userId); }
+    internal void ForgetListener(Guid userId) { lock (_gate) _replayListeners.Remove(userId); }
 
     public ClientEventSubscription? Subscribe(Guid userId, string? deviceId)
     {
@@ -29,6 +33,7 @@ public sealed class ClientEventHub(ClientEventOptions options) : IClientEventPub
         lock (_gate) targets = _subscriptions.Where(item => item.UserId == userId &&
             (deviceId == null || item.DeviceId == deviceId)).ToArray();
         foreach (var target in targets) target.Publish(value);
+        Published?.Invoke(userId, value);
     }
 
     private void Remove(ClientEventSubscription subscription) { lock (_gate) _subscriptions.Remove(subscription); }

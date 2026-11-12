@@ -99,6 +99,7 @@
   const activityHistory = $derived(group("activity-history", "Activity history", pick("EVENT_LOG_RETENTION_DAYS", "EVENT_LOG_MAXIMUM_ROWS")));
   const activityAdvanced = $derived(group("activity-advanced", "Cleanup timing and job history", pick("EVENT_LOG_CLEANUP_INTERVAL_MINUTES", "EVENT_LOG_CLEANUP_BATCH_SIZE", "EVENT_LOG_JOB_HISTORY_RETENTION_DAYS")));
   const accounts = $derived(group("accounts", "Accounts", pick("LISTENERS_CAN_CONNECT_OWN_ACCOUNTS")));
+  const lyricTranslation = $derived(group("lyric-translation", "Lyric translation", sectionFor("lyrics")));
   const everyoneHears = $derived(group("everyone-hears", "What everyone hears", pick("EXPLICIT_FILTER")));
   const networkFields = $derived(pick("ADMIN_BIND_ANY_IP", "ADMIN_TRUSTED_SUBNETS"));
   const diagnosticsFields = $derived(pick("DEBUG_LOG_ALL_REQUESTS"));
@@ -239,6 +240,7 @@
         {#each qualityGroups as item (item.id)}<SettingsFields section={item} {config} onChanged={refresh} sourceQuality={item.id === "audio-quality" ? qualitySends : undefined} />{/each}
       {:else if active === "sources"}
         {#await import("./RoutingView.svelte")}<RowsSkeleton />{:then { default: Routing }}<Routing embedded />{:catch}<ErrorState title="This settings page could not be opened" onretry={() => window.location.reload()} />{/await}
+        {#if lyricTranslation.fields.length}<SettingsFields section={lyricTranslation} {config} onChanged={refresh} />{/if}
         {#if accounts.fields.length}<SettingsFields section={accounts} {config} onChanged={refresh}>
           {#snippet footer()}{@render linkRow("Manage accounts", "Every service account, who uses it and whether its sign-in still works.", "Sources", "#/integrations/accounts")}{/snippet}
         </SettingsFields>{/if}

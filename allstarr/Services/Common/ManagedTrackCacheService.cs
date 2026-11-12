@@ -233,6 +233,7 @@ public sealed partial class ManagedTrackCacheService : IAsyncDisposable
                 scope.ProviderAccountId, IsCached: true, EffectiveQuality: scope.AudioQuality,
                 ServingAccountRevision: accountRevision)
             {
+                StoredFilePath = path,
                 FileFacts = new()
                 {
                     Measured = facts,

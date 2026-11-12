@@ -27,7 +27,8 @@ public sealed class CapabilitiesController(LibraryProviderResolver library, IDur
             PlayActivity = services.IsService(typeof(PlayTraceService)),
             HistoryImports = services.IsService(typeof(ListeningHistoryImportService)),
             HistoryRecheck = services.IsService(typeof(ListeningHistoryResolution)),
-            KaraokeModel = karaoke?.IsAvailable ?? false
+            KaraokeModel = karaoke?.IsAvailable ?? false,
+            V2LyricsTranslation = (bool)(await settings.GetAsync("Lyrics:Translation:Enabled", HttpContext.RequestAborted)).Value
         },
             await library.ResolveAsync(HttpContext, HttpContext.GetProtocolExecutionContext()!),
             await additions.CapabilitiesAsync(Execution, HttpContext.RequestAborted),

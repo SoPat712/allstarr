@@ -26,6 +26,24 @@ public sealed class TracksController(V2TrackEndpoints tracks) : ClientApiV2Contr
     [EndpointDescription("Reads one track by any id spelling, with any requested views.")]
     [ProducesResponseType<V2TrackResponse>(200)]
     public async Task<IActionResult> Get(string id, [FromQuery, Description(IncludeDescription)] string? include,
-        [FromQuery, Description("Comma-separated views: `lyrics`, `lyricsSources`, `match`. `viewStatus` says how each one went.")] string? views) =>
-        Respond(await tracks.GetAsync(HttpContext, Execution, id, include, views));
+        [FromQuery, Description("Comma-separated views: `lyrics`, `lyricsSources`, `match`, `autoplay`, `playback`. `viewStatus` says how each one went; autoplay returns 25 tracks by default.")] string? views,
+        [FromQuery, Description("Playback tier: lossless, high (default), normal, low or original.")] string? tier) =>
+        Respond(await tracks.GetAsync(HttpContext, Execution, id, include, views, tier));
+
+    [HttpGet("{id}/lyrics/translation")]
+    [EndpointName("getLyricsTranslation")]
+    [EndpointDescription("Translates the same lines as `views=lyrics`, preserving their order for timing. Shared for 30 days per song, lyrics text and target language. Returns 404 when disabled or lyrics are absent.")]
+    [ProducesResponseType<V2LyricsTranslationResponse>(200)]
+    public async Task<IActionResult> Translation(string id,
+        [FromQuery, Description("Target BCP-47 language, such as `en`, `es` or `pt-BR`. Defaults to `en`.")] string? to) =>
+        Respond(await tracks.TranslationAsync(HttpContext, Execution, id, to));
+
+    [HttpGet("{id}/autoplay")]
+    [EndpointName("getTrackAutoplay")]
+    [EndpointDescription("Continues after a track: InstantMix or service radio, similar songs, the same artist, then the album. Follow `next` to extend the queue without repeats; a partial page still has a cursor. Continuations retain at most a few hundred track identifiers.")]
+    [ProducesResponseType<V2AutoplayResponse>(200)]
+    public async Task<IActionResult> Autoplay(string id,
+        [FromQuery, Description("Opaque cursor from the previous page.")] string? cursor,
+        [FromQuery, Range(1, 50), Description("Tracks per page, from 1 to 50; defaults to 25.")] int limit = 25) =>
+        Respond(await tracks.AutoplayAsync(HttpContext, Execution, id, cursor ?? (Request.Query.ContainsKey("cursor") ? "" : null), limit));
 }

@@ -31,7 +31,7 @@ public sealed partial class ProtocolProviderGateway
                 ProviderStreamRetryBehavior.DoNotRetry);
             return new(response, lease, "allstarr", kept.RecordingId.ToString("D"), IsCached: true,
                 EffectiveQuality: quality, SelectionReason: "household-kept")
-            { ServingManagedFileId = kept.ManagedFileId };
+            { ServingManagedFileId = kept.ManagedFileId, StoredFilePath = kept.Path };
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {

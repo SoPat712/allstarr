@@ -10,6 +10,23 @@ namespace allstarr.Tests;
 
 public sealed partial class ProviderStreamOpenerTests
 {
+    [Fact]
+    public async Task SignedOriginalPlayback_PreservesTheSourcePrelude()
+    {
+        var bytes = ((byte[])[73, 68, 51, 4, 0, 0, 0, 0, 0, 0]).Concat(Flac()).ToArray();
+        using var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(bytes) };
+        var gateway = new Mock<IProtocolProviderGateway>();
+        gateway.Setup(item => item.OpenStreamAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "42",
+            It.IsAny<ProviderAudioQuality>(), null, false)).ReturnsAsync(new ProtocolProviderStream(response, SequentialLease(), "deezer", "42"));
+        var result = await new ProviderStreamOpener(gateway.Object, new ProtocolStreamingResponseAdapter())
+            .OpenAsync(new DefaultHttpContext(), _context, "deezer", "42", ProviderAudioQuality.Any,
+                new() { EnableTranscoding = false }, preserveSourceBytes: true);
+        using var stream = Assert.IsType<FileStreamResult>(result).FileStream;
+        using var output = new MemoryStream();
+        await stream.CopyToAsync(output);
+        Assert.Equal(bytes, output.ToArray());
+    }
+
     [Theory]
     [InlineData(0)]
     [InlineData(300000000)]

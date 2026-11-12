@@ -200,6 +200,7 @@ public sealed partial class TrackIdentityService : ITrackIdentityService, ITrack
     private readonly IProviderRegistry? _registry;
     private readonly IEffectiveProviderPolicyResolver? _providerPolicies;
     private readonly IBackendLibraryAccessResolver? _libraryAccess;
+    private readonly allstarr.Core.ClientApiV2.V2EventStream? _nativeEvents;
 
     public TrackIdentityService(
         IDbContextFactory<AllstarrDbContext> contextFactory,
@@ -207,7 +208,8 @@ public sealed partial class TrackIdentityService : ITrackIdentityService, ITrack
         IPlatformClock clock,
         IProviderRegistry? registry = null,
         IEffectiveProviderPolicyResolver? providerPolicies = null,
-        IBackendLibraryAccessResolver? libraryAccess = null)
+        IBackendLibraryAccessResolver? libraryAccess = null,
+        allstarr.Core.ClientApiV2.V2EventStream? nativeEvents = null)
     {
         _contextFactory = contextFactory;
         _storageState = storageState;
@@ -215,6 +217,7 @@ public sealed partial class TrackIdentityService : ITrackIdentityService, ITrack
         _registry = registry;
         _providerPolicies = providerPolicies;
         _libraryAccess = libraryAccess;
+        _nativeEvents = nativeEvents;
     }
 
     private async Task<bool> CanAutomaticallyLinkAsync(ProviderActorContext actor, string providerId,

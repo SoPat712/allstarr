@@ -84,8 +84,10 @@ public sealed partial class TrackIdentityService
                 created ? "created" : "enriched", new { canonicalRecordingId = recording.Id, hasIsrc = normalizedIsrc != null });
         AddLink(db, execution, request with { CanonicalRecordingId = recording.Id },
             scope == ProviderIdentityScope.Account ? account!.Id : null, now);
+        var renames = PendingRenames(db);
         await db.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
+        PublishRenames(renames);
         return recording.Id;
     }
 
@@ -157,8 +159,10 @@ public sealed partial class TrackIdentityService
         var second = await FindSurvivorAsync(context, secondId, cancellationToken)
             ?? throw new KeyNotFoundException("The second recording does not exist.");
         var winner = await MergeRecordsAsync(context, first, second, actor, correlationId, _clock.UtcNow, cancellationToken);
+        var renames = PendingRenames(context);
         await context.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
+        PublishRenames(renames);
         return ToIdentity(winner);
     }
 

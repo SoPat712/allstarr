@@ -311,6 +311,7 @@ builder.Services.Configure<OdesliSettings>(builder.Configuration.GetSection("Ode
 builder.Services.AddHttpClient("Odesli", client => client.Timeout = TimeSpan.FromSeconds(6)).RemoveAllLoggers()
     .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false, UseDefaultCredentials = false });
 builder.Services.AddHttpClient("Lrclib", client => client.Timeout = TimeSpan.FromSeconds(5));
+builder.Services.AddHttpClient(LyricsTranslation.HttpClientName, client => client.Timeout = TimeSpan.FromSeconds(4)).RemoveAllLoggers();
 builder.Services.AddHttpClient("ExtensionSdkV1")
     .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
     {
@@ -432,6 +433,7 @@ builder.Services.AddOpenApi("v2", options =>
 {
     options.ShouldInclude = description => description.GroupName == V2Contract.GroupName;
     options.AddDocumentTransformer<ClientApiSchemaTransformer>();
+    options.AddDocumentTransformer<ClientEventDocumentTransformer>();
     options.AddDocumentTransformer((document, context, cancellationToken) =>
     {
         document.Info.Title = "Allstarr Client API";
@@ -471,8 +473,14 @@ builder.Services.AddScoped<LibraryBackendBrandResolver>();
 builder.Services.AddScoped<LibraryProviderResolver>();
 builder.Services.AddScoped<ItemDetailsReader>();
 builder.Services.AddScoped<V2TrackReader>();
+builder.Services.AddSingleton<V2EventStream>();
+builder.Services.AddHostedService(services => services.GetRequiredService<V2EventStream>());
+builder.Services.AddScoped<V2AutoplayReader>();
+builder.Services.AddScoped<V2PlaybackReader>();
+builder.Services.AddSingleton<V2PlaybackTokens>();
 builder.Services.AddScoped<V2TrackViewReader>();
 builder.Services.AddScoped<V2TrackEndpoints>();
+builder.Services.AddScoped<LyricsTranslation>();
 builder.Services.AddScoped<V2ArtistLinkEndpoints>();
 builder.Services.AddScoped<V2BatchDispatcher>();
 builder.Services.AddScoped<ClientListeningHistory>();
@@ -782,7 +790,8 @@ app.UseExceptionHandler();
 app.UseMiddleware<CorrelationMiddleware>();
 app.UseMiddleware<PlaybackStartTimingMiddleware>();
 
-app.UseWhen(context => !context.Request.Path.StartsWithSegments("/allstarr/v1/events", StringComparison.OrdinalIgnoreCase),
+app.UseWhen(context => !context.Request.Path.StartsWithSegments("/allstarr/v1/events", StringComparison.OrdinalIgnoreCase) &&
+    !context.Request.Path.StartsWithSegments("/allstarr/v2/events", StringComparison.OrdinalIgnoreCase),
     branch => branch.UseResponseCompression());
 
 app.UseWebSockets(new WebSocketOptions

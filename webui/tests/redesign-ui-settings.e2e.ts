@@ -165,6 +165,38 @@ test("Settings changes save with Undo and restart changes wait for confirmation"
   await expect(page.getByText("Set in your deployment")).toBeVisible();
 });
 
+test("Lyrics translation fields save through the existing settings renderer", async ({ page }) => {
+  await fixture(page);
+  const values: Record<string, unknown> = { "Lyrics:Translation:Enabled": true, "Lyrics:Translation:LibreTranslateUrl": "" };
+  const writes: Record<string, string>[] = [];
+  await page.route("**/api/admin/ui/schema", route => route.fulfill({ json: { providers: [], configSections: [{ id: "lyrics", label: "Lyrics", fields: [
+    { key: "LYRICS_TRANSLATION_ENABLED", label: "Translate lyrics for apps", type: "toggle", valuePath: "operatorSettings.Lyrics:Translation:Enabled" },
+    { key: "LYRICS_TRANSLATION_LIBRETRANSLATE_URL", label: "Optional LibreTranslate URL", type: "url", valuePath: "operatorSettings.Lyrics:Translation:LibreTranslateUrl" },
+  ] }] } }));
+  await page.route("**/api/admin/config", async route => {
+    if (route.request().method() === "POST") {
+      const updates = route.request().postDataJSON().updates as Record<string, string>;
+      writes.push(updates);
+      if (updates.LYRICS_TRANSLATION_ENABLED !== undefined) values["Lyrics:Translation:Enabled"] = updates.LYRICS_TRANSLATION_ENABLED === "true";
+      if (updates.LYRICS_TRANSLATION_LIBRETRANSLATE_URL !== undefined) values["Lyrics:Translation:LibreTranslateUrl"] = updates.LYRICS_TRANSLATION_LIBRETRANSLATE_URL;
+      return route.fulfill({ json: { updatedKeys: Object.keys(updates), requiresRestart: false } });
+    }
+    return route.fulfill({ json: { operatorSettings: values } });
+  });
+  await page.goto("/#/settings/sources");
+  const enabled = page.getByRole("switch", { name: "Translate lyrics for apps", exact: true });
+  await expect(enabled).toBeChecked();
+  await enabled.uncheck();
+  await expect.poll(() => writes).toEqual([{ LYRICS_TRANSLATION_ENABLED: "false" }]);
+  const url = page.getByLabel("Optional LibreTranslate URL", { exact: true });
+  await url.fill("https://translate.invalid/base");
+  await url.press("Tab");
+  await expect.poll(() => writes).toEqual([{ LYRICS_TRANSLATION_ENABLED: "false" }, { LYRICS_TRANSLATION_LIBRETRANSLATE_URL: "https://translate.invalid/base" }]);
+  await page.reload();
+  await expect(enabled).not.toBeChecked();
+  await expect(url).toHaveValue("https://translate.invalid/base");
+});
+
 test("Settings search results open above the section links", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   await fixture(page);

@@ -4390,10 +4390,22 @@
           "v2Tracks": {
             "type": "boolean"
           },
+          "v2Playback": {
+            "type": "boolean"
+          },
           "v2Batch": {
             "type": "boolean"
           },
+          "v2LyricsTranslation": {
+            "type": "boolean"
+          },
           "v2ArtistLinks": {
+            "type": "boolean"
+          },
+          "v2Events": {
+            "type": "boolean"
+          },
+          "v2Autoplay": {
             "type": "boolean"
           }
         }
