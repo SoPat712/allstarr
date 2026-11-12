@@ -94,25 +94,6 @@ export type ListenerPlaylistCopy = {
   createdAt: string;
 };
 
-export type PlaylistSummary = {
-  id: string;
-  name: string;
-  trackCount: number;
-  localTracks: number;
-  externalTracks: number;
-  unmatchedTracks: number;
-  artworkUrl?: string | null;
-  sourceProvider?: string;
-};
-
-export type PlaylistResponse = {
-  playlists: PlaylistSummary[];
-  inventory: {
-    managed: number;
-    unmanaged: number;
-  };
-};
-
 export type Job = {
   displayName?: string;
   displayState?: string;

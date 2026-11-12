@@ -50,10 +50,6 @@ export function steeringNames(lately: string[], usually: string[], limit: number
 export function nudgeMarker(mode?: string) { return ({ more: "↑", less: "↓", never: "⊘" } as Record<string, string>)[mode ?? ""] ?? ""; }
 export function nudgeName(nudge: TasteNudge) { return nudge.kind === "song" ? "Hidden song" : nudge.name; }
 export const mixOrder = ["daily-1", "daily-2", "daily-3", "daily-4", "discover-weekly", "release-radar", "on-repeat", "rewind", "chill", "focus", "workout", "party", "sleep"];
-export function mixExplanation(kind: string) {
-  if (kind.startsWith("daily-")) return "Songs you know and close new picks, grouped around your taste. Refreshes every morning.";
-  return ({ "discover-weekly": "New songs picked around your taste. Refreshes every Monday.", "release-radar": "New music from artists you follow or play often. Refreshes every Friday.", "on-repeat": "The songs you've played most in the last 30 days. Refreshes every morning.", rewind: "Old favourites you haven't played in six months. Refreshes every Monday.", custom: "Songs chosen to fit your seed. This mix stays as you saved it.", external: "Kept up to date from your connected music service." } as Record<string, string>)[kind] ?? "Music for this mood, chosen from sound analysis and matching styles. Refreshes every Monday.";
-}
 
 export function mixName(name: string) {
   const periods: Record<string, string> = { "7day": "Last 7 days", "1month": "Last month", "3month": "Last 3 months", "12month": "Last year", overall: "All time" };

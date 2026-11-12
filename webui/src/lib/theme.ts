@@ -1,11 +1,5 @@
 export type ThemeMode = "system" | "light" | "dark";
 
-export const themeOptions = [
-  { value: "system", label: "Use device setting" },
-  { value: "light", label: "Light" },
-  { value: "dark", label: "Dark" },
-] as const;
-
 const storageKey = "allstarr.theme";
 const changeEvent = "allstarr-theme-change";
 
