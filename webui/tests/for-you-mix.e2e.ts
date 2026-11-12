@@ -29,7 +29,7 @@ test("Adding a mix is one click and playlists is the place to manage it", async 
   await expect(page.getByRole("dialog").getByText("✓ In your apps", { exact: true })).toBeVisible();
   await expect(page.getByRole("dialog").getByRole("link", { name: "Manage in Playlists", exact: true })).toHaveAttribute("href", "#/library/playlists");
   expect(state.calls.filter(call => call.path.endsWith("/in-apps"))).toEqual([{ path: "/api/admin/mixes/daily-1/in-apps", method: "POST", body: null }]);
-  await expect(page.getByRole("button", { name: /Remove from|In your apps/ })).toHaveCount(0);
+  await expect(page.getByRole("dialog").getByRole("button", { name: /Remove from|In your apps/ })).toHaveCount(0);
 });
 for (const admin of [false, true]) test(`Household availability gates adding for ${admin ? "administrators" : "listeners"}`, async ({ page }) => {
   const state = await mockForYou(page, { admin, publish: false }); state.cards[0].inApps = false;

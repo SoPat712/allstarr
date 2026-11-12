@@ -8364,17 +8364,69 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
     })) }));
     await page.goto("#/integrations/services/signed-audio");
     const panel = page.getByRole("dialog", { name: "Signed Audio", exact: true });
-    await expect(panel.locator(".source-summary .state-pill")).toHaveText("Needs verification");
+    await expect(panel.locator(".source-summary .state-pill")).toHaveText("Needs sign-in");
     await expect(panel.locator(".panel-title")).toContainText("Extension");
     await expect(page.getByText("Degraded", { exact: true })).toHaveCount(0);
     await expect(page.getByText(/Setup needed/)).toHaveCount(0);
     const check = page.locator(".service-check").filter({ hasText: "Streaming" }).first();
-    await expect(check).toContainText("Needs verification");
-    await expect(check).toContainText("Sign in again in this source's Sign-in section.");
+    await expect(check).toContainText("Needs sign-in");
+    // The account says it once, in its banner, instead of on every check.
+    await expect(check).not.toContainText("Sign in again");
+    const banner = page.locator(".account-sign-in");
+    await expect(banner).toContainText("Sign in to Signed Audio again");
+    await expect(banner).toContainText("Metadata and Streaming need it.");
     await page.screenshot({ path: `test-results/needs-verification-${width}-${theme}.png`, fullPage: true });
-    await check.getByRole("button", { name: "Go to sign-in", exact: true }).click();
+    await banner.getByRole("button", { name: "Sign in", exact: true }).click();
     await expect(page.locator(".extension-session").getByRole("button", { name: "Reconnect", exact: true })).toBeFocused();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  });
+}
+
+for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
+  test(`An account without its sign-in shows one banner and compact checks at ${width}px ${theme}`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await page.addInitScript(value => localStorage.setItem("allstarr.theme", value), theme);
+    await mockApi(page);
+    await page.route("**/api/admin/ui/schema", route => route.fulfill({ json: { ...schema,
+      providers: [...schema.providers.filter((item: { id: string }) => item.id !== "deezer"), { id: "deezer", name: "Deezer", categories: ["metadata", "streaming", "downloads", "playlists"],
+        accountSettings: [{ key: "arl", label: "ARL cookie", type: "password", sensitive: true, required: true }] }],
+    } }));
+    const fixture = responses["/api/admin/provider-accounts"] as { accounts: Record<string, unknown>[]; audienceUsers: object[] };
+    await page.route("**/api/admin/provider-accounts", route => route.fulfill({ json: { ...fixture, accounts: [{ ...fixture.accounts[0],
+      id: "deezer-account", providerId: "deezer", displayName: "Deezer", scope: "Shared", ownerUserId: null, supportedAudiences: ["Personal", "Shared"],
+      enabled: true, canManage: true, secret: { configured: false, revoked: false } }] } }));
+    await page.route("**/api/admin/providers/status", route => route.fulfill({ json: [
+      ["metadata", true, null], ["streaming", false, "Forbidden"], ["downloads", false, "sign_in_needed"], ["playlists", false, "sign_in_needed"],
+    ].map(([capability, ready, reasonCode]) => ({
+      provider: "deezer", providerAccountId: "deezer-account", providerAccountName: "Deezer", capability, accountScope: "shared",
+      supported: true, enabled: true, configuration: "configured", health: ready ? "healthy" : "degraded", ready, canAttempt: true, canTest: true,
+      reasonCode, testedAt: "2026-11-12T10:00:00Z",
+    })) }));
+    await page.goto("#/integrations/services/deezer");
+    await page.getByText("Settings, accounts and tests", { exact: true }).click();
+    const account = page.locator(".service-account").first();
+    const banner = account.locator(".account-sign-in");
+    await expect(banner).toContainText("Deezer isn't signed in");
+    await expect(banner).toContainText("Downloads and Playlists need it.");
+    await expect(account).not.toContainText("Sign-in section");
+    await page.screenshot({ path: `test-results/account-sign-in-${width}-${theme}.png`, fullPage: true });
+    await account.screenshot({ path: `test-results/account-card-${width}-${theme}.png` });
+    for (const name of ["Downloads", "Playlists"]) {
+      const row = account.locator(".service-check").filter({ hasText: name });
+      await expect(row).toContainText("Needs sign-in");
+      // Name and state share one line.
+      const [label, state] = [await row.locator(".service-check-name").boundingBox(), await row.locator(".service-check-status").boundingBox()];
+      expect(Math.abs(label!.y + label!.height / 2 - (state!.y + state!.height / 2))).toBeLessThan(6);
+    }
+    for (const button of await account.locator('[data-slot="button"]').all())
+      expect((await button.boundingBox())!.height, await button.innerText()).toBeLessThanOrEqual(40);
+    // Banner, then checks, then the account's actions.
+    const actions = account.locator(".service-account-actions [data-slot=button]").first();
+    await expect(actions).toBeVisible();
+    expect((await banner.boundingBox())!.y).toBeLessThan((await account.locator(".service-checks").boundingBox())!.y);
+    expect((await account.locator(".service-checks").boundingBox())!.y).toBeLessThan((await actions.boundingBox())!.y);
+    await banner.getByRole("button", { name: "Sign in", exact: true }).click();
+    await expect(page.getByRole("dialog").filter({ hasText: "ARL cookie" }).last()).toBeVisible();
   });
 }
 

@@ -48,7 +48,7 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     const spotify = shelf.getByRole("group", { name: "Discover Weekly", exact: true });
     const apple = shelf.getByRole("group", { name: favoriteName, exact: true });
     await expect(spotify).toHaveCount(1);
-    await expect(spotify.getByText("✓ In your apps · kept in sync", { exact: true })).toBeVisible();
+    await expect(spotify.getByRole("button", { name: /^Remove .+ from apps$/ })).toBeVisible();
     await expect(apple.getByRole("button", { name: `Add ${favoriteName}`, exact: true })).toBeVisible();
     const neighbour = shelf.getByRole("group", { name: "Service mix 01", exact: true });
     const titleHeights = await Promise.all([apple, neighbour].map(card => card.locator("strong").evaluate(element => element.getBoundingClientRect().height)));
@@ -94,7 +94,7 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     await expect(page.getByText("Blue morning", { exact: true }).first()).toBeVisible();
     await openHome(page);
     await shelf.getByRole("group", { name: favoriteName, exact: true }).getByRole("button", { name: `Add ${favoriteName}`, exact: true }).click();
-    await expect(shelf.getByRole("group", { name: favoriteName, exact: true }).getByText("✓ In your apps · kept in sync", { exact: true })).toBeVisible();
+    await expect(shelf.getByRole("group", { name: favoriteName, exact: true }).getByRole("button", { name: /^Remove .+ from apps$/ })).toBeVisible();
     expect(state.calls.filter(call => call.path === "/api/admin/mixes/favorites/in-apps" && call.method === "POST")).toHaveLength(1);
     expect(state.calls.filter(call => call.path === "/api/admin/mixes/external")).toHaveLength(0);
     await apple.getByRole("button", { name: `Open ${favoriteName}`, exact: true }).click();

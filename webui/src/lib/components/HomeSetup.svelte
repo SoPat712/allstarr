@@ -98,7 +98,8 @@
   .source-dots i.failing { background: var(--danger); }
   .source-dots i.slow { background: var(--warning); }
   p { color: var(--color-ink-muted); font-size: .74rem; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-  .setup-tile :global([data-slot="button"]) { align-self: start; margin-top: auto; padding-inline: 0; }
+  /* The label lines up with the tile text; the button keeps its padding so its pressed background fits it. */
+  .setup-tile :global([data-slot="button"]) { align-self: start; margin-top: auto; margin-inline-start: -0.625rem; }
   @media (max-width: 1050px) { .setup-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
   @media (max-width: 540px) { .setup-grid { grid-template-columns: minmax(0, 1fr); } }
 </style>

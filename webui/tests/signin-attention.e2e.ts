@@ -35,3 +35,17 @@ test("Several expired sign-ins are counted in one line", async ({ page }) => {
   const banner = page.getByRole("region", { name: "Needs your attention", exact: true });
   await expect(banner.getByText("2 sign-ins expired", { exact: true })).toBeVisible();
 });
+
+for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const) test(`Home's attention button keeps its label inside at ${width}px ${theme}`, async ({ page }) => {
+  await page.setViewportSize({ width, height: 844 }); await page.emulateMedia({ colorScheme: theme });
+  await homeFixture(page, true);
+  await expiredSignIns(page, []);
+  await page.goto("/#/");
+  const banner = page.getByRole("region", { name: "Needs your attention", exact: true });
+  const action = banner.getByRole("link", { name: "Review sources", exact: true });
+  await expect(action).toBeVisible();
+  await banner.screenshot({ path: test.info().outputPath(`attention-${width}-${theme}.png`) });
+  const fit = await action.evaluate(element => ({ content: element.scrollWidth, box: element.clientWidth, height: element.getBoundingClientRect().height }));
+  expect(fit.content).toBeLessThanOrEqual(fit.box);
+  expect(fit.height).toBeLessThanOrEqual(40);
+});

@@ -4,7 +4,7 @@
   import { onMount, type Component } from "svelte";
   import { goto } from "$app/navigation";
   import { ApiError, activityWork, audioMuse, historyImports, mixes, playlistLinks, releaseInbox, type AudioMuseStatus, type MixCard, type PlaylistLink, type PlaylistSourceAccount } from "$lib/api";
-  import { greeting, mixOrder } from "$lib/for-you";
+  import { greeting, mixName, mixOrder } from "$lib/for-you";
   import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
   import { importPhase } from "$lib/history-import";
   import { progressDetails } from "$lib/jobs";
@@ -137,6 +137,20 @@
     catch (cause) { if (!disposed) toast.error(cause instanceof ApiError && cause.status === 403 ? "Your admin hasn't allowed adding mixes." : cause instanceof Error ? cause.message : "This mix could not be added. Try again later."); return false; }
     finally { busy = ""; }
   }
+  async function remove(selected: MixCard) {
+    if (busy) return;
+    busy = selected.id;
+    try {
+      await mixes.remove(selected.id);
+      if (disposed) return;
+      cards = cards.map(card => card.id === selected.id ? { ...card, inApps: false } : card);
+      toast.success(`${mixName(selected.name)} is no longer in your apps`, { label: "Undo", run: () => void add({ ...selected, inApps: false }) });
+      await pending;
+      if (!disposed) await load();
+    }
+    catch (cause) { if (!disposed) toast.error(cause instanceof Error ? cause.message : "This mix could not be removed. Try again later."); }
+    finally { busy = ""; }
+  }
   const scheduler = createRefreshScheduler(async () => { if (!busy) await load(); }, 250, 30_000);
   onMount(() => {
     try { hidden = localStorage.getItem(storageKey) === "hidden"; } catch { /* Browser storage is optional. */ }
@@ -157,10 +171,10 @@
     </section>{/if}
     {#if error}<ErrorState title="Couldn't load your mixes" detail={error} onretry={load} />{/if}
     {#if !error && !made.some(item => item.readiness.ready)}<EmptyState title="Your mixes will appear here" description="Your mixes will appear here. Play some music, or import your history to start right away." />{/if}
-    <MixShelf title="Made for you" cards={made} onaddall={() => void addAll(made)} onopen={openMix} {busy} onadd={card => void add(card)} />
-    <MixShelf title="Moods" cards={moods} onaddall={() => void addAll(moods)} onopen={openMix} {busy} onadd={card => void add(card)} />
-    {#if custom.length}<MixShelf title="Your mixes" cards={custom} onaddall={() => void addAll(custom)} onopen={openMix} {busy} onadd={card => void add(card)} />{/if}
-    {#if services.length}<MixShelf title="From your services" columns={5} cards={servicesExpanded ? allServiceCards(services) : services} expanded={servicesExpanded} onseeall={() => servicesExpanded = !servicesExpanded} onaddall={() => void addAll(services)} additions={suggestions.map(item => item.id)} onopen={openMix} {busy} onadd={card => void add(card)} />{/if}
+    <MixShelf title="Made for you" cards={made} onaddall={() => void addAll(made)} onopen={openMix} {busy} onadd={card => void add(card)} onremove={card => void remove(card)} />
+    <MixShelf title="Moods" cards={moods} onaddall={() => void addAll(moods)} onopen={openMix} {busy} onadd={card => void add(card)} onremove={card => void remove(card)} />
+    {#if custom.length}<MixShelf title="Your mixes" cards={custom} onaddall={() => void addAll(custom)} onopen={openMix} {busy} onadd={card => void add(card)} onremove={card => void remove(card)} />{/if}
+    {#if services.length}<MixShelf title="From your services" columns={5} cards={servicesExpanded ? allServiceCards(services) : services} expanded={servicesExpanded} onseeall={() => servicesExpanded = !servicesExpanded} onaddall={() => void addAll(services)} additions={suggestions.map(item => item.id)} onopen={openMix} {busy} onadd={card => void add(card)} onremove={card => void remove(card)} />{/if}
     {#if releases.length}<MixShelf title="New releases" columns={6} cards={releases} albumArt seeAll="#/for-you?section=releases" onopen={card => { void goto(`#/for-you?section=releases&release=${encodeURIComponent(card.id)}`, { keepFocus: true, noScroll: true }); }} />{/if}
     {#if cards.length && !cards.some(card => card.appsAllowed)}<p class="muted apps-hint">Your admin hasn't allowed adding mixes.</p>{/if}
   {/if}

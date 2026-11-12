@@ -47,8 +47,8 @@ const checkGuides: Record<string, CheckGuide> = {
   "metadata-not-found": { label: "Test song unavailable", step: "The source returned no test song. Try again later." },
   "metadata-invalid": { label: "Invalid song response", step: "The source returned unusable song data. Try again later." },
   "probe-limit-exceeded": { label: "Check limit reached", step: "The source exceeded the check's request or time limit. Try again later." },
-  sign_in_needed: { label: "Needs verification", step: "Sign in again in this source's Sign-in section.", signIn: true },
-  verification_required: { label: "Needs verification", step: "Sign in again in this source's Sign-in section.", signIn: true },
+  sign_in_needed: { label: "Needs sign-in", step: "Sign in again.", signIn: true },
+  verification_required: { label: "Needs sign-in", step: "Sign in again.", signIn: true },
   "track-selection": {
     label: "No test song found",
     step: "The service returned no search results. This is usually on the service's side; it is checked again every 6 hours.",
@@ -94,7 +94,7 @@ export function sourceProblemLabel(provider: ProviderDefinition, accounts: Provi
 
 export function sourceStatusLabel(state: string) {
   if (state === "needs_config") return "Needs setup";
-  if (state === "needs_verification") return "Needs verification";
+  if (state === "needs_verification") return "Needs sign-in";
   if (state === "disabled") return "Turned off";
   return humanize(state);
 }

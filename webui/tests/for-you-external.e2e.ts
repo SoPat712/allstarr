@@ -19,7 +19,7 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     await openHome(page);
     await capture(page, "external-before-add", width, theme);
     await add(page);
-    await expect(page.getByRole("region", { name: "From your services", exact: true }).locator(".mix-card").filter({ hasText: "Loved on Last.fm" }).getByText("✓ In your apps · kept in sync", { exact: true })).toBeVisible();
+    await expect(page.getByRole("region", { name: "From your services", exact: true }).locator(".mix-card").filter({ hasText: "Loved on Last.fm" }).getByRole("button", { name: /^Remove .+ from apps$/ })).toBeVisible();
     await capture(page, "external-after-add", width, theme);
     await expect(page.getByRole("alertdialog")).toHaveCount(0);
     const notifications = page.getByRole("region", { name: "Notifications" });
@@ -107,7 +107,7 @@ test("External matching stops after a bounded wait even when status hangs", asyn
 test("External add leaves a compact status on the card", async ({ page }) => {
   const state = await mockForYou(page); await openHome(page); await add(page);
   const card = page.getByRole("region", { name: "From your services", exact: true }).locator(".mix-card").filter({ hasText: "Loved on Last.fm" });
-  await expect(card.getByText("✓ In your apps · kept in sync", { exact: true })).toBeVisible();
+  await expect(card.getByRole("button", { name: /^Remove .+ from apps$/ })).toBeVisible();
   await expect(card.getByRole("link", { name: "Manage in Playlists", exact: true })).toHaveCount(0);
   await expect(card.getByRole("button", { name: /^Add / })).toHaveCount(0);
   expect(state.calls.filter(call => call.path === "/api/admin/mixes/external" && call.method === "POST")).toHaveLength(1);

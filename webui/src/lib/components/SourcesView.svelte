@@ -157,6 +157,22 @@
       .find((button) => /Reconnect|Start verification|Get a new link/.test(button.textContent ?? ""));
     action?.focus({ preventScroll: true });
   }
+  // One banner per account says what needs a sign-in, instead of the same sentence on every check.
+  function accountSignIn(account: ProviderAccount, capabilities: ProviderHealth[]) {
+    const needing = capabilities.filter(item => !item.ready && checkGuide(item.reasonCode)?.signIn).map(item => checkName(item.capability));
+    const state = accountState(account);
+    if (!needing.length && state !== "Sign-in expired" && state !== "Sign in again") return null;
+    const name = providerDisplayName(providers, account.providerId);
+    const missing = !provider(account.providerId)?.usesSignedSession && !account.secret.configured;
+    return {
+      title: missing ? `${name} isn't signed in` : `Sign in to ${name} again`,
+      detail: needing.length ? `${new Intl.ListFormat("en", { type: "conjunction" }).format(needing)} ${needing.length === 1 ? "needs" : "need"} it.` : "Its checks can't run until then.",
+    };
+  }
+  function signIn(account: ProviderAccount) {
+    if (provider(account.providerId)?.usesSignedSession) goToSignIn();
+    else configure(account);
+  }
   let appleStatus = $state<AppleDownloadStatus | null>(null);
   let appleStatusError = $state("");
   let applePlaybackResult = $state("");
@@ -353,6 +369,16 @@
     if (checks.some(item => item.providerAccountId === account.id && item.signInExpired)) return "Sign-in expired";
     if (checks.some(item => item.health === "degraded" && item.reasonCode?.replaceAll("-", "_") === "service_unavailable")) return "Service down";
     return checks.some(item => item.health === "degraded") ? "Needs attention" : "Working";
+  }
+  // A service row with several accounts shows one state: the most urgent one and how many accounts it covers.
+  const urgentStates = ["Service down", "Sign-in expired", "Sign in again", "Needs attention"];
+  const statePhrases: Record<string, string> = { "Service down": "can't reach the service", "Sign-in expired": "sign-ins expired", "Sign in again": "need signing in", "Needs attention": "need attention", Off: "off" };
+  function groupState(group: ProviderAccount[]) {
+    const states = group.map(accountState);
+    if (new Set(states).size === 1) return { worst: states[0], text: states[0] };
+    const worst = urgentStates.find(state => states.includes(state)) ?? states.find(state => state.endsWith(" waiting")) ?? states.find(state => state !== "Working" && state !== "Connected") ?? "Working";
+    if (worst.endsWith(" waiting")) return { worst, text: worst };
+    return { worst, text: `${states.filter(state => state === worst).length} of ${group.length} ${statePhrases[worst] ?? worst.toLowerCase()}` };
   }
   const panelIndex = $derived(panelAccount ? filteredAccounts.findIndex(account => account.id === panelAccount.id) : filteredSources.findIndex(item => item.id === pageId));
   const panelCount = $derived(panelAccount ? filteredAccounts.length : filteredSources.length);
@@ -712,7 +738,7 @@
           {#if hasLabels}{@const accountLabels = [...new Set(group.map(item => labels.get(item.id)).filter(Boolean))].join(", ")}<td data-label={accountLabels ? "Account" : undefined}>{accountLabels}</td>{/if}
           <td data-label="Owner">{[...new Set(group.map(item => item.ownerDisplayName || item.creatorDisplayName || (item.scope === "Shared" ? "Household" : "")).filter(Boolean))].join(", ")}</td>
           <td data-label="Shared with">{[...new Set(group.map(item => item.scope === "Shared" ? "Everyone" : `Just ${item.ownerDisplayName || "you"}`))].join(", ")}</td>
-          <td data-label="State">{#each [...new Set(group.map(accountState))] as state}<StatePill tone={state === "Working" ? "ok" : state === "Service down" ? "stop" : ["Off", "Connected"].includes(state) ? "neutral" : "warn"} text={state} />{/each}</td>
+          <td data-label="State">{#each [groupState(group)] as state}<StatePill tone={state.worst === "Working" ? "ok" : state.worst === "Service down" ? "stop" : ["Off", "Connected"].includes(state.worst) ? "neutral" : "warn"} text={state.text} />{/each}</td>
           <td><div class="account-menus">{#if group.some(item => item.canManage || item.canChangeAudience)}{@render accountMenu(group.filter(item => item.canManage || item.canChangeAudience), serviceName(account))}{:else}<span class="muted">Read only</span>{/if}</div></td>
         </tr>
       {/each}
@@ -720,11 +746,12 @@
   {:else}<EmptyState title={accounts.length ? "No accounts in this view" : "No accounts connected"} description={accounts.length ? "Try a different search." : "Connect an account to use your subscriptions and send listens."} />{/if}
 {/snippet}
 
-{#snippet checkRow(label: string, check: Omit<SourceCheck, "id">, result?: ConnectivityResult, onTest?: () => void, canTest = false, testKey = "", onTry?: () => void)}
+{#snippet checkRow(label: string, check: Omit<SourceCheck, "id">, result?: ConnectivityResult, onTest?: () => void, canTest = false, testKey = "", onTry?: () => void, signInBanner = false)}
   {@const guide = check.ready ? null : checkGuide(check.reasonCode)}
+  {@const apple = check.reasonCode === "apple-download-sign-in-required"}
   <li class="service-check">
     <span class="service-check-name">{label}</span>
-    <span class="service-check-status"><Badge state={checkStatusState(check)}>{checkStatusLabel(check)}</Badge>{#if guide}<small>{guide.step}</small>{#if guide.signIn}<button type="button" class="text-button" onclick={goToSignIn}>Go to sign-in</button>{/if}{/if}{#if check.reasonCode === "apple-download-sign-in-required"}{#if administrator}<button type="button" class="text-button" onclick={() => appleDownloadOpen = true}>Open step 2: Apple Music sign-in</button>{:else}<a href="#/sources/services/apple-musickit">See step 2: Apple Music sign-in</a>{/if}{/if}</span>
+    <span class="service-check-status"><Badge state={checkStatusState(check)}>{checkStatusLabel(check)}</Badge></span>
     {#if result?.bars != null}<ConnectivityBars bars={result.healthy ?? result.success ? result.bars : 0} latency={result.latencyMs} />{:else}<span></span>{/if}
     {#if (canTest && onTest) || onTry}
       <span class="service-check-actions">
@@ -732,6 +759,8 @@
         {#if onTry}<Button variant="secondary" size="sm" class={canTest && onTest ? "rounded-s-none px-1.5" : ""} aria-label={`Open ${label} tests`} title={`Open ${label} tests`} onclick={onTry}>{#if canTest && onTest}<ChevronRight aria-hidden="true" />{:else}Test<ChevronRight aria-hidden="true" />{/if}</Button>{/if}
       </span>
     {:else}<span></span>{/if}
+    <!-- Sign-in problems are explained once, in the account's banner. -->
+    {#if (guide && !(guide.signIn && signInBanner)) || apple}<p class="service-check-reason">{#if guide && !(guide.signIn && signInBanner)}{guide.step}{#if guide.signIn}{" "}<button type="button" class="text-button" onclick={goToSignIn}>Sign in</button>{/if}{/if}{#if apple}{#if administrator}<button type="button" class="text-button" onclick={() => appleDownloadOpen = true}>Open step 2: Apple Music sign-in</button>{:else}<a href="#/sources/services/apple-musickit">See step 2: Apple Music sign-in</a>{/if}{/if}</p>{/if}
   </li>
 {/snippet}
 
@@ -803,16 +832,46 @@
             {@const capabilities = health.filter((item) => item.providerAccountId === account.id)}
             {@const accountCts = measurements.find((item) => item.providerAccountId === account.id)}
             {@const ready = capabilities.filter((item) => item.ready).length}
+            {@const signInNeeded = accountSignIn(account, capabilities)}
             <article class="service-account" id={`connection-${account.id}`} class:focused={account.id === focusAccount}>
               <header>
                 <span class="service-account-title">
                   <strong>{providerDisplayName(providers, account.providerId)}</strong>
-                  <small>{accountOwnershipLabel(account)}{source.usesSignedSession || account.secret.configured && !account.secret.revoked ? "" : " · Setup needed"}</small>
+                  <small>{accountOwnershipLabel(account)}</small>
                 </span>
                 <Badge state={!account.enabled ? "disabled" : readinessClass(capabilities.length > 0 && capabilities.every((item) => item.ready), capabilities.some((item) => item.health === "degraded") ? "degraded" : null)}>
                   {!account.enabled ? "Turned off" : capabilities.length && ready === capabilities.length ? "Working" : `${ready} of ${capabilities.length} ready`}
                 </Badge>
-                <span class="service-account-actions">
+              </header>
+              {#if signInNeeded && account.enabled}
+                <div class="account-sign-in" role="status">
+                  <LockKeyhole size={20} aria-hidden="true" />
+                  <div><strong>{signInNeeded.title}</strong><small>{signInNeeded.detail}</small></div>
+                  {#if account.canManage}<Button size="sm" onclick={() => signIn(account)}>Sign in</Button>{/if}
+                </div>
+              {/if}
+              {#if capabilities.length}
+                <ul class="service-checks" aria-label={`Checks for ${account.displayName}`}>
+                  {#each capabilities as capability}
+                    {@render checkRow(checkName(capability.capability), capability, testResults[`${account.id}:${capability.capability}`], () => void test(account, capability.capability), administrator && capability.canTest && account.canManage && account.enabled, `${account.id}:${capability.capability}`, administrator && account.canManage && account.enabled && tryable.has(capability.capability.toLowerCase()) ? () => openTry(source, account, capability.capability) : undefined, Boolean(signInNeeded))}
+                  {/each}
+                </ul>
+              {/if}
+              {#if capabilities.some((item) => item.reasonCode === "apple-web-token-unavailable")}
+                <p class="service-note" role="status">Apple's web-player token couldn't be fetched. Run this account's test again later.</p>
+              {/if}
+              {#if fields.length || accountCts}
+                <dl class="service-settings">
+                  {#each fields as field}
+                    <div><dt>{field.label}</dt><dd>{accountSettingValue(account, field)}</dd></div>
+                  {/each}
+                  {#if accountCts}<div><dt>Click to stream</dt><dd>{ctsMeasurementLabel(accountCts)} · {relativeTime(accountCts.testedAt)}</dd></div>{/if}
+                </dl>
+              {/if}
+              {#if account.providerId === "spotify" && account.scope === "Personal" && account.enabled && account.ownerUserId === currentUserId}
+                <Button variant="secondary" href={`#/library/import?account=${encodeURIComponent(account.id)}`}>Move your Spotify collection</Button>
+              {/if}
+              <div class="service-account-actions">
                   {#if administrator && account.canManage}<Button variant="secondary" size="sm" disabled={!account.enabled || Boolean(action)} onclick={() => void test(account)}>{action === `${account.id}:all` ? "Testing…" : "Test connection"}</Button>{/if}
                   {#if administrator && account.canManage && streams}<Button variant="secondary" size="sm" disabled={!account.enabled || Boolean(action)} onclick={() => void measure(account)}>{action === `${account.id}:cts` ? "Measuring…" : "Measure start time"}</Button>{/if}
                   {#if account.canManage}<Button variant="text" size="sm" onclick={() => configure(account)}>Edit configuration</Button>{/if}
@@ -829,29 +888,7 @@
                       </DropdownMenu.Portal>
                     </DropdownMenu.Root>
                   {/if}
-                </span>
-              </header>
-              {#if fields.length}
-                <dl class="service-settings">
-                  {#each fields as field}
-                    <div><dt>{field.label}</dt><dd>{accountSettingValue(account, field)}</dd></div>
-                  {/each}
-                </dl>
-              {/if}
-              {#if capabilities.length}
-                <ul class="service-checks" aria-label={`Checks for ${account.displayName}`}>
-                  {#each capabilities as capability}
-                    {@render checkRow(checkName(capability.capability), capability, testResults[`${account.id}:${capability.capability}`], () => void test(account, capability.capability), administrator && capability.canTest && account.canManage && account.enabled, `${account.id}:${capability.capability}`, administrator && account.canManage && account.enabled && tryable.has(capability.capability.toLowerCase()) ? () => openTry(source, account, capability.capability) : undefined)}
-                  {/each}
-                </ul>
-              {/if}
-              {#if capabilities.some((item) => item.reasonCode === "apple-web-token-unavailable")}
-                <p class="service-note" role="status">Apple's web-player token couldn't be fetched. Run this account's test again later.</p>
-              {/if}
-              {#if accountCts}<p class="service-note">Click to stream: {ctsMeasurementLabel(accountCts)} · {relativeTime(accountCts.testedAt)}</p>{/if}
-              {#if account.providerId === "spotify" && account.scope === "Personal" && account.enabled && account.ownerUserId === currentUserId}
-                <Button variant="secondary" href={`#/library/import?account=${encodeURIComponent(account.id)}`}>Move your Spotify collection</Button>
-              {/if}
+              </div>
             </article>
           {:else}
             <p class="service-empty">No accounts connected yet.{#if fields.length}{" "}These settings are saved with an account.{/if}</p>
@@ -1080,12 +1117,16 @@
   /* Each card in a service's settings is outlined like its server settings, so card padding never reads as a stray indent. */
   .service-advanced > :global(.settings-card) { border: 1px solid var(--color-edge); border-radius: var(--radius-md); }
   .service-description { margin: 0; font-size: var(--text-sm); color: var(--color-ink-muted); }
-  .source-panel-content :global(.settings-row), .source-panel-content :global(.service-check) { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); }
+  .source-panel-content :global(.settings-row) { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); }
   .source-panel-content :global(.settings-card) { min-width: 0; }
-  .source-panel-content :global(button), .source-panel-content :global([data-slot="button"]) { min-height: 44px; }
-  :global(.side-panel:has(.source-panel-content) .panel-controls button) { width: 44px; height: 44px; min-width: 44px; min-height: 44px; }
+  :global(.side-panel:has(.source-panel-content) .panel-controls button) { width: 40px; height: 40px; min-width: 40px; min-height: 40px; }
   :global(.side-panel:has(.source-panel-content) .panel-footer) { flex-wrap: wrap; gap: var(--space-2); }
-  .source-panel-content :global(.service-account header), .source-panel-content :global(.service-account-actions) { flex-wrap: wrap; }
+  .source-panel-content :global(.service-account-actions) { flex-wrap: wrap; }
+  /* One sign-in banner per account, in place of a sentence on every check. */
+  .account-sign-in { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: var(--space-3); padding: var(--space-3) var(--space-4); border-radius: var(--radius-md); background: var(--warning-container); color: var(--on-warning-container, var(--color-ink)); }
+  .account-sign-in > div { display: grid; min-width: 0; gap: 2px; }
+  .account-sign-in strong { font-size: var(--text-sm); font-weight: 600; }
+  .account-sign-in small { font-size: var(--text-xs); opacity: .9; }
   .source-panel-content :global(.extension-row) { display: flex; flex-wrap: wrap; }
   .source-panel-footer :global(.extension-remove-link) { margin-right: auto; }
   .source-panel-content :global(output) { display: flex; align-items: center; gap: var(--space-2); overflow-wrap: anywhere; }
@@ -1096,7 +1137,7 @@
   @media (max-width: 650px) {
     .sources-heading-actions { display: grid; width: 100%; grid-template-columns: 48px minmax(0, 1fr); }
     .sources-heading-actions :global([data-slot="button"]) { width: 100%; white-space: normal; }
-    .sources-heading-actions :global(button), .service-advanced :global(button), .service-advanced :global([data-slot="button"]) { min-height: 44px; }
+    .sources-heading-actions :global(button) { min-height: 40px; }
   }
   @media (max-width: 380px) { .sources-heading-actions { grid-template-columns: minmax(0, 1fr); } }
   /* Beside a docked panel the table keeps its rows and drops the audience column; only phones get stacked rows. */

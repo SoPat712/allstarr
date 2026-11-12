@@ -226,12 +226,18 @@
     // An expired sign-in comes first, and listeners see their own: they're the ones who can reconnect it.
     const expired = snapshot.signInExpired ?? [];
     const sourceName = (id: string) => providerDisplayName(snapshot?.providerCatalog ?? [], id);
+    // An account named after its service ("Deezer · Deezer") is shown once.
+    const accountLabel = (account: (typeof expired)[number]) => {
+      const name = sourceName(account.providerId);
+      return account.accountName && account.accountName.toLowerCase() !== name.toLowerCase() ? `${name} · ${account.accountName}` : name;
+    };
+    const named = expired.length > 1 || (expired.length === 1 && accountLabel(expired[0]) !== sourceName(expired[0].providerId));
     if (expired.length)
       items.push({
         key: "signin",
         title: expired.length === 1 ? `${sourceName(expired[0].providerId)} sign-in expired` : `${expired.length} sign-ins expired`,
-        detail: expired.map(account => `${sourceName(account.providerId)} · ${account.accountName}`).join(", ") + ".",
-        consequence: "Songs from them play from other sources until you reconnect.",
+        detail: named ? expired.map(accountLabel).join(", ") + "." : "Its songs play from other sources until you reconnect.",
+        consequence: named ? "Songs from them play from other sources until you reconnect." : undefined,
         href: "#/integrations/accounts",
         action: "Reconnect",
       });

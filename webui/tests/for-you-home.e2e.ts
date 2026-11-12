@@ -1,3 +1,4 @@
+import { touchTarget } from "./mobile-geometry";
 import { expect, test } from "@playwright/test";
 import { appearance, capture, mockForYou, openHome } from "./for-you-fixtures";
 
@@ -97,7 +98,8 @@ test("Shelf Add is one click, keeps card height, and the card opens separately",
   expect(await add.evaluate(button => button.parentElement === button.parentElement?.querySelector(".mix-open")?.parentElement)).toBe(true);
   const height = (await card.boundingBox())!.height;
   await add.click();
-  await expect(card.getByText("✓ In your apps", { exact: true })).toBeVisible();
+  // A mix in your apps offers to remove it, in the same place the Add button was.
+  await expect(card.getByRole("button", { name: /^Remove .+ from apps$/ })).toBeVisible();
   await expect(add).toHaveCount(0);
   expect((await card.boundingBox())!.height).toBeCloseTo(height, 2);
   expect(state.calls.filter(call => call.path === "/api/admin/mixes/daily-2/in-apps")).toHaveLength(1);
@@ -130,11 +132,9 @@ test.describe("Cover touch targets", () => {
     const waiting = new Promise<void>(resolve => { release = resolve; });
     await page.route("**/api/admin/mixes/daily-2/in-apps", async route => { await waiting; await route.fallback(); });
     const add = page.getByRole("button", { name: "Add Blend 2", exact: true });
-    const target = await add.evaluate(button => {
-      const box = button.getBoundingClientRect();
-      return { coarse: matchMedia("(pointer: coarse)").matches, width: box.width, height: box.height };
-    });
-    expect(target.coarse).toBe(true); expect(target.width).toBeGreaterThanOrEqual(44); expect(target.height).toBeGreaterThanOrEqual(44);
+    expect(await page.evaluate(() => matchMedia("(pointer: coarse)").matches)).toBe(true);
+    const target = await touchTarget(add);
+    expect(target.width).toBeGreaterThanOrEqual(44); expect(target.height).toBeGreaterThanOrEqual(44);
     await add.click(); await expect(add).toHaveText("Adding…"); await expect(add).toBeDisabled();
     release(); await expect(add).toHaveCount(0);
     expect(state.calls.filter(call => call.path === "/api/admin/mixes/daily-2/in-apps")).toHaveLength(1);

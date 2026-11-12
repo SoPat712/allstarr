@@ -140,7 +140,7 @@ describe("source presentation", () => {
   });
 
   it("gives automatic check failures a plain label and next step", () => {
-    expect(checkStatusLabel({ ready: false, health: "degraded", reasonCode: "sign_in_needed" })).toBe("Needs verification");
+    expect(checkStatusLabel({ ready: false, health: "degraded", reasonCode: "sign_in_needed" })).toBe("Needs sign-in");
     expect(checkStatusState({ ready: false, health: "degraded", reasonCode: "sign_in_needed" })).toBe("needs_verification");
     expect(checkGuide("sign_in_needed")?.signIn).toBe(true);
     expect(checkStatusLabel({ ready: false, health: "degraded", reasonCode: "track-selection" })).toBe("No test song found");
@@ -151,7 +151,7 @@ describe("source presentation", () => {
     expect(checkGuide("AccountNeedsReauthentication")?.signIn).toBe(true);
     expect(checkGuide("some-new-code")).toBeNull();
     expect(checkGuide(null)).toBeNull();
-    expect(sourceStatusLabel("needs_verification")).toBe("Needs verification");
+    expect(sourceStatusLabel("needs_verification")).toBe("Needs sign-in");
     const signed = { id: "signed", name: "Signed", usesSignedSession: true } as ProviderDefinition;
     const connection = { ...account(), id: "a", providerId: "signed" };
     const failing = (reasonCode: string, capability = "streaming") => ({ provider: "signed", providerAccountId: "a", capability,
@@ -357,7 +357,7 @@ describe("source presentation", () => {
       failureCode: "Unauthorized",
     };
 
-    expect(ctsMeasurementLabel(measurement)).toBe("Needs verification");
+    expect(ctsMeasurementLabel(measurement)).toBe("Needs sign-in");
     expect(ctsMeasurementLabel({ ...measurement, health: "unknown" })).toBe("Not measured yet");
     expect(ctsMeasurementLabel({ ...measurement, failureCode: "service_unavailable" })).toBe("Source service unavailable");
     expect(ctsMeasurementLabel({ ...measurement, failureCode: "http-503" })).toBe("Source service unavailable");
