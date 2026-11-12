@@ -56,18 +56,35 @@ async function fixture(page: Page, libraryFailure = false) {
     }
     return reply({ enabled: false, categories: [], media: {}, memory: {}, metadata: {}, activity: {}, artworkLimits: {}, extensionStorage: {} });
   });
+  const profile = { namingScript: "%albumartist%/%album%/%title%.%_extension%", libraryRootId: null, qualityFloor: { codecFamily: "lossless", minBitDepth: 16, minSampleRate: 44100 },
+    hiResCeiling: { maxBitDepth: 24, maxSampleRate: 96000 }, fakeLosslessCheck: true, allowLossy: false, musicBrainzTags: true, coverMode: "both", lyricsMode: ".lrc", replayGain: true,
+    defaultUnit: "album", removeKeptCopy: true };
+  await page.route("**/api/admin/library-promotions/**", async route => {
+    const path = new URL(route.request().url()).pathname;
+    if (path.endsWith("/folders")) return route.fulfill({ json: { available: true, reason: null, folders: [{ name: "Music", backendPath: "/media/music", path: "/media/music", writable: true }] } });
+    if (path.endsWith("/setup")) return route.fulfill({ json: { ready: true, allowedBaseConfigured: true, reason: null, rootId: "00000000-0000-0000-0000-000000000001" } });
+    if (path.endsWith("/roots")) return route.fulfill({ json: [{ id: "00000000-0000-0000-0000-000000000001", name: "Music" }] });
+    if (path.endsWith("/preview")) return route.fulfill({ json: { script: profile.namingScript, scriptOnly: false, tokens: [], errors: [],
+      examples: [{ libraryTrackId: null, recordingId: null, title: "Cyber Sex", kind: "album", relativePath: "Doja Cat/Hot Pink/Cyber Sex.flac", errors: [] }] } });
+    if (path.endsWith("/household")) return route.fulfill({ json: { values: profile, addWithoutApproval: "admins-and-trusted-listeners" } });
+    return route.fulfill({ json: { values: profile, householdDefault: { values: profile, addWithoutApproval: "admins-and-trusted-listeners" }, usesHouseholdDefault: true } });
+  });
   return writes;
 }
 
-const pages = ["playback", "library", "discovery", "history", "people", "alerts", "storage", "backups", "health", "setup", "appearance"];
-const headings: Record<string, string> = { playback: "Playback", library: "Library", discovery: "Mixes and discovery", history: "History and scrobbling",
-  people: "People and access", alerts: "Alerts", storage: "Storage", backups: "Backups", health: "Health", setup: "Setup guide", appearance: "Appearance" };
+const pages = ["quality", "sources", "library", "apps", "mixes", "history", "people", "alerts", "storage", "backups", "advanced", "setup", "appearance", "listening"];
+const headings: Record<string, string> = { quality: "Sound quality", sources: "Music sources", library: "Library", apps: "Apps", mixes: "Mixes and discovery",
+  history: "History and scrobbling", people: "People and sign-in", alerts: "Alerts", storage: "Storage and speed", backups: "Backups and health",
+  advanced: "Advanced", setup: "Setup guide", appearance: "Appearance", listening: "Listening" };
 for (const [width, theme] of [[1280, "light"], [1280, "dark"], [390, "light"], [390, "dark"]] as const) {
   test(`Settings pages and panels ${width} ${theme}`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
     await page.addInitScript(value => localStorage.setItem("allstarr.theme", value), theme);
     await page.emulateMedia({ reducedMotion: "reduce" });
     await fixture(page);
+    await page.goto("/#/settings");
+    await expect(page.getByRole("navigation", { name: "Settings categories", exact: true })).toBeVisible();
+    await page.screenshot({ path: `test-results/ui-settings/categories-${width}-${theme}.png`, fullPage: true });
     for (const section of pages) {
       await page.goto(`/#/settings/${section}`);
       await expect(page.getByRole("heading", { name: headings[section], level: 2, exact: true })).toBeVisible();
@@ -75,7 +92,7 @@ for (const [width, theme] of [[1280, "light"], [1280, "dark"], [390, "light"], [
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
       await page.screenshot({ path: `test-results/ui-settings/${section}-${width}-${theme}.png`, fullPage: true });
       const open = section === "people" ? page.getByRole("button", { name: "Open Sam", exact: true })
-        : section === "health" ? page.getByRole("button", { name: "Open Server connection", exact: true }) : null;
+        : section === "backups" ? page.getByRole("button", { name: "Open Server connection", exact: true }) : null;
       if (open) {
         await open.click();
         await expect(page.getByRole("dialog")).toBeVisible();
@@ -88,6 +105,9 @@ for (const [width, theme] of [[1280, "light"], [1280, "dark"], [390, "light"], [
         await page.getByRole("checkbox", { name: "Concert recordings", exact: true }).check();
         await expect(page.getByRole("alertdialog")).toBeVisible(); await capture("restart-dialog");
         await page.getByRole("alertdialog").getByRole("button", { name: "Cancel", exact: true }).click();
+        await page.getByRole("button", { name: /How added songs are saved/ }).click();
+        await expect(page.getByRole("dialog", { name: "Adding songs to the library", exact: true })).toBeVisible(); await capture("adding-panel");
+        await page.getByRole("dialog").getByRole("button", { name: "Close", exact: true }).click();
       } else if (section === "alerts") {
         await page.getByRole("button", { name: "Add your channel", exact: true }).click();
         await expect(page.getByRole("dialog")).toBeVisible(); await capture("alert-channel-dialog");
@@ -99,7 +119,7 @@ for (const [width, theme] of [[1280, "light"], [1280, "dark"], [390, "light"], [
         await dialog.getByLabel("Type RESTORE to confirm", { exact: true }).fill("RESTORE");
         await expect(dialog.getByRole("button", { name: "Restore on restart", exact: true })).toBeEnabled();
         await capture("restore-dialog"); await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
-      } else if (section === "discovery") {
+      } else if (section === "mixes") {
         await page.getByRole("button", { name: "Edit connection", exact: true }).click();
         const connection = page.getByRole("form", { name: "AudioMuse connection", exact: true }); await expect(connection).toBeVisible();
         await capture("sound-connection"); await connection.getByRole("button", { name: "Cancel", exact: true }).click();
@@ -108,7 +128,7 @@ for (const [width, theme] of [[1280, "light"], [1280, "dark"], [390, "light"], [
         await page.getByRole("button", { name: "Open", exact: true }).click();
         await expect(page.getByRole("heading", { name: "Your media server", exact: true })).toBeVisible();
         await expect(page.getByLabel("Loading items", { exact: true })).toHaveCount(0); await capture("setup-first-step");
-      } else if (section === "playback") {
+      } else if (section === "sources") {
         await page.locator(".routing-group li.has-score .routing-copy").click();
         await expect(page.getByRole("dialog", { name: "First source", exact: true })).toBeVisible(); await capture("quality-score-panel");
         await page.getByRole("dialog").getByRole("button", { name: "Close", exact: true }).click();
@@ -123,7 +143,7 @@ for (const [width, theme] of [[1280, "light"], [1280, "dark"], [390, "light"], [
 
 test("Settings changes save with Undo and restart changes wait for confirmation", async ({ page }) => {
   const writes = await fixture(page);
-  await page.goto("/#/settings/people");
+  await page.goto("/#/settings/apps");
   await page.getByRole("switch", { name: "Client API for apps", exact: true }).check();
   await expect.poll(() => writes.length).toBe(1);
   await page.getByRole("button", { name: "Undo", exact: true }).click();
@@ -137,6 +157,7 @@ test("Settings changes save with Undo and restart changes wait for confirmation"
   await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(page.getByRole("checkbox", { name: "Music", exact: true })).toBeChecked();
   await expect(page.getByRole("checkbox", { name: "Concert recordings", exact: true })).not.toBeChecked();
+  await page.goto("/#/settings/advanced");
   await expect(page.getByText("Set in your deployment")).toBeVisible();
 });
 
@@ -144,8 +165,8 @@ test("Settings search results open above the section links", async ({ page }) =>
   await page.setViewportSize({ width: 1280, height: 800 });
   await fixture(page);
   await page.goto("/#/settings/library");
-  await page.getByRole("navigation", { name: "Settings sections" }).getByRole("searchbox", { name: "Find a setting" }).fill("Libraries");
-  const results = page.getByRole("navigation", { name: "Settings sections" }).getByRole("list", { name: "Matching settings" });
+  await page.getByRole("navigation", { name: "Settings categories" }).getByRole("searchbox", { name: "Find a setting" }).fill("Libraries");
+  const results = page.getByRole("navigation", { name: "Settings categories" }).getByRole("list", { name: "Matching settings" });
   await expect(results.getByRole("link").first()).toBeVisible();
   for (const result of await results.getByRole("listitem").all()) {
     const box = (await result.boundingBox())!;
@@ -155,22 +176,22 @@ test("Settings search results open above the section links", async ({ page }) =>
   }
 });
 
-test("Single sign-on fields and browser access stay folded until needed", async ({ page }) => {
+test("Single sign-on fields stay folded until needed and browser origins live under Apps", async ({ page }) => {
   await fixture(page);
   await page.goto("/#/settings/people");
   await expect(page.getByLabel("Issuer address", { exact: true })).toHaveCount(0);
   await page.getByRole("switch", { name: "Enable single sign-on", exact: true }).check();
   await expect(page.getByLabel("Issuer address", { exact: true })).toBeVisible();
-  await expect(page.getByLabel("Browser origins", { exact: true })).toBeHidden();
-  await page.getByText("Advanced: browser origins, methods and headers", { exact: true }).click();
+  await expect(page.getByLabel("Browser origins", { exact: true })).toHaveCount(0);
+  await page.goto("/#/settings/apps");
   await expect(page.getByLabel("Browser origins", { exact: true })).toBeVisible();
 });
 
 test("Health skips are neutral and repeated open problems are grouped", async ({ page }) => {
   await fixture(page);
   await page.goto("/#/settings/health");
-  await expect(page.getByLabel("Page status").first()).toContainText("Passing");
-  await expect(page.getByLabel("Page status").first()).toContainText("1 check passed");
+  await expect(page.getByLabel("Health summary").first()).toContainText("Passing");
+  await expect(page.getByLabel("Health summary").first()).toContainText("1 check passed");
   await expect(page.getByText("Partly checked", { exact: true })).toHaveCount(0);
   await expect(page.getByRole("group", { name: "Last 30 checks", exact: true })).toBeVisible();
   await page.goto("/#/settings/alerts");
@@ -211,6 +232,7 @@ test("Quality changes save and undo, and source filters remember the selected li
   await page.getByRole("switch", { name: "Prefer your own music when unsure", exact: true }).uncheck();
   await expect.poll(() => writes.length).toBe(3);
   expect(writes[2]).toEqual({ updates: { MATCHING_LOCAL_PREFERENCE_PERCENT: "0" } });
+  await page.goto("/#/settings/sources");
   await page.getByRole("radiogroup", { name: "Source orders", exact: true }).getByRole("radio", { name: /Streaming/ }).click();
   await page.reload();
   await expect(page.getByRole("heading", { name: "Streaming source order", exact: true })).toBeVisible();
@@ -271,11 +293,12 @@ test("Libraries retain manual ID entry when discovery fails", async ({ page }) =
 
 test("Settings structure keeps source orders inside their card and playlist permissions together", async ({ page }) => {
   await fixture(page);
-  await page.goto("/#/settings/playback");
+  await page.goto("/#/settings/sources");
   const card = page.locator(".routing-group");
   await expect(card.getByRole("radiogroup", { name: "Source orders", exact: true })).toBeVisible();
   await expect(card.getByText("Details", { exact: true })).toHaveCount(0);
-  const policy = page.getByRole("form", { name: "Audio quality settings", exact: true });
+  await page.goto("/#/settings/quality");
+  const policy = page.getByRole("form", { name: "Quality settings", exact: true });
   await expect(policy.locator(":scope > details.settings-fold")).toHaveText(/Exact quality asked from each service/);
   await page.goto("/#/settings/people");
   const permissions = page.getByRole("region", { name: "Playlist editing", exact: true });
@@ -307,8 +330,8 @@ test("A song.link key is requested with an action before showing a replacement f
   for (const [path, json] of [["**/api/admin/providers/status", []], ["**/api/admin/ui/provider-summaries", { providers: [] }], ["**/api/admin/providers/scores", { providers: [] }],
     ["**/api/admin/extensions/packages", []], ["**/api/admin/extensions/registries", []], ["**/api/admin/extensions/store", { items: [], errors: [] }]] as const)
     await page.route(path, route => route.fulfill({ json }));
-  await page.goto("/#/integrations/services");
-  await expect(page.getByRole("heading", { name: "Helpers for every source", exact: true })).toBeVisible();
+  await page.goto("/#/settings/advanced");
+  await expect(page.getByRole("heading", { name: "song.link", exact: true })).toBeVisible();
   await expect(page.getByLabel("song.link API key", { exact: true })).toHaveCount(0);
   await page.getByRole("button", { name: "Add key…", exact: true }).click();
   await expect(page.getByLabel("song.link API key", { exact: true })).toBeVisible();

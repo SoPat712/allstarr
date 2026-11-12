@@ -63,11 +63,11 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     await page.setViewportSize({ width, height: 900 });
     await page.emulateMedia({ colorScheme: theme, reducedMotion: "reduce" });
     const mock = await mockCapacity(page);
-    await page.goto("/#/settings/playback");
-    await expect(page.getByRole("heading", { name: "Playback", exact: true })).toBeVisible();
-    await expect(page.getByRole("form", { name: "Audio limits settings", exact: true })).toHaveCount(0);
+    await page.goto("/#/settings/quality");
+    await expect(page.getByRole("heading", { name: "Sound quality", exact: true })).toBeVisible();
+    await expect(page.getByRole("form", { name: "Speed settings", exact: true })).toHaveCount(0);
     await page.goto("/#/settings/storage");
-    const form = page.getByRole("form", { name: "Audio limits settings", exact: true });
+    const form = page.getByRole("form", { name: "Speed settings", exact: true });
     await expect(form).toBeVisible();
     const quota = page.locator('[name="CACHE_AUDIO_MAXIMUM_GIB"]');
     const streams = form.locator('[name="PROVIDER_STREAMS_PER_LISTENER"]');
@@ -101,6 +101,6 @@ test("Audio resource policy is unavailable to listeners", async ({ page }) => {
   const mock = await mockCapacity(page, false);
   await page.goto("/#/settings/storage");
   await expect(page.getByRole("heading", { name: "This workspace is for administrators.", exact: true })).toBeVisible();
-  await expect(page.getByRole("form", { name: "Audio limits settings", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("form", { name: "Speed settings", exact: true })).toHaveCount(0);
   expect(mock.configReads()).toBe(0);
 });

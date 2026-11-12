@@ -1238,7 +1238,7 @@ for (const viewport of viewports) {
           providers: { streamingOrder: saved?.StreamingOrder ?? "lumen-audio" },
         } });
       });
-      await page.goto("#/settings/general");
+      await page.goto("#/settings/advanced");
       const publicUrl = page.locator(".setting-field").filter({ has: page.getByText("Public URL", { exact: true }) });
       await expect(publicUrl.getByText("Set in your deployment", { exact: true })).toBeVisible();
       await expect(publicUrl.locator("output")).toBeVisible();
@@ -1259,15 +1259,16 @@ for (const viewport of viewports) {
       await expect(sourceDialog.getByLabel("Access token")).toHaveValue("");
       await sourceDialog.getByRole("button", { name: "Cancel" }).click();
       await page.goto("#/settings/routing");
-      await expect(page.getByRole("heading", { name: "Playback", level: 2 })).toBeVisible();
-      await expect(page.getByText(/What plays, at what quality and from where/)).toBeVisible();
+      await expect(page.getByRole("heading", { name: "Music sources", level: 2 })).toBeVisible();
+      await expect(page.getByText(/Which services Allstarr asks, in what order/)).toBeVisible();
       await expect(page.getByRole("button", { name: "Save playback and matching" })).toHaveCount(0);
       await expect(page.getByRole("button", { name: "Move Jellyfin up" })).toHaveCount(0);
       await expect(page.locator(".provider-art").first()).toHaveCSS("border-top-width", "0px");
       const savePlayback = page.getByRole("button", { name: "Save Playback", exact: true });
       await expect(savePlayback).toHaveCount(0);
       const routes = page.locator(".routing-group li[draggable=true]");
-      await page.locator(".routing-group").first().scrollIntoViewIfNeeded();
+      // Centre the rows: on a landscape phone the bottom navigation bar covers the lower part of the screen.
+      await routes.nth(0).evaluate((element) => element.scrollIntoView({ block: "center" }));
       await expect(routes.nth(0)).toBeInViewport({ ratio: 1 });
       await expect(routes.nth(1)).toBeInViewport({ ratio: 1 });
       // Dragging while the view is still easing in can land on the wrong row.
@@ -1304,7 +1305,7 @@ for (const viewport of viewports) {
         document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
       await page.goto("#/settings/storage");
       const storage = page.locator(".settings-workspace");
-      await expect(storage.getByRole("heading", { name: "Storage", level: 2, exact: true })).toBeVisible();
+      await expect(storage.getByRole("heading", { name: "Storage and speed", level: 2, exact: true })).toBeVisible();
       await expect(storage).toHaveAttribute("aria-busy", "false");
       const advanced = storage.locator("details").filter({ has: page.getByText(
         "Advanced: cache times, file checks and cleanup", { exact: true }) });
@@ -2422,7 +2423,7 @@ for (const width of [835, 1280]) for (const theme of ["light", "dark"]) {
         key: `SCROLL_FIELD_${i}`, label: `Read-only setting ${i + 1}`, type: "text", valuePath: "deployment.backend", readOnly: true,
       })) }],
     } }));
-    await page.goto("#/settings/general");
+    await page.goto("#/settings/advanced");
     await expect(page.getByText("Read-only setting 24", { exact: true })).toBeVisible();
     await page.evaluate(() => new Promise<void>(resolve =>
       requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
@@ -2458,7 +2459,7 @@ for (const width of [835, 1280]) {
   test(`Short desktop navigation keeps the profile and every destination reachable at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 420 });
     await mockApi(page);
-    await page.goto("#/settings/general");
+    await page.goto("#/settings/advanced");
     const profile = await page.locator(".profile").boundingBox();
     expect(profile!.y).toBeGreaterThanOrEqual(0);
     expect(profile!.y + profile!.height).toBeLessThanOrEqual(420);
@@ -2480,7 +2481,7 @@ for (const theme of ["light", "dark"]) {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.addInitScript(value => localStorage.setItem("allstarr.theme", value), theme);
     await mockApi(page);
-    await page.goto("#/settings/general");
+    await page.goto("#/settings/advanced");
     await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
     const bar = await page.locator(".sidebar").boundingBox();
     expect(bar!.x).toBe(0);
@@ -2541,7 +2542,6 @@ for (const theme of ["light", "dark"] as const) {
         ["#/for-you", "For you sections", "Recap"],
         ["#/sources/services", "Source sections", "Accounts"],
         ["#/activity?view=history", "Activity views", "Plays"],
-        ...(width < 768 ? [["#/settings/general", "Settings sections", "Appearance"]] : []),
       ]) {
         await page.goto(href);
         await page.mouse.move(0, 0);
@@ -2625,12 +2625,12 @@ for (const [administrator, backend] of [[true, "Jellyfin"], [false, "Navidrome"]
     await expect(page.locator(".profile strong")).toHaveText("Taylor");
     await expect(page.locator(".profile small")).toHaveText(administrator ? "Administrator" : "Listener");
     await expect(page.getByRole("button", { name: "Sign out", exact: true })).toBeVisible();
-    await expect(nav.getByRole("link", { name: "Playback settings", exact: true })).toHaveCount(0);
+    await expect(nav.getByRole("link", { name: "Listening settings", exact: true })).toHaveCount(0);
     if (administrator) await expect(page.getByText(/^Allstarr · beta /)).toBeVisible();
-    const settingsNav = page.getByRole("navigation", { name: "Settings sections", exact: true }).first();
+    const settingsNav = page.getByRole("navigation", { name: "Settings categories", exact: true }).first();
     await expect(settingsNav.getByText("You", { exact: true })).toBeVisible();
-    await settingsNav.getByRole("link", { name: "Playback", exact: true }).click();
-    await expect(page).toHaveURL(/#\/settings\/playback$/);
+    await settingsNav.getByRole("link", { name: /^Listening/ }).click();
+    await expect(page).toHaveURL(/#\/settings\/listening$/);
     await expect(nav.getByRole("link", { name: "Settings", exact: true })).toHaveAttribute("aria-current", "page");
   });
 }
@@ -4169,7 +4169,7 @@ test("Settings fields share columns, control baselines, and a compact action rai
     }),
   }));
 
-  await page.goto("#/settings/general");
+  await page.goto("#/settings/advanced");
   const section = page.getByRole("form", { name: "More settings" });
   const fields = section.locator(".setting-field");
   await expect(fields).toHaveCount(3);
@@ -4911,29 +4911,29 @@ test("Settings loads only the active section owners", async ({ page }) => {
   page.on("request", (request) => requests.push(new URL(request.url()).pathname));
   await mockApi(page);
   await page.goto("#/settings/general");
-  await expect(page.getByRole("heading", { name: "Playback", level: 2 })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Sound quality", level: 2 })).toBeVisible();
   expect(requests).toContain("/api/admin/config");
   expect(requests).not.toContain("/api/admin/provider-accounts");
   expect(requests).not.toContain("/api/admin/storage");
   expect(requests).not.toContain("/api/admin/cache");
 
   requests.length = 0;
-  await page.locator(".settings-nav").getByRole("link", { name: "Storage" }).click();
-  await expect(page.getByRole("heading", { name: "Storage", level: 2 })).toBeVisible();
+  await page.getByRole("navigation", { name: "Settings categories" }).getByRole("link", { name: /^Storage and speed/ }).click();
+  await expect(page.getByRole("heading", { name: "Storage and speed", level: 2 })).toBeVisible();
   await expect.poll(() => requests.includes("/api/admin/cache/maintenance/preview")).toBe(true);
   expect(requests).toContain("/api/admin/cache");
   await expect.poll(() => requests.includes("/api/admin/storage")).toBe(true);
   expect(requests).not.toContain("/api/admin/provider-accounts");
 
   requests.length = 0;
-  await page.locator(".settings-nav").getByRole("link", { name: "Backups" }).click();
-  await expect(page.getByRole("heading", { name: "Backups", level: 2 })).toBeVisible();
+  await page.getByRole("navigation", { name: "Settings categories" }).getByRole("link", { name: /^Backups and health/ }).click();
+  await expect(page.getByRole("heading", { name: "Backups and health", level: 2 })).toBeVisible();
   await expect.poll(() => requests.includes("/api/admin/storage")).toBe(true);
   expect(requests).not.toContain("/api/admin/config");
   expect(requests).not.toContain("/api/admin/cache");
 
   requests.length = 0;
-  await page.locator(".settings-nav").getByRole("link", { name: "Setup guide", exact: true }).click();
+  await page.getByRole("link", { name: /^Walk through setup again/ }).click();
   await page.getByRole("button", { name: "Review previous settings", exact: true }).click();
   await expect.poll(() => requests.includes("/api/admin/config/migration/status")).toBe(true);
 });
@@ -5098,7 +5098,7 @@ test("Score details open from the whole row, close again, and dim what does not 
 
 test("Audio quality labels choose a step and the track follows", async ({ page }) => {
   await mockApi(page);
-  await page.goto("#/integrations/routing");
+  await page.goto("#/settings/quality");
   const slider = page.getByRole("slider", { name: "Audio quality" });
   await page.locator(".audio-quality-steps button", { hasText: "CD lossless" }).click();
   await expect(slider).toHaveAttribute("aria-valuetext", /CD lossless/);
@@ -5128,7 +5128,7 @@ test("Audio quality supports keyboard changes, provider outcomes, save, and relo
     });
   });
 
-  await page.goto("#/integrations/routing");
+  await page.goto("#/settings/quality");
   const slider = page.getByRole("slider", { name: "Audio quality" });
   await expect(slider).toHaveAttribute("aria-valuetext", /Best available/);
   await slider.focus();
@@ -5156,7 +5156,7 @@ test("Audio quality supports keyboard changes, provider outcomes, save, and relo
     element.scrollWidth <= element.clientWidth)).toBe(true);
 });
 
-test("Settings preserves dirty drafts during live refresh and scrolls mobile tabs", async ({ page }) => {
+test("Settings preserves dirty drafts during live refresh and shows one page at a time on a phone", async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 844 });
   await page.addInitScript(() => {
     class TestEventSource {
@@ -5210,26 +5210,17 @@ test("Settings preserves dirty drafts during live refresh and scrolls mobile tab
   await page.getByRole("button", { name: "Reload server values" }).click();
   await expect(input).toHaveValue("9");
 
-  const tabs = page.locator(".settings-tabs");
-  const tabSizes = await tabs.getByRole("tab").evaluateAll((items) => items.map((item) => {
-    const box = item.getBoundingClientRect();
-    return { height: box.height, fontSize: Number.parseFloat(getComputedStyle(item).fontSize) };
-  }));
-  expect(tabSizes.every(({ height, fontSize }) => height >= 44 && fontSize >= 14)).toBe(true);
-  const storageTab = tabs.getByRole("tab", { name: "Storage" });
-  const selectedBackground = await storageTab.evaluate((element) => getComputedStyle(element).backgroundColor);
-  await tabs.getByRole("tab", { name: "Setup guide", exact: true }).click();
-  await expect(tabs.getByRole("tab", { name: "Setup guide", exact: true })).toHaveAttribute("aria-selected", "true");
-  const setupTab = tabs.getByRole("tab", { name: "Setup guide", exact: true });
-  await expect.poll(() => setupTab.evaluate((element) => getComputedStyle(element).backgroundColor))
-    .toBe(selectedBackground);
-  await expect.poll(() => tabs.evaluate((element) => {
-    const active = element.querySelector<HTMLElement>('[aria-selected="true"]');
-    if (!active) return false;
-    const container = element.getBoundingClientRect();
-    const item = active.getBoundingClientRect();
-    return item.left >= container.left - 1 && item.right <= container.right + 1;
-  })).toBe(true);
+  // A phone shows one page at a time: the category list, or a page with a way back to it.
+  const categories = page.getByRole("navigation", { name: "Settings categories", exact: true });
+  await expect(categories).toBeHidden();
+  await page.getByRole("link", { name: "Settings", exact: true }).and(page.locator(".settings-back")).click();
+  await expect(page).toHaveURL(/#\/settings$/);
+  await expect(categories).toBeVisible();
+  const rows = await categories.getByRole("link").evaluateAll((items) => items.map((item) => item.getBoundingClientRect().height));
+  expect(rows.every((height) => height >= 44)).toBe(true);
+  await categories.getByRole("link", { name: /^Backups and health/ }).click();
+  await expect(page.getByRole("heading", { name: "Backups and health", level: 2 })).toBeVisible();
+  await expect(categories).toBeHidden();
 });
 
 test("Maintenance previews, retries, and applies a legacy import on mobile", async ({ page }) => {
@@ -7148,8 +7139,10 @@ test("Playback diagnostic errors stay readable and persistent", async ({ page })
 test("Quality and routing lives in Settings, not Sources", async ({ page }) => {
   await mockApi(page);
   await page.goto("#/integrations/routing");
-  await expect(page.getByRole("heading", { name: "Playback", level: 2 })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Music sources", level: 2 })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Settings", level: 1 })).toBeVisible();
+  await page.goto("#/settings/quality");
+  await expect(page.getByRole("slider", { name: "Audio quality" })).toBeVisible();
   await page.goto("#/integrations/services");
   await expect(page.getByRole("tab", { name: /routing/i })).toHaveCount(0);
 });

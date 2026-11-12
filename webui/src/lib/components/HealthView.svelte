@@ -200,7 +200,7 @@
 </script>
 
 <div class="settings-stack">
-  <PageStatus items={latest ? [{ label: outcome(latest).label, tone: outcome(latest).tone === "stop" ? "stop" : outcome(latest).tone === "ok" ? "good" : "neutral" }, { label: counts(latest) }, { label: snapshot?.configuration.enabled ? `Every ${snapshot.configuration.intervalMinutes} min` : "Scheduled checks off" }, ...(snapshot?.configuration.nextRunAt ? [{ label: `Next ${when(snapshot.configuration.nextRunAt)}` }] : [])] : [{ label: "No checks yet" }, { label: "Set up monitoring, then run a check" }]} />
+  <PageStatus label="Health summary" items={latest ? [{ label: outcome(latest).label, tone: outcome(latest).tone === "stop" ? "stop" : outcome(latest).tone === "ok" ? "good" : "neutral" }, { label: counts(latest) }, { label: snapshot?.configuration.enabled ? `Every ${snapshot.configuration.intervalMinutes} min` : "Scheduled checks off" }, ...(snapshot?.configuration.nextRunAt ? [{ label: `Next ${when(snapshot.configuration.nextRunAt)}` }] : [])] : [{ label: "No checks yet" }, { label: "Set up monitoring, then run a check" }]} />
   {#if loading}<RowsSkeleton />
   {:else if !snapshot}<ErrorState title="Health monitoring could not be loaded" detail={error} onretry={() => load(true)} />
   {:else}

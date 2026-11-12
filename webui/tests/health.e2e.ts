@@ -69,10 +69,10 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
       return respond(route, view);
     });
     await page.goto("/#/settings/health");
-    await expect(page.getByRole("heading", { name: "Health", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Backups and health", exact: true })).toBeVisible();
     await expect(page.getByText("Check provider playback and listener actions with a dedicated test account.", { exact: true })).toHaveCount(0);
     await expect(page.getByText("Server API key ready", { exact: true })).toBeVisible();
-    await expect(page.getByLabel("Page status", { exact: true }).getByText("No checks yet", { exact: true })).toBeVisible();
+    await expect(page.getByLabel("Health summary", { exact: true }).getByText("No checks yet", { exact: true })).toBeVisible();
     await expect(page.getByRole("heading", { name: "No checks yet", exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "Run now", exact: true })).toBeDisabled();
     const form = page.getByRole("form", { name: "Health monitoring", exact: true });

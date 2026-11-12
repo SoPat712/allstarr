@@ -165,7 +165,7 @@ for (const width of [1280, 390]) for (const theme of ["dark", "light"] as const)
       await capture(page, info, `${path.replace(/[/?=]/g, "-")}-${width}-${theme}`);
     }
     await settingsFixture(page);
-    await page.goto("/#/settings/playback");
+    await page.goto("/#/settings/sources");
     await expect(page.locator(".routing-view")).toBeVisible();
     await expect(page.locator(".routing-view")).toHaveAttribute("aria-busy", "false");
     for (const group of await page.locator(".routing-view .seg").all()) {
@@ -260,7 +260,7 @@ for (const width of [1280, 390]) for (const theme of ["dark", "light"] as const)
     await page.goto("/#/settings/health");
     await expectEnds(page, page.getByRole("radiogroup", { name: "Filter checks", exact: true }));
     if (width === 390) {
-      await page.goto("/#/settings/quality");
+      await page.goto("/#/settings/sources");
       await expectEnds(page, page.getByRole("radiogroup", { name: "Source orders", exact: true }));
     }
     expect(await page.pageErrors()).toEqual([]);

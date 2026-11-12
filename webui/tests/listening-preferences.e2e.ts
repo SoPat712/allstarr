@@ -144,10 +144,10 @@ test("listener autosaves each change and resets with the latest returned revisio
 
   await page.goto("/");
   await page.getByRole("button", { name: "More destinations" }).click();
-  await page.getByRole("link", { name: /Playback settings/ }).click();
-  await expect(page).toHaveURL(/#\/settings\/playback$/);
+  await page.getByRole("link", { name: /Listening settings/ }).click();
+  await expect(page).toHaveURL(/#\/settings\/listening$/);
   await expect(page.getByRole("heading", { name: "Settings", level: 1 })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Playback", level: 2 })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Listening", level: 2 })).toBeVisible();
 
   await chooseFilter(page, "Hide clean/edited versions");
   await expect(page.getByRole("switch", { name: "Show [A] for external tracks", exact: true })).toBeEnabled();
@@ -219,7 +219,7 @@ test("administrator reloads a 409 conflict before saving against the refreshed r
   });
 
   await page.goto("/");
-  await page.getByRole("link", { name: "Your playback settings" }).click();
+  await page.getByRole("link", { name: "Your listening settings" }).click();
   await chooseFilter(page, "Clean only");
   await expect(page.locator(".preferences-view").getByRole("alert")).toContainText("changed in another session");
   await page.getByRole("button", { name: "Reload latest" }).click();

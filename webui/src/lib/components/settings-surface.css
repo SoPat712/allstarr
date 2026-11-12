@@ -50,3 +50,16 @@
 .settings-card-title { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
 .scope-tag { display: inline-flex; padding: 4px 7px; border-radius: 6px; background: var(--color-panel-raised); color: var(--color-ink-muted); font-size: .66rem; font-weight: 500; letter-spacing: .04em; line-height: 1; text-transform: uppercase; }
 .scope-tag[data-scope="you"] { background: var(--color-signal-muted); color: var(--color-signal-text); }
+
+/* Settings list-detail (Material 3): one scope chip in the page header, a section label above each rounded box,
+   and list rows with 16px titles and 14px supporting text. */
+.settings-split .scope-tag { display: none; }
+.settings-split :is(.settings-content, .settings-stack) > .settings-card:has(> header) { overflow: visible; border: 0; background: transparent; }
+.settings-split :is(.settings-content, .settings-stack) > .settings-card:has(> header) > header { padding: 0 var(--space-4) var(--space-2); }
+.settings-split :is(.settings-content, .settings-stack) > .settings-card:has(> header) > header :is(h3, strong) { color: var(--color-signal-text, var(--color-signal)); font-size: var(--text-sm); font-weight: 500; }
+.settings-split :is(.settings-content, .settings-stack) > .settings-card:has(> header) > :not(header) { overflow: hidden; background: var(--color-panel); }
+.settings-split :is(.settings-content, .settings-stack) > .settings-card:has(> header) > header + * { border-top: 0; border-radius: 16px 16px 0 0; }
+.settings-split :is(.settings-content, .settings-stack) > .settings-card:has(> header) > :last-child:not(header) { border-bottom-left-radius: 16px; border-bottom-right-radius: 16px; }
+.settings-split :is(.settings-content, .settings-stack) > .settings-card:has(> header) > header + :last-child { border-radius: 16px; }
+.settings-split .settings-row > div:first-child strong { font-size: 1rem; line-height: 1.5rem; font-weight: 400; }
+.settings-split .settings-row > div:first-child small { font-size: .875rem; line-height: 1.25rem; }

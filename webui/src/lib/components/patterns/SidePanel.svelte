@@ -184,10 +184,10 @@
                 {#if description}<Dialog.Description>{description}</Dialog.Description>{/if}
               </div>
               <div class="panel-controls touch-targets">
-                <nav class="panel-navigation" aria-label="Browse items">
+                {#if onPrevious || onNext || previousLabel || nextLabel}<nav class="panel-navigation" aria-label="Browse items">
                   <Button variant="text" size="icon" aria-label={previousLabel ?? `Previous ${navigationLabel}`} disabled={!onPrevious} onclick={onPrevious}><ArrowUp size={16} aria-hidden="true" /></Button>
                   <Button variant="text" size="icon" aria-label={nextLabel ?? `Next ${navigationLabel}`} disabled={!onNext} onclick={onNext}><ArrowDown size={16} aria-hidden="true" /></Button>
-                </nav>
+                </nav>{/if}
                 {@render menu?.()}
                 {#if !phone.current}<Button variant="text" size="icon" aria-label={expanded ? "Restore" : "Expand"} aria-pressed={expanded} title={expanded ? "Restore" : "Expand"} onclick={() => expanded = !expanded}>{#if expanded}<Minimize2 size={16} aria-hidden="true" />{:else}<Maximize2 size={16} aria-hidden="true" />{/if}</Button>{/if}
                 <Dialog.Close class={buttonVariants({ variant: "text", size: "icon" })} aria-label="Close"><X size={18} aria-hidden="true" /></Dialog.Close>

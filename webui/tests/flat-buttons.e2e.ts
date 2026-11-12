@@ -141,11 +141,13 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     await expect(page.getByRole("checkbox", { name: "Select Liked Songs", exact: true })).not.toBeChecked();
     await capture("import");
 
-    // Your choices and the household limit share the Playback page.
-    await page.goto("/#/settings/playback");
-    await expect(page.getByRole("heading", { name: "Playback", level: 2, exact: true })).toBeVisible();
+    // The household limit has its own page; the source orders have theirs.
+    await page.goto("/#/settings/quality");
+    await expect(page.getByRole("heading", { name: "Sound quality", level: 2, exact: true })).toBeVisible();
     await capture("preferences");
     await expect(page.getByRole("slider", { name: "Audio quality", exact: true })).toBeVisible();
+    await page.goto("/#/settings/sources");
+    await expect(page.getByRole("heading", { name: "Music sources", level: 2, exact: true })).toBeVisible();
     const sort = page.getByRole("button", { name: "Sort by score", exact: true });
     await expectSignalText(sort);
     await expect(sort).toHaveAttribute("data-variant", "text");

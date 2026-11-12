@@ -221,18 +221,18 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
       }
       return json(route, { playback: { startPreference: playbackStart } });
     });
-    await page.goto("/#/settings/general");
-    const form = page.getByRole("form", { name: "Defaults for everyone settings", exact: true });
+    await page.goto("/#/settings/quality");
+    const form = page.getByRole("form", { name: "Starting songs settings", exact: true });
     const group = form.getByRole("radiogroup", { name: "Playback start for everyone", exact: true });
     await expect(group.getByRole("radio", { name: "Balanced", exact: true })).toBeChecked();
-    await expect(form.getByRole("button", { name: "Save changes to Defaults for everyone", exact: true })).toHaveCount(0);
+    await expect(form.getByRole("button", { name: "Save changes to Starting songs", exact: true })).toHaveCount(0);
     await group.getByRole("radio", { name: "Balanced", exact: true }).focus();
     await page.keyboard.press("ArrowRight");
     await expect(group.getByRole("radio", { name: "Best quality", exact: true })).toBeChecked();
     await expect.poll(() => writes).toEqual([{ updates: { PLAYBACK_START_PREFERENCE: "BestQuality" } }]);
     await expect(page.getByRole("status").filter({ hasText: "Saved · Playback start" })).toBeVisible();
     await expect(group.getByRole("radio", { name: "Best quality", exact: true })).toBeChecked();
-    await expect(form.getByRole("button", { name: "Save changes to Defaults for everyone", exact: true })).toHaveCount(0);
+    await expect(form.getByRole("button", { name: "Save changes to Starting songs", exact: true })).toHaveCount(0);
     for (const radio of await group.getByRole("radio").all()) {
       const box = await radio.boundingBox();
       expect(box).not.toBeNull();

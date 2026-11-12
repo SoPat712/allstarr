@@ -127,7 +127,7 @@ for (const width of [1280, 390]) for (const theme of ["dark", "light"] as const)
           expect(shown.label).toMatch(/^(Advanced|Exact quality asked from each service|Preference window|See the details|Bring in your history|More filters|Copy details|Choose individual collections|See songs|Naming script|Couldn.t check)/);
         }
         if (path === "settings") {
-          if (width === 1280) expect((await page.locator(".settings-nav").boundingBox())!.width).toBe(170);
+          if (width === 1280) expect((await page.getByRole("navigation", { name: "Settings categories" }).boundingBox())!.width).toBe(304);
         }
       }
       await capture(page, path.replace(/[/?=]/g, "-") || "home", width, theme);
@@ -464,7 +464,7 @@ for (const [width, theme] of themeVariants) {
     await page.route("**/api/admin/alerts", route => route.fulfill({ json: { channels: [], deliveries: [], revision: 1, permittedDestinations: [],
       thresholds: { warningBytes: 5 * 1024 ** 3, warningPercent: 5, criticalBytes: 1024 ** 3, criticalPercent: 1, hysteresisBytes: 1024 ** 3, hysteresisPercent: 1, cooldownMinutes: 30 } } }));
 
-    await page.goto("/#/settings/playback");
+    await page.goto("/#/settings/quality");
     const row = page.locator('[data-setting="MATCHING_LOCAL_PREFERENCE_PERCENT"]');
     const toggle = row.getByRole("switch", { name: "Prefer your own music when unsure", exact: true });
     await expect(toggle).toBeVisible();

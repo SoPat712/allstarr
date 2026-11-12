@@ -175,7 +175,7 @@
 
 {#if administrator}
   <div class="settings-stack">
-    <PageStatus items={[{ label: status?.lastSuccessAt ? `Last backup verified ${date(status.lastSuccessAt)}` : "No verified backup yet" }, ...(status?.lastBytes ? [{ label: size(status.lastBytes) }] : []), { label: data?.backupPolicy?.enabled ? `Next ${date(status?.nextRunAt)}` : "Scheduling off" }, ...(data?.databaseBytes == null ? [] : [{ label: `${formatDownloadSize(data.databaseBytes)} database` }])]} />
+    <PageStatus label="Backup summary" items={[{ label: status?.lastSuccessAt ? `Last backup verified ${date(status.lastSuccessAt)}` : "No verified backup yet" }, ...(status?.lastBytes ? [{ label: size(status.lastBytes) }] : []), { label: data?.backupPolicy?.enabled ? `Next ${date(status?.nextRunAt)}` : "Scheduling off" }, ...(data?.databaseBytes == null ? [] : [{ label: `${formatDownloadSize(data.databaseBytes)} database` }])]} />
     {#if error}<ErrorState title="Backup status is unavailable" detail={error} onretry={() => { polls = 0; return refresh(); }} />{/if}
     {#if !data && !error}<RowsSkeleton count={4} />
     {:else if data}

@@ -189,7 +189,7 @@
     {/if}
 
     {#if !embedded}<PageStatus items={[{ label: `${groups.length} source orders` }, { label: "Changes save as you make them" }]} />{/if}
-    {#if policyFields.length}
+    {#if policyFields.length && !embedded}
       <SettingsFields section={{ id: "quality-policy", label: "Audio quality", fields: policyFields }} {config} onChanged={async () => { await refresh(); loadScores(); }} />
     {/if}
     <div class="routing-groups">

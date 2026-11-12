@@ -157,7 +157,7 @@ test("Listeners can open their own settings and never request the household endp
   await expect.poll(() => state.personal.replayGain).toBe(false);
   expect(state.householdReads).toBe(0);
   expect(state.setupReads).toBe(0);
-  await expect(page.getByRole("navigation", { name: "Settings sections", exact: true }).getByRole("link", { name: "Adding to the library", exact: true })).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "Settings categories", exact: true }).getByRole("link", { name: /^Adding to the library/ })).toBeVisible();
 });
 
 test("Inherited profiles follow household saves until a personal profile is saved", async ({ page }) => {
