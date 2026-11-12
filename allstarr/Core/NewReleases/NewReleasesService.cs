@@ -443,6 +443,7 @@ public sealed partial class NewReleasesService(IDbContextFactory<AllstarrDbConte
             item.BackendPrincipalId == user.BackendPrincipalId).Select(item => item.PayloadJson).ToArrayAsync(token);
         var dismissedSources = dismissed.SelectMany(json => JsonSerializer.Deserialize<ReleaseSource[]>(json) ?? []).ToArray();
         var cleanOnly = (await settings.GetPreferencesAsync(owner, token)).Values.ExplicitFilter == "CleanOnly";
+        using var grouping = RequestTiming.Current?.Stage("merge");
         var entries = ReleaseInboxProjection.Group(sources, clock.UtcNow)
             .Where(item => (!cleanOnly || item.IsExplicit == false) &&
                 !item.Sources.Any(source => dismissedSources.Any(dismissed => ReleaseInboxProjection.Dismissed(source, dismissed)))).ToArray();

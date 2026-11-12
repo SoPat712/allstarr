@@ -234,7 +234,8 @@ public partial class JellyfinController : ControllerBase
 
         var cover = resourceKind switch
         {
-            "song" => (await _providerGateway.GetSongAsync(protocol, provider, externalId))?.CoverArtUrl,
+            "song" => await _providerGateway.GetStoredSongArtworkAsync(protocol, provider, externalId) ??
+                (await _providerGateway.GetSongAsync(protocol, provider, externalId))?.CoverArtUrl,
             "album" => (await _providerGateway.GetAlbumAsync(protocol, provider, externalId))?.CoverArtUrl,
             "artist" => (await _providerGateway.GetArtistAsync(protocol, provider, externalId))?.ImageUrl,
             "playlist" => (await _providerGateway.GetPlaylistAsync(protocol, provider, externalId))?.CoverUrl,

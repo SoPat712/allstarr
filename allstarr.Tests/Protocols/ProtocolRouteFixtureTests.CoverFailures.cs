@@ -101,8 +101,8 @@ public sealed partial class ProtocolRouteFixtureTests
     {
         byte[] bytes = [0xFF, 0xD8, 0xFF, 0xD9];
         var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
-        gateway.Setup(service => service.GetSongAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "42"))
-            .ReturnsAsync(new Song { Id = "ext-deezer-song-42", CoverArtUrl = "https://images.example.test/missing.jpg" });
+        gateway.Setup(service => service.GetStoredSongArtworkAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "42"))
+            .ReturnsAsync("https://images.example.test/missing.jpg");
         gateway.Setup(service => service.GetStoredSongAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "42"))
             .ReturnsAsync(new Song { Id = "ext-deezer-song-42", AlbumId = "ext-deezer-album-9" });
         gateway.Setup(service => service.GetStoredAlbumAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "9"))
@@ -123,6 +123,7 @@ public sealed partial class ProtocolRouteFixtureTests
         using var response = await client.GetAsync("/Items/ext-deezer-song-42/Images/Primary?api_key=fixture-key");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal(bytes, await response.Content.ReadAsByteArrayAsync());
+        gateway.Verify(service => service.GetSongAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "42"), Times.Never);
         gateway.Verify(service => service.GetAlbumAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), It.IsAny<string>()), Times.Never);
         gateway.VerifyAll();
         gateway.VerifyNoOtherCalls();

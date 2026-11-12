@@ -99,6 +99,8 @@ public sealed partial class ProtocolRouteFixtureTests
             var path = request.RequestUri!.AbsolutePath;
             var query = Uri.UnescapeDataString(request.RequestUri.Query);
             if (path == "/Users/Me") return Json(200, """{"Id":"listener"}""");
+            if (path == "/Users/listener/Items" && query.Contains("includeItemTypes=MusicAlbum", StringComparison.Ordinal))
+                return Json(200, """{"Items":[{"Id":"lib-album","Type":"MusicAlbum","Name":"Owned album","AlbumArtist":"Library Friend","AlbumArtists":[{"Id":"lib-artist","Name":"Library Friend"}],"ProductionYear":2019,"ChildCount":9,"ImageTags":{"Primary":"owned-art"}}]}""");
             if (path == "/Artists/AlbumArtists" && query.Contains("searchTerm=Library Friend", StringComparison.Ordinal))
                 return Json(200, """{"Items":[{"Id":"lib-artist","Name":"Library Friend"}]}""");
             if (path == "/Users/listener/Items" && (query.Contains("albumArtistIds=lib-artist", StringComparison.Ordinal) || query.Contains("Ids=lib-album", StringComparison.Ordinal)))
@@ -312,11 +314,12 @@ public sealed partial class ProtocolRouteFixtureTests
         var keys = Array.Empty<string>();
         try
         {
+            SimilarAlbumsReader.TrimCacheForTests();
             SimilarAlbumsReader.PutCacheForTests(expired, DateTimeOffset.UnixEpoch);
             var fresh = SimilarAlbumsReader.CacheCountForTests() - 1;
             var room = Math.Max(1, SimilarAlbumsReader.MaxCacheEntries - fresh + 1);
             keys = Enumerable.Range(0, room).Select(index => prefix + index.ToString("D4")).ToArray();
-            var start = DateTimeOffset.UtcNow.AddHours(-5);
+            var start = DateTimeOffset.UtcNow.AddMinutes(-1);
             for (var index = 0; index < keys.Length; index++)
                 SimilarAlbumsReader.PutCacheForTests(keys[index], start.AddSeconds(index));
             SimilarAlbumsReader.TrimCacheForTests();

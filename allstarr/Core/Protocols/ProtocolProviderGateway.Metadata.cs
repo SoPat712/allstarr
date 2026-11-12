@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Text.Json;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Storage;
+using allstarr.Core.Settings;
 using allstarr.Models.Domain;
 using allstarr.Services.Common;
 
@@ -130,6 +131,34 @@ public sealed partial class ProtocolProviderGateway
         if (song == null || song.IsLocal || NormalizeProvider(song.ExternalProvider) != provider || song.ExternalId != externalId) return null;
         return new(song.Title, song.Artist, song.Album,
             song.Duration is > 0 and <= 604800 ? song.Duration.Value * 1000L : null, song.CanonicalRecordingId);
+    }
+
+    public async Task<string?> GetStoredSongArtworkAsync(ProtocolExecutionContext protocol, string providerId, string externalId)
+    {
+        providerId = NormalizeProvider(providerId);
+        var policy = await ResolveEffectivePolicyAsync(protocol);
+        if (providerId == "allstarr")
+            return applicationCache == null || !Guid.TryParse(externalId, out var recording) ? null :
+                await applicationCache.GetStringAsync(SongArtworkKey(protocol, policy, recording.ToString("D")));
+        if (policy?.IsEnabled(providerId) == false) return null;
+        var actor = protocol.Actor ?? new ProviderActorContext(ProviderActorKind.PublicRead, null);
+        var song = await ReadCachedSongAsync(actor, providerId, externalId) ??
+            await ReadAccountMetadataAsync<Song>(protocol, actor, providerId, ProviderResourceKind.Track, externalId, true) ??
+            await ReadAccountMetadataAsync<Song>(protocol, actor, providerId, ProviderResourceKind.Track, externalId, false);
+        if (song == null || policy?.Includes(song) == false ||
+            ProviderArtworkFallback.IsFallback(providerId, song.CoverArtUrl, "song")) return null;
+        return song.CoverArtUrl;
+    }
+
+    private static string SongArtworkKey(ProtocolExecutionContext protocol, EffectiveProviderPolicySnapshot? policy, string recordingId) =>
+        CacheKeyBuilder.BuildProtocolMetadataKey("allstarr", JsonSerializer.Serialize(new { protocol.Actor, policy }), "song-artwork", recordingId);
+
+    private async Task RememberSongArtworkAsync(ProtocolExecutionContext protocol, EffectiveProviderPolicySnapshot? policy, Song song)
+    {
+        if (applicationCache?.IsEnabled != true || song.CanonicalRecordingId is not { } recording ||
+            string.IsNullOrWhiteSpace(song.CoverArtUrl) || ProviderArtworkFallback.IsFallback(song.ExternalProvider, song.CoverArtUrl, "song")) return;
+        try { await applicationCache.SetStringAsync(SongArtworkKey(protocol, policy, recording.ToString("D")), song.CoverArtUrl, TimeSpan.FromMinutes(1)); }
+        catch (Exception error) { logger?.LogDebug("Could not retain song artwork ({ErrorType})", error.GetType().Name); }
     }
 
     public async Task<Album?> GetStoredAlbumAsync(ProtocolExecutionContext protocol, string providerId, string externalId)

@@ -90,6 +90,8 @@ public sealed partial class ProtocolRouteFixtureTests
         var realBytes = encoded.ToArray();
         var cover = real ? "https://images.example.test/cover.png" : null;
         var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        gateway.Setup(item => item.GetStoredSongArtworkAsync(It.IsAny<ProtocolExecutionContext>(), provider, "resource"))
+            .ReturnsAsync((string?)null);
         gateway.Setup(item => item.GetSongAsync(It.IsAny<ProtocolExecutionContext>(), provider, "resource"))
             .ReturnsAsync(new Song { Id = $"ext-{provider}-song-resource", ExternalProvider = provider, ExternalId = "resource", CoverArtUrl = cover });
         gateway.Setup(item => item.GetAlbumAsync(It.IsAny<ProtocolExecutionContext>(), provider, "resource"))

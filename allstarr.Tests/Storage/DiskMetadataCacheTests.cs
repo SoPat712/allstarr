@@ -71,13 +71,14 @@ public sealed class DiskMetadataCacheTests : IDisposable
         providers.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Metadata)).Returns(Array.Empty<string>());
         var execution = new ProtocolExecutionContext(ProtocolKind.Jellyfin, "main", "listener",
             new AllstarrPrincipal(listener, "jellyfin", "main", "listener", "Listener", false), "test", clock.UtcNow.AddMinutes(5), default);
-        var scope = SimilarAlbumsReader.CacheKey(listener, "main", "album", 12, null, []);
+        var scope = SimilarAlbumsReader.CacheKey(listener, "main", "album", 12, null, []) +
+            "|v2|Jellyfin|listener|PrimaryImageAspectRatio,ProductionYear,ChildCount|";
         var key = CacheKeyBuilder.BuildProtocolMetadataKey("allstarr", scope, "similar-albums", "album");
         var expected = new ClientSimilarAlbums("album", "fixture",
             [new("second", "Second", "Artist", null, 2026, 2, null, "fixture", true, null),
              new("first", "First", "Artist", null, 2025, 3, null, "library", false, null)]);
         var first = Create();
-        await first.Cache.SetAsync(key, expected, TimeSpan.FromHours(6));
+        await first.Cache.SetAsync(key, new { At = DateTimeOffset.UtcNow, Value = expected, Native = new Dictionary<string, JsonElement>() }, TimeSpan.FromMinutes(2));
         await first.Disk.FlushWritesAsync();
         var reader = new SimilarAlbumsReader(providers.Object, null!, null!, null!, null!, applicationCache: Create().Cache);
         var restored = await reader.ReadAsync(new DefaultHttpContext(), execution, "album", 12);

@@ -22,7 +22,7 @@ public sealed class ReleasesController(ReleaseReader reader, ReleaseArtworkReade
     {
         try
         {
-            var source = await reader.CoverAsync(Execution, releaseId);
+            var source = await reader.CoverAsync(HttpContext, Execution, releaseId);
             if (source == null) return NotFound();
             var asset = await artwork.ReadAsync(Execution.RequireActor().EffectiveUserId!.Value, Execution,
                 source.ProviderId, source.AlbumId, Execution.CancellationToken, releaseId, cache);

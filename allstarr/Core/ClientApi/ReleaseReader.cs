@@ -20,17 +20,7 @@ public sealed class ReleaseReader(NewReleasesService releases, IProtocolProvider
     public async Task<ClientReleases> ListAsync(HttpContext http, ProtocolExecutionContext execution)
     {
         using var merging = RequestTiming.Current?.Stage("merge");
-        var access = await libraryAccess.ResolveAsync(execution, execution.CancellationToken);
-        return (await FeedReadCache.ReadAsync<ClientReleases>(factory, cache, readCoalescer, clock, execution,
-            "releases", access, http, async (request, context) =>
-                await request!.RequestServices.GetRequiredService<ReleaseReader>().ListCoreAsync(context)))!;
-    }
-
-    private async Task<ClientReleases> ListCoreAsync(ProtocolExecutionContext execution)
-    {
-        var owner = execution.RequireActor().EffectiveUserId!.Value;
-        await releases.EnsurePollingAsync(owner, execution.CancellationToken);
-        var inbox = await releases.ReadAsync(owner, execution.CancellationToken);
+        var inbox = await InboxAsync(http, execution);
         using var serialization = RequestTiming.Current?.Stage("serialize");
         var follows = inbox.Coverage.Select(item => item.Artist).ToArray();
         return new(inbox.Entries.Select(entry =>
@@ -57,10 +47,23 @@ public sealed class ReleaseReader(NewReleasesService releases, IProtocolProvider
         ? $"/Items/{Uri.EscapeDataString(id)}/Images/Primary?tag={Uri.EscapeDataString(JellyfinItemArtwork.PrimaryImageTag(id, false))}"
         : $"/Items/{Uri.EscapeDataString(id)}/Images/Primary" + (string.IsNullOrWhiteSpace(tag) ? "" : $"?tag={Uri.EscapeDataString(tag)}");
 
-    public async Task<ReleaseSource?> CoverAsync(ProtocolExecutionContext execution, string releaseId)
+    private async Task<ReleaseInbox> InboxAsync(HttpContext http, ProtocolExecutionContext execution)
+    {
+        var access = await libraryAccess.ResolveAsync(execution, execution.CancellationToken);
+        return (await FeedReadCache.ReadAsync<ReleaseInbox>(factory, cache, readCoalescer, clock, execution,
+            "releases-inbox", access, http, async (request, context) =>
+            {
+                var service = request!.RequestServices.GetRequiredService<NewReleasesService>();
+                var owner = context.RequireActor().EffectiveUserId!.Value;
+                await service.EnsurePollingAsync(owner, context.CancellationToken);
+                return (await service.ReadAsync(owner, context.CancellationToken)) with { Excluded = [] };
+            }))!;
+    }
+
+    public async Task<ReleaseSource?> CoverAsync(HttpContext http, ProtocolExecutionContext execution, string releaseId)
     {
         using var matching = RequestTiming.Current?.Stage("match");
-        var inbox = await releases.ReadAsync(execution.RequireActor().EffectiveUserId!.Value, execution.CancellationToken);
+        var inbox = await InboxAsync(http, execution);
         var entry = inbox.Entries.FirstOrDefault(item => item.Id == releaseId);
         return entry == null ? null : ReleaseInboxProjection.PrimarySource(entry.Sources);
     }

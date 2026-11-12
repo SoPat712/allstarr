@@ -278,7 +278,7 @@ builder.WebHost.ConfigureKestrel(serverOptions =>
 builder.Services.AddResponseCompression(options =>
 {
     options.EnableForHttps = true;
-    options.MimeTypes = new[] { "application/json", "text/json" };
+    options.MimeTypes = new[] { "application/json", "text/json", "application/x-ndjson" };
 });
 
 builder.Services.AddControllers()

@@ -6,11 +6,65 @@ using allstarr.Core.Storage;
 using allstarr.Services;
 using Microsoft.Extensions.Configuration;
 using Moq;
+using System.Text.Json;
+using allstarr.Models.Domain;
 
 namespace allstarr.Tests;
 
 public sealed partial class ProtocolProviderStreamingGatewayTests
 {
+    [Fact]
+    public async Task SongArtworkReusesTheCanonicalDisplayCoverForTheSameListener()
+    {
+        var context = Context();
+        var recording = Guid.NewGuid();
+        var song = new Song
+        {
+            Id = $"ext-allstarr-song-{recording:D}",
+            CanonicalRecordingId = recording,
+            Title = "Stored title",
+            Artist = "Stored artist",
+            Album = "Stored album",
+            AlbumId = "ext-deezer-album-stored",
+            ExternalProvider = "deezer",
+            ExternalId = "stored",
+            CoverArtUrl = "https://artwork.example.invalid/display.jpg"
+        };
+        var identities = new Mock<ITrackIdentityService>(MockBehavior.Strict);
+        identities.Setup(service => service.GetStoredSongsAsync(context.RequireActor(), song.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((IReadOnlyList<Song>)[song]);
+        var router = new Mock<IProviderRouter>(MockBehavior.Strict);
+        var gateway = new ProtocolProviderGateway(router.Object, MetadataRegistry(), new HttpClientFactory(),
+            identities: identities.Object, applicationCache: new TestMemoryApplicationCache());
+        Assert.NotNull(await gateway.GetStoredSongAsync(context, "allstarr", recording.ToString("D")));
+        identities.Invocations.Clear();
+        Assert.Equal(song.CoverArtUrl, await gateway.GetStoredSongArtworkAsync(context, "allstarr", recording.ToString("N")));
+        Assert.Null(await gateway.GetStoredSongArtworkAsync(Context(), "allstarr", recording.ToString("D")));
+        identities.VerifyNoOtherCalls();
+        router.VerifyNoOtherCalls();
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SongArtworkReadsTheStoredSearchOrDetailCoverWithoutMatching(bool detail)
+    {
+        var context = Context();
+        var cache = new TestMemoryApplicationCache();
+        const string url = "https://artwork.example.invalid/search-cover.jpg";
+        var song = new Song { Id = "ext-deezer-song-stored-art", ExternalProvider = "deezer", ExternalId = "stored-art", CoverArtUrl = url };
+        await cache.SetStringAsync(ProtocolProviderGateway.MetadataCacheKey(context.RequireActor(), "deezer",
+            ProviderResourceKind.Track, "stored-art", detail), JsonSerializer.Serialize(song));
+        var identities = new Mock<ITrackIdentityService>(MockBehavior.Strict);
+        var router = new Mock<IProviderRouter>(MockBehavior.Strict);
+        var gateway = new ProtocolProviderGateway(router.Object, MetadataRegistry(), new HttpClientFactory(),
+            identities: identities.Object, applicationCache: cache);
+        Assert.Equal(url, await gateway.GetStoredSongArtworkAsync(context, "deezer", "stored-art"));
+        router.VerifyNoOtherCalls();
+        identities.VerifyNoOtherCalls();
+        Assert.Null(await gateway.GetStoredSongArtworkAsync(context, "allstarr", "stored-art"));
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

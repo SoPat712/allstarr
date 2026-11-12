@@ -67,6 +67,7 @@ public sealed partial class ProtocolProviderGateway
         }
         NormalizeDisplaySource(chosen);
         if (MediaFacts is { } store) await store.ApplyStoredMediaFactsAsync(actor, [chosen], protocol.CancellationToken);
+        await RememberSongArtworkAsync(protocol, policy, chosen);
         return chosen;
     }
 

@@ -86,6 +86,9 @@ public interface IProtocolProviderGateway
     Task<Song?> GetStoredSongAsync(ProtocolExecutionContext protocol, string providerId, string externalId) =>
         Task.FromResult<Song?>(null);
 
+    Task<string?> GetStoredSongArtworkAsync(ProtocolExecutionContext protocol, string providerId, string externalId) =>
+        Task.FromResult<string?>(null);
+
     Task<Album?> GetStoredAlbumAsync(ProtocolExecutionContext protocol, string providerId, string externalId) =>
         Task.FromResult<Album?>(null);
 

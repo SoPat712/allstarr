@@ -131,6 +131,9 @@ public sealed partial class AllstarrDbContext
                         case "personal-mixes-preview":
                         case "release-rate":
                             break;
+                        case "library-artist-fix":
+                            changed.Add((null, "library"));
+                            break;
                         default:
                             changed.Add((snapshot.OwnerUserId, "library"));
                             break;

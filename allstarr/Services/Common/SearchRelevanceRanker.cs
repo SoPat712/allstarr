@@ -6,23 +6,26 @@ public static partial class SearchRelevanceRanker
     private static partial System.Text.RegularExpressions.Regex VersionSegmentRegex();
 
     public static double Score(string query, string name, string? artist = null, string? album = null,
-        string? albumArtist = null) => Score(query, name, artist, album, albumArtist, null);
+        string? albumArtist = null, CancellationToken cancellationToken = default) => Score(query, name, artist, album, albumArtist, null, cancellationToken);
 
     private static double Score(string query, string name, string? artist, string? album,
-        string? albumArtist, IEnumerable<string>? alternateTitles)
+        string? albumArtist, IEnumerable<string>? alternateTitles, CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (string.IsNullOrWhiteSpace(query) || string.IsNullOrWhiteSpace(name)) return 0;
         var queryTokens = Tokens(query);
         if (queryTokens.Count == 0 || Tokens(name).Count == 0) return 0;
-        var fit = TitleFit(query, name, artist, albumArtist, queryTokens);
+        var fit = TitleFit(query, name, artist, albumArtist, queryTokens, cancellationToken);
         foreach (var alias in (alternateTitles ?? []).Take(8).Where(value =>
                      !string.IsNullOrWhiteSpace(value) && value.Length <= 500 && value == value.Trim() && !value.Any(char.IsControl)))
         {
-            var candidate = TitleFit(query, alias, artist, albumArtist, queryTokens);
+            cancellationToken.ThrowIfCancellationRequested();
+            var candidate = TitleFit(query, alias, artist, albumArtist, queryTokens, cancellationToken);
             if (candidate.Score > fit.Score || candidate.Score == fit.Score && candidate.MatchesMainArtist)
                 fit = candidate;
         }
         var (score, matchesMainArtist) = fit;
+        cancellationToken.ThrowIfCancellationRequested();
 
         var requestedVariants = VariantTags(query, requireDecoration: false);
         var variants = VariantTags(name, requireDecoration: true);
@@ -50,18 +53,19 @@ public static partial class SearchRelevanceRanker
     }
 
     private static (double Score, bool MatchesMainArtist) TitleFit(
-        string query, string name, string? artist, string? albumArtist, IReadOnlySet<string> queryTokens)
+        string query, string name, string? artist, string? albumArtist, IReadOnlySet<string> queryTokens, CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var nameTokens = Tokens(name);
         if (nameTokens.Count == 0) return (0, false);
         // A title substring alone must not satisfy the artist portion of a combined query.
         var titleCoverage = (double)queryTokens.Count(nameTokens.Contains) / queryTokens.Count;
-        double titleScore = FuzzyMatcher.CalculateSimilarityAggressive(query, name);
+        double titleScore = FuzzyMatcher.CalculateSearchSimilarityAggressive(query, name, cancellationToken);
         if (nameTokens.IsProperSubsetOf(queryTokens)) titleScore *= titleCoverage;
         var combined = Tokens($"{name} {artist}");
         var matched = queryTokens.Count(combined.Contains);
         var coverageScore = 100 * (0.9 * matched / queryTokens.Count + 0.1 * matched / combined.Count);
-        double combinedScore = FuzzyMatcher.CalculateSimilarityAggressive(query, $"{name} {artist}");
+        double combinedScore = FuzzyMatcher.CalculateSearchSimilarityAggressive(query, $"{name} {artist}", cancellationToken);
         if (combined.IsProperSubsetOf(queryTokens)) combinedScore *= (double)matched / queryTokens.Count;
         var score = Math.Max(titleScore, Math.Max(coverageScore, combinedScore));
 
@@ -82,14 +86,14 @@ public static partial class SearchRelevanceRanker
 
     public static double ScoreSong(string query, string title, string? artist, string? album = null,
         string? albumArtist = null, double? durationSeconds = null, bool provenRecording = false,
-        bool hasKnownDurationVersion = false) =>
-        ScoreSong(query, title, artist, album, albumArtist, durationSeconds, provenRecording, hasKnownDurationVersion, null);
+        bool hasKnownDurationVersion = false, CancellationToken cancellationToken = default) =>
+        ScoreSong(query, title, artist, album, albumArtist, durationSeconds, provenRecording, hasKnownDurationVersion, null, cancellationToken);
 
     private static double ScoreSong(string query, string title, string? artist, string? album,
         string? albumArtist, double? durationSeconds, bool provenRecording,
-        bool hasKnownDurationVersion, IEnumerable<string>? alternateTitles)
+        bool hasKnownDurationVersion, IEnumerable<string>? alternateTitles, CancellationToken cancellationToken)
     {
-        var score = Score(query, title, artist, album, albumArtist, alternateTitles);
+        var score = Score(query, title, artist, album, albumArtist, alternateTitles, cancellationToken);
         if (durationSeconds is > 0 and < 60) score = Math.Max(0, score - 30);
         else if (durationSeconds is not > 0 && hasKnownDurationVersion) score = Math.Max(0, score - 25);
         // Recording evidence breaks relevance ties without overtaking the next relevance band.

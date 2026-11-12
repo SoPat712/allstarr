@@ -35,7 +35,11 @@ public partial class JellyfinController
                 .OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase).Select(pair => new { pair.Key, Value = pair.Value.ToString() })
         }));
         if (await _cache.GetAsync<RecommendationResponse>(key) is { } cached)
-            return new ContentResult { Content = cached.Body, ContentType = cached.ContentType, StatusCode = cached.Status };
+        {
+            using var body = JsonDocument.Parse(cached.Body);
+            if (kind != "similar" || !body.RootElement.TryGetProperty("AllstarrBasedOn", out _))
+                return new ContentResult { Content = cached.Body, ContentType = cached.ContentType, StatusCode = cached.Status };
+        }
         var clock = HttpContext.RequestServices.GetService<TimeProvider>() ?? TimeProvider.System;
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3), clock);
         var aborted = HttpContext.RequestAborted;
@@ -62,7 +66,8 @@ public partial class JellyfinController
             if (response != null && !linked.IsCancellationRequested)
             {
                 using var body = JsonDocument.Parse(response.Body);
-                if (body.RootElement.TryGetProperty("Items", out var items) && items.GetArrayLength() > 0)
+                if (body.RootElement.TryGetProperty("Items", out var items) && items.GetArrayLength() > 0 &&
+                    (kind != "similar" || !body.RootElement.TryGetProperty("AllstarrBasedOn", out _)))
                     await _cache.SetAsync(key, response, TimeSpan.FromHours(6));
             }
             return result;

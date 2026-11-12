@@ -3,26 +3,32 @@ using System.Text.Json;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Matching;
 using allstarr.Core.Music;
+using allstarr.Core.Operations;
 using allstarr.Core.Protocols;
 using allstarr.Core.Settings;
+using allstarr.Core.Storage;
 using allstarr.Models.Domain;
 using allstarr.Services.Common;
 using allstarr.Services.Jellyfin;
 using allstarr.Services.Local;
+using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Core.ClientApi;
 
 // Albums by the artists a source relates to an album's artist, from the library when it has one of theirs.
 public sealed class SimilarAlbumsReader(IProtocolProviderGateway providers, SavedLibraryReader saved,
-    JellyfinProxyService jellyfin, IProviderRegistry registry, LibraryProviderResolver libraryProvider, LibraryArtistIndex? artistIndex = null, TimeProvider? timeProvider = null, IApplicationCache? applicationCache = null)
+    JellyfinProxyService jellyfin, IProviderRegistry registry, LibraryProviderResolver libraryProvider, LibraryArtistIndex? artistIndex = null, TimeProvider? timeProvider = null, IApplicationCache? applicationCache = null,
+    IDbContextFactory<AllstarrDbContext>? contexts = null, IBackendLibraryAccessResolver? libraryAccess = null)
 {
     private const int RelatedArtists = 24;
     private const string RelatedArtistsSource = "deezer";
     private const int Lookups = 4;
     private const int ArtistAlbumSample = 24;
     internal const int MaxCacheEntries = 500;
-    private static readonly TimeSpan FreshFor = TimeSpan.FromHours(6);
-    private static readonly ConcurrentDictionary<string, (DateTimeOffset At, ClientSimilarAlbums Value)> Recent = new();
+    private static readonly TimeSpan FreshFor = TimeSpan.FromMinutes(2);
+    private static readonly object NativeItemsKey = new();
+    private static readonly ConcurrentDictionary<string, CachedSimilar> Recent = new();
+    private sealed record CachedSimilar(DateTimeOffset At, ClientSimilarAlbums Value, Dictionary<string, JsonElement> Native);
 
     private sealed record Seed(string Title, string Artist, Dictionary<string, string> ArtistIds);
 
@@ -30,15 +36,33 @@ public sealed class SimilarAlbumsReader(IProtocolProviderGateway providers, Save
     {
         limit = Math.Clamp(limit, 1, 24);
         var owner = execution.RequireActor().EffectiveUserId!.Value;
+        var clock = timeProvider ?? TimeProvider.System;
         var metadata = providers.GetProviderOrder(ProviderCapabilityKind.Metadata) ?? [];
-        var key = CacheKey(owner, execution.BackendInstanceId, itemId, limit, execution.Policy, metadata);
-        if (Recent.TryGetValue(key, out var cached) && DateTimeOffset.UtcNow - cached.At < FreshFor) return cached.Value;
+        var requested = http.Request.Query["Fields"].ToString();
+        var fields = http.Request.Path.StartsWithSegments("/allstarr") ? "ChildCount,ProductionYear,AlbumArtist" :
+            string.IsNullOrWhiteSpace(requested) ? "PrimaryImageAspectRatio,ProductionYear,ChildCount" : requested;
+        var access = libraryAccess == null ? null : await libraryAccess.ResolveAsync(execution, execution.CancellationToken);
+        await using var db = contexts == null ? null : await contexts.CreateDbContextAsync(execution.CancellationToken);
+        var libraryKey = db?.FeedReadKey(execution, "library-similar", access);
+        var key = CacheKey(owner, execution.BackendInstanceId, itemId, limit, execution.Policy, metadata) +
+            $"|v2|{execution.Protocol}|{execution.VerifiedBackendPrincipalId}|{fields}|{libraryKey}";
+        if (access?.Succeeded != false && Recent.TryGetValue(key, out var cached) && clock.GetUtcNow() - cached.At < FreshFor)
+        {
+            RequestTiming.Current?.NoteCache(true);
+            http.Items[NativeItemsKey] = cached.Native;
+            return cached.Value;
+        }
 
         var persistedKey = CacheKeyBuilder.BuildProtocolMetadataKey("allstarr", key, "similar-albums", itemId);
-        if (applicationCache != null && await applicationCache.GetAsync<ClientSimilarAlbums>(persistedKey) is { } retained)
-            return retained;
+        if (access?.Succeeded != false && applicationCache != null && await applicationCache.GetAsync<CachedSimilar>(persistedKey) is { } retained &&
+            clock.GetUtcNow() - retained.At < FreshFor)
+        {
+            RequestTiming.Current?.NoteCache(true);
+            http.Items[NativeItemsKey] = retained.Native;
+            return retained.Value;
+        }
+        RequestTiming.Current?.NoteCache(false);
 
-        var clock = timeProvider ?? TimeProvider.System;
         using var timeout = new CancellationTokenSource(TimeSpan.FromMilliseconds(2700), clock);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(execution.CancellationToken, timeout.Token);
         var token = linked.Token;
@@ -50,11 +74,23 @@ public sealed class SimilarAlbumsReader(IProtocolProviderGateway providers, Save
         string? basedOn;
         IReadOnlyList<Artist> related;
         ItemDetailsProvider library;
+        JsonElement[] libraryAlbums;
+        (string Id, string Name)[]? libraryArtists;
+        bool complete;
         try
         {
-            seed = await SeedAsync(http, execution, itemId).WaitAsync(token);
-            (basedOn, related) = await RelatedArtistsAsync(execution, seed).WaitAsync(token);
-            library = await libraryProvider.ResolveAsync(http, execution).WaitAsync(token);
+            var libraryTask = LibraryAlbumsAsync(http, execution, fields);
+            var artistsTask = LibraryArtistsAsync(http, execution);
+            seed = await SeedAsync(http, execution, itemId, libraryTask).WaitAsync(token);
+            var relatedTask = RelatedArtistsAsync(execution, seed);
+            var providerTask = libraryProvider.ResolveAsync(http, execution);
+            (basedOn, related) = await relatedTask.WaitAsync(token);
+            var rows = await libraryTask.WaitAsync(token);
+            libraryAlbums = rows ?? [];
+            libraryArtists = await artistsTask.WaitAsync(token);
+            complete = rows != null && libraryArtists != null &&
+                (rows.Length == 0 || libraryArtists.Length > 0 && rows.All(album => AlbumArtists(album).Any()));
+            library = await providerTask.WaitAsync(token);
         }
         catch (OperationCanceledException) when (timeout.IsCancellationRequested && !original.CancellationToken.IsCancellationRequested)
         { return new(itemId, null, []); }
@@ -64,7 +100,7 @@ public sealed class SimilarAlbumsReader(IProtocolProviderGateway providers, Save
         {
             try { await slots.WaitAsync(token); }
             catch (OperationCanceledException) when (timeout.IsCancellationRequested) { return null; }
-            try { return await PickAsync(http, execution, artist, library, icons).WaitAsync(token); }
+            try { return await PickAsync(http, execution, artist, library, icons, libraryAlbums, libraryArtists).WaitAsync(token); }
             catch (Exception exception) when (exception is HttpRequestException or JsonException or InvalidOperationException ||
                 exception is OperationCanceledException && timeout.IsCancellationRequested)
             { return null; }
@@ -75,11 +111,23 @@ public sealed class SimilarAlbumsReader(IProtocolProviderGateway providers, Save
             .Where(album => !SameName(album.Artist, seed.Artist))
             .DistinctBy(album => album.Id).Take(limit).ToArray();
         var result = new ClientSimilarAlbums(itemId, basedOn, albums);
-        Recent[key] = (DateTimeOffset.UtcNow, result);
-        TrimCache();
-        if (applicationCache != null) await applicationCache.SetAsync(persistedKey, result, FreshFor);
+        var selected = albums.Where(album => !album.IsExternal).Select(album => album.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var native = libraryAlbums.Where(album => album.TryGetProperty("Id", out var id) && selected.Contains(id.GetString() ?? ""))
+            .DistinctBy(album => album.GetProperty("Id").GetString(), StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(album => album.GetProperty("Id").GetString()!, StringComparer.OrdinalIgnoreCase);
+        http.Items[NativeItemsKey] = native;
+        if (!token.IsCancellationRequested && complete && access?.Succeeded != false && libraryKey == db?.FeedReadKey(execution, "library-similar", access))
+        {
+            var entry = new CachedSimilar(clock.GetUtcNow(), result, native);
+            Recent[key] = entry;
+            TrimCache(clock.GetUtcNow());
+            if (applicationCache != null) await applicationCache.SetAsync(persistedKey, entry, FreshFor);
+        }
         return result;
     }
+
+    internal static IReadOnlyDictionary<string, JsonElement> NativeAlbums(HttpContext http) =>
+        http.Items.TryGetValue(NativeItemsKey, out var value) && value is Dictionary<string, JsonElement> rows ? rows : new Dictionary<string, JsonElement>();
 
     // Clean-only and the metadata sources this read consults are part of the answer, so a settings change misses.
     internal static string CacheKey(Guid owner, string backendId, string itemId, int limit,
@@ -94,9 +142,9 @@ public sealed class SimilarAlbumsReader(IProtocolProviderGateway providers, Save
         return $"{clean}|{deezer}|{string.Join(',', consulted)}";
     }
 
-    private static void TrimCache()
+    private static void TrimCache(DateTimeOffset? at = null)
     {
-        var now = DateTimeOffset.UtcNow;
+        var now = at ?? DateTimeOffset.UtcNow;
         foreach (var stale in Recent.Where(item => now - item.Value.At >= FreshFor).Select(item => item.Key).ToArray())
             Recent.TryRemove(stale, out _);
         var overflow = Recent.Count - MaxCacheEntries;
@@ -105,7 +153,7 @@ public sealed class SimilarAlbumsReader(IProtocolProviderGateway providers, Save
             Recent.TryRemove(oldest, out _);
     }
 
-    private async Task<Seed> SeedAsync(HttpContext http, ProtocolExecutionContext execution, string itemId)
+    private async Task<Seed> SeedAsync(HttpContext http, ProtocolExecutionContext execution, string itemId, Task<JsonElement[]?> library)
     {
         var parsed = LocalLibraryService.ParseExternalResource(itemId);
         if (parsed.isExternal)
@@ -119,6 +167,9 @@ public sealed class SimilarAlbumsReader(IProtocolProviderGateway providers, Save
             if (artist is { isExternal: true, type: "artist" }) ids[artist.provider!] = artist.externalId!;
             return new(album.Title, album.Artist, ids);
         }
+        var existing = (await library ?? []).FirstOrDefault(album => album.TryGetProperty("Id", out var id) &&
+            string.Equals(id.GetString(), itemId, StringComparison.OrdinalIgnoreCase));
+        if (existing.ValueKind == JsonValueKind.Object) return LibrarySeed(existing);
         var (body, status) = await jellyfin.GetJsonAsync(
             $"Users/{Uri.EscapeDataString(execution.VerifiedBackendPrincipalId)}/Items/{Uri.EscapeDataString(itemId)}",
             clientHeaders: http.Request.Headers, cancellationToken: execution.CancellationToken);
@@ -127,17 +178,62 @@ public sealed class SimilarAlbumsReader(IProtocolProviderGateway providers, Save
             if (status is 400 or 404) throw new KeyNotFoundException();
             if (status is 401 or 403) throw new UnauthorizedAccessException();
             if (status != 200 || body == null) throw new HttpRequestException("Library details are unavailable.");
-            var root = body.RootElement;
-            if (!root.TryGetProperty("Type", out var type) || type.GetString() != "MusicAlbum")
-                throw new ArgumentException("Only albums have similar albums.");
-            var name = root.TryGetProperty("AlbumArtist", out var albumArtist) ? albumArtist.GetString() : null;
-            return new(root.TryGetProperty("Name", out var title) ? title.GetString() ?? "" : "", name ?? "", new(StringComparer.Ordinal));
+            return LibrarySeed(body.RootElement);
         }
+    }
+
+    private static Seed LibrarySeed(JsonElement root)
+    {
+        if (!root.TryGetProperty("Type", out var type) || type.GetString() != "MusicAlbum")
+            throw new ArgumentException("Only albums have similar albums.");
+        var name = root.TryGetProperty("AlbumArtist", out var albumArtist) ? albumArtist.GetString() : null;
+        return new(root.TryGetProperty("Name", out var title) ? title.GetString() ?? "" : "", name ?? "", new(StringComparer.Ordinal));
+    }
+
+    private async Task<JsonElement[]?> LibraryAlbumsAsync(HttpContext http, ProtocolExecutionContext execution, string fields)
+    {
+        using var stage = RequestTiming.Current?.Stage("library");
+        try
+        {
+            var (body, status) = await jellyfin.GetJsonAsync($"Users/{Uri.EscapeDataString(execution.VerifiedBackendPrincipalId)}/Items", new()
+            {
+                ["includeItemTypes"] = "MusicAlbum",
+                ["recursive"] = "true",
+                ["sortBy"] = "PlayCount,CommunityRating,ProductionYear",
+                ["sortOrder"] = "Descending",
+                ["fields"] = fields,
+                ["enableImages"] = "true"
+            }, http.Request.Headers, execution.CancellationToken);
+            using (body)
+                return status == 200 && body?.RootElement.TryGetProperty("Items", out var items) == true && items.ValueKind == JsonValueKind.Array &&
+                    (!body.RootElement.TryGetProperty("TotalRecordCount", out var count) || !count.TryGetInt32(out var total) || total <= items.GetArrayLength())
+                    ? items.EnumerateArray().Select(item => item.Clone()).ToArray() : null;
+        }
+        catch (Exception exception) when (exception is HttpRequestException or JsonException) { return null; }
+    }
+
+    private async Task<(string Id, string Name)[]?> LibraryArtistsAsync(HttpContext http, ProtocolExecutionContext execution)
+    {
+        try
+        {
+            var (body, status) = await jellyfin.GetJsonAsync("Artists/AlbumArtists", new()
+            {
+                ["userId"] = execution.VerifiedBackendPrincipalId,
+                ["enableImages"] = "false"
+            }, http.Request.Headers, execution.CancellationToken);
+            using (body)
+                return status == 200 && body?.RootElement.TryGetProperty("Items", out var items) == true && items.ValueKind == JsonValueKind.Array &&
+                    (!body.RootElement.TryGetProperty("TotalRecordCount", out var count) || !count.TryGetInt32(out var total) || total <= items.GetArrayLength())
+                    ? items.EnumerateArray().Where(item => item.TryGetProperty("Id", out _) && item.TryGetProperty("Name", out _))
+                        .Select(item => (item.GetProperty("Id").GetString() ?? "", item.GetProperty("Name").GetString() ?? "")).ToArray() : null;
+        }
+        catch (Exception exception) when (exception is HttpRequestException or JsonException) { return null; }
     }
 
     // The first source in the listener's order that relates other artists to this one.
     private async Task<(string? Source, IReadOnlyList<Artist> Artists)> RelatedArtistsAsync(ProtocolExecutionContext execution, Seed seed)
     {
+        using var stage = RequestTiming.Current?.Stage("sources");
         if (string.IsNullOrWhiteSpace(seed.Artist)) return (null, []);
         // Deezer is the service that publishes related artists, so it is asked right after the album's own service,
         // then the household's other song-details sources the listener allows.
@@ -190,9 +286,10 @@ public sealed class SimilarAlbumsReader(IProtocolProviderGateway providers, Save
     }
 
     private async Task<ClientSimilarAlbum?> PickAsync(HttpContext http, ProtocolExecutionContext execution, Artist artist,
-        ItemDetailsProvider library, ConcurrentDictionary<string, ItemDetailsProvider?> icons)
+        ItemDetailsProvider library, ConcurrentDictionary<string, ItemDetailsProvider?> icons, IReadOnlyList<JsonElement> libraryAlbums,
+        (string Id, string Name)[]? libraryArtists)
     {
-        if (await LibraryAlbumAsync(http, execution, artist.Name) is { } owned) return owned with { Provider = library };
+        if (await LibraryAlbumAsync(http, execution, artist.Name, libraryAlbums, libraryArtists) is { } owned) return owned with { Provider = library };
         if (artist.ExternalProvider is not { } source || artist.ExternalId is not { } artistId) return null;
         var albums = MusicAlbumReleases.Collapse(await providers.GetArtistAlbumsAsync(execution, source, artistId, ArtistAlbumSample).WaitAsync(execution.CancellationToken))
             .OrderByDescending(item => item.ReleaseDate ?? item.Year?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "", StringComparer.Ordinal)
@@ -219,8 +316,22 @@ public sealed class SimilarAlbumsReader(IProtocolProviderGateway providers, Save
     }
 
     // The listener's best-rated album by this artist, if the library has one.
-    private async Task<ClientSimilarAlbum?> LibraryAlbumAsync(HttpContext http, ProtocolExecutionContext execution, string artist)
+    private async Task<ClientSimilarAlbum?> LibraryAlbumAsync(HttpContext http, ProtocolExecutionContext execution, string artist,
+        IReadOnlyList<JsonElement> libraryAlbums, (string Id, string Name)[]? libraryArtists)
     {
+        var credits = libraryArtists ?? [];
+        var matches = credits.Where(item => SameName(item.Name, artist)).ToArray();
+        if (matches.Length == 1 && string.Equals(matches[0].Name, artist, StringComparison.OrdinalIgnoreCase) &&
+            !credits.Any(item => item.Id != matches[0].Id && item.Name.Contains(artist, StringComparison.OrdinalIgnoreCase)))
+        {
+            var best = libraryAlbums.FirstOrDefault(album => AlbumArtists(album).Any(item => item.Id == matches[0].Id));
+            if (best.ValueKind == JsonValueKind.Object) return LibraryAlbum(best, artist, matches[0].Id);
+        }
+        else if (matches.Length == 0 && libraryArtists is { Length: > 0 } && libraryAlbums.Count > 0 &&
+            libraryAlbums.All(album => AlbumArtists(album).Any()))
+            return null;
+
+        // Ambiguous names keep the server's search limit and first exact match.
         var user = Uri.EscapeDataString(execution.VerifiedBackendPrincipalId);
         var (artists, status) = await jellyfin.GetJsonAsync("Artists/AlbumArtists", new()
         {
@@ -238,6 +349,8 @@ public sealed class SimilarAlbumsReader(IProtocolProviderGateway providers, Save
                 SameName(name.GetString(), artist)) is { ValueKind: JsonValueKind.Object } match ? match.GetProperty("Id").GetString() : null;
         }
         if (artistId == null) return null;
+        var ranked = libraryAlbums.FirstOrDefault(album => AlbumArtists(album).Any(item => item.Id == artistId));
+        if (ranked.ValueKind == JsonValueKind.Object) return LibraryAlbum(ranked, artist, artistId);
         var (albums, albumStatus) = await jellyfin.GetJsonAsync($"Users/{user}/Items", new()
         {
             ["includeItemTypes"] = "MusicAlbum",
@@ -253,14 +366,23 @@ public sealed class SimilarAlbumsReader(IProtocolProviderGateway providers, Save
         {
             if (albumStatus != 200 || albums == null || !albums.RootElement.TryGetProperty("Items", out var items) ||
                 items.ValueKind != JsonValueKind.Array || items.GetArrayLength() == 0) return null;
-            var album = items[0];
-            var id = album.GetProperty("Id").GetString()!;
-            return new(id, album.TryGetProperty("Name", out var name) ? name.GetString() ?? "" : "",
+            return LibraryAlbum(items[0], artist, artistId);
+        }
+    }
+
+    private static IEnumerable<(string Id, string Name)> AlbumArtists(JsonElement album) =>
+        album.TryGetProperty("AlbumArtists", out var credits) && credits.ValueKind == JsonValueKind.Array
+            ? credits.EnumerateArray().Where(item => item.TryGetProperty("Id", out _) && item.TryGetProperty("Name", out _))
+                .Select(item => (item.GetProperty("Id").GetString() ?? "", item.GetProperty("Name").GetString() ?? "")) : [];
+
+    private static ClientSimilarAlbum LibraryAlbum(JsonElement album, string artist, string artistId)
+    {
+        var id = album.GetProperty("Id").GetString()!;
+        return new(id, album.TryGetProperty("Name", out var name) ? name.GetString() ?? "" : "",
                 album.TryGetProperty("AlbumArtist", out var albumArtist) ? albumArtist.GetString() ?? artist : artist, artistId,
                 album.TryGetProperty("ProductionYear", out var year) && year.TryGetInt32(out var value) ? value : null,
                 album.TryGetProperty("ChildCount", out var count) && count.TryGetInt32(out var songs) ? songs : null,
                 JellyfinItemArtwork.PrimaryImageUrl(album, id), "library", false, null);
-        }
     }
 
     private static bool SameName(string? first, string? second) =>
@@ -269,7 +391,7 @@ public sealed class SimilarAlbumsReader(IProtocolProviderGateway providers, Save
 
     internal static int CacheCountForTests() => Recent.Count;
     internal static bool ContainsCacheForTests(string key) => Recent.ContainsKey(key);
-    internal static void PutCacheForTests(string key, DateTimeOffset at) => Recent[key] = (at, new(key, null, []));
+    internal static void PutCacheForTests(string key, DateTimeOffset at) => Recent[key] = new(at, new(key, null, []), new());
     internal static void RemoveCacheForTests(string key) => Recent.TryRemove(key, out _);
     internal static void TrimCacheForTests() => TrimCache();
 }

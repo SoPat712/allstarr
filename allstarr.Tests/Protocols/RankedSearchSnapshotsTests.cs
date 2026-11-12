@@ -166,6 +166,27 @@ public sealed class RankedSearchSnapshotsTests
         Assert.True(second["done"]!.GetValue<bool>());
     }
 
+    [Fact]
+    public async Task RankedSnapshotsKeepFourPointBarriersWhenMergingNewRows()
+    {
+        var clock = new ManualTimeProvider();
+        var emitted = Channel.CreateUnbounded<JsonNode>();
+        var snapshots = new RankedSearchSnapshots("query", 10, ["songs"], "missing", clock,
+            (value, _) => { emitted.Writer.TryWrite(JsonSerializer.SerializeToNode(value)!); return Task.CompletedTask; });
+        var running = snapshots.RunAsync(CancellationToken.None);
+        await clock.WaitForTimersAsync(TimeSpan.FromMilliseconds(400));
+        await snapshots.AddAsync("first", [Row("a", "songs", 60)], CancellationToken.None);
+        clock.Advance(TimeSpan.FromMilliseconds(400));
+        await emitted.Reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        await snapshots.AddAsync("second", [Row("b", "songs", 64), Row("c", "songs", 68), Row("d", "songs", 72)], CancellationToken.None);
+        snapshots.Complete([]);
+        await clock.WaitForTimersAsync(TimeSpan.FromMilliseconds(250));
+        clock.Advance(TimeSpan.FromMilliseconds(250));
+        await running.WaitAsync(TimeSpan.FromSeconds(5));
+        var final = await emitted.Reader.ReadAsync();
+        Assert.Equal(["a", "b", "c", "d"], final["sections"]!["songs"]!.AsArray().Select(row => row!["Id"]!.GetValue<string>()));
+    }
+
     private static RankedSearchRow Row(string id, string section, double score, string? artistName = null,
         Song? song = null, Album? album = null, ExternalPlaylist? playlist = null) => new(
         new JsonObject { ["Id"] = id, ["Name"] = artistName ?? id, ["score"] = score }, section,

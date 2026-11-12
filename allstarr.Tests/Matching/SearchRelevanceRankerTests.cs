@@ -5,6 +5,48 @@ namespace allstarr.Tests;
 public sealed class SearchRelevanceRankerTests
 {
     [Theory]
+    [InlineData("Get Lucky", "Get Lucky", "Daft Punk", 100)]
+    [InlineData("Get Lucky Daft Punk", "Get Lucky", "Daft Punk", 130)]
+    [InlineData("Daft Punk Get Lucky", "Get Lucky", "Daft Punk", 130)]
+    [InlineData("Live Forever", "Live Forever", null, 100)]
+    public void CancellableScoringKeepsOrdinaryFixtureScores(string query, string title, string? artist, double expected)
+    {
+        using var stop = new CancellationTokenSource();
+        Assert.Equal(expected, SearchRelevanceRanker.Score(query, title, artist, cancellationToken: stop.Token));
+        Assert.Equal(expected, SearchRelevanceRanker.ScoreSong(query, title, artist, durationSeconds: 240, cancellationToken: stop.Token));
+        Assert.Equal(expected, SearchRelevanceRanker.ScoreSong(query,
+            new allstarr.Models.Domain.Song { Title = title, Artist = artist ?? "", Duration = 240 }, cancellationToken: stop.Token));
+        Assert.Equal(expected, SearchRelevanceRanker.ScoreAlbum(query,
+            new allstarr.Models.Domain.Album { Title = title, Artist = artist ?? "" }, cancellationToken: stop.Token));
+    }
+
+    [Fact]
+    public void SearchEditDistanceUsesOnlyTheNormalizedPrefixAndGeneralMatchingKeepsTheFullText()
+    {
+        var query = new string('a', 100) + new string('x', 100);
+        var title = new string('a', 100) + new string('y', 100);
+        Assert.Equal(37, FuzzyMatcher.CalculateSimilarityAggressive(query, title));
+        Assert.Equal(75, FuzzyMatcher.CalculateSearchSimilarityAggressive(query, title));
+        Assert.Equal(75, SearchRelevanceRanker.Score(query, title));
+        Assert.Equal(95, SearchRelevanceRanker.Score("needle", new string('z', 4000) + " needle"));
+    }
+
+    [Fact]
+    public void CancelledScoringStopsBeforeInspectingLongMetadata()
+    {
+        using var stop = new CancellationTokenSource();
+        stop.Cancel();
+        var title = new string('x', 100_000);
+        Assert.Throws<OperationCanceledException>(() => SearchRelevanceRanker.Score("query", title, cancellationToken: stop.Token));
+        Assert.Throws<OperationCanceledException>(() => SearchRelevanceRanker.ScoreSong("query", title, "artist", cancellationToken: stop.Token));
+        Assert.Throws<OperationCanceledException>(() => SearchRelevanceRanker.ScoreSong("query",
+            new allstarr.Models.Domain.Song { Title = title, Isrc = title }, cancellationToken: stop.Token));
+        Assert.Throws<OperationCanceledException>(() => SearchRelevanceRanker.ScoreAlbum("query",
+            new allstarr.Models.Domain.Album { Title = title }, cancellationToken: stop.Token));
+        Assert.Throws<OperationCanceledException>(() => FuzzyMatcher.CalculateSearchSimilarityAggressive("query", title, stop.Token));
+    }
+
+    [Theory]
     [InlineData("Get Lucky Daft Punk")]
     [InlineData("Daft Punk Get Lucky")]
     [InlineData("Get Lucky")]

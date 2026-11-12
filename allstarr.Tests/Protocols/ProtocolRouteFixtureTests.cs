@@ -1111,6 +1111,8 @@ public sealed partial class ProtocolRouteFixtureTests
     {
         using var fixture = ReadFixture("jellyfin-item-image-shaping.json");
         var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        gateway.Setup(service => service.GetStoredSongArtworkAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", It.IsAny<string>()))
+            .ReturnsAsync((string?)null);
         gateway.Setup(service => service.GetSongAsync(
                 It.Is<ProtocolExecutionContext>(context => context.Protocol == ProtocolKind.Jellyfin &&
                     context.VerifiedBackendPrincipalId == "user-1" && context.Actor != null),

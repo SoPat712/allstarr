@@ -1,4 +1,5 @@
 using System.Net;
+using allstarr.Services.Common;
 using System.Diagnostics;
 using System.Text.Json;
 using allstarr.Controllers;
@@ -278,7 +279,9 @@ public sealed partial class ProtocolRouteFixtureTests
             .ReturnsAsync(new Album { CoverArtUrl = "https://covers.example.test/release.png" });
         byte[] art = [137, 80, 78, 71, 13, 10, 26, 10];
         using var factory = ClientReleaseFactory(metadata, gateway, request => new(HttpStatusCode.OK)
-        { Content = new ByteArrayContent(art) { Headers = { ContentType = new("image/png") } } });
+        { Content = new ByteArrayContent(art) { Headers = { ContentType = new("image/png") } } },
+            library: request => request.RequestUri!.AbsolutePath == "/UserViews"
+                ? Json(200, """{"Items":[{"Id":"library","CollectionType":"music"}]}""") : null);
         using var client = CreateClientApiClient(factory);
         client.DefaultRequestHeaders.Add("X-Emby-Token", "listener-token");
         var owner = (await factory.Services.GetRequiredService<BackendIdentityResolver>().ResolveAsync(new("Jellyfin", "listener")))!.UserId;
@@ -304,6 +307,19 @@ public sealed partial class ProtocolRouteFixtureTests
             followed.GetProperty("imageUrl").GetString());
         var path = release.GetProperty("coverUrl").GetString();
         Assert.Equal($"/allstarr/v1/releases/{inbox.Id}/cover", path);
+        var router = Mock.Get(factory.Services.GetRequiredService<IProviderRouter>());
+        using (var primer = await client.GetAsync(path)) primer.EnsureSuccessStatusCode();
+        for (var sample = 0; sample < 3; sample++)
+        {
+            await factory.Services.GetRequiredService<IApplicationCache>().DeleteByPatternAsync("feed:read:*");
+            router.Invocations.Clear();
+            using var baseline = await client.GetAsync(path);
+            baseline.EnsureSuccessStatusCode();
+            AssertTimingStages(baseline, "match", "merge");
+            Assert.NotEmpty(router.Invocations);
+            _lyricsSearchOutput.WriteLine("Uncached cover request: " + Assert.Single(baseline.Headers.GetValues("Server-Timing")));
+        }
+        router.Invocations.Clear();
         using var cover = await client.GetAsync(path);
         Assert.Equal(HttpStatusCode.OK, cover.StatusCode);
         AssertTimingStages(cover, "match");
@@ -315,6 +331,13 @@ public sealed partial class ProtocolRouteFixtureTests
         conditional.Headers.IfNoneMatch.Add(cover.Headers.ETag!);
         using var unchanged = await client.SendAsync(conditional);
         Assert.Equal(HttpStatusCode.NotModified, unchanged.StatusCode);
+        AssertTimingStages(unchanged, "match");
+        Assert.Empty(router.Invocations);
+        foreach (var concurrent in await ReadConcurrentTimingAsync(client, path!)) Assert.Equal(art, concurrent);
+        Assert.Empty(router.Invocations);
+        await releases.DismissAsync(owner, inbox.Id);
+        using var dismissedCover = await client.GetAsync(path);
+        Assert.Equal(HttpStatusCode.NotFound, dismissedCover.StatusCode);
         client.DefaultRequestHeaders.Remove("X-Emby-Token");
         client.DefaultRequestHeaders.Add("X-Emby-Token", "other-token");
         using var other = await client.GetAsync("/allstarr/v1/releases");

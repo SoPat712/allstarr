@@ -397,8 +397,11 @@ public static partial class FuzzyMatcher
         return CalculateSimilarity(source, candidate);
     }
 
-    public static int CalculateSimilarity(string query, string target)
+    public static int CalculateSimilarity(string query, string target) => CalculateSimilarity(query, target, null, default);
+
+    private static int CalculateSimilarity(string query, string target, int? editDistanceLimit, CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (string.IsNullOrWhiteSpace(query) || string.IsNullOrWhiteSpace(target))
         {
             return 0;
@@ -432,10 +435,11 @@ public static partial class FuzzyMatcher
             return 85;
         }
 
-        return CalculateTokenSimilarity(queryNorm, targetNorm);
+        return CalculateTokenSimilarity(queryNorm, targetNorm, editDistanceLimit, cancellationToken);
     }
 
-    private static int CalculateTokenSimilarity(string queryNorm, string targetNorm)
+    private static int CalculateTokenSimilarity(string queryNorm, string targetNorm, int? editDistanceLimit = null,
+        CancellationToken cancellationToken = default)
     {
         var tokens1 = queryNorm.Split(' ', StringSplitOptions.RemoveEmptyEntries);
         var tokens2 = targetNorm.Split(' ', StringSplitOptions.RemoveEmptyEntries);
@@ -447,6 +451,7 @@ public static partial class FuzzyMatcher
 
             foreach (var token1 in tokens1)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 for (int i = 0; i < tokens2.Length; i++)
                 {
                     if (usedTokens.Contains(i)) continue;
@@ -478,17 +483,24 @@ public static partial class FuzzyMatcher
 
             if (tokenMatchScore >= 70)
             {
-                var levenshteinScore = CalculateLevenshteinScore(queryNorm, targetNorm);
+                var levenshteinScore = CalculateLevenshteinScore(queryNorm, targetNorm, editDistanceLimit, cancellationToken);
                 return (int)Math.Max(tokenMatchScore, levenshteinScore);
             }
         }
 
-        return CalculateLevenshteinScore(queryNorm, targetNorm);
+        return CalculateLevenshteinScore(queryNorm, targetNorm, editDistanceLimit, cancellationToken);
     }
 
-    private static int CalculateLevenshteinScore(string str1, string str2)
+    private static int CalculateLevenshteinScore(string str1, string str2, int? editDistanceLimit = null,
+        CancellationToken cancellationToken = default)
     {
-        var distance = LevenshteinDistance(str1, str2);
+        cancellationToken.ThrowIfCancellationRequested();
+        if (editDistanceLimit is { } limit)
+        {
+            str1 = str1[..Math.Min(str1.Length, limit)];
+            str2 = str2[..Math.Min(str2.Length, limit)];
+        }
+        var distance = LevenshteinDistance(str1, str2, cancellationToken);
         var maxLength = Math.Max(str1.Length, str2.Length);
 
         if (maxLength == 0)
@@ -512,6 +524,15 @@ public static partial class FuzzyMatcher
         return Math.Max(
             CalculateSimilarity(query, target),
             CalculateSimilarity(StripDecorators(query), StripDecorators(target)));
+    }
+
+    internal static int CalculateSearchSimilarityAggressive(string query, string target, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (string.IsNullOrWhiteSpace(query) || string.IsNullOrWhiteSpace(target)) return 0;
+        var original = CalculateSimilarity(query, target, 100, cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+        return Math.Max(original, CalculateSimilarity(StripDecorators(query), StripDecorators(target), 100, cancellationToken));
     }
 
     public static string NormalizeForMatching(string text)
@@ -609,8 +630,9 @@ public static partial class FuzzyMatcher
         return stringBuilder.ToString().Normalize(System.Text.NormalizationForm.FormC);
     }
 
-    private static int LevenshteinDistance(string source, string target)
+    private static int LevenshteinDistance(string source, string target, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (string.IsNullOrEmpty(source))
         {
             return target?.Length ?? 0;
@@ -626,7 +648,7 @@ public static partial class FuzzyMatcher
 
         if (sourceLength < targetLength)
         {
-            return LevenshteinDistance(target, source);
+            return LevenshteinDistance(target, source, cancellationToken);
         }
 
         Span<int> previousRow = targetLength + 1 <= StackallocLevenshteinLimit
@@ -644,6 +666,7 @@ public static partial class FuzzyMatcher
 
         for (var i = 1; i <= sourceLength; i++)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             currentRow[0] = i;
             for (var j = 1; j <= targetLength; j++)
             {

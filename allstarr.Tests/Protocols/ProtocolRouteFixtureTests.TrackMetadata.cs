@@ -143,6 +143,8 @@ public sealed partial class ProtocolRouteFixtureTests
     private static Mock<IProtocolProviderGateway> MetadataGateway(Song song)
     {
         var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        gateway.Setup(item => item.GetStoredSongArtworkAsync(It.IsAny<ProtocolExecutionContext>(), "artistgrid", "metadata"))
+            .ReturnsAsync((string?)null);
         gateway.Setup(item => item.GetSongAsync(It.IsAny<ProtocolExecutionContext>(), "artistgrid", "metadata")).ReturnsAsync(song);
         gateway.Setup(item => item.GetAlbumAsync(It.IsAny<ProtocolExecutionContext>(), "artistgrid", "era")).ReturnsAsync(new Album
         {

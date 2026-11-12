@@ -23,7 +23,9 @@ public partial class JellyfinController
                                               or HttpRequestException)
         { return null; }
 
-        var native = await NativeAlbumsAsync(similar.Albums.Where(album => !album.IsExternal).Select(album => album.Id).ToArray());
+        var retained = SimilarAlbumsReader.NativeAlbums(HttpContext);
+        var native = await NativeAlbumsAsync(similar.Albums.Where(album => !album.IsExternal && !retained.ContainsKey(album.Id))
+            .Select(album => album.Id).ToArray());
         var items = new JsonArray();
         foreach (var album in similar.Albums)
         {
@@ -44,7 +46,8 @@ public partial class JellyfinController
                     IsLocal = false
                 }))?.AsObject();
             }
-            else item = native.GetValueOrDefault(album.Id)?.DeepClone().AsObject();
+            else item = retained.TryGetValue(album.Id, out var row) ? JsonNode.Parse(row.GetRawText())!.AsObject() :
+                native.GetValueOrDefault(album.Id)?.DeepClone().AsObject();
             if (item == null) continue;
             item["AllstarrSource"] = album.Source;
             if (album.Provider != null) item["AllstarrProvider"] = JsonSerializer.SerializeToNode(album.Provider, ClientApiContract.JsonOptions);

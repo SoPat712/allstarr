@@ -38,7 +38,7 @@ public sealed partial class LibraryArtistIndex(IDbContextFactory<AllstarrDbConte
         if (!ValidName(name)) return ([], []);
         var access = await libraryAccess.ResolveUserAsync(owner, token);
         if (access.Context == null || !access.Access.Succeeded) return ([], []);
-        await Gate.WaitAsync(token);
+        using (RequestTiming.Current?.Stage("lock")) await Gate.WaitAsync(token);
         try
         {
             await using var db = await factory.CreateDbContextAsync(token);

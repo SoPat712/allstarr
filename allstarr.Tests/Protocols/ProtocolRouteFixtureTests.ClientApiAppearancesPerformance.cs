@@ -158,6 +158,46 @@ public sealed partial class ProtocolRouteFixtureTests
             await refreshed.Content.ReadAsStringAsync());
     }
 
+    [Fact]
+    public async Task ClientApi_AppearancesReuseMixResolutionAndInvalidateOnSavedChanges()
+    {
+        var reads = new AppearanceReads();
+        using var factory = AppearanceFactory(new(), reads);
+        using var client = CreateClientApiClient(factory);
+        client.DefaultRequestHeaders.Add("X-Emby-Token", "listener-token");
+        var mix = await SeedClientMixAsync(factory);
+        const string path = "/allstarr/v1/items/native-mix-song/appearances";
+        using var cold = await client.GetAsync(path);
+        cold.EnsureSuccessStatusCode();
+        AssertTimingStages(cold, "merge", "match");
+        var expected = await cold.Content.ReadAsStringAsync();
+        reads.Count = 0;
+        using var warm = await client.GetAsync(path);
+        warm.EnsureSuccessStatusCode();
+        Assert.Equal(expected, await warm.Content.ReadAsStringAsync());
+        AssertTimingStages(warm, "match");
+        _lyricsSearchOutput.WriteLine($"Appearances repeat: {reads.Count} database reads.");
+        Assert.DoesNotContain(", merge;dur=", Assert.Single(warm.Headers.GetValues("Server-Timing")));
+        foreach (var concurrent in await ReadConcurrentTimingAsync(client, path))
+            Assert.Equal(expected, System.Text.Encoding.UTF8.GetString(concurrent));
+        await using (var db = await factory.Services.GetRequiredService<IDbContextFactory<AllstarrDbContext>>().CreateDbContextAsync())
+        {
+            var row = await db.ExternalMetadataSnapshots.SingleAsync(item => item.ResourceKind == "personal-mixes");
+            var next = JsonSerializer.Deserialize<ExternalMetadataSnapshotRecord>(JsonSerializer.Serialize(row))!;
+            next.Id = Guid.NewGuid();
+            next.PayloadJson = row.PayloadJson.Replace("Saved favourites", "Renamed favourites", StringComparison.Ordinal);
+            next.PayloadSha256 = CanonicalCatalogKeys.Hash(next.PayloadJson);
+            next.SnapshotVersion++;
+            next.RetrievedAt = DateTimeOffset.UtcNow;
+            db.ExternalMetadataSnapshots.Add(next);
+            await db.SaveChangesAsync();
+        }
+        using var changed = await client.GetAsync(path);
+        changed.EnsureSuccessStatusCode();
+        Assert.Contains("Renamed favourites", await changed.Content.ReadAsStringAsync());
+        AssertTimingStages(changed, "merge");
+    }
+
     private static ProtocolFactory AppearanceFactory(Mock<IProtocolProviderGateway> gateway, AppearanceReads reads) => ClientMixFactory(gateway, configure: services =>
     {
         services.RemoveAll<IDbContextFactory<AllstarrDbContext>>();

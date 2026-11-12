@@ -22,6 +22,8 @@ public sealed partial class ProtocolRouteFixtureTests
         var reads = 0;
         var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
         const string url = "https://images.example.test/timing.png";
+        gateway.Setup(service => service.GetStoredSongArtworkAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "picture"))
+            .ReturnsAsync((string?)null);
         gateway.Setup(service => service.GetSongAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "picture"))
             .ReturnsAsync(new Song { Id = "ext-deezer-song-picture", CoverArtUrl = url });
         gateway.Setup(service => service.GetAlbumAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "picture"))
@@ -87,6 +89,46 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.Equal(await owner.Content.ReadAsByteArrayAsync(), await joining.Content.ReadAsByteArrayAsync());
         Assert.Equal(1, reads);
         gateway.Verify(service => service.GetAlbumAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "picture"), Times.Once);
+    }
+
+    [Fact]
+    public async Task TimingSongArtworkUsesStoredSearchCoverAndCachesTheRequestedVariant()
+    {
+        var reads = 0;
+        var gateway = new Mock<IProtocolProviderGateway>();
+        const string url = "https://images.example.test/timing.png";
+        gateway.Setup(service => service.GetStoredSongArtworkAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "picture"))
+            .ReturnsAsync((string?)null);
+        gateway.Setup(service => service.GetSongAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "picture"))
+            .Returns(async () =>
+            {
+                await Task.Delay(200);
+                return new Song { Id = "ext-deezer-song-picture", CoverArtUrl = url };
+            });
+        using var factory = TimingImageFactory(gateway, () => reads++);
+        using var client = factory.CreateClient();
+        const string path = "/Items/ext-deezer-song-picture/Images/Primary?api_key=fixture-key&fillWidth=600&quality=90&tag=ext-deezer-song-picture-art-v3";
+        using var baseline = await client.GetAsync(path + "-baseline");
+        baseline.EnsureSuccessStatusCode();
+        AssertTimingStages(baseline, "resolve", "fetch", "render");
+        gateway.Setup(service => service.GetStoredSongArtworkAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "picture"))
+            .ReturnsAsync(url);
+        using var cold = await client.GetAsync(path);
+        Assert.Equal(HttpStatusCode.OK, cold.StatusCode);
+        AssertTimingStages(cold, "resolve", "fetch", "render");
+        var bytes = await cold.Content.ReadAsByteArrayAsync();
+        Assert.Equal(await baseline.Content.ReadAsByteArrayAsync(), bytes);
+        using var warm = await client.GetAsync(path);
+        AssertTimingStages(warm);
+        Assert.Equal(bytes, await warm.Content.ReadAsByteArrayAsync());
+        Assert.Equal(cold.Headers.ETag, warm.Headers.ETag);
+        Assert.Equal(2, reads);
+        foreach (var concurrent in await ReadConcurrentTimingAsync(client, path)) Assert.Equal(bytes, concurrent);
+        gateway.Verify(service => service.GetSongAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "picture"), Times.Once);
+        gateway.Verify(service => service.GetStoredSongArtworkAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "picture"), Times.Exactly(2));
+        using var revised = await client.GetAsync(path + "-changed");
+        Assert.Equal(bytes, await revised.Content.ReadAsByteArrayAsync());
+        Assert.Equal(3, reads);
     }
 
     private static ProtocolFactory TimingImageFactory(Mock<IProtocolProviderGateway> gateway, Action fetched) =>
