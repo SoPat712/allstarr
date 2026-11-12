@@ -108,6 +108,20 @@ test("Shelf Add is one click, keeps card height, and the card opens separately",
   await expect(page.getByRole("dialog").getByRole("list", { name: "Songs", exact: true })).toBeVisible();
 });
 
+test("An added mix that apps can't show yet says so instead of offering Add again", async ({ page }) => {
+  await mockForYou(page, { partial: true, preparing: true }); await openHome(page);
+  const card = page.getByRole("group", { name: "Blend 2", exact: true });
+  await card.getByRole("button", { name: "Add Blend 2", exact: true }).click();
+  await expect(card).toContainText("Preparing for your apps…");
+  await expect(card.getByRole("button", { name: /^Remove .+ from apps$/ })).toBeVisible();
+  await expect(card.getByRole("button", { name: "Add Blend 2", exact: true })).toHaveCount(0);
+  await card.getByRole("button", { name: "Open Blend 2", exact: true }).click();
+  const panel = page.getByRole("dialog");
+  await expect(panel.getByRole("switch", { name: "Show in my apps" })).toBeChecked();
+  await expect(panel).toContainText("Preparing for your apps…");
+  await expect(panel.getByRole("button", { name: "Add to apps", exact: true })).toHaveCount(0);
+});
+
 test("Completed history removes the listening tip even with an unready mix", async ({ page }) => {
   await mockForYou(page, { partial: true });
   await page.route("**/api/admin/history/imports", route => route.fulfill({ json: [{ state: 3, importedRows: 62000 }] }));

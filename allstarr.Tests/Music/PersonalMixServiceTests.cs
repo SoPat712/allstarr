@@ -264,7 +264,7 @@ public sealed partial class PersonalMixServiceTests : IAsyncLifetime
         Assert.IsType<OkObjectResult>(await controller.AddToApps(mix.Id, default));
         Assert.IsType<OkObjectResult>(await controller.AddToApps(mix.Id, default));
         var card = JsonSerializer.SerializeToElement(Assert.IsType<OkObjectResult>(await controller.Get(mix.Id, default)).Value).GetProperty("mix");
-        Assert.True(card.GetProperty("inApps").GetBoolean());
+        Assert.False(card.GetProperty("inApps").GetBoolean());
         Assert.False(card.TryGetProperty("ShowInApps", out _));
         publish = false;
         Assert.IsType<OkObjectResult>(await controller.RemoveFromApps(mix.Id, default));

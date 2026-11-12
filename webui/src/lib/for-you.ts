@@ -70,6 +70,12 @@ export function mixNextStep(kind: string, message: string, administrator: boolea
   return { href: "#/for-you?import=1", label: "Import history" };
 }
 
+// A mix the listener added that their apps can't show yet says why, instead of offering "Add to apps" again.
+export function appsWaiting(card: Pick<MixCard, "inApps" | "added" | "appsUnavailableReason">) {
+  if (card.inApps || !card.added) return "";
+  const reason = card.appsUnavailableReason ?? "";
+  return !reason || reason.startsWith("Preparing") ? "Preparing for your apps…" : reason;
+}
 export function mixDescription(description: string, kind: string) {
   const descriptions: Record<string, string> = {
     "discover-weekly": "New to you, based on your taste",

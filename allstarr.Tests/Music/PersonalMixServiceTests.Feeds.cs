@@ -203,7 +203,9 @@ public sealed partial class PersonalMixServiceTests
             (await db.ProviderAccounts.SingleAsync(item => item.Id == account)).Enabled = false;
             await db.SaveChangesAsync();
         }
-        Assert.DoesNotContain(await service.ListCardsAsync(owner), item => item.Kind == "external");
+        var unavailable = Assert.Single(await service.ListCardsAsync(owner), item => item.Kind == "external");
+        Assert.False(allstarr.Core.ClientApi.MixReader.IsInApps(unavailable, true));
+        Assert.Contains("service", unavailable.AppsUnavailableReason);
     }
 
     [Fact]

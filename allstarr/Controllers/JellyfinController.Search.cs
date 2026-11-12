@@ -1065,8 +1065,6 @@ public partial class JellyfinController
             .GroupBy(item => item.TargetPlaylistId!, StringComparer.Ordinal)
             .Where(group => group.Count() == 1)
             .ToDictionary(group => group.Key, group => group.Single(), StringComparer.Ordinal);
-        foreach (var playlist in byTargetId.Values)
-            aliasedProtocolIds.Add(playlist.ProtocolId);
         var aliases = new Dictionary<string, VirtualPlaylistReadModel>(StringComparer.OrdinalIgnoreCase);
         if (_spotifySettings.Enabled)
         {
@@ -1082,15 +1080,14 @@ public partial class JellyfinController
                     bySourceId.ContainsKey(item.Id))
                 .GroupBy(item => item.JellyfinId, StringComparer.OrdinalIgnoreCase)
                 .ToDictionary(group => group.Key, group => bySourceId[group.First().Id], StringComparer.OrdinalIgnoreCase);
-            foreach (var playlist in aliases.Values)
-                aliasedProtocolIds.Add(playlist.ProtocolId);
         }
         foreach (var item in items.Where(item => item["Type"]?.ToString() == "Playlist"))
         {
             if (item["Id"] is not JsonValue idValue || !idValue.TryGetValue<string>(out var id)) continue;
             var sourceAlias = aliases.TryGetValue(id, out var playlist);
             if (!sourceAlias && !byTargetId.TryGetValue(id, out playlist)) continue;
-            item["Name"] = playlist!.Name;
+            aliasedProtocolIds.Add(playlist!.ProtocolId);
+            item["Name"] = playlist.Name;
             item["Overview"] = playlist.Description;
             item["ChildCount"] = playlist.TrackCount;
             item["RunTimeTicks"] = playlist.DurationMilliseconds * TimeSpan.TicksPerMillisecond;

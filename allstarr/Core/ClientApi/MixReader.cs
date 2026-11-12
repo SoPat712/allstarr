@@ -36,7 +36,7 @@ public sealed class MixReader(PersonalMixService mixes, IDbContextFactory<Allsta
         var token = execution.CancellationToken;
         var stored = await mixes.ListAsync(execution, timeZoneId);
         var publish = (bool)(await settings.GetAsync(PersonalMixService.PublishKey, token)).Value;
-        stored = stored.Where(mix => mix.Kind != "external" || IsInApps(mix, publish)).ToArray();
+        stored = stored.Where(mix => mix.Kind != "external" || mix.Added).ToArray();
         var allowed = await AllowedLocalIdsAsync(execution, stored);
         var artworkSongs = stored.Where(mix => mix.Kind != "external" || mix.ArtworkUrl == null)
             .Select(mix => Playable(mix, allowed).Select(item => item.Song).ToArray()).ToArray();
@@ -68,10 +68,11 @@ public sealed class MixReader(PersonalMixService mixes, IDbContextFactory<Allsta
             return new ClientMix(mix.Id, mix.Kind, mix.Name, mix.Description, State(mix), mix.SongCount ?? songs.Count,
                 songs.Sum(item => item.Song.Duration * 1000L ?? 0), mix.UpdatedAt,
                 $"/allstarr/v1/mixes/{mix.Id}/cover?v={MixCoverImageService.Version(covers[mix.Id])}", inApps,
-                inApps ? PlaylistVirtualizationService.CreateProtocolId(mix.Id) : null,
+                inApps ? mix.PlaylistId ?? PlaylistVirtualizationService.CreateProtocolId(mix.Id) : null,
                 mix.Kind == "external" && mix.ArtworkUrl != null
                     ? [$"/allstarr/v1/mixes/{mix.Id}/cover?v={MixCoverImageService.Version(covers[mix.Id])}"]
-                    : songs.Select(item => ArtworkUrl(item.Song, native)).OfType<string>().Distinct(StringComparer.Ordinal).Take(4).ToArray(), mix.Section, mix.Source, mix.SourcePlaylistId);
+                    : songs.Select(item => ArtworkUrl(item.Song, native)).OfType<string>().Distinct(StringComparer.Ordinal).Take(4).ToArray(), mix.Section, mix.Source, mix.SourcePlaylistId,
+                mix.AppsUnavailableReason);
         }).ToArray());
     }
 
@@ -300,7 +301,8 @@ public sealed class MixReader(PersonalMixService mixes, IDbContextFactory<Allsta
     }
 
     internal static bool IsInApps(PersonalMix mix, bool publish) =>
-        mix.Added && (mix.Source is "spotify" or "apple-musickit" || publish && mix.Generation > 0);
+        mix.Added && mix.AppsUnavailableReason == null && (mix.Kind == "external" || mix.Generation > 0) &&
+        (mix.Source is "spotify" or "apple-musickit" || publish);
 
     private static bool SameNativeId(string? first, string second) => first == second ||
         Guid.TryParse(first, out var firstId) && Guid.TryParse(second, out var secondId) && firstId == secondId;

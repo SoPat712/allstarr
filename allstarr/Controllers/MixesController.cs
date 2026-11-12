@@ -69,7 +69,8 @@ public sealed partial class MixesController(PersonalMixService mixes, IDurableRu
     {
         if (!(bool)(await settings.GetAsync(PersonalMixService.PublishKey, token)).Value) throw new UnauthorizedAccessException();
         await mixes.SetInAppsAsync(user.Id, id, true, token);
-        return new { inApps = true };
+        var mix = await mixes.GetAsync(user.Id, id, token);
+        return new { inApps = allstarr.Core.ClientApi.MixReader.IsInApps(mix, true), mix.AppsUnavailableReason };
     }, token);
 
     [HttpDelete("{id:guid}/in-apps")]
@@ -140,7 +141,11 @@ public sealed partial class MixesController(PersonalMixService mixes, IDurableRu
         mix.UpdatedAt,
         mix.Readiness,
         publication,
-        inApps = mix.Added,
+        inApps = allstarr.Core.ClientApi.MixReader.IsInApps(mix, enabled),
+        added = mix.Added,
+        playlistId = allstarr.Core.ClientApi.MixReader.IsInApps(mix, enabled)
+            ? mix.PlaylistId ?? allstarr.Core.Playlists.PlaylistVirtualizationService.CreateProtocolId(mix.Id) : null,
+        mix.AppsUnavailableReason,
         appsAllowed = enabled,
         coverArtwork = mix.ArtworkUrl != null || mix.Kind != "external" && mix.Songs.Count > 0
             ? new[] { $"/api/admin/mixes/{mix.Id}/cover?v={MixCoverImageService.Version(MixCoverInput.From(mix))}" }

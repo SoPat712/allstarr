@@ -1,13 +1,13 @@
 <script lang="ts">
   import type { MixCard } from "$lib/api";
-  import { mixDescription, mixName, shortReadiness } from "$lib/for-you";
+  import { appsWaiting, mixDescription, mixName, shortReadiness } from "$lib/for-you";
   import { Button } from "$lib/components/ui/button";
   import MixCover from "$lib/components/MixCover.svelte";
   let { title, cards, onopen, seeAll = "", onseeall, expanded = false, seeAllLabel = "See all", additions = [], albumArt = false, busy = "", onadd, onremove, onaddall, columns = 8 }: {
     title: string; cards: MixCard[]; onopen: (card: MixCard) => void; seeAll?: string; onseeall?: () => void; expanded?: boolean; seeAllLabel?: string; additions?: string[]; albumArt?: boolean; busy?: string;
     onadd?: (card: MixCard) => void; onremove?: (card: MixCard) => void; onaddall?: () => void; columns?: number;
   } = $props();
-  const available = $derived(cards.filter(card => !card.inApps && card.appsAllowed && card.readiness.ready));
+  const available = $derived(cards.filter(card => !card.inApps && !card.added && card.appsAllowed && card.readiness.ready));
 </script>
 <section aria-label={title}>
   <header class:expandable={Boolean(onseeall)}><h2>{title}</h2><div class="shelf-actions">
@@ -24,9 +24,10 @@
             <strong>{mixName(card.name)}</strong><span class="description">{card.readiness.ready || card.section === "yourServices" ? mixDescription(card.description, card.kind) : shortReadiness(card.readiness.message)}</span>
           </button>
           {#if card.savedFrom}<span class="description saved-from">Saved from {card.savedFrom}</span>{/if}
-          {#if onadd && !card.inApps && card.appsAllowed && card.readiness.ready}
+          {#if appsWaiting(card)}<span class="description saved-from">{appsWaiting(card)}</span>{/if}
+          {#if onadd && !card.inApps && !card.added && card.appsAllowed && card.readiness.ready}
             <Button variant="outline" size="sm" class="add-chip" aria-label={`Add ${mixName(card.name)}`} disabled={Boolean(busy)} onclick={() => onadd?.(card)}>{busy === card.id ? "Adding…" : "Add to apps"}</Button>
-          {:else if onremove && card.inApps}
+          {:else if onremove && (card.inApps || card.added)}
             <Button variant="outline" size="sm" class="add-chip" aria-label={`Remove ${mixName(card.name)} from apps`} disabled={Boolean(busy)} onclick={() => onremove?.(card)}>{busy === card.id ? "Removing…" : "Remove from apps"}</Button>
           {:else if !albumArt}<small class:added={card.inApps}>{card.inApps ? card.section === "yourServices" ? "✓ In your apps · kept in sync" : "✓ In your apps" : ""}</small>{/if}
         </div>

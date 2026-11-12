@@ -496,7 +496,8 @@ public sealed partial class PersonalMixServiceTests
         var card = JsonSerializer.SerializeToElement(response.Value);
         Assert.False(card.TryGetProperty("Added", out _));
         Assert.Equal(allowed, card.GetProperty("appsAllowed").GetBoolean());
-        Assert.True(card.GetProperty("inApps").GetBoolean());
+        Assert.False(card.GetProperty("inApps").GetBoolean());
+        Assert.Equal("Preparing this mix for your apps.", card.GetProperty("AppsUnavailableReason").GetString());
         Assert.False(card.GetProperty("Readiness").GetProperty("Ready").GetBoolean());
         Assert.Equal("Matching songs…", card.GetProperty("Readiness").GetProperty("Message").GetString());
         Assert.Empty(card.GetProperty("coverArtwork").EnumerateArray());

@@ -3,8 +3,8 @@
   import { countLabel } from "$lib/count-label";
   import { onMount } from "svelte";
   import { goto } from "$app/navigation";
-  import { ApiError, activityWork, mixes, taste, type MixDetail, type MixSong } from "$lib/api";
-  import { mixDescription, mixExclusions, mixName, mixNextStep, shortReadiness } from "$lib/for-you";
+  import { ApiError, activityWork, mixes, taste, type MixCard, type MixDetail, type MixSong } from "$lib/api";
+  import { appsWaiting, mixDescription, mixExclusions, mixName, mixNextStep, shortReadiness } from "$lib/for-you";
   import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
   import { toast } from "$lib/toasts";
   import { Button } from "$lib/components/ui/button";
@@ -23,12 +23,14 @@
   let { id, administrator = false }: { id: string; administrator?: boolean } = $props();
   let detail = $state<MixDetail | null>(null), error = $state(""), busy = $state(false), throttled = $state(false);
   let appsChecked = $state(false);
-  $effect(() => { appsChecked = detail?.mix.inApps ?? false; });
+  // An added mix that is still being prepared keeps its switch on; the label says it isn't in the apps yet.
+  const showsInApps = (mix: MixCard) => mix.inApps || mix.added === true;
+  $effect(() => { appsChecked = detail ? showsInApps(detail.mix) : false; });
   async function showInApps(checked: boolean) {
     const target = id;
     await perform(value => checked ? mixes.add(value) : mixes.remove(value));
-    if (!disposed && id === target && detail) appsChecked = detail.mix.inApps;
-    if (!disposed && id === target && detail?.mix.inApps === checked) toast.success(checked ? "Mix added to your apps" : "Mix hidden from your apps", { label: "Undo", run: () => showInApps(!checked) });
+    if (!disposed && id === target && detail) appsChecked = showsInApps(detail.mix);
+    if (!disposed && id === target && detail && showsInApps(detail.mix) === checked) toast.success(checked ? "Mix added to your apps" : "Mix hidden from your apps", { label: "Undo", run: () => showInApps(!checked) });
   }
   let deleteOpen = $state(false);
   let disposed = false, request = 0, currentId = "", pending: Promise<void> | null = null;
@@ -144,7 +146,7 @@
     <div class="mix-summary">
       <PageStatus items={detail.mix.evidence ? [{ label: `${detail.mix.evidence.fromMusic} from your library` }, { label: `${detail.mix.evidence.fromServices} from services when made` }] : [{ label: preparing ? "Preparing songs…" : `${countLabel(detail.songs.length, "song")} picked for you` }]} />
       {#if detail.mix.evidence}<p>{detail.mix.evidence.recipe.sentence}</p>{/if}
-      <div class="apps-row"><label for="mix-show-apps"><strong>Show in my apps</strong>{#if detail.mix.inApps}<small id="mix-apps-description" class="added-state"><span>✓ In your apps</span><a class="touch-target" href="#/library/playlists">Manage in Playlists</a></small>{:else}<small id="mix-apps-description">Appears as a playlist in your music apps</small>{/if}</label><Switch id="mix-show-apps" aria-label="Show in my apps" aria-describedby="mix-apps-description" bind:checked={appsChecked} disabled={busy || !detail.mix.inApps && !detail.mix.appsAllowed} onchange={event => void showInApps(event.currentTarget.checked)} /></div>
+      <div class="apps-row"><label for="mix-show-apps"><strong>Show in my apps</strong>{#if detail.mix.inApps}<small id="mix-apps-description" class="added-state"><span>✓ In your apps</span><a class="touch-target" href="#/library/playlists">Manage in Playlists</a></small>{:else if appsWaiting(detail.mix)}<small id="mix-apps-description">{appsWaiting(detail.mix)}</small>{:else}<small id="mix-apps-description">Appears as a playlist in your music apps</small>{/if}</label><Switch id="mix-show-apps" aria-label="Show in my apps" aria-describedby="mix-apps-description" bind:checked={appsChecked} disabled={busy || !detail.mix.inApps && !detail.mix.appsAllowed} onchange={event => void showInApps(event.currentTarget.checked)} /></div>
       {#if !detail.mix.appsAllowed}<p class="muted">Your admin hasn't allowed adding mixes.</p>{/if}
       {#if detail.mix.inApps && detail.mix.publication}
         {@const publication = detail.mix.publication}
@@ -179,7 +181,7 @@
   {/if}
   {#snippet footer()}{#if detail}<div class="mix-footer">
     {#if detail.mix.kind !== "custom" && detail.mix.kind !== "external"}<Button variant="outline" disabled={busy || throttled || Boolean(refreshJob)} onclick={() => void refresh()}>Refresh mix</Button>{/if}
-    {#if !detail.mix.inApps}<Button disabled={busy || !detail.mix.appsAllowed} onclick={() => void showInApps(true)}>Add to apps</Button>{/if}
+    {#if !showsInApps(detail.mix)}<Button disabled={busy || !detail.mix.appsAllowed} onclick={() => void showInApps(true)}>Add to apps</Button>{/if}
   </div>{/if}{/snippet}
 </SidePanel>
 <ConfirmDialog bind:open={deleteOpen} title="Delete mix?" description="This saved mix will be removed from your mixes and apps." confirmLabel="Delete mix" disabled={busy} closeOnConfirm={false} onConfirm={() => perform(async target => { await mixes.delete(target); if (id === target) close(); })} />

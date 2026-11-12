@@ -1,8 +1,16 @@
 import { describe, expect, it } from "vitest";
 import type { MixCard } from "./api";
-import { artworkUrl, soundDifference, soundSummary, steeringNames, greeting, mixDescription, mosaicArtwork, reasonLabel, shortReadiness, tasteSummary, nudgeMarker, mixName, mixNextStep, serviceCards, allServiceCards } from "./for-you";
+import { appsWaiting, artworkUrl, soundDifference, soundSummary, steeringNames, greeting, mixDescription, mosaicArtwork, reasonLabel, shortReadiness, tasteSummary, nudgeMarker, mixName, mixNextStep, serviceCards, allServiceCards } from "./for-you";
 
 describe("personal mix presentation", () => {
+  it("says an added mix is still on its way to the apps", () => {
+    expect(appsWaiting({ inApps: true, added: true })).toBe("");
+    expect(appsWaiting({ inApps: false, added: false, appsUnavailableReason: "Preparing this mix for your apps." })).toBe("");
+    expect(appsWaiting({ inApps: false, added: true, appsUnavailableReason: "Preparing this mix for your apps." })).toBe("Preparing for your apps…");
+    expect(appsWaiting({ inApps: false, added: true })).toBe("Preparing for your apps…");
+    expect(appsWaiting({ inApps: false, added: true, appsUnavailableReason: "The playlist in your music server is unavailable." }))
+      .toBe("The playlist in your music server is unavailable.");
+  });
   it("describes each mix without repeating its name", () => {
     expect(mixDescription("Made for you · Uncharted", "discover-weekly")).toBe("New to you, based on your taste");
     expect(mixDescription("Made for you · Long Lost", "rewind")).toBe("Songs you loved and haven't played lately");

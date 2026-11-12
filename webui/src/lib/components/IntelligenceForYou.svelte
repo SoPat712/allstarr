@@ -109,7 +109,7 @@
     void poll();
   }
   async function addAll(shelf: MixCard[]) {
-    for (const card of shelf.filter(item => !item.inApps && item.appsAllowed && item.readiness.ready)) {
+    for (const card of shelf.filter(item => !item.inApps && !item.added && item.appsAllowed && item.readiness.ready)) {
       if (disposed) return;
       if (!await add(card)) break;
     }
@@ -128,7 +128,7 @@
       } else {
         await mixes.add(selected.id);
         if (disposed) return;
-        cards = cards.map(card => card.id === selected.id ? { ...card, inApps: true } : card);
+        cards = cards.map(card => card.id === selected.id ? { ...card, inApps: true, added: true } : card);
       }
       // The card already shows its new state; the refresh below must not label it "Removing…".
       busy = "";
@@ -145,9 +145,9 @@
     try {
       await mixes.remove(selected.id);
       if (disposed) return;
-      cards = cards.map(card => card.id === selected.id ? { ...card, inApps: false } : card);
+      cards = cards.map(card => card.id === selected.id ? { ...card, inApps: false, added: false } : card);
       busy = "";
-      toast.success(`${mixName(selected.name)} is no longer in your apps`, { label: "Undo", run: () => void add({ ...selected, inApps: false }) });
+      toast.success(`${mixName(selected.name)} is no longer in your apps`, { label: "Undo", run: () => void add({ ...selected, inApps: false, added: false }) });
       await pending;
       if (!disposed) await load();
     }

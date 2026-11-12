@@ -5192,6 +5192,12 @@
               "null",
               "string"
             ]
+          },
+          "appsUnavailableReason": {
+            "type": [
+              "null",
+              "string"
+            ]
           }
         }
       },

@@ -155,9 +155,10 @@ public sealed partial class PersonalMixService
     {
         var cards = await ServiceFeedCardsAsync(user, token, refresh: !background && !coverOnly && id == null,
             queuePreparation: !background && !coverOnly);
+        if (!coverOnly) await RepairExternalAppsAsync(await ContextAsync(user, token), token, cards);
         var linked = await ExternalMixesAsync(user, token, id, cardsOnly, cards);
         await using var db = await factory.CreateDbContextAsync(token);
-        var links = await ExternalLinks(db, user).AsNoTracking().OrderByDescending(link => link.Enabled).ThenBy(link => link.CreatedAt).ToArrayAsync(token);
+        var links = await ExternalLinks(db, user, availableOnly: false).AsNoTracking().OrderByDescending(link => link.Enabled).ThenBy(link => link.CreatedAt).ToArrayAsync(token);
         var result = linked.ToList();
         var prepared = id.HasValue ? null : await PreparedServiceFeedsAsync(user, cards.Where(card =>
         {
@@ -185,6 +186,8 @@ public sealed partial class PersonalMixService
                         {
                             Id = link.Id,
                             Added = link.Enabled,
+                            AppsUnavailableReason = mix.AppsUnavailableReason,
+                            PlaylistId = mix.PlaylistId,
                             Songs = card.Songs.Select(item => item with { MixId = link.Id }).ToArray()
                         };
                     }

@@ -95,6 +95,11 @@ public sealed partial class PersonalMixService
             var snapshot = snapshots.Where(item => item.PlaylistLinkId == card.Id && item.PublishedAt.HasValue)
                 .OrderByDescending(item => item.SnapshotVersion).FirstOrDefault();
             var publishedAt = snapshot?.PublishedAt;
+            if (card.AppsUnavailableReason != null)
+            {
+                result[card.Id] = new("needsLook", publishedAt, card.AppsUnavailableReason);
+                continue;
+            }
             var served = link?.Mode == PlaylistLinkMode.Virtual;
             var delivery = served ? "Served by Allstarr." : link?.TargetProtocol == "jellyfin" ? "Saved in Jellyfin." : "Saved in your music server.";
             string? reason = null;

@@ -125,6 +125,7 @@ public sealed class PlaylistVirtualizationService(
 
         if (context.Protocol == ProtocolKind.Jellyfin)
             return await ListSummariesAsync(context, cancellationToken);
+        if (personalMixes != null) await personalMixes.RepairExternalAppsAsync(context, cancellationToken);
         var actor = context.Actor;
         Guid[] linkIds;
         await using (var db = await contextFactory.CreateDbContextAsync(cancellationToken))
@@ -161,6 +162,7 @@ public sealed class PlaylistVirtualizationService(
         ProtocolExecutionContext context, CancellationToken token, IReadOnlySet<string>? visibleTargetIds = null)
     {
         if (context.Actor?.EffectiveUserId is not { } owner) return [];
+        if (personalMixes != null) await personalMixes.RepairExternalAppsAsync(context, token);
         await using var db = await contextFactory.CreateDbContextAsync(token);
         if (!await db.Users.AsNoTracking().AnyAsync(user => user.Id == owner && user.Enabled &&
             user.BackendType == "jellyfin" && user.BackendInstanceId == context.BackendInstanceId &&
@@ -174,6 +176,7 @@ public sealed class PlaylistVirtualizationService(
         var authorizedTargetIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var link in links)
         {
+            if (personalMixes != null && !await personalMixes.IsExternalVisibleAsync(context, link, token)) continue;
             if (link.TargetPlaylistId != null)
             {
                 if (visibleTargetIds != null)
@@ -241,6 +244,7 @@ public sealed class PlaylistVirtualizationService(
     internal async Task<int> CountAsync(ProtocolExecutionContext context, CancellationToken token)
     {
         if (context.Actor?.EffectiveUserId is not { } owner) return 0;
+        if (personalMixes != null) await personalMixes.RepairExternalAppsAsync(context, token);
         await using var db = await contextFactory.CreateDbContextAsync(token);
         if (!await db.Users.AsNoTracking().AnyAsync(user => user.Id == owner && user.Enabled &&
             user.BackendType == "jellyfin" && user.BackendInstanceId == context.BackendInstanceId &&
@@ -257,8 +261,8 @@ public sealed class PlaylistVirtualizationService(
         foreach (var link in links)
         {
             if (link.ProjectionMode == PlaylistProjectionMode.Target) continue;
-            if (allstarr.Core.Music.PersonalMixService.IsExternalLink(link) &&
-                (personalMixes == null || !await personalMixes.IsExternalVisibleAsync(context, link, token))) continue;
+            if (personalMixes == null ? allstarr.Core.Music.PersonalMixService.IsExternalLink(link) :
+                !await personalMixes.IsExternalVisibleAsync(context, link, token)) continue;
             count++;
         }
         return count + (personalMixes == null ? 0 : await personalMixes.PublishedCountAsync(context, token));
@@ -315,6 +319,7 @@ public sealed class PlaylistVirtualizationService(
             return null;
 
         var actor = context.Actor;
+        if (personalMixes != null) await personalMixes.RepairExternalAppsAsync(context, cancellationToken);
         await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
         var backendType = context.Protocol.ToString().ToLowerInvariant();
         if (!await db.Users.AsNoTracking().AnyAsync(user => user.Id == actor.EffectiveUserId && user.Enabled &&
@@ -336,8 +341,8 @@ public sealed class PlaylistVirtualizationService(
             return (await personalMixes.PublishedAsync(context, cancellationToken, linkId)).SingleOrDefault(item => item.LinkId == linkId);
         if (selected.Length != 1) return null;
         var link = selected[0];
-        if (allstarr.Core.Music.PersonalMixService.IsExternalLink(link) &&
-            (personalMixes == null || !await personalMixes.IsExternalVisibleAsync(context, link, cancellationToken))) return null;
+        if (personalMixes == null ? allstarr.Core.Music.PersonalMixService.IsExternalLink(link) :
+            !await personalMixes.IsExternalVisibleAsync(context, link, cancellationToken)) return null;
         BackendPlaylistSnapshot? authorizedTarget = null;
         if (!string.IsNullOrWhiteSpace(link.TargetPlaylistId) &&
             (visibleTargetIds?.Contains(link.TargetPlaylistId) != true ||

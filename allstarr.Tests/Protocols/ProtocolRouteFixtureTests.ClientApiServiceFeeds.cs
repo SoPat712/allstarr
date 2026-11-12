@@ -83,15 +83,16 @@ public sealed partial class ProtocolRouteFixtureTests
             Assert.Equal("37i9dQZweekly", card.GetProperty("sourcePlaylistId").GetString());
             Assert.Equal(30, card.GetProperty("itemCount").GetInt32());
             Assert.Equal(linkedId, card.GetProperty("mixId").GetGuid());
-            Assert.True(card.GetProperty("inApps").GetBoolean());
-            Assert.Equal(PlaylistVirtualizationService.CreateProtocolId(linkedId), card.GetProperty("playlistId").GetString());
+            Assert.False(card.GetProperty("inApps").GetBoolean());
+            Assert.Equal(JsonValueKind.Null, card.GetProperty("playlistId").ValueKind);
+            Assert.False(string.IsNullOrWhiteSpace(card.GetProperty("appsUnavailableReason").GetString()));
         }
         else
         {
             Assert.DoesNotContain(body.RootElement.GetProperty("mixes").EnumerateArray(), item => item.TryGetProperty("source", out var source) && source.GetString() == "spotify");
         }
         Assert.Equal(links, await db.PlaylistLinks.CountAsync());
-        Assert.Equal(jobs + 1, await db.Jobs.CountAsync());
+        Assert.Equal(jobs + (synced ? 2 : 1), await db.Jobs.CountAsync());
 
         static string Hash(string value) => Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
     }
@@ -176,6 +177,20 @@ public sealed partial class ProtocolRouteFixtureTests
             RuleVersion = "1",
             PolicyVersion = "1",
             Mode = PlaylistLinkMode.Virtual
+        });
+        db.PlaylistSourceSnapshots.Add(new()
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = owner,
+            ProviderAccountId = account.Id,
+            PlaylistLinkId = addedFeedId,
+            SnapshotVersion = 1,
+            SourceKind = PlaylistSourceKinds.Feed,
+            Name = addedFeed.Name,
+            ProviderRevision = "1",
+            PayloadSha256 = Hash("published"),
+            RetrievedAt = DateTimeOffset.UtcNow,
+            PublishedAt = DateTimeOffset.UtcNow
         });
         await db.SaveChangesAsync();
         await factory.Services.GetRequiredService<IDurableRuntimeSettings>().ApplyBatchAsync([new(PersonalMixService.PublishKey, "true")], "fixture");

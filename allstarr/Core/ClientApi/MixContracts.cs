@@ -29,7 +29,8 @@ public sealed record ClientMix(
     [property: JsonPropertyName("artworkUrls")] IReadOnlyList<string>? ArtworkUrls = null,
     [property: JsonPropertyName("section")] string Section = "madeForYou",
     [property: JsonPropertyName("source")] string? Source = null,
-    [property: JsonPropertyName("sourcePlaylistId")] string? SourcePlaylistId = null);
+    [property: JsonPropertyName("sourcePlaylistId")] string? SourcePlaylistId = null,
+    [property: JsonPropertyName("appsUnavailableReason")] string? AppsUnavailableReason = null);
 
 public sealed record ClientMixItems(
     [property: JsonPropertyName("mixId")] Guid MixId,
