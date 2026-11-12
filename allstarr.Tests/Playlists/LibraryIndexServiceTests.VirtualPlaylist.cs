@@ -202,10 +202,10 @@ public sealed partial class LibraryIndexServiceTests
         Assert.Equal(previousPage, currentPage);
         Assert.Equal(1, backend.Reads - backendBefore);
         Assert.Empty(reads.Commands);
-        Assert.Equal(2, membershipReads);
+        Assert.Equal(1, membershipReads);
         using var page = JsonDocument.Parse(currentPage);
         Assert.Equal(100, page.RootElement.GetProperty("Items").GetArrayLength());
-        _recordingOutput.WriteLine($"100-song served page with real matching and 250 ms fake Jellyfin: before {pageBefore:F1} ms; warm {pageAfter:F1} ms; one batched Jellyfin hydration; zero matching queries; exact response JSON/order equal; membership read each time.");
+        _recordingOutput.WriteLine($"100-song served page with real matching and 250 ms fake Jellyfin: before {pageBefore:F1} ms; warm {pageAfter:F1} ms; one batched Jellyfin hydration; zero matching queries; exact response JSON/order equal; membership reused across pages.");
     }
 
     private sealed class VirtualPlaylistItemBackend : HttpMessageHandler

@@ -277,7 +277,15 @@ public sealed partial class ProtocolRouteFixtureTests
             return new(HttpStatusCode.OK) { Content = new ByteArrayContent(expected) { Headers = { ContentType = new("image/jpeg") } } };
         }, services =>
         {
-            if (backend == "Jellyfin") AddArtworkPrincipal(services, "user-1");
+            if (backend == "Jellyfin")
+            {
+                AddArtworkPrincipal(services, "user-1");
+                var access = new Mock<IBackendLibraryAccessResolver>();
+                access.Setup(service => service.ResolveAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<CancellationToken>()))
+                    .ReturnsAsync(new BackendLibraryAccess(true, []));
+                services.RemoveAll<IBackendLibraryAccessResolver>();
+                services.AddSingleton(access.Object);
+            }
             services.RemoveAll<IPlaylistVirtualizationService>();
             services.AddSingleton(playlists.Object);
         });

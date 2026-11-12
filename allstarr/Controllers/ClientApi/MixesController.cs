@@ -32,7 +32,8 @@ public sealed class MixesController(MixReader reader, MixCoverImageService cover
         {
             await reader.EnsureCoverAccessAsync(Execution, mixId);
             var owner = Execution.RequireActor().EffectiveUserId!.Value;
-            if (version != null && await covers.TryCreateCachedResponseAsync(mixId, owner, version, HttpContext) is { } cached) return cached;
+            using (allstarr.Core.Operations.RequestTiming.Current?.Stage("store"))
+                if (version != null && await covers.TryCreateCachedResponseAsync(mixId, owner, version, HttpContext) is { } cached) return cached;
             return await covers.CreateResponseAsync(await reader.CoverAsync(Execution, mixId), HttpContext, version, owner);
         }
         catch (UnauthorizedAccessException) { return NotFound(); }

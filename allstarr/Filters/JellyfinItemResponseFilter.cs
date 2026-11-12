@@ -41,6 +41,9 @@ public sealed partial class JellyfinItemResponseFilter(JellyfinProxyService prox
         var allItems = BaseItems(root).ToArray();
         var items = allItems.Where(IsExternal).ToArray();
         if (items.Length == 0) return;
+        var virtualPlaylistsOnly = items.All(item => PlaylistVirtualizationService.TryParseProtocolId(item["Id"]!.GetValue<string>(), out _));
+        using var merging = virtualPlaylistsOnly || http.Items.ContainsKey(JellyfinItemFields.PlaylistMembersKey)
+            ? allstarr.Core.Operations.RequestTiming.Current?.Stage("merge") : null;
 
         var instance = http.GetProtocolExecutionContext()?.BackendInstanceId;
         if (instance == null) return;
@@ -49,7 +52,7 @@ public sealed partial class JellyfinItemResponseFilter(JellyfinProxyService prox
         if (nativeServerId != null) proxy.RememberServerId(instance, nativeServerId);
         var serverId = await proxy.GetServerIdAsync(instance, http.RequestAborted);
         http.Items[JellyfinResponseBuilder.ServerIdItemKey] = serverId;
-        IReadOnlyList<FavoriteViewItem> favoriteView = favorites == null ? [] : await favorites.ReadForRequestAsync(http);
+        IReadOnlyList<FavoriteViewItem> favoriteView = favorites == null || virtualPlaylistsOnly ? [] : await favorites.ReadForRequestAsync(http);
         var saved = favoriteView.Select(item => item.ItemId).ToHashSet(FavoriteViewReader.ItemComparer(favoriteView));
         await HydrateItemUserDataAsync(items, http);
         await HydrateSavedMembershipAsync(items, http);

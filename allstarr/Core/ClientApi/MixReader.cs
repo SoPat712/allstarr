@@ -166,8 +166,25 @@ public sealed class MixReader(PersonalMixService mixes, IDbContextFactory<Allsta
         return new(mix.Id, mix.UpdatedAt, result);
     }
 
-    public Task EnsureCoverAccessAsync(ProtocolExecutionContext execution, Guid mixId) =>
-        mixes.EnsureCoverAccessAsync(execution.RequireActor().EffectiveUserId!.Value, mixId, execution.CancellationToken);
+    private sealed record CoverAccessEntry(bool Allowed);
+
+    public async Task EnsureCoverAccessAsync(ProtocolExecutionContext execution, Guid mixId)
+    {
+        using var saved = RequestTiming.Current?.Stage("saved");
+        var owner = execution.RequireActor().EffectiveUserId!.Value;
+        await using var db = await factory.CreateDbContextAsync(execution.CancellationToken);
+        var key = db.FeedReadKey(execution, "mix-cover-access:" + mixId);
+        if (await cache.GetAsync<CoverAccessEntry>(key) is { Allowed: true }) return;
+        await readCoalescer.RunAsync(key, async () =>
+        {
+            if (await cache.GetAsync<CoverAccessEntry>(key) is { Allowed: true } shared) return shared;
+            await mixes.EnsureCoverAccessAsync(owner, mixId, execution.CancellationToken);
+            var entry = new CoverAccessEntry(true);
+            if (key == db.FeedReadKey(execution, "mix-cover-access:" + mixId))
+                await cache.SetAsync(key, entry, TimeSpan.FromSeconds(60));
+            return entry;
+        }, execution.CancellationToken);
+    }
 
     public async Task<MixCoverInput> CoverAsync(ProtocolExecutionContext execution, Guid mixId)
     {

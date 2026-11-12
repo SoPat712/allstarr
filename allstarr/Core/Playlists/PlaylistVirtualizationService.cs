@@ -238,6 +238,32 @@ public sealed class PlaylistVirtualizationService(
         return result;
     }
 
+    internal async Task<int> CountAsync(ProtocolExecutionContext context, CancellationToken token)
+    {
+        if (context.Actor?.EffectiveUserId is not { } owner) return 0;
+        await using var db = await contextFactory.CreateDbContextAsync(token);
+        if (!await db.Users.AsNoTracking().AnyAsync(user => user.Id == owner && user.Enabled &&
+            user.BackendType == "jellyfin" && user.BackendInstanceId == context.BackendInstanceId &&
+            user.BackendPrincipalId == context.VerifiedBackendPrincipalId, token)) return 0;
+        // A count has no native rows to overlay; only standalone published playlists are added.
+        var links = await db.PlaylistLinks.AsNoTracking().Where(link => link.OwnerUserId == owner &&
+            link.TargetBackendInstanceId == context.BackendInstanceId && link.TargetProtocol == "jellyfin" &&
+            link.Enabled && link.TargetPlaylistId == null &&
+            (link.Mode == PlaylistLinkMode.Virtual || link.Mode == PlaylistLinkMode.Hybrid) &&
+            db.PlaylistSourceSnapshots.Any(snapshot => snapshot.PlaylistLinkId == link.Id &&
+                snapshot.OwnerUserId == owner && snapshot.PublishedAt.HasValue))
+            .ToArrayAsync(token);
+        var count = 0;
+        foreach (var link in links)
+        {
+            if (link.ProjectionMode == PlaylistProjectionMode.Target) continue;
+            if (allstarr.Core.Music.PersonalMixService.IsExternalLink(link) &&
+                (personalMixes == null || !await personalMixes.IsExternalVisibleAsync(context, link, token))) continue;
+            count++;
+        }
+        return count + (personalMixes == null ? 0 : await personalMixes.PublishedCountAsync(context, token));
+    }
+
     public static string DisplayName(string provider, string name)
     {
         if (provider.Equals("listenbrainz", StringComparison.OrdinalIgnoreCase))

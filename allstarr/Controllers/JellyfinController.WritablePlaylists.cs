@@ -116,7 +116,7 @@ public partial class JellyfinController
         if (!create && !items && !replace && !move) return null;
         var protocol = HttpContext.RequireProtocolExecutionContext();
         var id = create ? null : segments[1];
-        if (isRead && id != null && await WritablePlaylists.ReadForkAsync(protocol, id, HttpContext.RequestAborted) != null) return null;
+        if (isRead && id != null && await _virtualPlaylistProtocolAdapter.ReadForkAsync(protocol, id, HttpContext.RequestAborted) != null) return null;
         var originalId = id;
         if (id != null && JellyfinMusicEndpointPolicy.IsSynthesizedPlaylistId(id))
         {

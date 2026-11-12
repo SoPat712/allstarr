@@ -725,6 +725,22 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
         finally { await write.DisposeAsync(); }
     }
 
+    internal async Task<int> PublishedCountAsync(ProtocolExecutionContext context, CancellationToken token)
+    {
+        if (context.Actor?.EffectiveUserId is not { } owner || !(bool)(await settings.GetAsync(PublishKey, token)).Value) return 0;
+        await using var db = await factory.CreateDbContextAsync(token);
+        var user = await BrowseUserAsync(db, owner, token, context);
+        if (user == null) return 0;
+        var row = await RowAsync(db, user, token);
+        if (row == null) return 0;
+        using var document = JsonDocument.Parse(row.PayloadJson);
+        if (!document.RootElement.TryGetProperty("AppsOptInVersion", out var version) || version.GetInt32() < 3)
+            return (await PublishedAsync(context, token, summariesOnly: true)).Count;
+        return document.RootElement.TryGetProperty("Mixes", out var stored) ? stored.EnumerateObject().Count(item =>
+            item.Value.TryGetProperty("Added", out var added) && added.GetBoolean() &&
+            item.Value.TryGetProperty("Generation", out var generation) && generation.GetInt32() > 0) : 0;
+    }
+
     public async Task<IReadOnlyList<VirtualPlaylistReadModel>> PublishedAsync(ProtocolExecutionContext context, CancellationToken token,
         Guid? playlistId = null, bool summariesOnly = false)
     {

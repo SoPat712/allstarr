@@ -86,14 +86,14 @@ public sealed partial class VirtualPlaylistProtocolAdapterTests
         var warm = watch.Elapsed.TotalMilliseconds;
         Assert.Equal(first, repeated);
         Assert.Equal(before, first);
-        Assert.Equal(5, reads);
+        Assert.Equal(1, reads);
         Assert.Equal(4, providerReads);
         query = new QueryCollection(new Dictionary<string, Microsoft.Extensions.Primitives.StringValues> { ["StartIndex"] = "50", ["Limit"] = "50" });
         var page = Assert.IsType<JsonResult>(await adapter.ReadItemsAsync(context, ProtocolId, null, query, default));
         using var json = JsonDocument.Parse(JsonSerializer.Serialize(page.Value));
         Assert.Equal(200, json.RootElement.GetProperty("TotalRecordCount").GetInt32());
         Assert.Equal(50, json.RootElement.GetProperty("Items").GetArrayLength());
-        Assert.Equal(6, reads);
+        Assert.Equal(1, reads);
         Assert.Equal(4, providerReads);
         await using var db = factory.CreateDbContext();
         await using (var transaction = await db.Database.BeginTransactionAsync())
@@ -103,16 +103,32 @@ public sealed partial class VirtualPlaylistProtocolAdapterTests
             await transaction.CommitAsync();
         }
         await adapter.ReadItemsAsync(context, ProtocolId, null, query, default);
-        Assert.Equal(7, reads);
+        Assert.Equal(2, reads);
         Assert.Equal(4, providerReads);
+        var match = new TrackMatchRecord
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = user.Id,
+            ExternalSnapshotId = (await db.ExternalMetadataSnapshots.SingleAsync()).Id,
+            State = TrackMatchState.Unresolved,
+            DecisionVersion = 1,
+            SourceSnapshotVersion = 1
+        };
+        db.TrackMatches.Add(match);
+        await db.SaveChangesAsync();
+        await adapter.ReadItemsAsync(context, ProtocolId, null, query, default);
+        Assert.Equal(3, reads);
+        Assert.Equal(8, providerReads);
         model = model with { Tracks = [] };
+        match.State = TrackMatchState.Rejected;
+        await db.SaveChangesAsync();
         var emptied = Assert.IsType<JsonResult>(await adapter.ReadItemsAsync(context, ProtocolId, null, query, default));
         using var emptyJson = JsonDocument.Parse(JsonSerializer.Serialize(emptied.Value));
         Assert.Equal(0, emptyJson.RootElement.GetProperty("TotalRecordCount").GetInt32());
         Assert.Empty(emptyJson.RootElement.GetProperty("Items").EnumerateArray());
-        Assert.Equal(8, reads);
-        Assert.Equal(4, providerReads);
-        _output.WriteLine($"Served playlist 200 tracks / 50 per page: uncached {baseline:F1} ms; first {cold:F1} ms; warm {warm:F1} ms; current membership read on every request and provider reads 4 -> 0 on repeat and next page; response bytes equal; source removal visible immediately without a stored change.");
+        Assert.Equal(4, reads);
+        Assert.Equal(8, providerReads);
+        _output.WriteLine($"Served playlist 200 tracks / 50 per page: uncached {baseline:F1} ms; first {cold:F1} ms; warm {warm:F1} ms; one membership read across concurrent requests, repeats and later pages; stored edits and match changes invalidate membership; response bytes equal.");
     }
 
     [Fact]
@@ -189,6 +205,28 @@ public sealed partial class VirtualPlaylistProtocolAdapterTests
         await db.SaveChangesAsync();
         await adapter.ListAsync(context, default);
         Assert.Equal(5, reads);
+    }
+
+    [Fact]
+    public async Task ServedVirtualPlaylistWithNativeTargetReadsCurrentBackendMembership()
+    {
+        await using var database = await SqliteTestDatabase.CreateAsync();
+        using var cache = new MemoryApplicationCache(new SystemPlatformClock());
+        var model = Model() with { TargetPlaylistId = "native-playlist" };
+        var service = new Mock<IPlaylistVirtualizationService>();
+        service.Setup(item => item.ReadAsync(It.IsAny<ProtocolExecutionContext>(), ProtocolId, It.IsAny<CancellationToken>()))
+            .Returns(() => Task.FromResult<VirtualPlaylistReadModel?>(model));
+        var adapter = new JellyfinVirtualPlaylistProtocolAdapter(service.Object, new StubJellyfinMutationResolver(null),
+            readContexts: new ReadCacheFactory(database.Options), readCache: cache);
+        var user = FeedReadsTests.User("principal");
+        user.BackendInstanceId = "backend";
+        var context = FeedReadsTests.Context(user);
+        await adapter.ReadItemsAsync(context, ProtocolId, default);
+        model = model with { Tracks = [] };
+        var result = Assert.IsType<JsonResult>(await adapter.ReadItemsAsync(context, ProtocolId, default));
+        using var json = JsonDocument.Parse(JsonSerializer.Serialize(result.Value));
+        Assert.Equal(0, json.RootElement.GetProperty("TotalRecordCount").GetInt32());
+        service.Verify(item => item.ReadAsync(It.IsAny<ProtocolExecutionContext>(), ProtocolId, It.IsAny<CancellationToken>()), Times.Exactly(2));
     }
 
     private sealed class ReadCacheFactory(DbContextOptions<AllstarrDbContext> options) : IDbContextFactory<AllstarrDbContext>

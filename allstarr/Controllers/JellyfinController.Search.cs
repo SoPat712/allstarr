@@ -1238,6 +1238,16 @@ public partial class JellyfinController
             using (body)
             {
                 if (status != 200 || body == null) return HandleProxyResponse(body, status);
+                if (Request.Query.Keys.All(key => key.ToLowerInvariant() is "userid" or "limit" or "startindex" or
+                    "recursive" or "includeitemtypes" or "enabletotalrecordcount" or "api_key" or "access_token" or "apikey"))
+                {
+                    var total = await _virtualPlaylistProtocolAdapter.CountAsync(context, token);
+                    var result = JsonNode.Parse(body.RootElement.GetRawText())!.AsObject();
+                    result["TotalRecordCount"] = Math.Min(10000, result["TotalRecordCount"]?.GetValue<int>() ?? 0) + total;
+                    result["Items"] = new JsonArray();
+                    result["StartIndex"] = startIndex;
+                    return Content(result.ToJsonString(), "application/json");
+                }
                 var summaries = await _virtualPlaylistProtocolAdapter.ListAsync(context, token, new HashSet<string>(StringComparer.OrdinalIgnoreCase));
                 var mediaTypes = JellyfinProviderQuery.Values(Request.Query["MediaTypes"].ToString());
                 var parent = Request.Query["ParentId"].ToString();
