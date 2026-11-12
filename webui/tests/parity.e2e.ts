@@ -5141,9 +5141,11 @@ test("Audio quality supports keyboard changes, provider outcomes, save, and relo
   await expect(slider).toHaveAttribute("aria-valuetext", /High lossy/);
   await expect(page.getByText(/Smaller files and streams with high sound quality/)).toBeVisible();
 
-  await page.getByText("Exact quality asked from each service", { exact: true }).click();
-  await expect(page.getByText("Apple Music: AAC 320 kbps")).toBeVisible();
-  await expect(page.getByText("Deezer: MP3 320 kbps")).toBeVisible();
+  await page.getByRole("button", { name: /What each source sends/ }).click();
+  const sends = page.getByRole("dialog", { name: "What each source sends" });
+  await expect(sends.getByRole("listitem").filter({ hasText: "Apple Music" })).toContainText("Asks for AAC 320 kbps");
+  await expect(sends.getByRole("listitem").filter({ hasText: "Deezer" })).toContainText("Asks for MP3 320 kbps");
+  await sends.getByRole("button", { name: "Close", exact: true }).click();
   await page.getByText("Preference window", { exact: true }).click();
   await expect(page.getByLabel("Preference window (points)", { exact: true })).toHaveValue("7");
   await expect.poll(() => saved).toBe("High");

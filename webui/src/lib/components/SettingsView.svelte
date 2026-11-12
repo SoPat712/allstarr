@@ -4,7 +4,7 @@
   import { storageSegments as measuredStorageSegments } from "$lib/storage-usage";
   import { onMount } from "svelte";
   import { toast } from "$lib/toasts";
-  import { home, settings, downloads, type DownloadsResponse, type ConfigSection, type UiSchema, type OnboardingState } from "$lib/api";
+  import { home, settings, downloads, sources, type DownloadsResponse, type ConfigSection, type ProviderScore, type UiSchema, type OnboardingState } from "$lib/api";
   import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
   import { Archive, ArrowLeft, AudioLines, Bell, ChevronRight, HardDrive, Headphones, History, Library, LibraryBig, ListOrdered, Palette, SlidersHorizontal, Smartphone, UserRound, Users } from "@lucide/svelte";
   import { Button } from "$lib/components/ui/button";
@@ -68,7 +68,8 @@
   let databaseBytes = $state<number | null>(null);
   let loading = $state(true), refreshing = $state(false), error = $state(""), action = $state("");
   let purgeOpen = $state(false), purgeTarget = $state("");
-  let addingOpen = $state(false);
+  let addingOpen = $state(false), sendsOpen = $state(false);
+  let scores = $state<ProviderScore[]>([]);
   $effect(() => { if (section === "adding-to-library" && administrator) addingOpen = true; });
   let loadedSection = "";
   const fields = $derived((schema?.configSections ?? []).flatMap(item => item.fields));
@@ -115,6 +116,14 @@
   const storageItems = $derived([{ label: cacheAudioBytes === null ? "Cached song usage unavailable" : `${bytes(cacheAudioBytes)} cached of ${bytes(audioMaximum)}` }, { label: keptAudioBytes === null ? "Kept song usage unavailable" : `${bytes(keptAudioBytes)} kept` }, ...(databaseBytes === null ? [] : [{ label: `${bytes(databaseBytes)} database` }])]);
   const storageSegments = $derived(measuredStorageSegments(cacheAudioBytes, keptAudioBytes, audioMaximum, databaseBytes));
   const summaries = $derived(Object.fromEntries(pageIds.map(id => [id, settingsSummary(id, config, fields, administrator)])));
+  // "What each source sends": what Allstarr asks each service for at this setting, beside what real plays delivered.
+  function sendsRows(requested: readonly string[]) {
+    const asked = new Map(requested.map(line => { const at = line.indexOf(": "); return [line.slice(0, at), line.slice(at + 2)] as const; }));
+    const name = (id: string) => schema?.providers?.find(item => item.id === id)?.name ?? id;
+    const measured = scores.filter(item => item.quality).map(item => ({ name: name(item.providerId), got: item.quality!.typical }));
+    return [...new Set([...asked.keys(), ...measured.map(item => item.name)])]
+      .map(source => ({ source, asked: asked.get(source) ?? "its best, up to your limit", got: measured.find(item => item.name === source)?.got ?? null }));
+  }
   const setupReviewed = $derived(onboardingState?.steps?.filter(step => step.state !== "pending").length ?? 0);
 
   let findQuery = $state("");
@@ -139,6 +148,7 @@
     refreshing = true; error = "";
     const requests: Array<[string, Promise<unknown>]> = [["schema", home.schema()]];
     if (administrator && withConfig) requests.push(["config", settings.config()]);
+    if (active === "quality") requests.push(["scores", sources.scores().then(value => value.providers ?? []).catch(() => [])]);
     if (active === "storage") requests.push(["cache", settings.cache()], ["preview", settings.cachePreview()], ["cachedSongs", downloads.list("cache")], ["keptSongs", downloads.list("kept")], ["database", settings.storage().then(value => value.databaseBytes ?? null).catch(() => null)]);
     const results = await Promise.allSettled(requests.map(item => item[1]));
     results.forEach((result, index) => {
@@ -150,6 +160,7 @@
       if (requests[index][0] === "cachedSongs") cachedSongs = result.value as DownloadsResponse;
       if (requests[index][0] === "keptSongs") keptSongs = result.value as DownloadsResponse;
       if (requests[index][0] === "database") databaseBytes = result.value as number | null;
+      if (requests[index][0] === "scores") scores = result.value as ProviderScore[];
     });
     loading = false; refreshing = false;
   }
@@ -180,6 +191,13 @@
       </ul>
     {/if}
   </div>
+{/snippet}
+{#snippet qualitySends(requested: readonly string[])}
+  <button type="button" class="settings-row settings-link-row" onclick={() => sendsOpen = true}><div><strong>What each source sends</strong><small>What Allstarr asks each service for at this setting, and what it actually got.</small></div><span>Open<ChevronRight size={18} aria-hidden="true" /></span></button>
+  <SidePanel bind:open={sendsOpen} title="What each source sends" description="Asked for at this setting, and measured from real plays over the last 30 days." width={420} minimumContentWidth={560} wrapTitle>
+    <ul class="source-sends">{#each sendsRows(requested) as row (row.source)}<li><div><strong>{row.source}</strong><small>Asks for {row.asked}</small></div><span>{row.got ?? "Not measured yet"}</span></li>{/each}</ul>
+    <p class="settings-muted source-sends-note">Your library always plays as it is. A listener's own limit lowers what they get.</p>
+  </SidePanel>
 {/snippet}
 {#snippet linkRow(title: string, detail: string, label: string, target: string)}
   <a class="settings-row settings-link-row" href={target}><div><strong>{title}</strong><small>{detail}</small></div><span>{label}<ChevronRight size={18} aria-hidden="true" /></span></a>
@@ -218,7 +236,7 @@
       {:else if active === "adding"}
         {#await import("./LibraryPromotionSettings.svelte")}<RowsSkeleton count={4} />{:then { default: Promotion }}<Promotion {administrator} />{:catch}<ErrorState title="This settings page could not be opened" onretry={() => window.location.reload()} />{/await}
       {:else if active === "quality"}
-        {#each qualityGroups as item (item.id)}<SettingsFields section={item} {config} onChanged={refresh} />{/each}
+        {#each qualityGroups as item (item.id)}<SettingsFields section={item} {config} onChanged={refresh} sourceQuality={item.id === "audio-quality" ? qualitySends : undefined} />{/each}
       {:else if active === "sources"}
         {#await import("./RoutingView.svelte")}<RowsSkeleton />{:then { default: Routing }}<Routing embedded />{:catch}<ErrorState title="This settings page could not be opened" onretry={() => window.location.reload()} />{/await}
         {#if accounts.fields.length}<SettingsFields section={accounts} {config} onChanged={refresh}>
@@ -315,6 +333,12 @@
   .settings-link-row { width: 100%; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; text-decoration: none; cursor: pointer; }
   .settings-link-row > span { display: inline-flex; justify-self: end; align-items: center; gap: var(--space-2); color: var(--color-ink); font-size: var(--text-sm); font-weight: 500; }
   .settings-link-row:hover { background: var(--row-hover); }
+  .source-sends { display: grid; margin: 0; padding: 0; list-style: none; }
+  .source-sends li { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--space-3); padding: var(--space-3) 0; border-bottom: 1px solid var(--color-edge); }
+  .source-sends strong { display: block; font-weight: 500; }
+  .source-sends small { display: block; color: var(--color-ink-muted); font-size: var(--text-sm); }
+  .source-sends li > span { color: var(--color-ink); font-size: var(--text-sm); text-align: right; }
+  .source-sends-note { margin: var(--space-3) 0 0; font-size: var(--text-sm); }
   @media (max-width: 900px) {
     .settings-split { grid-template-columns: minmax(0, 1fr); }
     .settings-split:not(.list-only) .settings-categories, .settings-split.list-only > .settings-content { display: none; }

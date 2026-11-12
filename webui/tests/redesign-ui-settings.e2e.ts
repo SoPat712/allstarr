@@ -108,6 +108,10 @@ for (const [width, theme] of [[1280, "light"], [1280, "dark"], [390, "light"], [
         await page.getByRole("button", { name: /How added songs are saved/ }).click();
         await expect(page.getByRole("dialog", { name: "Adding songs to the library", exact: true })).toBeVisible(); await capture("adding-panel");
         await page.getByRole("dialog").getByRole("button", { name: "Close", exact: true }).click();
+      } else if (section === "quality") {
+        await page.getByRole("button", { name: /What each source sends/ }).click();
+        await expect(page.getByRole("dialog", { name: "What each source sends", exact: true })).toBeVisible(); await capture("sends-panel");
+        await page.getByRole("dialog").getByRole("button", { name: "Close", exact: true }).click();
       } else if (section === "alerts") {
         await page.getByRole("button", { name: "Add your channel", exact: true }).click();
         await expect(page.getByRole("dialog")).toBeVisible(); await capture("alert-channel-dialog");
@@ -299,7 +303,9 @@ test("Settings structure keeps source orders inside their card and playlist perm
   await expect(card.getByText("Details", { exact: true })).toHaveCount(0);
   await page.goto("/#/settings/quality");
   const policy = page.getByRole("form", { name: "Quality settings", exact: true });
-  await expect(policy.locator(":scope > details.settings-fold")).toHaveText(/Exact quality asked from each service/);
+  await policy.getByRole("button", { name: /What each source sends/ }).click();
+  await expect(page.getByRole("dialog", { name: "What each source sends" })).toBeVisible();
+  await page.getByRole("dialog").getByRole("button", { name: "Close", exact: true }).click();
   await page.goto("/#/settings/people");
   const permissions = page.getByRole("region", { name: "Playlist editing", exact: true });
   await expect(permissions.getByText("Per listener", { exact: true })).toBeVisible();

@@ -19,7 +19,8 @@
   import AdvancedFold from "$lib/components/patterns/AdvancedFold.svelte";
   import SavedMark from "$lib/components/patterns/SavedMark.svelte";
 
-  let { section, config, footer, embedded = false, onChanged = () => {} }: { section: ConfigSection; config: Record<string, unknown>; footer?: Snippet; embedded?: boolean; onChanged?: () => void | Promise<void> } = $props();
+  // sourceQuality replaces the per-service quality fold, for pages that show it another way.
+  let { section, config, footer, sourceQuality, embedded = false, onChanged = () => {} }: { section: ConfigSection; config: Record<string, unknown>; footer?: Snippet; sourceQuality?: Snippet<[readonly string[]]>; embedded?: boolean; onChanged?: () => void | Promise<void> } = $props();
   let edits = $state<Record<string, { value: string; base: string }>>({});
   let solverTesting = $state(false);
   let libraries = $state<{ id: string; name: string }[] | null>(null);
@@ -201,7 +202,8 @@
       {#if field.key === "MATCHING_LOCAL_PREFERENCE_PERCENT" && !locked(field)}<AdvancedFold label="Preference window"><label class="setting-field settings-row"><div><strong>Points</strong><small>Between {field.min ?? 0} and {field.max ?? 20}.</small></div><input type="number" aria-label="Preference window (points)" value={value(field)} min={field.min ?? 0} max={field.max ?? 20} disabled={busy} onchange={event => { if (event.currentTarget.reportValidity()) change(field, event.currentTarget.value); }} /></label></AdvancedFold>{/if}
     {/each}
   </div>
-  {#if section.fields.some(field => field.type === "audio-quality")}<AdvancedFold label="Exact quality asked from each service"><ul class="requested-qualities">{#each requestedQualities as quality}<li>{quality}</li>{/each}</ul></AdvancedFold>{/if}
+  {#if section.fields.some(field => field.type === "audio-quality") && sourceQuality}{@render sourceQuality(requestedQualities)}
+  {:else if section.fields.some(field => field.type === "audio-quality")}<AdvancedFold label="Exact quality asked from each service"><ul class="requested-qualities">{#each requestedQualities as quality}<li>{quality}</li>{/each}</ul></AdvancedFold>{/if}
   {#if error}<p role="alert" class="settings-impact notice-error">{error}</p>{/if}
   {@render footer?.()}
 </svelte:element>
