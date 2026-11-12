@@ -48,7 +48,7 @@
   import SelectField from "$lib/components/SelectField.svelte";
   import { fieldValue } from "$lib/settings";
   import { relativeTime } from "$lib/activity";
-  import { deliveryCounts } from "$lib/source-deliveries";
+  import { deliveryCounts, deliveryBreakdown } from "$lib/source-deliveries";
   import {
     accountSettings,
     accountSubtitle,
@@ -356,9 +356,13 @@
     const label = sourceLabel(item);
     return label === "Working" ? "ok" : label === "Failing" ? "stop" : ["Off", "Manual only", "Available"].includes(label) ? "neutral" : "warn";
   }
+  const deliveriesFor = (account: ProviderAccount) =>
+    deliveries.filter(item => item.destinationAccountId === account.id || !item.destinationAccountId && item.suggestedDestinationAccountId === account.id);
   function waitingFor(account: ProviderAccount) {
-    return deliveries.filter(item => item.destinationAccountId === account.id || !item.destinationAccountId && item.suggestedDestinationAccountId === account.id).length;
+    return deliveriesFor(account).length;
   }
+  // Why a row's listens are waiting, so "35 waiting" says what kind of problem it is.
+  const waitingDetail = (group: ProviderAccount[]) => deliveryBreakdown(group.flatMap(deliveriesFor));
   function accountState(account: ProviderAccount) {
     if (!account.enabled) return "Off";
     const waiting = waitingFor(account);
@@ -738,7 +742,7 @@
           {#if hasLabels}{@const accountLabels = [...new Set(group.map(item => labels.get(item.id)).filter(Boolean))].join(", ")}<td data-label={accountLabels ? "Account" : undefined}>{accountLabels}</td>{/if}
           <td data-label="Owner">{[...new Set(group.map(item => item.ownerDisplayName || item.creatorDisplayName || (item.scope === "Shared" ? "Household" : "")).filter(Boolean))].join(", ")}</td>
           <td data-label="Shared with">{[...new Set(group.map(item => item.scope === "Shared" ? "Everyone" : `Just ${item.ownerDisplayName || "you"}`))].join(", ")}</td>
-          <td data-label="State">{#each [groupState(group)] as state}<StatePill tone={state.worst === "Working" ? "ok" : state.worst === "Service down" ? "stop" : ["Off", "Connected"].includes(state.worst) ? "neutral" : "warn"} text={state.text} />{/each}</td>
+          <td data-label="State">{#each [groupState(group)] as state}<StatePill tone={state.worst === "Working" ? "ok" : state.worst === "Service down" ? "stop" : ["Off", "Connected"].includes(state.worst) ? "neutral" : "warn"} text={state.text} />{#if state.worst.endsWith(" waiting")}<small class="waiting-detail">{waitingDetail(group)}</small>{/if}{/each}</td>
           <td><div class="account-menus">{#if group.some(item => item.canManage || item.canChangeAudience)}{@render accountMenu(group.filter(item => item.canManage || item.canChangeAudience), serviceName(account))}{:else}<span class="muted">Read only</span>{/if}</div></td>
         </tr>
       {/each}
@@ -1098,6 +1102,7 @@
   .accounts-table td:last-child :global(button) { pointer-events: auto; }
   .account-opener :global(.provider-art) { width: 28px; height: 28px; flex-shrink: 0; }
   .accounts-table small { display: block; color: var(--color-ink-muted); }
+  .accounts-table .waiting-detail { margin-top: var(--space-1); font-size: var(--text-xs); }
   .source-filter-note, .muted { color: var(--color-ink-muted); font-size: var(--text-xs); }
   .source-panel-content { display: grid; min-width: 0; gap: var(--space-5); }
   .source-summary { display: grid; gap: var(--space-2); border-radius: var(--radius-md); padding: var(--space-3); background: var(--color-panel-raised); }

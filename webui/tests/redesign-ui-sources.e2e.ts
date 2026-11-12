@@ -182,12 +182,12 @@ for (const [width, theme] of [[1280, "light"], [1280, "dark"], [390, "light"], [
     page.on("request", request => { if (request.isNavigationRequest()) documentRequests.push(request.url()); });
     await page.getByRole("link", { name: "Open ListenBrainz account" }).click();
     const panel = page.getByRole("dialog", { name: "ListenBrainz", exact: true });
-    await expect(panel).toContainText("2 listens are waiting");
+    await expect(panel).toContainText("2 need their destination confirmed");
     await panel.getByRole("button", { name: "Previous account", exact: true }).click();
     const previousPanel = page.getByRole("dialog", { name: "Apple Music", exact: true });
     await expect(previousPanel).toBeVisible();
     await previousPanel.getByRole("button", { name: "Next account", exact: true }).click();
-    await expect(panel).toContainText("2 listens are waiting");
+    await expect(panel).toContainText("2 need their destination confirmed");
     await capture(page, `account-panel-${width}-${theme}`);
     await panel.getByRole("button", { name: "Confirm destination", exact: true }).click();
     const confirm = page.getByRole("alertdialog", { name: "Confirm destination?" });
@@ -710,7 +710,7 @@ test("Sources account panel keeps its elements across refreshed revisions", asyn
   const panel = page.getByRole("dialog", { name: "ListenBrainz", exact: true });
   await expect(panel.getByRole("switch", { name: "Use this account", exact: true })).toBeVisible();
   await expect(panel.locator(".service-advanced .extension-skeleton")).toHaveCount(0);
-  await expect(panel.locator(".delivery-groups")).toContainText("2 listens are waiting");
+  await expect(panel.locator(".delivery-groups")).toContainText("2 need their destination confirmed");
   const sections = [".delivery-groups", ".source-facts", ".account-send-setting", ".source-more"];
   await watchPanel(page, sections);
   for (let refresh = 0; refresh < 3; refresh++) {

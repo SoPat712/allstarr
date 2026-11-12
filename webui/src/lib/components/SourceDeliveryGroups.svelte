@@ -4,7 +4,7 @@
   import { countLabel } from "$lib/count-label";
   import { untrack } from "svelte";
   import { scrobbling, type ScrobbleDelivery, type ProviderAccount } from "$lib/api";
-  import { canResend, groupDeliveries, visibleDeliveries } from "$lib/source-deliveries";
+  import { canResend, deliveryReasonLabel, groupDeliveries, visibleDeliveries } from "$lib/source-deliveries";
   import GroupedRow from "$lib/components/patterns/GroupedRow.svelte";
   import EmptyState from "$lib/components/patterns/EmptyState.svelte";
   import ErrorState from "$lib/components/patterns/ErrorState.svelte";
@@ -96,8 +96,8 @@
       {@const name = targetName(first.targetId)}
       {@const reason = first.unavailableReason || (first.providerCode === "destination-unbound" ? "The destination needs confirming" : first.requiresReauthentication ? "Reconnect the saved account" : first.safeMessage || "Waiting to retry")}
       <div class="delivery-group">
-        {#if accountId}<p class="delivery-reason"><strong>{countLabel(group.items.length, "listen is", "listens are")} waiting.</strong> {reason}</p>{/if}
-        <GroupedRow count={group.items.length} summary={`${group.items.length === 1 ? "listen" : "listens"} waiting for ${name}`} {reason} expanded={Boolean(accountId)}>
+        {#if accountId}<p class="delivery-reason"><strong>{group.items.length} {deliveryReasonLabel(first)}.</strong> {reason}</p>{/if}
+        <GroupedRow count={group.items.length} summary={`${deliveryReasonLabel(first)} · ${name}`} {reason} expanded={Boolean(accountId)}>
           {#snippet action()}
             <div class="delivery-actions">
               {#if canResend(first)}
