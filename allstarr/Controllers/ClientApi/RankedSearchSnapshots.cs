@@ -52,6 +52,8 @@ internal sealed class RankedSearchSnapshots(string query, int limit, IReadOnlyLi
     private int revision;
     // Service artists that matched songs tie to a library artist; they live in that artist's alsoOn instead.
     private IReadOnlySet<string> linked = new HashSet<string>();
+    // Library artists by normalized name, so a same-named service artist can name the one it might be.
+    private ILookup<string, RankedSearchRow> libraryArtists = Array.Empty<RankedSearchRow>().ToLookup(row => "");
 
     /// <param name="alsoOn">Service artists proven to be an artist already listed; each joins that row's alsoOn.</param>
     internal async Task AddAsync(string provider, IReadOnlyList<RankedSearchRow> rows, CancellationToken token,
@@ -89,9 +91,14 @@ internal sealed class RankedSearchSnapshots(string query, int limit, IReadOnlyLi
                 if (update.Provider is { } provider && !providers.Contains(provider, StringComparer.Ordinal)) providers.Add(provider);
                 if (update.Linked is { Count: > 0 } artists) linked = artists;
                 if (update.Provider == null && update.Rows.Count > 0)
+                {
                     PruneExternalDuplicates(update.Rows);
+                    libraryArtists = update.Rows.Where(row => row.Native?.Kind == MusicItemKind.Artist)
+                        .ToLookup(row => FuzzyMatcher.NormalizeForMatching(row.Native!.Name));
+                }
                 foreach (var row in update.Rows)
                     if (!IsLinked(row) && sections.TryGetValue(row.Section, out var rows)) rows.Add(row);
+                TagNamesakes();
                 foreach (var (id, entry) in update.AlsoOn ?? [])
                     if (sections.GetValueOrDefault("artists")?.FirstOrDefault(row => row.Item["Id"]?.GetValue<string>() == id) is { } listed)
                     {
@@ -128,6 +135,19 @@ internal sealed class RankedSearchSnapshots(string query, int limit, IReadOnlyLi
             await wake.CancelAsync();
             token.ThrowIfCancellationRequested();
         }
+    }
+
+    // A service artist that shares a library artist's name without being tied to it lists that library artist, so an app can ask "Same artist?".
+    private void TagNamesakes()
+    {
+        if (!sections.TryGetValue("artists", out var rows)) return;
+        foreach (var row in rows.Where(row => row.Native == null && row.Artist != null && row.Item["namesakes"] == null))
+            if (libraryArtists[FuzzyMatcher.NormalizeForMatching(row.Artist!.Name)].ToArray() is { Length: > 0 } namesakes)
+                row.Item["namesakes"] = new JsonArray(namesakes.Select(library => (JsonNode)new JsonObject
+                {
+                    ["id"] = library.Native!.Id,
+                    ["name"] = library.Native.Name
+                }).ToArray());
     }
 
     private bool IsLinked(RankedSearchRow row) => row.Native == null && row.Artist != null && MusicSearchService.IsLinked(row.Artist, linked);

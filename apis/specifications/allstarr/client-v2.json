@@ -5,12 +5,289 @@
     "version": "2"
   },
   "paths": {
+    "/allstarr/v2/artists/{libraryArtistId}/links": {
+      "get": {
+        "tags": [
+          "ArtistLinks"
+        ],
+        "description": "The service artists shown as this library artist, tied by matched songs or by a person\u0027s answer, and the ones someone said are a different act. Ids may be v2 artist ids or the older media server and \u0060ext-\u0060 artist ids.",
+        "operationId": "getArtistLinks",
+        "parameters": [
+          {
+            "name": "libraryArtistId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V2ArtistLinksResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/allstarr/v2/artists/{libraryArtistId}/links/{serviceArtistId}": {
+      "put": {
+        "tags": [
+          "ArtistLinks"
+        ],
+        "description": "Says whether a service artist is the same artist as this library artist. An administrator\u0027s answer covers the household; a listener\u0027s covers only them and wins over the household\u0027s for them. Search and artist pages follow at once. Ids may be v2 artist ids or the older media server and \u0060ext-\u0060 artist ids.",
+        "operationId": "setArtistLink",
+        "parameters": [
+          {
+            "name": "libraryArtistId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "serviceArtistId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/V2ArtistLinkRequest"
+              }
+            },
+            "text/json": {
+              "schema": {
+                "$ref": "#/components/schemas/V2ArtistLinkRequest"
+              }
+            },
+            "application/*\u002Bjson": {
+              "schema": {
+                "$ref": "#/components/schemas/V2ArtistLinkRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V2ArtistLinksResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "ArtistLinks"
+        ],
+        "description": "Takes back this person\u0027s answer, so matched songs decide again. A listener cannot take back the household\u0027s answer (403); they can mark it as not the same for themselves instead. Ids may be v2 artist ids or the older media server and \u0060ext-\u0060 artist ids.",
+        "operationId": "clearArtistLink",
+        "parameters": [
+          {
+            "name": "libraryArtistId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "serviceArtistId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V2ArtistLinksResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/allstarr/v2/batch": {
       "post": {
         "tags": [
           "Batch"
         ],
-        "description": "Runs up to 20 v2 reads in one round trip and returns each one's status and body by its `id`. Only v2 GET routes can be batched. One failing read never fails the others.",
+        "description": "Runs up to 20 v2 reads in one round trip and returns each one\u0027s status and body by its \u0060id\u0060. Only v2 GET routes can be batched. One failing read never fails the others.",
         "operationId": "batch",
         "requestBody": {
           "content": {
@@ -24,7 +301,7 @@
                 "$ref": "#/components/schemas/V2BatchRequest"
               }
             },
-            "application/*+json": {
+            "application/*\u002Bjson": {
               "schema": {
                 "$ref": "#/components/schemas/V2BatchRequest"
               }
@@ -101,7 +378,7 @@
         "tags": [
           "Tracks"
         ],
-        "description": "Reads up to 100 tracks in the order asked. Any id spelling is accepted: a track id, a library item id or an `ext-` service id. Two spellings of one song return it once, with both in `aliases`. Ids that are unknown or hidden for this listener are listed in `missing`.",
+        "description": "Reads up to 100 tracks in the order asked. Any id spelling is accepted: a track id, a library item id or an \u0060ext-\u0060 service id. Two spellings of one song return it once, with both in \u0060aliases\u0060. Ids that are unknown or hidden for this listener are listed in \u0060missing\u0060.",
         "operationId": "getTracks",
         "parameters": [
           {
@@ -116,7 +393,7 @@
           {
             "name": "include",
             "in": "query",
-            "description": "Comma-separated extras. `album` adds an `albums` map keyed by album id.",
+            "description": "Comma-separated extras. \u0060album\u0060 adds an \u0060albums\u0060 map keyed by album id.",
             "schema": {
               "type": "string"
             }
@@ -205,7 +482,7 @@
           {
             "name": "include",
             "in": "query",
-            "description": "Comma-separated extras. `album` adds an `albums` map keyed by album id.",
+            "description": "Comma-separated extras. \u0060album\u0060 adds an \u0060albums\u0060 map keyed by album id.",
             "schema": {
               "type": "string"
             }
@@ -213,7 +490,7 @@
           {
             "name": "views",
             "in": "query",
-            "description": "Comma-separated views: `lyrics`, `lyricsSources`, `match`. `viewStatus` says how each one went.",
+            "description": "Comma-separated views: \u0060lyrics\u0060, \u0060lyricsSources\u0060, \u0060match\u0060. \u0060viewStatus\u0060 says how each one went.",
             "schema": {
               "type": "string"
             }
@@ -808,6 +1085,81 @@
           }
         }
       },
+      "V2ArtistLink": {
+        "required": [
+          "id",
+          "aliases",
+          "source",
+          "sourceName",
+          "by",
+          "scope"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "aliases": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The same artist\u0027s older id, as search and artist pages use it today."
+          },
+          "source": {
+            "type": "string"
+          },
+          "sourceName": {
+            "type": "string"
+          },
+          "by": {
+            "type": "string",
+            "description": "\u0060songs\u0060 when matched songs tie them, \u0060fix\u0060 when a person said so."
+          },
+          "scope": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "description": "For a fix: \u0060household\u0060 when an administrator set it for everyone, \u0060you\u0060 when it is this listener\u0027s own."
+          }
+        }
+      },
+      "V2ArtistLinkRequest": {
+        "required": [
+          "same"
+        ],
+        "type": "object",
+        "properties": {
+          "same": {
+            "type": "boolean",
+            "description": "\u0060true\u0060: the same artist. \u0060false\u0060: a different act."
+          }
+        }
+      },
+      "V2ArtistLinksResponse": {
+        "required": [
+          "links",
+          "notSame"
+        ],
+        "type": "object",
+        "properties": {
+          "links": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/V2ArtistLink"
+            },
+            "description": "Service artists shown as this library artist."
+          },
+          "notSame": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/V2ArtistLink"
+            },
+            "description": "Service artists someone said are a different act; search keeps them apart."
+          }
+        }
+      },
       "V2Artwork": {
         "required": [
           "url"
@@ -835,7 +1187,7 @@
             "maxLength": 8192,
             "minLength": 1,
             "type": "string",
-            "description": "A v2 GET path with its query, such as `/allstarr/v2/tracks/trk_…?views=lyrics`."
+            "description": "A v2 GET path with its query, such as \u0060/allstarr/v2/tracks/trk_\u2026?views=lyrics\u0060."
           }
         }
       },
@@ -1093,7 +1445,7 @@
         "properties": {
           "id": {
             "type": "string",
-            "description": "Stable id. `trk_` plus the recording when the song has one, so it survives keeping, adding to the library and rematching."
+            "description": "Stable id. \u0060trk_\u0060 plus the recording when the song has one, so it survives keeping, adding to the library and rematching."
           },
           "aliases": {
             "type": "array",
@@ -1131,7 +1483,7 @@
             "additionalProperties": {
               "type": "string"
             },
-            "description": "Known identifiers such as `isrc`, `musicbrainzRecording` and the service's own id under its name."
+            "description": "Known identifiers such as \u0060isrc\u0060, \u0060musicbrainzRecording\u0060 and the service\u0027s own id under its name."
           },
           "title": {
             "type": "string"
@@ -1409,6 +1761,9 @@
     }
   },
   "tags": [
+    {
+      "name": "ArtistLinks"
+    },
     {
       "name": "Batch"
     },

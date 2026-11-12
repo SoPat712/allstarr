@@ -27,6 +27,7 @@ public sealed class SearchController(IProtocolProviderGateway providers, MusicSe
         "Every item also has source, the provider id that produced it or the library id for library items, and sourceName, its display name. Same-named library and service artists or albums are separate items. " +
         "In ranked snapshots, a library artist that matched songs tie to service artists has alsoOn, an array of {source, sourceName, id}, and those service artists are not listed separately. " +
         "Same-named artists from different services are one item when one of their songs is the same recording (same ISRC, or same title and length): in ranked snapshots the others join its alsoOn, and the default shape leaves them out. Unproven namesakes stay separate items. " +
+        "In ranked snapshots, a service artist with a library artist's name that it is not tied to has namesakes, an array of {id, name} of those library artists. " +
         "The default shape emits {provider,items} batches and a final {done:true,late} line. " +
         "With shape=ranked, every line replaces the previous snapshot: {revision,done,providers,top,items,sections}, including library (Jellyfin) matches in top, items and sections ranked by merged search relevance scorer rules. " +
         "Revisions increase from 1; sections contains only requested songs, albums, artists and playlists, each capped at limit. " +

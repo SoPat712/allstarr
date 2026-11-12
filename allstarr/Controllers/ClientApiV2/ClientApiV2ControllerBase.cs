@@ -27,6 +27,7 @@ public abstract class ClientApiV2ControllerBase : ControllerBase
     protected IActionResult Respond(V2Result result)
     {
         Response.Headers.CacheControl = "no-store";
+        if (result.Body is ClientApiError error) return new JsonResult(error) { StatusCode = result.Status };
         return result.Status == 200 && result.Body != null ? Ok(result.Body) : StatusCode(result.Status);
     }
 }

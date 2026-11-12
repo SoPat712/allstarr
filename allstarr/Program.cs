@@ -473,6 +473,7 @@ builder.Services.AddScoped<ItemDetailsReader>();
 builder.Services.AddScoped<V2TrackReader>();
 builder.Services.AddScoped<V2TrackViewReader>();
 builder.Services.AddScoped<V2TrackEndpoints>();
+builder.Services.AddScoped<V2ArtistLinkEndpoints>();
 builder.Services.AddScoped<V2BatchDispatcher>();
 builder.Services.AddScoped<ClientListeningHistory>();
 builder.Services.AddSingleton<ClientLibraryAdditions>();

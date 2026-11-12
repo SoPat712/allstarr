@@ -64,6 +64,39 @@ public sealed partial class NewReleasesTests
     }
 
     [Fact]
+    public async Task LibraryIndex_artist_fixes_cover_the_household_but_a_listeners_own_answer_wins_for_them()
+    {
+        await ArtistSongAsync("Only", "winner");
+        var index = ArtistIndex(administrator: _first);
+
+        // A listener's "not the same" drops the song link for them alone.
+        Assert.True(await index.SetFixAsync(_second, "Artist", "deezer", "winner", false));
+        Assert.Empty(await index.ReadAsync(_second, "Artist"));
+        Assert.Single(await index.ReadAsync(_first, "Artist"));
+
+        // The administrator's answers cover everyone: one adds an artist no song ties, one says the song link is wrong.
+        Assert.True(await index.SetFixAsync(_first, "Artist", "apple-musickit", "apple", true));
+        Assert.True(await index.SetFixAsync(_first, "Artist", "deezer", "winner", false));
+        Assert.Equal([new LibraryArtistLink("apple-musickit", "apple")], await index.ReadAsync(_first, "Artist"));
+        Assert.Equal([new LibraryArtistLink("apple-musickit", "apple")], await index.ReadAsync(_second, "Artist"));
+
+        // The listener takes their own answer back and says "same" instead; theirs wins over the household's for them.
+        Assert.True(await index.SetFixAsync(_second, "Artist", "deezer", "winner", true));
+        Assert.Contains(new LibraryArtistLink("deezer", "winner"), await index.ReadAsync(_second, "Artist"));
+        Assert.DoesNotContain(new LibraryArtistLink("deezer", "winner"), await index.ReadAsync(_first, "Artist"));
+        var (_, fixes) = await index.ReadPartsAsync(_second, "Artist");
+        Assert.Contains(new LibraryArtistFix("deezer", "winner", true, false), fixes);
+        Assert.Contains(new LibraryArtistFix("apple-musickit", "apple", true, true), fixes);
+
+        // Search reads saved links, and it sees every answer straight away.
+        var saved = await index.ReadSavedAsync(_second, ["Artist"]);
+        Assert.Contains(new LibraryArtistLink("deezer", "winner"), saved["Artist"]);
+        Assert.Contains(new LibraryArtistLink("apple-musickit", "apple"), saved["Artist"]);
+        Assert.True(await index.SetFixAsync(_second, "Artist", "deezer", "winner", null));
+        Assert.DoesNotContain(new LibraryArtistLink("deezer", "winner"), (await index.ReadSavedAsync(_second, ["Artist"]))["Artist"]);
+    }
+
+    [Fact]
     public async Task LibraryIndex_artist_conflicting_track_identities_leave_the_service_unlinked()
     {
         var first = await ArtistSongAsync("First", "winner");
@@ -283,12 +316,13 @@ public sealed partial class NewReleasesTests
         gateway.Verify(value => value.RememberTrackAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>()), Times.Never);
     }
 
-    private LibraryArtistIndex ArtistIndex(IProtocolProviderGateway? gateway = null, ITrackIdentityService? identities = null, string[]? libraries = null)
+    private LibraryArtistIndex ArtistIndex(IProtocolProviderGateway? gateway = null, ITrackIdentityService? identities = null, string[]? libraries = null,
+        Guid? administrator = null)
     {
         var access = new Mock<IBackendLibraryAccessResolver>();
         access.Setup(value => value.ResolveUserAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((Guid owner, CancellationToken _) => new BackendLibraryAccessContext(new(ProtocolKind.Subsonic, "main", owner.ToString(),
-                new AllstarrPrincipal(owner, "subsonic", "main", owner.ToString(), "Listener", false), "artist-index", _clock.UtcNow.AddMinutes(10), default),
+                new AllstarrPrincipal(owner, "subsonic", "main", owner.ToString(), "Listener", owner == administrator), "artist-index", _clock.UtcNow.AddMinutes(10), default),
                 new(true, libraries ?? ["music"])));
         gateway ??= Mock.Of<IProtocolProviderGateway>();
         return new(_factory, access.Object, _clock,

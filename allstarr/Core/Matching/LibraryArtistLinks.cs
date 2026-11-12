@@ -17,6 +17,13 @@ public interface ILibraryArtistLinks
 
     /// <summary>Queues background song matching for an artist with no links yet, at most once a day.</summary>
     Task RequestAsync(Guid owner, string name, CancellationToken token);
+
+    /// <summary>The links matched songs prove and the fixes people made, kept apart.</summary>
+    Task<(IReadOnlyList<LibraryArtistLink> Songs, IReadOnlyList<LibraryArtistFix> Fixes)> ReadPartsAsync(Guid owner, string name,
+        CancellationToken token);
+
+    /// <summary>Saves a person's "same artist" (true) or "not the same" (false) answer; null takes it back.</summary>
+    Task<bool> SetFixAsync(Guid owner, string name, string providerId, string artistId, bool? same, CancellationToken token);
 }
 
 public sealed record LibraryArtistLinkPayload(Guid UserId, string Name);
@@ -30,6 +37,12 @@ public sealed class LibraryArtistLinks(LibraryArtistIndex index, DurableJobQueue
 
     public Task<IReadOnlyDictionary<string, IReadOnlyList<LibraryArtistLink>>> ReadSavedAsync(Guid owner,
         IReadOnlyCollection<string> names, CancellationToken token) => index.ReadSavedAsync(owner, names, token);
+
+    public Task<(IReadOnlyList<LibraryArtistLink> Songs, IReadOnlyList<LibraryArtistFix> Fixes)> ReadPartsAsync(Guid owner, string name,
+        CancellationToken token) => index.ReadPartsAsync(owner, name, token);
+
+    public Task<bool> SetFixAsync(Guid owner, string name, string providerId, string artistId, bool? same, CancellationToken token) =>
+        index.SetFixAsync(owner, name, providerId, artistId, same, token);
 
     public async Task RequestAsync(Guid owner, string name, CancellationToken token)
     {

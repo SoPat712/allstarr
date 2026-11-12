@@ -213,6 +213,34 @@ public sealed partial class ProtocolRouteFixtureTests
         links.Verify(item => item.RequestAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
+    [Fact]
+    public async Task ClientApi_SearchStreamRankedNamesTheLibraryArtistAnUnlinkedServiceArtistSharesANameWith()
+    {
+        var libraryItemsJson = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            Items = new object[] { new { Id = "lib-artist-saynow", Name = "say now", Type = "MusicArtist" } }
+        });
+        var result = new SearchResult
+        {
+            Artists =
+            [
+                new Artist { Id = "ext-deezer-artist-saynow", Name = "Say Now", ExternalProvider = "deezer", ExternalId = "saynow" },
+                new Artist { Id = "ext-deezer-artist-other", Name = "Say Now See", ExternalProvider = "deezer", ExternalId = "other" }
+            ]
+        };
+
+        var lines = await ReadSearchStreamLinesAsync(result, [], "say now", 20, "ranked", nativeItemsJson: libraryItemsJson);
+
+        var artists = lines[^1]["sections"]!["artists"]!.AsArray().Select(item => item!).ToArray();
+        // No songs tie them yet, so both stay and the service row names the library artist an app can offer "Same artist?" for.
+        var service = artists.Single(item => item["Id"]!.GetValue<string>() == "ext-deezer-artist-saynow");
+        var namesake = Assert.Single(service["namesakes"]!.AsArray())!;
+        Assert.Equal("lib-artist-saynow", namesake["id"]!.GetValue<string>());
+        Assert.Equal("say now", namesake["name"]!.GetValue<string>());
+        Assert.Null(artists.Single(item => item["Id"]!.GetValue<string>() == "ext-deezer-artist-other")["namesakes"]);
+        Assert.Null(artists.Single(item => item["Id"]!.GetValue<string>() == "lib-artist-saynow")["namesakes"]);
+    }
+
     [Theory]
     [InlineData("ranked")]
     [InlineData(null)]
