@@ -148,7 +148,7 @@ public sealed partial class ProtocolRouteFixtureTests
                     if (armed)
                     {
                         Interlocked.Increment(ref reads);
-                        await Task.Delay(800);
+                        await Task.Delay(20);
                         if (blockRefresh)
                         {
                             entered.TrySetResult();

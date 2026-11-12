@@ -120,13 +120,19 @@ public sealed class SavedLibraryReader(IDbContextFactory<AllstarrDbContext> fact
                 http.Request.Query["UserId"].ToString() }.Any(user => !string.IsNullOrEmpty(user) && user != execution.VerifiedBackendPrincipalId))
             return Task.FromResult<IReadOnlyList<FavoriteViewItem>>([]);
         if (http.Items[typeof(SavedLibraryReader)] is Task<IReadOnlyList<FavoriteViewItem>> cached) return cached;
-        var read = ReadAsync(execution, http.RequestAborted);
+        var read = ReadCurrentAsync();
         http.Items[typeof(SavedLibraryReader)] = read;
         return read;
+
+        async Task<IReadOnlyList<FavoriteViewItem>> ReadCurrentAsync() =>
+            await ReadAsync(execution, http.RequestAborted, await new FavoriteViewReader(factory).ReadForRequestAsync(http));
     }
 
-    public async Task<IReadOnlyList<FavoriteViewItem>> ReadAsync(ProtocolExecutionContext execution,
-        CancellationToken cancellationToken = default)
+    public Task<IReadOnlyList<FavoriteViewItem>> ReadAsync(ProtocolExecutionContext execution,
+        CancellationToken cancellationToken = default) => ReadAsync(execution, cancellationToken, null);
+
+    private async Task<IReadOnlyList<FavoriteViewItem>> ReadAsync(ProtocolExecutionContext execution,
+        CancellationToken cancellationToken, IReadOnlyList<FavoriteViewItem>? favoriteView)
     {
         if (execution.Principal is not { } principal || execution.Actor?.EffectiveUserId is not { } owner) return [];
         await using var db = await factory.CreateDbContextAsync(cancellationToken);
@@ -135,7 +141,7 @@ public sealed class SavedLibraryReader(IDbContextFactory<AllstarrDbContext> fact
             user.BackendPrincipalId == execution.VerifiedBackendPrincipalId, cancellationToken);
         if (user == null) return [];
         var sharedScope = await FavoriteLinkScope.MemberAsync(db, user, cancellationToken) != null;
-        var favorites = await new FavoriteViewReader(factory).ReadAsync(execution, cancellationToken);
+        var favorites = favoriteView ?? await new FavoriteViewReader(factory).ReadAsync(execution, cancellationToken);
         var states = await db.Set<FavoriteStateRecord>().AsNoTracking().Where(item => item.OwnerUserId == owner &&
             item.Protocol == principal.BackendType && item.BackendInstanceId == execution.BackendInstanceId).ToArrayAsync(cancellationToken);
         var displays = states.Select(item => FavoriteDisplaySnapshot.Read(item.ItemId, item.DisplayMetadataJson))
@@ -327,7 +333,7 @@ public sealed class SavedLibraryReader(IDbContextFactory<AllstarrDbContext> fact
             .ToDictionary(item => item.Album(), item => item);
         foreach (var album in albumViews.Keys) album.SongCount = null;
         var albumParents = new Dictionary<string, string>(StringComparer.Ordinal);
-        foreach (var group in MusicAlbumReleases.Partition(albumViews.Keys).Where(group => group.Count > 1))
+        foreach (var group in albumViews.Keys.GroupBy(MusicAlbumReleases.FamilyKey).SelectMany(group => MusicAlbumReleases.Partition(group)).Where(group => group.Count > 1))
         {
             var members = group.Select(album => albumViews[album]).ToArray();
             var chosen = members.OrderByDescending(item => hearted.Contains(item.ItemId)).ThenBy(item => item.FavoritedAt)
@@ -348,8 +354,8 @@ public sealed class SavedLibraryReader(IDbContextFactory<AllstarrDbContext> fact
             .Select(item => replacements.GetValueOrDefault(item.ItemId, item)).ToArray();
         var visibleSongCounts = visibleSaved.Where(item => item.Resource.ResourceKind == ProviderResourceKind.Track && item.Display.AlbumId != null)
             .GroupBy(item => item.Display.AlbumId!, itemComparer).ToDictionary(group => group.Key, group => group.Count(), itemComparer);
-        var albumLabels = MusicAlbumReleases.Collapse(visibleSaved.Where(item => item.Resource.ResourceKind == ProviderResourceKind.Album)
-            .Select(item => item.Album())).ToDictionary(album => album.Id, album => album.Title, StringComparer.Ordinal);
+        var albumLabels = visibleSaved.Where(item => item.Resource.ResourceKind == ProviderResourceKind.Album)
+            .Select(item => item.Album()).GroupBy(MusicAlbumReleases.FamilyKey).SelectMany(group => MusicAlbumReleases.Collapse(group)).ToDictionary(album => album.Id, album => album.Title, StringComparer.Ordinal);
         var visibleAlbumCounts = visibleSaved.Where(item => item.Resource.ResourceKind == ProviderResourceKind.Album)
             .SelectMany(item => item.Display.ArtistIds.Concat(item.Display.AlbumArtistIds).Distinct(itemComparer))
             .GroupBy(id => id, itemComparer).ToDictionary(group => group.Key, group => group.Count(), itemComparer);

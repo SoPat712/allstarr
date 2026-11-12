@@ -112,13 +112,14 @@ public sealed class FavoriteViewReader(IDbContextFactory<AllstarrDbContext> fact
         var albums = items.Where(item => item.Resource.ResourceKind == ProviderResourceKind.Album)
             .ToDictionary(item => item.Album(), item => item);
         var hidden = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var group in MusicAlbumReleases.Partition(albums.Keys).Where(group => group.Count > 1))
+        foreach (var group in albums.Keys.GroupBy(MusicAlbumReleases.FamilyKey).SelectMany(group => MusicAlbumReleases.Partition(group)).Where(group => group.Count > 1))
         {
             var chosen = group.Select(album => albums[album]).OrderBy(item => item.FavoritedAt)
                 .ThenBy(item => item.ItemId, StringComparer.Ordinal).First();
             foreach (var album in group.Where(album => album.Id != chosen.ItemId)) hidden.Add(album.Id);
         }
-        var labels = MusicAlbumReleases.Collapse(albums.Keys.Where(album => !hidden.Contains(album.Id)))
+        var labels = albums.Keys.Where(album => !hidden.Contains(album.Id)).GroupBy(MusicAlbumReleases.FamilyKey)
+            .SelectMany(group => MusicAlbumReleases.Collapse(group))
             .ToDictionary(album => album.Id, album => album.Title, StringComparer.Ordinal);
         return items.Where(item => !hidden.Contains(item.ItemId)).Select(item => labels.TryGetValue(item.ItemId, out var title)
             ? item with { Display = item.Display with { Title = title } } : item).ToArray();

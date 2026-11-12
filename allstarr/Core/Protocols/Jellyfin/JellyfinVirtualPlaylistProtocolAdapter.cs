@@ -547,12 +547,13 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
         var startIndex = QueryInt(clientQuery, "StartIndex", 0);
         var limit = QueryInt(clientQuery, "Limit", int.MaxValue);
         var tracks = playlist.Tracks.Skip(startIndex).Take(limit).ToArray();
+        var externalSongsTask = responseBuilder == null
+            ? Task.FromResult<IReadOnlyDictionary<string, Song>>(new Dictionary<string, Song>())
+            : ReadExternalSongsAsync(context, tracks);
         var originals = playlist.ProjectionMode is not (PlaylistProjectionMode.Resolved or PlaylistProjectionMode.Target)
             ? null
             : await ReadOriginalItemsAsync(context, tracks, clientHeaders, clientQuery);
-        IReadOnlyDictionary<string, Song> externalSongs = responseBuilder == null
-            ? new Dictionary<string, Song>()
-            : await ReadExternalSongsAsync(context, tracks);
+        var externalSongs = await externalSongsTask;
         var hasSyntheticItems = playlist.ProjectionMode == PlaylistProjectionMode.Source || tracks.Any(track =>
             track.RouteKind != TrackRouteKind.Local || originals?.ContainsKey(track.BackendItemId) != true);
         if (hasSyntheticItems && originals != null && proxyService != null)

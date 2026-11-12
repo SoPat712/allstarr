@@ -42,8 +42,7 @@ public sealed partial class JellyfinItemResponseFilter(JellyfinProxyService prox
         var items = allItems.Where(IsExternal).ToArray();
         if (items.Length == 0) return;
         var virtualPlaylistsOnly = items.All(item => PlaylistVirtualizationService.TryParseProtocolId(item["Id"]!.GetValue<string>(), out _));
-        using var merging = virtualPlaylistsOnly || http.Items.ContainsKey(JellyfinItemFields.PlaylistMembersKey)
-            ? allstarr.Core.Operations.RequestTiming.Current?.Stage("merge") : null;
+        using var merging = allstarr.Core.Operations.RequestTiming.Current?.Stage("merge");
 
         var instance = http.GetProtocolExecutionContext()?.BackendInstanceId;
         if (instance == null) return;

@@ -91,33 +91,59 @@ public sealed partial class PersonalMixService
             await QueueServiceFeedPreparationAsync(owner, account, request.Offset + 3, generation, token);
     }
 
-    private async Task<PersonalMix> PreparedServiceFeedAsync(UserRecord user, PersonalMix card, CancellationToken token)
+    private async Task<PersonalMix> PreparedServiceFeedAsync(UserRecord user, PersonalMix card, CancellationToken token) =>
+        (await PreparedServiceFeedsAsync(user, [card], token))[card.Id];
+
+    private async Task<IReadOnlyDictionary<Guid, PersonalMix>> PreparedServiceFeedsAsync(UserRecord user, PersonalMix[] cards,
+        CancellationToken token)
     {
+        var result = new Dictionary<Guid, PersonalMix>();
+        if (cards.Length == 0) return result;
         await using var db = await factory.CreateDbContextAsync(token);
-        var revision = await db.ProviderAccounts.AsNoTracking().Where(item => item.Id == card.ProviderAccountId && item.OwnerUserId == user.Id && item.Enabled)
-            .Select(item => (long?)item.Revision).SingleOrDefaultAsync(token);
-        if (revision == null) return card with { Songs = [], Readiness = new(false, "Your service is unavailable.") };
-        var key = Hash(Scope(user) + ":" + revision + ":" + card.SourcePlaylistId);
-        var saved = await db.ExternalMetadataSnapshots.AsNoTracking().Where(item => item.OwnerUserId == user.Id && item.ProviderAccountId == card.ProviderAccountId &&
-                item.ResourceKind == PreparedFeedKind && item.ExternalIdHash == key).OrderByDescending(item => item.SnapshotVersion).FirstOrDefaultAsync(token);
-        if (saved == null) return card with { Songs = [], Readiness = new(false, "Preparing songs from your service…") };
-        var prepared = JsonSerializer.Deserialize<PersonalMix>(saved.PayloadJson)!;
+        var accounts = cards.Select(card => card.ProviderAccountId).OfType<Guid>().Distinct().ToArray();
+        var revisions = await db.ProviderAccounts.AsNoTracking().Where(item => accounts.Contains(item.Id) && item.OwnerUserId == user.Id && item.Enabled)
+            .ToDictionaryAsync(item => item.Id, item => item.Revision, token);
+        var keys = cards.Where(card => card.ProviderAccountId is { } account && revisions.ContainsKey(account))
+            .ToDictionary(card => card.Id, card => Hash(Scope(user) + ":" + revisions[card.ProviderAccountId!.Value] + ":" + card.SourcePlaylistId));
+        var hashes = keys.Values.Distinct().ToArray();
+        var snapshots = db.ExternalMetadataSnapshots.AsNoTracking().Where(item => item.OwnerUserId == user.Id &&
+            accounts.Contains(item.ProviderAccountId!.Value) && item.ResourceKind == PreparedFeedKind && hashes.Contains(item.ExternalIdHash));
+        var rows = await snapshots.Where(item => !snapshots.Any(newer => newer.ProviderAccountId == item.ProviderAccountId &&
+            newer.ExternalIdHash == item.ExternalIdHash && newer.SnapshotVersion > item.SnapshotVersion)).ToArrayAsync(token);
+        var latest = rows.GroupBy(item => (item.ProviderAccountId, item.ExternalIdHash))
+            .ToDictionary(group => group.Key, group => group.OrderByDescending(item => item.SnapshotVersion).First());
+        var prepared = new List<(PersonalMix Card, ExternalMetadataSnapshotRecord Saved, PersonalMix Mix)>();
+        foreach (var card in cards)
+        {
+            if (!keys.TryGetValue(card.Id, out var key))
+                result[card.Id] = card with { Songs = [], Readiness = new(false, "Your service is unavailable.") };
+            else if (!latest.TryGetValue((card.ProviderAccountId, key), out var saved))
+                result[card.Id] = card with { Songs = [], Readiness = new(false, "Preparing songs from your service…") };
+            else
+                prepared.Add((card, saved, JsonSerializer.Deserialize<PersonalMix>(saved.PayloadJson)!));
+        }
+        if (prepared.Count == 0) return result;
         var context = await ContextAsync(user, token);
-        var blocked = await taste.BlockedSongsAsync(user.Id, prepared.Songs.Select(item => item.Song).ToArray(), token);
-        var localIds = prepared.Songs.Where(item => item.Song.IsLocal).Select(item => item.Song.Id).ToArray();
+        var allSongs = prepared.SelectMany(item => item.Mix.Songs).Select(item => item.Song).ToArray();
+        var blocked = await taste.BlockedSongsAsync(user.Id, allSongs, token);
+        var localIds = allSongs.Where(song => song.IsLocal).Select(song => song.Id).Distinct().ToArray();
         var allowed = localIds.Length == 0 ? [] : await LibraryTrackAccess.Query(db, context, await libraryAccess.ResolveAsync(context, token))
             .Where(item => localIds.Contains(item.BackendItemId)).Select(item => item.BackendItemId).ToArrayAsync(token);
-        var songs = prepared.Songs.Where(item => !blocked.Contains(item.Song) && context.Policy!.Includes(item.Song) &&
-            (!item.Song.IsLocal || allowed.Contains(item.Song.Id))).ToArray();
-        return card with
+        foreach (var (card, saved, mix) in prepared)
         {
-            Songs = songs,
-            UpdatedAt = saved.RetrievedAt,
-            SongCount = prepared.SongCount ?? card.SongCount,
-            Evidence = prepared.Evidence is { } evidence ? evidence with
-            { FromMusic = songs.Count(item => item.Song.IsLocal), FromServices = songs.Count(item => !item.Song.IsLocal), Shown = songs.Length } : null,
-            Readiness = new(songs.Length > 0, songs.Length > 0 ? "Ready" : prepared.Songs.Count == 0 ? prepared.Readiness.Message : "No playable songs right now.")
-        };
+            var songs = mix.Songs.Where(item => !blocked.Contains(item.Song) && context.Policy!.Includes(item.Song) &&
+                (!item.Song.IsLocal || allowed.Contains(item.Song.Id))).ToArray();
+            result[card.Id] = card with
+            {
+                Songs = songs,
+                UpdatedAt = saved.RetrievedAt,
+                SongCount = mix.SongCount ?? card.SongCount,
+                Evidence = mix.Evidence is { } evidence ? evidence with
+                { FromMusic = songs.Count(item => item.Song.IsLocal), FromServices = songs.Count(item => !item.Song.IsLocal), Shown = songs.Length } : null,
+                Readiness = new(songs.Length > 0, songs.Length > 0 ? "Ready" : mix.Songs.Count == 0 ? mix.Readiness.Message : "No playable songs right now.")
+            };
+        }
+        return result;
     }
 
     private async Task<PersonalMix> MatchServiceFeedLibraryAsync(UserRecord user, PersonalMix mix, ProtocolExecutionContext context, CancellationToken token)

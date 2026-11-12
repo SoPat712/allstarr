@@ -48,7 +48,9 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         var expected = JsonSerializer.Serialize(albums[0]);
         Assert.All(albums, album => Assert.Equal(expected, JsonSerializer.Serialize(album)));
         albums[0]!.Songs.Clear();
+        using var timing = RequestTiming.Begin();
         var repeat = await gateway.GetAlbumAsync(context, "deezer", "7");
+        Assert.All(new[] { "resolve", "fetch", "match" }, stage => Assert.Contains(stage, timing.Snapshot("jellyfin").Stages.Keys));
         Assert.Equal(expected, JsonSerializer.Serialize(repeat));
         Assert.Equal(["2", "1"], repeat!.Songs.Select(song => song.ExternalId));
         Assert.Equal(TimeSpan.FromMilliseconds(241160), repeat.Songs[0].PreciseDuration);

@@ -106,7 +106,8 @@ public sealed partial class AllstarrDbContext
                     else if (setting.Key is not (ListeningPreferenceKeys.LyricsOrder or ListeningPreferenceKeys.PlaybackStart or ListeningPreferenceKeys.HeartAction))
                         All(owner);
                     break;
-                case TasteProfileRecord taste:
+                case TasteProfileRecord taste when entry.State != EntityState.Modified ||
+                    TasteNudgesChanged(entry.OriginalValues.GetValue<string>(nameof(TasteProfileRecord.PayloadJson)), taste.PayloadJson):
                     MixesAndPlaylists(taste.OwnerUserId);
                     break;
                 case ExternalMetadataSnapshotRecord snapshot:
@@ -130,6 +131,9 @@ public sealed partial class AllstarrDbContext
                             break;
                         case "personal-mixes-preview":
                         case "release-rate":
+                        case "library-artist-index":
+                        case "library-artist-backfill":
+                        case "library-artist-candidate":
                             break;
                         case "library-artist-fix":
                             changed.Add((null, "library"));
@@ -152,12 +156,28 @@ public sealed partial class AllstarrDbContext
                 case AuditEventRecord audit when audit.Action == "promotion.library-linked":
                     changed.Add((null, "library"));
                     break;
+                case LibraryTrackRecord when entry.State == EntityState.Modified && !entry.Properties.Any(property => property.IsModified &&
+                    property.Metadata.Name is not (nameof(LibraryTrackRecord.IndexedAt) or nameof(LibraryTrackRecord.UpdatedAt) or
+                        nameof(LibraryTrackRecord.DurationRetrievedAt) or nameof(LibraryTrackRecord.Revision))):
+                    break;
                 case SharedTagProfileRecord or LibraryTrackRecord or ProviderTrackIdentityRecord or CanonicalRecordingRecord or TrackMatchRecord:
                     changed.Add((null, "library"));
                     break;
             }
         }
         return changed;
+    }
+
+    private static bool TasteNudgesChanged(string before, string after)
+    {
+        static string Nudges(string payload)
+        {
+            using var document = JsonDocument.Parse(payload);
+            return document.RootElement.TryGetProperty("Nudges", out var nudges) ? nudges.GetRawText() : "[]";
+        }
+        if (before == after) return false;
+        try { return Nudges(before) != Nudges(after); }
+        catch (Exception error) when (error is JsonException or InvalidOperationException) { return true; }
     }
 
     private void FeedReadsSaved(HashSet<(Guid? Owner, string Model)> changed)

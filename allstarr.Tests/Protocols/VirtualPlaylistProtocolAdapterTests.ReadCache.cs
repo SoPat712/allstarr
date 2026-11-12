@@ -43,7 +43,7 @@ public sealed partial class VirtualPlaylistProtocolAdapterTests
             .Returns(async (ProtocolExecutionContext _, string _, string id) =>
             {
                 Interlocked.Increment(ref providerReads);
-                await Task.Delay(800);
+                await Task.Delay(20);
                 return new Song
                 {
                     Id = "ext-deezer-song-" + id,
@@ -227,6 +227,75 @@ public sealed partial class VirtualPlaylistProtocolAdapterTests
         using var json = JsonDocument.Parse(JsonSerializer.Serialize(result.Value));
         Assert.Equal(0, json.RootElement.GetProperty("TotalRecordCount").GetInt32());
         service.Verify(item => item.ReadAsync(It.IsAny<ProtocolExecutionContext>(), ProtocolId, It.IsAny<CancellationToken>()), Times.Exactly(2));
+    }
+
+    [Fact]
+    public async Task VirtualPlaylistScreenReadsSurviveIndexBookkeepingAndPlaybackState()
+    {
+        await using var database = await SqliteTestDatabase.CreateAsync();
+        var factory = new ReadCacheFactory(database.Options);
+        await using var db = factory.CreateDbContext();
+        var user = FeedReadsTests.User("principal");
+        user.BackendInstanceId = "backend";
+        var track = new LibraryTrackRecord { Id = Guid.NewGuid(), OwnerUserId = user.Id, Protocol = "jellyfin", BackendInstanceId = "backend", BackendItemId = "local" };
+        db.Users.Add(user);
+        db.LibraryTracks.Add(track);
+        var playback = new ProviderUserDataRecord { OwnerUserId = user.Id, Protocol = "jellyfin", BackendInstanceId = "backend", ItemId = "ext-deezer-song-local" };
+        db.ProviderUserData.Add(playback);
+        var taste = new TasteProfileRecord { OwnerUserId = user.Id, Revision = 1 };
+        db.TasteProfiles.Add(taste);
+        await db.SaveChangesAsync();
+        using var cache = new MemoryApplicationCache(new SystemPlatformClock());
+        var reads = 0;
+        var model = Model();
+        var service = new Mock<IPlaylistVirtualizationService>();
+        service.Setup(item => item.ReadAsync(It.IsAny<ProtocolExecutionContext>(), ProtocolId, It.IsAny<CancellationToken>()))
+            .Returns(async () =>
+            {
+                reads++;
+                db.ExternalMetadataSnapshots.Add(FeedReadsTests.Snapshot(user.Id, "library-artist-index"));
+                await db.SaveChangesAsync();
+                await Task.Delay(20);
+                return model;
+            });
+        var adapter = new JellyfinVirtualPlaylistProtocolAdapter(service.Object, new StubJellyfinMutationResolver(null), readContexts: factory, readCache: cache);
+        var context = FeedReadsTests.Context(user);
+        var expected = new string?[3];
+        for (var pass = 0; pass < 2; pass++)
+        {
+            for (var call = 0; call < 3; call++)
+            {
+                track.IndexedAt = DateTimeOffset.UtcNow;
+                track.UpdatedAt = track.IndexedAt;
+                track.DurationRetrievedAt = track.IndexedAt;
+                track.Revision++;
+                playback.PlayedAt = track.IndexedAt;
+                taste.Revision++;
+                taste.PayloadJson = $"{{\"Occurrences\":{{\"playing\":{{\"Position\":{pass * 3 + call}}}}},\"Nudges\":[]}}";
+                db.ExternalMetadataSnapshots.Add(FeedReadsTests.Snapshot(user.Id, "library-artist-backfill"));
+                db.ExternalMetadataSnapshots.Add(FeedReadsTests.Snapshot(user.Id, "library-artist-index"));
+                await db.SaveChangesAsync();
+                using var timing = RequestTiming.Begin();
+                var result = call switch
+                {
+                    0 => JsonSerializer.Serialize(Assert.IsType<JsonResult>(await adapter.ReadItemsAsync(context, ProtocolId, default)).Value),
+                    1 => JsonSerializer.Serialize(Assert.IsType<JsonResult>(await adapter.ReadItemAsync(context, ProtocolId, default)).Value),
+                    _ => await adapter.GetImageSourceIdAsync(context, ProtocolId, default)
+                };
+                if (pass == 0) expected[call] = result;
+                else Assert.Equal(expected[call], result);
+                _output.WriteLine($"Virtual playlist call={call} pass={pass} builds={reads}: {timing.Snapshot("jellyfin").Header}");
+            }
+        }
+        Assert.Equal(1, reads);
+        track.Title = "Changed";
+        await db.SaveChangesAsync();
+        await adapter.ReadItemsAsync(context, ProtocolId, default);
+        Assert.Equal(2, reads);
+        db.ExternalMetadataSnapshots.Add(FeedReadsTests.Snapshot(user.Id, "library-artist-fix"));
+        await db.SaveChangesAsync();
+        await adapter.ReadItemsAsync(context, ProtocolId, default);
+        Assert.Equal(3, reads);
     }
 
     private sealed class ReadCacheFactory(DbContextOptions<AllstarrDbContext> options) : IDbContextFactory<AllstarrDbContext>

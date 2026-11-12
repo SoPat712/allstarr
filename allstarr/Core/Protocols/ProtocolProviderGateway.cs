@@ -1,5 +1,6 @@
 using System.Text.Json;
 using allstarr.Core.ClientApi;
+using allstarr.Core.Operations;
 using allstarr.Core.Playback;
 using System.Net;
 using System.Diagnostics;
@@ -869,23 +870,30 @@ public sealed partial class ProtocolProviderGateway(
     private async Task<Album?> GetAlbumCoreAsync(ProtocolExecutionContext protocol, string providerId, string externalId, bool prefetch)
     {
         var routedProviderId = NormalizeProvider(providerId);
-        var routed = await PlanExactAsync<IProviderMetadataCapability>(
-            protocol, routedProviderId, ProviderCapabilityKind.Metadata, "protocol-metadata-get-album");
+        (ProviderRouteCandidate<IProviderMetadataCapability>? Candidate, ProviderRoutePlan<IProviderMetadataCapability> Plan) routed;
+        using (RequestTiming.Current?.Stage("resolve"))
+            routed = await PlanExactAsync<IProviderMetadataCapability>(
+                protocol, routedProviderId, ProviderCapabilityKind.Metadata, "protocol-metadata-get-album");
         if (routed.Candidate != null)
         {
             var id = new ProviderExternalResourceId(routedProviderId, ProviderResourceKind.Album, externalId);
-            var album = await FullMetadataAsync<Album>(routed.Candidate.Context, ProviderResourceKind.Album, externalId, async execution =>
+            Album? album;
+            using (RequestTiming.Current?.Stage("fetch"))
             {
-                var outcome = await routed.Candidate.Implementation.GetAlbumAsync(execution, new ProviderAlbumLookupRequest(id));
-                if (outcome.IsSuccess) return Map(outcome.RequireValue());
-                if (outcome.Error!.Kind == ProviderErrorKind.NotFound) return null;
-                ThrowRouteFailure(outcome.Error);
-                return null;
-            }, prefetch);
+                album = await FullMetadataAsync<Album>(routed.Candidate.Context, ProviderResourceKind.Album, externalId, async execution =>
+                {
+                    var outcome = await routed.Candidate.Implementation.GetAlbumAsync(execution, new ProviderAlbumLookupRequest(id));
+                    if (outcome.IsSuccess) return Map(outcome.RequireValue());
+                    if (outcome.Error!.Kind == ProviderErrorKind.NotFound) return null;
+                    ThrowRouteFailure(outcome.Error);
+                    return null;
+                }, prefetch);
+            }
             if (album == null || prefetch) return album;
+            using var matching = RequestTiming.Current?.Stage("match");
             var policy = await ResolveEffectivePolicyAsync(protocol);
             album.Songs = album.Songs.Where(song => policy?.Includes(song) != false).ToList();
-            await ApplyKnownPublicIdsAsync(routed.Candidate.Context, album.Songs, protocol);
+            await ApplyKnownPublicIdsAsync(routed.Candidate.Context, album.Songs, protocol, policy);
             return album;
         }
 

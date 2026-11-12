@@ -4,6 +4,7 @@ using allstarr.Core.Capabilities;
 using allstarr.Core.ClientApi;
 using allstarr.Core.Identity;
 using allstarr.Core.Matching;
+using allstarr.Core.Music;
 using allstarr.Core.Playlists;
 using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
@@ -196,6 +197,103 @@ public sealed partial class ProtocolRouteFixtureTests
         changed.EnsureSuccessStatusCode();
         Assert.Contains("Renamed favourites", await changed.Content.ReadAsStringAsync());
         AssertTimingStages(changed, "merge");
+    }
+
+    [Fact]
+    public async Task ClientApi_AppearancesBatchPreparedFeedsAndPreserveCards()
+    {
+        var reads = new AppearanceReads();
+        using var factory = AppearanceFactory(new(), reads);
+        using var client = CreateClientApiClient(factory);
+        client.DefaultRequestHeaders.Add("X-Emby-Token", "listener-token");
+        var mix = await SeedClientMixAsync(factory);
+        await SeedAppearanceFeedsAsync(factory, 1);
+        const string path = "/allstarr/v1/items/native-mix-song/appearances";
+        reads.Count = 0;
+        using (var small = await client.GetAsync(path)) small.EnsureSuccessStatusCode();
+        var smallReads = reads.Count;
+        var feeds = await SeedAppearanceFeedsAsync(factory, 12);
+        reads.Count = 0;
+        using var large = await client.GetAsync(path);
+        large.EnsureSuccessStatusCode();
+        Assert.True(reads.Count <= smallReads + 3, $"1 feed used {smallReads} reads; 12 feeds used {reads.Count} reads.");
+        var expected = feeds.Select(feed => new ClientItemAppearance("mix", feed.Id.ToString("D"), feed.Name, "Spotify",
+            $"/allstarr/v1/mixes/{feed.Id}/cover", 2, null)).Append(new("mix", mix.Id.ToString("D"), mix.Name,
+            "Made for you", $"/allstarr/v1/mixes/{mix.Id}/cover", 1, PlaylistVirtualizationService.CreateProtocolId(mix.Id))).ToArray();
+        Assert.Equal(JsonSerializer.Serialize(new ClientItemAppearances("native-mix-song", 1, expected)), await large.Content.ReadAsStringAsync());
+        reads.Count = 0;
+        using var warm = await client.GetAsync(path);
+        warm.EnsureSuccessStatusCode();
+        Assert.Equal(await large.Content.ReadAsStringAsync(), await warm.Content.ReadAsStringAsync());
+        Assert.DoesNotContain(", merge;dur=", Assert.Single(warm.Headers.GetValues("Server-Timing")));
+    }
+
+    [Fact(Skip = "Manual fixture measurement; run on each revision to compare cold and warm request timing.")]
+    public async Task ClientApi_AppearancesReportPreparedFeedRequestTiming()
+    {
+        var reads = new AppearanceReads();
+        using var factory = AppearanceFactory(new(), reads);
+        using var client = CreateClientApiClient(factory);
+        client.DefaultRequestHeaders.Add("X-Emby-Token", "listener-token");
+        await SeedClientMixAsync(factory);
+        await SeedAppearanceFeedsAsync(factory, 12);
+        foreach (var state in new[] { "cold", "warm" })
+        {
+            reads.Count = 0;
+            using var response = await client.GetAsync("/allstarr/v1/items/native-mix-song/appearances");
+            response.EnsureSuccessStatusCode();
+            _lyricsSearchOutput.WriteLine($"Appearances {state}: {reads.Count} database reads; " + Assert.Single(response.Headers.GetValues("Server-Timing")));
+        }
+    }
+
+    private static async Task<PersonalMix[]> SeedAppearanceFeedsAsync(ProtocolFactory factory, int count)
+    {
+        var owner = (await factory.Services.GetRequiredService<BackendIdentityResolver>().ResolveAsync(new("Jellyfin", "listener")))!.UserId;
+        await using var db = await factory.Services.GetRequiredService<IDbContextFactory<AllstarrDbContext>>().CreateDbContextAsync();
+        var user = await db.Users.SingleAsync(item => item.Id == owner);
+        var account = await db.ProviderAccounts.SingleOrDefaultAsync(item => item.OwnerUserId == owner && item.ProviderId == "spotify");
+        if (account == null)
+        {
+            account = new() { Id = Guid.NewGuid(), OwnerUserId = owner, ProviderId = "spotify", Enabled = true, Revision = 1 };
+            db.ProviderAccounts.Add(account);
+        }
+        var scope = CanonicalCatalogKeys.Hash($"{user.Id}:{user.BackendType}:{user.BackendInstanceId}:{user.BackendPrincipalId}");
+        var version = (await db.ExternalMetadataSnapshots.Where(item => item.OwnerUserId == owner && item.ResourceKind == "service-feeds")
+            .Select(item => (int?)item.SnapshotVersion).MaxAsync() ?? 0) + 1;
+        var cards = Enumerable.Range(0, count).Select(index => new PersonalMix(Guid.NewGuid(), "external", $"Feed {index:00}", "From Spotify", 1,
+            null, new(true, "Ready"), false, [])
+        { Source = "spotify", SourceLabel = "Spotify", SourcePlaylistId = $"appearance-feed-{index}", ProviderAccountId = account.Id }).ToArray();
+        void Snapshot(string kind, string key, object payload)
+        {
+            var json = JsonSerializer.Serialize(payload);
+            db.ExternalMetadataSnapshots.Add(new()
+            {
+                Id = Guid.NewGuid(),
+                OwnerUserId = owner,
+                ProviderAccountId = account.Id,
+                ProviderId = "spotify",
+                ResourceKind = kind,
+                ExternalIdHash = key,
+                SnapshotVersion = version,
+                Protocol = user.BackendType,
+                BackendInstanceId = user.BackendInstanceId,
+                BackendPrincipalId = user.BackendPrincipalId,
+                ProviderRevision = "1:artwork-v1",
+                PayloadJson = json,
+                PayloadSha256 = CanonicalCatalogKeys.Hash(json),
+                RetrievedAt = DateTimeOffset.UtcNow
+            });
+        }
+        Snapshot("service-feeds", CanonicalCatalogKeys.Hash(scope + ":1"), cards);
+        foreach (var card in cards)
+        {
+            var song = new Song { Id = "native-mix-song", IsLocal = true, Title = "Library song", Artist = "Library artist" };
+            var hidden = new Song { Id = "inaccessible-song", IsLocal = true, Title = "Hidden song" };
+            Snapshot("service-feed-prepared", CanonicalCatalogKeys.Hash(scope + ":1:" + card.SourcePlaylistId), card with
+            { Songs = [new(card.Id, 1, song, "library", "Saved", 1), new(card.Id, 1, song, "library", "Duplicate", 1), new(card.Id, 1, hidden, "library", "Hidden", 1)] });
+        }
+        await db.SaveChangesAsync();
+        return cards;
     }
 
     private static ProtocolFactory AppearanceFactory(Mock<IProtocolProviderGateway> gateway, AppearanceReads reads) => ClientMixFactory(gateway, configure: services =>

@@ -183,6 +183,75 @@ public sealed partial class FeedReadsTests
         Assert.NotEqual(key, db.FeedReadKey(context, "playlist-tracks:original"));
     }
 
+    [Fact]
+    public async Task LibraryIndexPassAndDerivedArtistReadsDoNotInvalidatePlaylistViews()
+    {
+        await using var database = await SqliteTestDatabase.CreateAsync();
+        await using var db = new AllstarrDbContext(database.Options);
+        var owner = User("listener");
+        db.Users.Add(owner);
+        var tracks = Enumerable.Range(0, 64).Select(index => new LibraryTrackRecord
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = owner.Id,
+            Protocol = "jellyfin",
+            BackendInstanceId = "primary",
+            BackendItemId = index.ToString(),
+            Title = "Track " + index
+        }).ToArray();
+        db.LibraryTracks.AddRange(tracks);
+        await db.SaveChangesAsync();
+        var revision = db.FeedReadLibraryRevisionFor(owner.Id);
+        foreach (var track in tracks)
+        {
+            track.IndexedAt = DateTimeOffset.UtcNow;
+            track.UpdatedAt = track.IndexedAt;
+            track.DurationRetrievedAt = track.IndexedAt;
+            track.Revision++;
+            await db.SaveChangesAsync();
+        }
+        foreach (var kind in new[] { "library-artist-index", "library-artist-backfill", "library-artist-candidate" })
+        {
+            db.ExternalMetadataSnapshots.Add(Snapshot(owner.Id, kind));
+            await db.SaveChangesAsync();
+        }
+        Assert.Equal(revision, db.FeedReadLibraryRevisionFor(owner.Id));
+        tracks[0].DurationMilliseconds = 180123;
+        await db.SaveChangesAsync();
+        Assert.Equal(++revision, db.FeedReadLibraryRevisionFor(owner.Id));
+        foreach (var kind in new[] { "library-artist-fix", "playback-metadata", "track-media" })
+        {
+            db.ExternalMetadataSnapshots.Add(Snapshot(owner.Id, kind));
+            await db.SaveChangesAsync();
+            Assert.Equal(++revision, db.FeedReadLibraryRevisionFor(owner.Id));
+        }
+    }
+
+    [Fact]
+    public async Task PlaybackLearningAndComputedSnapshotsKeepPlaylistKeysButNudgesInvalidate()
+    {
+        await using var database = await SqliteTestDatabase.CreateAsync();
+        await using var db = new AllstarrDbContext(database.Options);
+        var owner = User("listener");
+        var taste = new TasteProfileRecord { OwnerUserId = owner.Id, Revision = 1 };
+        db.Users.Add(owner);
+        db.TasteProfiles.Add(taste);
+        await db.SaveChangesAsync();
+        var context = Context(owner);
+        var key = db.FeedReadKey(context, "playlist-view:one");
+        taste.PayloadJson = "{\"snapshot\":{}}";
+        await db.SaveChangesAsync();
+        Assert.Equal(key, db.FeedReadKey(context, "playlist-view:one"));
+        taste.Revision++;
+        taste.PayloadJson = "{\"Occurrences\":{\"playing\":{\"Position\":30}},\"Nudges\":[]}";
+        await db.SaveChangesAsync();
+        Assert.Equal(key, db.FeedReadKey(context, "playlist-view:one"));
+        taste.Revision++;
+        taste.PayloadJson = "{\"Nudges\":[{\"Kind\":\"artist\",\"Name\":\"Artist\",\"Mode\":\"never\"}]}";
+        await db.SaveChangesAsync();
+        Assert.NotEqual(key, db.FeedReadKey(context, "playlist-view:one"));
+    }
+
     internal static UserRecord User(string principal) => new()
     {
         Id = Guid.NewGuid(),

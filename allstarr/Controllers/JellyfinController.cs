@@ -380,6 +380,7 @@ public partial class JellyfinController : ControllerBase
         string? selectedArtistId = null,
         ExternalArtistRelation artistRelation = ExternalArtistRelation.All)
     {
+        using var merging = type == "album" ? allstarr.Core.Operations.RequestTiming.Current?.Stage("merge") : null;
         var items = await ReadExternalChildRowsAsync(provider, type, externalId, includeItemTypes,
             cancellationToken, selectedArtistId, artistRelation);
         return items == null ? _responseBuilder.CreateError(404, "Album not found") :

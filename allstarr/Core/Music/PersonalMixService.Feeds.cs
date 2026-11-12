@@ -159,6 +159,13 @@ public sealed partial class PersonalMixService
         await using var db = await factory.CreateDbContextAsync(token);
         var links = await ExternalLinks(db, user).AsNoTracking().OrderByDescending(link => link.Enabled).ThenBy(link => link.CreatedAt).ToArrayAsync(token);
         var result = linked.ToList();
+        var prepared = id.HasValue ? null : await PreparedServiceFeedsAsync(user, cards.Where(card =>
+        {
+            var link = links.FirstOrDefault(link => (link.ProviderAccountId == card.ProviderAccountId || link.ProviderAccountId == null) &&
+                link.SourceProviderId == card.Source && link.SourcePlaylistId == card.SourcePlaylistId);
+            var mix = link == null ? null : linked.FirstOrDefault(mix => mix.Id == link.Id);
+            return link == null || mix != null && (mix.Generation == 0 || !link!.Enabled);
+        }).ToArray(), token);
         foreach (var sourceCard in cards)
         {
             var card = sourceCard;
@@ -173,7 +180,7 @@ public sealed partial class PersonalMixService
                     var mix = result[match];
                     if (mix.Generation == 0 || !link.Enabled)
                     {
-                        card = await PreparedServiceFeedAsync(user, card, token);
+                        card = prepared == null ? await PreparedServiceFeedAsync(user, card, token) : prepared[card.Id];
                         mix = card with
                         {
                             Id = link.Id,
@@ -194,7 +201,7 @@ public sealed partial class PersonalMixService
                 continue;
             }
             if (id != null && card.Id != id) continue;
-            result.Add(await PreparedServiceFeedAsync(user, card, token));
+            result.Add(prepared == null ? await PreparedServiceFeedAsync(user, card, token) : prepared[card.Id]);
         }
         return result.DistinctBy(mix => (mix.Source is "spotify" or "apple-musickit" ? (Guid?)null : mix.ProviderAccountId,
             mix.Source, mix.SourcePlaylistId ?? mix.Id.ToString())).ToArray();
