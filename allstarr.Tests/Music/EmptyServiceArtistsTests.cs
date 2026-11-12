@@ -36,6 +36,25 @@ public sealed class EmptyServiceArtistsTests
     }
 
     [Fact]
+    public void ASourceWhoseArtistPagesAreNearlyAlwaysEmptyIsLeftOutUntilADayPasses()
+    {
+        var clock = new StepClock();
+        var empty = new EmptyServiceArtists(clock);
+        for (var index = 0; index < 9; index++) empty.Record("spotiflac-jiosaavn", "stub" + index, 0);
+        empty.Record("spotiflac-jiosaavn", "real", 3);
+        for (var index = 0; index < 5; index++) empty.Record("deezer", "credit" + index, 0);
+        for (var index = 0; index < 5; index++) empty.Record("deezer", "real" + index, 12);
+
+        // Nine in ten empty: every artist from that source stays out, even ones never looked at.
+        Assert.True(empty.IsEmpty(Artist("spotiflac-jiosaavn", "never-seen")));
+        // Half empty is a source with real artists and some empty credit profiles; only the empty ones go.
+        Assert.False(empty.IsEmpty(Artist("deezer", "never-seen")));
+        Assert.True(empty.IsEmpty(Artist("deezer", "credit0")));
+        clock.Now += TimeSpan.FromDays(1.1);
+        Assert.False(empty.IsEmpty(Artist("spotiflac-jiosaavn", "never-seen")));
+    }
+
+    [Fact]
     public async Task AServiceThatFailsSaysNothingAboutTheArtist()
     {
         var gateway = new Mock<IProtocolProviderGateway>();
