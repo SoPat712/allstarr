@@ -42,7 +42,7 @@ internal sealed class RankedSearchSnapshots(string query, int limit, IReadOnlyLi
 {
     private sealed record Update(string? Provider, IReadOnlyList<RankedSearchRow> Rows,
         IReadOnlyList<string>? Late, TaskCompletionSource? Accepted = null, IReadOnlySet<string>? Linked = null,
-        IReadOnlyList<(string Id, JsonObject Entry)>? AlsoOn = null);
+        IReadOnlyList<(string Id, JsonObject Entry)>? AlsoOn = null, string? Spelled = null);
     private readonly Channel<Update> updates = Channel.CreateUnbounded<Update>(new() { SingleReader = true });
     private readonly Dictionary<string, List<RankedSearchRow>> sections = requested.ToDictionary(section => section, _ => new List<RankedSearchRow>());
     private readonly List<string> providers = [];
@@ -54,6 +54,8 @@ internal sealed class RankedSearchSnapshots(string query, int limit, IReadOnlyLi
     private IReadOnlySet<string> linked = new HashSet<string>();
     // Library artists by normalized name, so a same-named service artist can name the one it might be.
     private ILookup<string, RankedSearchRow> libraryArtists = Array.Empty<RankedSearchRow>().ToLookup(row => "");
+    // The library's own spelling of the query ("Cyber Sex" for "cybersex"); every row scores against both.
+    private string? spelled;
 
     /// <param name="alsoOn">Service artists proven to be an artist already listed; each joins that row's alsoOn.</param>
     internal async Task AddAsync(string provider, IReadOnlyList<RankedSearchRow> rows, CancellationToken token,
@@ -65,10 +67,10 @@ internal sealed class RankedSearchSnapshots(string query, int limit, IReadOnlyLi
     }
 
     internal async Task AddLibraryAsync(IReadOnlyList<RankedSearchRow> rows, CancellationToken token,
-        IReadOnlySet<string>? linkedArtists = null)
+        IReadOnlySet<string>? linkedArtists = null, string? spelling = null)
     {
         var accepted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        await updates.Writer.WriteAsync(new(null, rows, null, accepted, linkedArtists), token);
+        await updates.Writer.WriteAsync(new(null, rows, null, accepted, linkedArtists, Spelled: spelling), token);
         await accepted.Task.WaitAsync(token);
     }
 
@@ -90,6 +92,7 @@ internal sealed class RankedSearchSnapshots(string query, int limit, IReadOnlyLi
             {
                 if (update.Provider is { } provider && !providers.Contains(provider, StringComparer.Ordinal)) providers.Add(provider);
                 if (update.Linked is { Count: > 0 } artists) linked = artists;
+                if (update.Spelled is { Length: > 0 } spelling) spelled = spelling;
                 if (update.Provider == null && update.Rows.Count > 0)
                 {
                     PruneExternalDuplicates(update.Rows);
@@ -197,16 +200,17 @@ internal sealed class RankedSearchSnapshots(string query, int limit, IReadOnlyLi
         if (refresh != null) await refresh(all, token);
         var knownDurationTitles = all.Where(row => (row.Song?.PreciseDuration?.TotalSeconds ?? row.Song?.Duration ?? row.Native?.DurationSeconds) is > 0)
             .Select(row => SearchRelevanceRanker.RecordingTitle(row.Song?.Title ?? row.Native!.Name, row.Song?.Artist ?? row.Native?.ArtistText, row.Song?.AlbumArtist ?? row.Native?.AlbumArtistText)).ToHashSet(StringComparer.Ordinal);
+        double Best(Func<string, double> score) => spelled == null ? score(query) : Math.Max(score(query), score(spelled));
         foreach (var row in all)
         {
             if (row.Song != null)
-                row.Item["score"] = SearchRelevanceRanker.ScoreSong(query, row.Song!, knownDurationTitles.Contains(
-                    SearchRelevanceRanker.RecordingTitle(row.Song!.Title, row.Song.Artist, row.Song.AlbumArtist)));
-            else if (row.Native?.Kind == MusicItemKind.Song)
-                row.Item["score"] = SearchRelevanceRanker.ScoreSong(query, row.Native.Name, row.Native.ArtistText,
-                    row.Native.AlbumText, row.Native.AlbumArtistText, row.Native.DurationSeconds, provenRecording: true,
+                row.Item["score"] = Best(text => SearchRelevanceRanker.ScoreSong(text, row.Song!, knownDurationTitles.Contains(
+                    SearchRelevanceRanker.RecordingTitle(row.Song!.Title, row.Song.Artist, row.Song.AlbumArtist))));
+            else if (row.Native is { Kind: MusicItemKind.Song } native)
+                row.Item["score"] = Best(text => SearchRelevanceRanker.ScoreSong(text, native.Name, native.ArtistText,
+                    native.AlbumText, native.AlbumArtistText, native.DurationSeconds, provenRecording: true,
                     hasKnownDurationVersion: knownDurationTitles.Contains(
-                        SearchRelevanceRanker.RecordingTitle(row.Native.Name, row.Native.ArtistText, row.Native.AlbumArtistText)));
+                        SearchRelevanceRanker.RecordingTitle(native.Name, native.ArtistText, native.AlbumArtistText))));
         }
         foreach (var rows in sections.Values) Rank(rows);
         var byEntry = new Dictionary<MusicSearchEntry<object>, RankedSearchRow>(ReferenceEqualityComparer.Instance);
@@ -219,7 +223,8 @@ internal sealed class RankedSearchSnapshots(string query, int limit, IReadOnlyLi
         Rank(mixed);
         string? ArtistName(RankedSearchRow row) => row.Artist?.Name ?? (row.Native?.Kind == MusicItemKind.Artist ? row.Native.Name : null);
         bool Exact(RankedSearchRow row) => ArtistName(row) is { } name &&
-            FuzzyMatcher.NormalizeForMatching(name) == FuzzyMatcher.NormalizeForMatching(query);
+            (FuzzyMatcher.NormalizeForMatching(name) == FuzzyMatcher.NormalizeForMatching(query) ||
+             spelled != null && FuzzyMatcher.NormalizeForMatching(name) == FuzzyMatcher.NormalizeForMatching(spelled));
         var exact = all.Where(Exact).OrderByDescending(row => row.Score).ThenBy(row => row.Native == null).FirstOrDefault();
         if (exact != null && (pinned == null || exact.Native != null && pinned.Native == null))
             pinned = exact;

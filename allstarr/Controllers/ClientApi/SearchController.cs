@@ -111,7 +111,7 @@ public sealed class SearchController(IProtocolProviderGateway providers, MusicSe
                         var links = await savedLinks!;
                         var libraryRows = BuildLibraryRows(query, owned, requested, limit, library, links, native.Spelled);
                         if (libraryRows.Count > 0)
-                            await snapshots.AddLibraryAsync(libraryRows, token, MusicSearchService.LinkedKeys(links));
+                            await snapshots.AddLibraryAsync(libraryRows, token, MusicSearchService.LinkedKeys(links), native.Spelled);
                     }
                 }
                 catch (OperationCanceledException) when (token.IsCancellationRequested) { }
