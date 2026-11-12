@@ -102,7 +102,18 @@ internal sealed class RankedSearchSnapshots(string query, int limit, IReadOnlyLi
                 foreach (var (id, entry) in update.AlsoOn ?? [])
                     if (sections.GetValueOrDefault("artists")?.FirstOrDefault(row => row.Item["Id"]?.GetValue<string>() == id) is { } listed)
                     {
-                        if (listed.Item["alsoOn"] is not JsonArray also) listed.Item["alsoOn"] = also = [];
+                        // The first joined part makes the row a combined entry: labelled Allstarr, listing its own part first.
+                        if (listed.Item["alsoOn"] is not JsonArray also)
+                        {
+                            listed.Item["alsoOn"] = also = [new JsonObject
+                            {
+                                ["source"] = listed.Item["source"]?.DeepClone(),
+                                ["sourceName"] = listed.Item["sourceName"]?.DeepClone(),
+                                ["id"] = id
+                            }];
+                            listed.Item["source"] = SearchController.CombinedSource;
+                            listed.Item["sourceName"] = SearchController.CombinedSourceName;
+                        }
                         also.Add(entry);
                     }
                 late = update.Late ?? late;

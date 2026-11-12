@@ -53,7 +53,7 @@ public partial class JellyfinController
             var providerArtists = (await providerTask).Artists.Where(artist => !_musicSearch.IsEmptyArtist(artist)).ToList();
             var linked = await _musicSearch.LinkedProviderArtistsAsync(HttpContext.RequireProtocolExecutionContext(),
                 libraryNames, providerArtists, HttpContext.RequestAborted);
-            rows.AddRange(providerArtists.Where(artist => !MusicSearchService.IsLinked(artist, linked))
+            rows.AddRange(MusicSearchService.OneServiceArtistPerName(providerArtists.Where(artist => !MusicSearchService.IsLinked(artist, linked)))
                 .Select(_responseBuilder.ConvertArtistForQuery));
             return await ShapeProviderQueryAsync(rows, "SortName", nativeAlreadyFiltered: true, defaultLimit: limit);
         }

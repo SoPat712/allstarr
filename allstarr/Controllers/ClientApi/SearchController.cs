@@ -25,8 +25,8 @@ public sealed class SearchController(IProtocolProviderGateway providers, MusicSe
     [EndpointName("streamSearch")]
     [EndpointDescription("Streams external Jellyfin-shaped items with a lowercase numeric score from the merged search relevance scorer. " +
         "Every item also has source, the provider id that produced it or the library id for library items, and sourceName, its display name. Same-named library and service artists or albums are separate items. " +
-        "In ranked snapshots, a library artist that matched songs tie to service artists has alsoOn, an array of {source, sourceName, id}, and those service artists are not listed separately. " +
-        "Same-named artists from different services are one item when one of their songs is the same recording (same ISRC, or same title and length): in ranked snapshots the others join its alsoOn, and the default shape leaves them out. Unproven namesakes stay separate items. " +
+        "In ranked snapshots, a library artist that matched songs or a person's answer tie to service artists is one combined item: source allstarr, sourceName Allstarr, and alsoOn, an array of {source, sourceName, id} listing the library artist first and then those service artists, which are not listed separately. " +
+        "Besides the library artist, each name has at most one streaming artist: same-named artists from other services join it. In ranked snapshots that makes it a combined item the same way, its own part first in alsoOn; the default shape leaves them out. " +
         "In ranked snapshots, a service artist with a library artist's name that it is not tied to has namesakes, an array of {id, name} of those library artists. " +
         "The default shape emits {provider,items} batches and a final {done:true,late} line. " +
         "With shape=ranked, every line replaces the previous snapshot: {revision,done,providers,top,items,sections}, including library (Jellyfin) matches in top, items and sections ranked by merged search relevance scorer rules. " +
@@ -74,8 +74,8 @@ public sealed class SearchController(IProtocolProviderGateway providers, MusicSe
         var sentAlbums = new HashSet<string>(StringComparer.Ordinal);
         var sentArtists = new List<Artist>();
         var seenArtists = new List<Artist>();
+        // Per listed artist row: the services already shown on it, its own first.
         var alsoOnSources = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
-        var evidence = new List<Song>();
         using var publishingStop = CancellationTokenSource.CreateLinkedTokenSource(disconnected);
         RankedSearchSnapshots? snapshots = null;
         Task? libraryTask = null;
@@ -149,7 +149,6 @@ public sealed class SearchController(IProtocolProviderGateway providers, MusicSe
                         knownDurationTitles.Contains(SearchRelevanceRanker.RecordingTitle(song.Title, song.Artist, song.AlbumArtist)));
                     var items = new List<RankedSearchRow>();
                     var alsoOn = new List<(string Id, JsonObject Entry)>();
-                    evidence.AddRange(results.Songs);
                     // Service artists that open to nothing stay out; same-named ones are checked for next time.
                     seenArtists.AddRange(results.Artists);
                     music.ProbeArtists(Execution, seenArtists, owned.Where(item => item.Kind == MusicItemKind.Artist).Select(item => item.Name));
@@ -189,17 +188,17 @@ public sealed class SearchController(IProtocolProviderGateway providers, MusicSe
                                  .OrderByDescending(artist => SearchRelevanceRanker.Score(query, artist.Name)).Take(limit))
                     {
                         if (sentIds.Contains("MusicArtist:" + artist.Id)) continue;
-                        // A same-named artist from another service joins the listed one only when a song proves it; otherwise it is its own row.
-                        if (sentArtists.FirstOrDefault(sent => MusicSearchService.SameServiceArtist(sent, artist, evidence)) is { } twin)
+                        // Each name has one streaming artist; a same-named one from any service joins it instead of being its own row.
+                        if (sentArtists.FirstOrDefault(sent => Normalize(sent.Name) == Normalize(artist.Name)) is { } twin)
                         {
                             // One entry per service: several same-named accounts on one service add nothing for the app to show.
-                            alsoOnSources.TryAdd(twin.Id, []);
                             if (alsoOnSources[twin.Id].Add(provider))
                                 alsoOn.Add((twin.Id, new JsonObject { ["source"] = provider, ["sourceName"] = providerName, ["id"] = artist.Id }));
                             continue;
                         }
                         sentIds.Add("MusicArtist:" + artist.Id);
                         sentArtists.Add(artist);
+                        alsoOnSources[artist.Id] = [provider];
                         Add(requested.SetEquals(["MusicArtist"]) ? builder.ConvertArtistForQuery(artist) : builder.ConvertArtistToJellyfinItem(artist),
                             SearchRelevanceRanker.Score(query, artist.Name), "artists", artist: artist);
                     }
@@ -251,6 +250,8 @@ public sealed class SearchController(IProtocolProviderGateway providers, MusicSe
         await Response.Body.FlushAsync(cancellationToken);
     }
 
+    internal const string CombinedSource = "allstarr", CombinedSourceName = "Allstarr";
+
     private static string Normalize(string? value) => FuzzyMatcher.NormalizeForMatching(value ?? "");
     private static string AlbumKey(string title, string? artist) => Normalize(title) + "\u001f" + Normalize(artist);
 
@@ -298,13 +299,19 @@ public sealed class SearchController(IProtocolProviderGateway providers, MusicSe
                 itemNode["score"] = score;
                 itemNode["source"] = source.Id;
                 itemNode["sourceName"] = source.Name;
+                // A library artist that songs tie to service artists is one combined entry: labelled Allstarr, with every part in alsoOn.
                 if (links.GetValueOrDefault(artist.Name) is { Count: > 0 } alsoOn)
-                    itemNode["alsoOn"] = JsonSerializer.SerializeToNode(alsoOn.Select(link => new
-                    {
-                        source = link.ProviderId,
-                        sourceName = registry.TryGet(link.ProviderId, out var descriptor) ? descriptor!.DisplayName : link.ProviderId,
-                        id = ProtocolProviderGateway.ProtocolItemId(new(link.ProviderId, ProviderResourceKind.Artist, link.ArtistId))
-                    }));
+                {
+                    itemNode["alsoOn"] = JsonSerializer.SerializeToNode(new[] { new { source = source.Id, sourceName = source.Name, id = artist.Id } }
+                        .Concat(alsoOn.Select(link => new
+                        {
+                            source = link.ProviderId,
+                            sourceName = registry.TryGet(link.ProviderId, out var descriptor) ? descriptor!.DisplayName : link.ProviderId,
+                            id = ProtocolProviderGateway.ProtocolItemId(new(link.ProviderId, ProviderResourceKind.Artist, link.ArtistId))
+                        })));
+                    itemNode["source"] = CombinedSource;
+                    itemNode["sourceName"] = CombinedSourceName;
+                }
                 rows.Add(new(itemNode, "artists", Native: AsObjectPayload(artist)));
             }
         }

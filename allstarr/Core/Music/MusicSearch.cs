@@ -448,8 +448,8 @@ public sealed partial class MusicSearchService(
                 .Concat(playlists.Select(playlist => (
                     new MusicSearchEntry<TPayload> { Playlist = playlist },
                     SearchRelevanceRanker.Score(query, playlist.Name, playlist.CuratorName))))),
-            // Same-named artists from two services become one row only when one of their songs is the same recording.
-            Rank(query, nativeArtists, WithoutProvenServiceRepeats(artists.Where(artist => !IsLinked(artist, linkedProviderArtists)), providerSongs)
+            // Beside the library artist, each name has one streaming artist.
+            Rank(query, nativeArtists, OneServiceArtistPerName(artists.Where(artist => !IsLinked(artist, linkedProviderArtists)))
                 .Select(artist => (
                     new MusicSearchEntry<TPayload> { Artist = artist },
                     SearchRelevanceRanker.Score(query, artist.Name)))));

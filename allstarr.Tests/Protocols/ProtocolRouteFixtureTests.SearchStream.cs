@@ -205,7 +205,13 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.DoesNotContain(artists, item => item!["Id"]!.GetValue<string>() == "ext-deezer-artist-same");
         Assert.DoesNotContain(final["items"]!.AsArray(), item => item!["Id"]!.GetValue<string>() == "ext-deezer-artist-same");
         var library = Assert.Single(artists, item => item!["Id"]!.GetValue<string>() == "lib-artist-juice")!;
-        var alsoOn = Assert.Single(library["alsoOn"]!.AsArray())!;
+        // One combined entry: labelled Allstarr, with the library artist and then the service in alsoOn.
+        Assert.Equal("allstarr", library["source"]!.GetValue<string>());
+        var parts = library["alsoOn"]!.AsArray();
+        Assert.Equal(2, parts.Count);
+        Assert.Equal("jellyfin", parts[0]!["source"]!.GetValue<string>());
+        Assert.Equal("lib-artist-juice", parts[0]!["id"]!.GetValue<string>());
+        var alsoOn = parts[1]!;
         Assert.Equal("deezer", alsoOn["source"]!.GetValue<string>());
         Assert.Equal("ext-deezer-artist-same", alsoOn["id"]!.GetValue<string>());
         Assert.False(string.IsNullOrWhiteSpace(alsoOn["sourceName"]!.GetValue<string>()));
@@ -244,19 +250,8 @@ public sealed partial class ProtocolRouteFixtureTests
     [Theory]
     [InlineData("ranked")]
     [InlineData(null)]
-    public async Task ClientApi_SearchStreamJoinsSameNamedServiceArtistsOnlyWhenASongProvesIt(string? shape)
+    public async Task ClientApi_SearchStreamShowsOneStreamingArtistPerNameLabelledAllstarr(string? shape)
     {
-        Song Brick(string provider, string isrc) => new()
-        {
-            Id = $"ext-{provider}-song-brick",
-            ExternalProvider = provider,
-            ExternalId = "brick",
-            Title = "Brick By Brick",
-            Artist = "Say Now",
-            Album = "Brick By Brick",
-            Duration = 200,
-            Isrc = isrc
-        };
         Artist SayNow(string provider, string id = "saynow") => new()
         {
             Id = $"ext-{provider}-artist-{id}",
@@ -266,14 +261,9 @@ public sealed partial class ProtocolRouteFixtureTests
         };
         var batches = new List<(string, SearchResult)>
         {
-            ("deezer", new SearchResult { Artists = [SayNow("deezer")], Songs = [Brick("deezer", "USX9P2300001")] }),
-            // Apple has two same-named accounts with the song; Songbird gets one Apple entry, not two.
-            ("applemusic", new SearchResult
-            {
-                Artists = [SayNow("applemusic"), SayNow("applemusic", "reupload")],
-                Songs = [Brick("applemusic", "USX9P2300001")]
-            }),
-            // Qobuz has an act with the same name but none of its songs, so nothing proves it is the same artist.
+            ("deezer", new SearchResult { Artists = [SayNow("deezer")] }),
+            // Apple has two same-named accounts; Songbird gets one Apple entry, not two.
+            ("applemusic", new SearchResult { Artists = [SayNow("applemusic"), SayNow("applemusic", "reupload")] }),
             ("qobuz", new SearchResult { Artists = [SayNow("qobuz")] })
         };
 
@@ -283,15 +273,16 @@ public sealed partial class ProtocolRouteFixtureTests
             ? lines[^1]["sections"]!["artists"]!.AsArray().Select(item => item!).ToArray()
             : lines.Where(line => line["items"] != null).SelectMany(line => line["items"]!.AsArray())
                 .Where(item => item!["Type"]!.GetValue<string>() == "MusicArtist").Select(item => item!).ToArray();
-        Assert.Equal(["ext-deezer-artist-saynow", "ext-qobuz-artist-saynow"],
-            artists.Select(item => item["Id"]!.GetValue<string>()).Order(StringComparer.Ordinal));
+        var row = Assert.Single(artists);
+        Assert.Equal("ext-deezer-artist-saynow", row["Id"]!.GetValue<string>());
         if (shape == "ranked")
         {
-            var deezer = artists.Single(item => item["Id"]!.GetValue<string>() == "ext-deezer-artist-saynow");
-            var apple = Assert.Single(deezer["alsoOn"]!.AsArray())!;
-            Assert.Equal("ext-applemusic-artist-saynow", apple["id"]!.GetValue<string>());
-            Assert.Equal("applemusic", apple["source"]!.GetValue<string>());
+            Assert.Equal("allstarr", row["source"]!.GetValue<string>());
+            Assert.Equal("Allstarr", row["sourceName"]!.GetValue<string>());
+            Assert.Equal([("deezer", "ext-deezer-artist-saynow"), ("applemusic", "ext-applemusic-artist-saynow"), ("qobuz", "ext-qobuz-artist-saynow")],
+                row["alsoOn"]!.AsArray().Select(part => (part!["source"]!.GetValue<string>(), part["id"]!.GetValue<string>())));
         }
+        else Assert.Equal("deezer", row["source"]!.GetValue<string>());
     }
 
     [Theory]
