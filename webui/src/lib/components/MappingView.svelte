@@ -27,6 +27,7 @@
     manualMatchAuthority,
   } from "$lib/matching-api";
   import MatchesPanel from "$lib/components/MatchesPanel.svelte";
+  import MatchKindSwitch from "$lib/components/MatchKindSwitch.svelte";
   import PageStatus from "$lib/components/patterns/PageStatus.svelte";
   import FilterSegments from "$lib/components/patterns/FilterSegments.svelte";
   import StatePill from "$lib/components/patterns/StatePill.svelte";
@@ -64,7 +65,7 @@
       };
   type MappingView = MatchFilter;
   const storageKey = "matches.filter";
-  let { initialSearch = "", initialReview = "" }: { initialSearch?: string; initialReview?: string } = $props();
+  let { initialSearch = "", initialReview = "", administrator = false }: { initialSearch?: string; initialReview?: string; administrator?: boolean } = $props();
 
   let data = $state<MatchReviewResponse | null>(null);
   let providers = $state<ProviderDefinition[]>([]);
@@ -625,7 +626,7 @@
   <section class="mapping-page" class:panel-open={dialogOpen} aria-busy={refreshing}>
     <article class="mapping-queue">
       <header class="mapping-heading">
-        <div class="match-title"><h2>Matches</h2><Button variant="outline" size="sm" disabled={Boolean(action) || refreshing} onclick={() => rematchAllOpen = true}>Rematch all</Button></div>
+        <div class="match-title"><h2>Matches</h2>{#if administrator}<MatchKindSwitch active="songs" />{/if}<Button class="match-title-action" variant="outline" size="sm" disabled={Boolean(action) || refreshing} onclick={() => rematchAllOpen = true}>Rematch all</Button></div>
         <PageStatus items={[
           { label: `${countLabel(data.stats.total, "song")}${playlistCount == null ? "" : ` from ${countLabel(playlistCount, "playlist")}`}`, emphasis: true },
           { label: `${counts.needs.toLocaleString()} ${counts.needs === 1 ? "needs" : "need"} a look`, tone: "warn" },
@@ -726,7 +727,8 @@
 <style>
   .mapping-queue { overflow: visible; }
   .mapping-heading { display: grid; grid-template-columns: minmax(0, 1fr); justify-content: stretch; align-items: start; gap: var(--space-3); margin-bottom: var(--space-5); }
-  .match-title { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
+  .match-title { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); }
+  .match-title :global(.match-title-action) { margin-left: auto; }
   .match-status-bar { display: flex; gap: 2px; height: 8px; overflow: hidden; border-radius: var(--radius-sm); background: var(--color-panel-raised); }
   .match-status-bar span { min-width: 3px; }
   .match-legend { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-4); list-style: none; margin: 0; padding: 0; font-size: var(--text-xs); }
@@ -783,4 +785,5 @@
     .matches-toolbar { flex-wrap: wrap; }.matches-table, .matches-table tbody { display: block; }.matches-table thead, .desktop-cell { display: none; }.mapping-row { display: block; height: auto; }.mapping-row .phone-cell { display: block; padding: 0; border: 0; }.matches-table { table-layout: auto; }
     .mapping-bulk { bottom: calc(var(--mobile-nav-height) + var(--space-2)); }.mapping-pagination { flex-wrap: wrap; gap: var(--space-2); }.mapping-pagination > div { display: flex; align-items: center; }
   }
+  @media (max-width: 599px) { .match-title:has(:global(.match-kind)) h2 { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; } }
 </style>

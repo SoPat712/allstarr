@@ -163,6 +163,9 @@
           ? {
               initialSearch: routeQuery.get("search") ?? "",
               initialReview: routeQuery.get("review") ?? "",
+              initialArtist: routeQuery.get("artist") ?? "",
+              view: routeQuery.get("view") ?? "",
+              administrator,
             }
           : route === "/library/kept"
             ? { administrator }
@@ -260,7 +263,7 @@
     if (path === "/") return import("$lib/components/HomeView.svelte");
     if (path === "/library/import") return import("$lib/components/ImportView.svelte");
     if (path === "/library/playlists") return import("$lib/components/PlaylistsView.svelte");
-    if (path === "/library/mappings") return import("$lib/components/MappingView.svelte");
+    if (path === "/library/mappings") return import("$lib/components/MatchesView.svelte");
     if (path === "/library/kept") return import("$lib/components/KeptSongsView.svelte");
     if (path === "/library/to-library") return import("$lib/components/LibraryPromotionsView.svelte");
     if (path === "/library/cached") {
