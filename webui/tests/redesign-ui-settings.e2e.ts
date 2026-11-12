@@ -105,9 +105,9 @@ for (const [width, theme] of [[1280, "light"], [1280, "dark"], [390, "light"], [
         await page.getByRole("checkbox", { name: "Concert recordings", exact: true }).check();
         await expect(page.getByRole("alertdialog")).toBeVisible(); await capture("restart-dialog");
         await page.getByRole("alertdialog").getByRole("button", { name: "Cancel", exact: true }).click();
-        await page.getByRole("button", { name: /How added songs are saved/ }).click();
-        await expect(page.getByRole("dialog", { name: "Adding songs to the library", exact: true })).toBeVisible(); await capture("adding-panel");
-        await page.getByRole("dialog").getByRole("button", { name: "Close", exact: true }).click();
+        // Adding songs to the library sits on this page now, not behind a panel.
+        await expect(page.locator("#adding-to-library")).toBeVisible();
+        await expect(page.getByRole("button", { name: /How added songs are saved/ })).toHaveCount(0); await capture("adding-inline");
       } else if (section === "quality") {
         await page.getByRole("button", { name: /What each source sends/ }).click();
         await expect(page.getByRole("dialog", { name: "What each source sends", exact: true })).toBeVisible(); await capture("sends-panel");

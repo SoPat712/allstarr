@@ -129,7 +129,10 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.Equal(TimeSpan.Zero, cover.Headers.CacheControl?.MaxAge);
 
         await using var db = await factory.Services.GetRequiredService<IDbContextFactory<AllstarrDbContext>>().CreateDbContextAsync();
-        (await db.LibraryTracks.SingleAsync()).Revision++;
+        // A real library change touches the song's metadata; revision or timestamp-only writes keep the cover cached.
+        var track = await db.LibraryTracks.SingleAsync();
+        track.Revision++;
+        track.Isrc = "USABC2400001";
         await db.SaveChangesAsync();
         using var libraryChanged = await client.GetAsync($"/allstarr/v1/mixes/{mix.Id}/cover");
         libraryChanged.EnsureSuccessStatusCode();
