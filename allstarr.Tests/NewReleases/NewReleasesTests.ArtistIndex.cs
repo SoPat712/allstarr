@@ -370,7 +370,7 @@ public sealed partial class NewReleasesTests
     }
 
     private LibraryArtistIndex ArtistIndex(IProtocolProviderGateway? gateway = null, ITrackIdentityService? identities = null, string[]? libraries = null,
-        Guid? administrator = null, allstarr.Core.Music.EmptyServiceArtists? empty = null)
+        Guid? administrator = null, allstarr.Core.Music.EmptyServiceArtists? empty = null, IDbContextFactory<AllstarrDbContext>? factory = null)
     {
         var access = new Mock<IBackendLibraryAccessResolver>();
         access.Setup(value => value.ResolveUserAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
@@ -378,7 +378,7 @@ public sealed partial class NewReleasesTests
                 new AllstarrPrincipal(owner, "subsonic", "main", owner.ToString(), "Listener", owner == administrator), "artist-index", _clock.UtcNow.AddMinutes(10), default),
                 new(true, libraries ?? ["music"])));
         gateway ??= Mock.Of<IProtocolProviderGateway>();
-        return new(_factory, access.Object, _clock,
+        return new(factory ?? _factory, access.Object, _clock,
             new TrackMatchPlayableSearch(gateway, new(), NullLogger<TrackMatchPlayableSearch>.Instance),
             gateway, identities ?? Mock.Of<ITrackIdentityService>(), emptyArtists: empty);
     }

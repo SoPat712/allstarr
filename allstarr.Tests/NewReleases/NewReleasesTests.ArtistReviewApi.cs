@@ -62,7 +62,7 @@ public sealed partial class NewReleasesTests
         Assert.Equal(new ArtistReviewCounts(0, 1, 0, 0, 1), searched.Counts);
         var songService = Assert.Single(Assert.Single(searched.Artists).Services);
         Assert.Equal("song-artist", songService.ArtistId);
-        Assert.Equal(1, songService.SharedSongs);
+        Assert.Null(songService.SharedSongs);
         var detail = await review.DetailAsync(context, "songs", default);
         Assert.Equal(["Shared song"], Assert.Single(detail!.Services).SharedSongTitles);
         await Assert.ThrowsAsync<ArgumentException>(() => review.ListAsync(context, "all", "changed", first.NextCursor, 2, default));
@@ -101,6 +101,8 @@ public sealed partial class NewReleasesTests
         var song = await ArtistSongAsync("New shared song", null, "Songs");
         Assert.Empty(await index.ReadAsync(_first, "Songs"));
         await ArtistIdentityAsync(song, "linked");
+        Assert.Equal(0, (await review.ListAsync(ArtistReviewContext(_first), "linked", null, null, 50, default)).Counts.Linked);
+        await index.ReadPartsAsync(_first, "Songs");
         var page = await review.ListAsync(ArtistReviewContext(_first), "linked", null, null, 50, default);
         Assert.Equal(1, page.Counts.Linked);
         Assert.Equal("Songs", Assert.Single(page.Artists).Name);
@@ -156,7 +158,7 @@ public sealed partial class NewReleasesTests
     [InlineData(new string[] { }, "library-only")]
     public void LibraryArtist_review_status_precedence(string[] states, string expected) => Assert.Equal(expected, ArtistReviewRow.StatusFor(states));
 
-    private async Task<(LibraryArtistReview Review, LibraryArtistIndex Index, IProviderRegistry Registry)> ArtistReviewSetupAsync(ArtistReviewHttp? handler = null)
+    private async Task<(LibraryArtistReview Review, LibraryArtistIndex Index, IProviderRegistry Registry)> ArtistReviewSetupAsync(ArtistReviewHttp? handler = null, Microsoft.EntityFrameworkCore.Diagnostics.DbCommandInterceptor? interceptor = null)
     {
         await using var db = _factory.CreateDbContext();
         (await db.Users.SingleAsync(user => user.Id == _first)).IsAdmin = true;
@@ -170,7 +172,8 @@ public sealed partial class NewReleasesTests
         permissions.Setup(value => value.CreateRequestAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(() => new HttpRequestMessage(HttpMethod.Post, "https://library.example.test/rest/getMusicFolders.view")
             { Content = new FormUrlEncodedContent(new Dictionary<string, string> { ["f"] = "json" }) });
-        var index = ArtistIndex(administrator: _first);
+        var index = ArtistIndex(administrator: _first, factory: interceptor == null ? null : new Factory(
+            new DbContextOptionsBuilder<allstarr.Core.Storage.AllstarrDbContext>(_database.Options).AddInterceptors(interceptor).Options));
         return (new(index, registry, new TestBackendLibraryAccess(_factory, "music"), permissions.Object,
             new CoverClients(handler ?? new ArtistReviewHttp()), new TestMemoryApplicationCache()), index, registry);
     }
@@ -205,7 +208,7 @@ public sealed partial class NewReleasesTests
             Calls++;
             var parameters = await request.Content!.ReadAsStringAsync(token);
             Parameters.Add(parameters);
-            var offset = parameters.Contains("artistOffset=200", StringComparison.Ordinal) ? 200 : 0;
+            var offset = int.Parse(parameters.Split("artistOffset=")[1].Split('&')[0]);
             var names = total.HasValue ? Enumerable.Range(0, total.Value).Select(number => "Artist " + number).ToArray() :
                 new[] { "Artist", "Songs", "Decided", "Apart", "Library" };
             var artists = names.Skip(offset).Take(200).Select((name, number) => new { id = name.ToLowerInvariant(), name, songCount = noCounts ? (int?)null : names.Length - offset - number });

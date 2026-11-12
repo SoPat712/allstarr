@@ -108,7 +108,8 @@ public sealed partial class LibraryArtistIndex(IDbContextFactory<AllstarrDbConte
                 item.ResourceKind == FixKind && hashes.Contains(item.ExternalIdHash))
             .Select(item => new { item.OwnerUserId, item.ExternalIdHash, item.RetrievedAt, item.SnapshotVersion, item.PayloadJson })
             .ToArrayAsync(token);
-        string? Latest(string hash, bool household) => rows.Where(row => row.ExternalIdHash == hash && (household || row.OwnerUserId == owner))
+        var byHash = rows.ToLookup(row => row.ExternalIdHash, StringComparer.Ordinal);
+        string? Latest(string hash, bool household) => byHash[hash].Where(row => household || row.OwnerUserId == owner)
             .OrderByDescending(row => row.RetrievedAt).ThenByDescending(row => row.SnapshotVersion).FirstOrDefault()?.PayloadJson;
         var result = new Dictionary<string, IReadOnlyList<LibraryArtistFix>>(StringComparer.Ordinal);
         foreach (var name in names)
@@ -146,7 +147,6 @@ public sealed partial class LibraryArtistIndex(IDbContextFactory<AllstarrDbConte
         string name, CancellationToken token, List<LibraryArtistEvidence>? evidence = null)
     {
         var tracks = await TracksAsync(db, access, name, token);
-        if (tracks.Length == 0) return [];
         var recordings = tracks.Select(item => item.CanonicalRecordingId).OfType<Guid>().Distinct().ToArray();
         var soloRecordings = tracks.Where(item => FuzzyMatcher.NormalizeForMatching(item.Artist) == FuzzyMatcher.NormalizeForMatching(name))
             .Select(item => item.CanonicalRecordingId).OfType<Guid>().ToHashSet();
@@ -261,9 +261,19 @@ public sealed partial class LibraryArtistIndex(IDbContextFactory<AllstarrDbConte
         if (valid.Length == 0) return result;
         var access = await libraryAccess.ResolveUserAsync(owner, token);
         if (access.Context == null || !access.Access.Succeeded) return result;
-        var keys = valid.ToDictionary(name => name, name => Key(access.Context, name), StringComparer.Ordinal);
-        var hashes = keys.Values.Distinct(StringComparer.Ordinal).ToArray();
         await using var db = await factory.CreateDbContextAsync(token);
+        result = await ReadSavedAsync(db, owner, access.Context, valid, token);
+        foreach (var (name, fixes) in await FixesAsync(db, owner, access.Context, valid, token))
+            result[name] = Apply(result.GetValueOrDefault(name) ?? [], fixes);
+        return result;
+    }
+
+    private static async Task<Dictionary<string, IReadOnlyList<LibraryArtistLink>>> ReadSavedAsync(AllstarrDbContext db, Guid owner,
+        ProtocolExecutionContext context, IReadOnlyCollection<string> names, CancellationToken token)
+    {
+        var result = new Dictionary<string, IReadOnlyList<LibraryArtistLink>>(StringComparer.Ordinal);
+        var keys = names.ToDictionary(name => name, name => Key(context, name), StringComparer.Ordinal);
+        var hashes = keys.Values.Distinct(StringComparer.Ordinal).ToArray();
         var saved = (await db.ExternalMetadataSnapshots.AsNoTracking().Where(item => item.OwnerUserId == owner &&
                 item.ProviderId == "allstarr" && item.ResourceKind == IndexKind && hashes.Contains(item.ExternalIdHash))
             .Select(item => new { item.ExternalIdHash, item.SnapshotVersion, item.PayloadJson }).ToArrayAsync(token))
@@ -275,8 +285,6 @@ public sealed partial class LibraryArtistIndex(IDbContextFactory<AllstarrDbConte
             try { result[name] = (JsonSerializer.Deserialize<LibraryArtistLink[]>(payload) ?? []).Where(link => Usable(link.ArtistId)).ToArray(); }
             catch (JsonException) { }
         }
-        foreach (var (name, fixes) in await FixesAsync(db, owner, access.Context, valid, token))
-            result[name] = Apply(result.GetValueOrDefault(name) ?? [], fixes);
         return result;
     }
 

@@ -44,12 +44,12 @@ public sealed partial class LibraryArtistIndex
         if (names.Length == 0) return;
         var access = await libraryAccess.ResolveUserAsync(owner, token);
         if (access.Context == null || !access.Access.Succeeded) return;
-        await Gate.WaitAsync(token);
-        try
+        await using var db = await factory.CreateDbContextAsync(token);
+        var fixes = await FixesAsync(db, owner, access.Context, names, token);
+        foreach (var name in names)
         {
-            await using var db = await factory.CreateDbContextAsync(token);
-            var fixes = await FixesAsync(db, owner, access.Context, names, token);
-            foreach (var name in names)
+            await Gate.WaitAsync(token);
+            try
             {
                 var key = HouseholdKey(access.Context, name);
                 var previous = await db.ExternalMetadataSnapshots.AsNoTracking().Where(row => row.ProviderId == "allstarr" &&
@@ -77,8 +77,8 @@ public sealed partial class LibraryArtistIndex
                 if (!changed) continue;
                 await SaveAsync(db, access.Context, CandidateKind, key, saved, "1", previous, token);
             }
+            finally { Gate.Release(); }
         }
-        finally { Gate.Release(); }
     }
 
     public async Task<IReadOnlyDictionary<string, LibraryArtistReviewParts>> ReadReviewAsync(Guid owner,
@@ -88,21 +88,25 @@ public sealed partial class LibraryArtistIndex
         var result = new Dictionary<string, LibraryArtistReviewParts>(StringComparer.Ordinal);
         var access = await libraryAccess.ResolveUserAsync(owner, token);
         if (access.Context == null || !access.Access.Succeeded) return result;
-        await Gate.WaitAsync(token);
+        if (names.Length == 0) return result;
+        if (detail) await Gate.WaitAsync(token);
         try
         {
             await using var db = await factory.CreateDbContextAsync(token);
-            var keys = names.Select(name => HouseholdKey(access.Context, name)).Distinct().ToArray();
+            var saved = detail ? null : await ReadSavedAsync(db, owner, access.Context, names, token);
+            var keysByName = names.ToDictionary(name => name, name => HouseholdKey(access.Context, name), StringComparer.Ordinal);
+            var keys = keysByName.Values.Distinct().ToArray();
             var rows = await db.ExternalMetadataSnapshots.AsNoTracking().Where(row => row.ProviderId == "allstarr" &&
                 row.ResourceKind == CandidateKind &&
                 keys.Contains(row.ExternalIdHash)).ToArrayAsync(token);
+            var candidatesByKey = rows.GroupBy(row => row.ExternalIdHash, StringComparer.Ordinal)
+                .ToDictionary(group => group.Key, group => ReadCandidates(group.MaxBy(row => row.SnapshotVersion)?.PayloadJson), StringComparer.Ordinal);
             var fixes = await FixesAsync(db, owner, access.Context, names, token);
             foreach (var name in names)
             {
-                var candidates = ReadCandidates(rows.Where(row => row.ResourceKind == CandidateKind &&
-                    row.ExternalIdHash == HouseholdKey(access.Context, name)).MaxBy(row => row.SnapshotVersion)?.PayloadJson);
+                var candidates = candidatesByKey.GetValueOrDefault(keysByName[name]) ?? [];
                 var evidence = new List<LibraryArtistEvidence>();
-                var songs = await ComputedAsync(db, owner, access, name, token, detail ? evidence : null);
+                var songs = detail ? await ComputedAsync(db, owner, access, name, token, evidence) : saved!.GetValueOrDefault(name) ?? [];
                 var decisions = fixes.GetValueOrDefault(name) ?? [];
                 result[name] = new(songs, decisions, candidates.Where(candidate => !songs.Any(link => link.ProviderId == candidate.ProviderId &&
                     link.ArtistId == candidate.ArtistId) && !decisions.Any(fix => fix.ProviderId == candidate.ProviderId &&
@@ -113,7 +117,7 @@ public sealed partial class LibraryArtistIndex
                     }) != true).ToArray(), evidence, clock.UtcNow);
             }
         }
-        finally { Gate.Release(); }
+        finally { if (detail) Gate.Release(); }
         return result;
     }
 

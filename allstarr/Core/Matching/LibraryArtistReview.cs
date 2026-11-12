@@ -82,8 +82,7 @@ public sealed class LibraryArtistReview(LibraryArtistIndex index, IProviderRegis
                 row.SongCount == after.Songs && string.CompareOrdinal(row.Id, after.Id) > 0))
             .OrderByDescending(row => row.SongCount).ThenBy(row => row.Id, StringComparer.Ordinal).Take(limit + 1).ToArray();
         var shown = page.Take(limit).ToArray();
-        var details = await index.ReadReviewAsync(owner, shown.Select(row => row.Name).ToArray(), token, detail: true);
-        return new(counts, shown.Select(row => Shape(selected.First(artist => artist.Id == row.Id), details.GetValueOrDefault(row.Name), false)).ToArray(),
+        return new(counts, shown,
             page.Length <= limit ? null : WebEncoders.Base64UrlEncode(JsonSerializer.SerializeToUtf8Bytes(new Cursor(scope, shown[^1].SongCount, shown[^1].Id))));
     }
 

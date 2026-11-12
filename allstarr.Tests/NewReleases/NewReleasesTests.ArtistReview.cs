@@ -32,6 +32,7 @@ public sealed partial class NewReleasesTests
         Assert.Empty((await index.ReadReviewAsync(_second, ["Artist"]))["Artist"].Candidates);
         await index.SetFixAsync(_first, "Artist", "deezer", "namesake", null, true);
         await ArtistSongAsync("Shared", "namesake");
+        await index.ReadPartsAsync(_second, "Artist");
         var linked = (await index.ReadReviewAsync(_second, ["Artist"]))["Artist"];
         Assert.Empty(linked.Candidates);
         Assert.Single(linked.Songs);
