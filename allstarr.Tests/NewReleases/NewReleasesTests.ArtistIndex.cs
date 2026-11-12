@@ -104,9 +104,18 @@ public sealed partial class NewReleasesTests
         {
             db.LibraryTracks.AddRange(Enumerable.Range(0, 1200).Select(index => new LibraryTrackRecord
             {
-                Id = Guid.CreateVersion7(), OwnerUserId = _first, Protocol = "subsonic", BackendInstanceId = "main", BackendLibraryId = "music",
-                BackendItemId = "filler" + index, FilePath = "/music/filler" + index, Title = "Cyan Song " + index, Artist = "Filler",
-                IndexedAt = _clock.UtcNow, SourceModifiedAt = _clock.UtcNow, UpdatedAt = _clock.UtcNow
+                Id = Guid.CreateVersion7(),
+                OwnerUserId = _first,
+                Protocol = "subsonic",
+                BackendInstanceId = "main",
+                BackendLibraryId = "music",
+                BackendItemId = "filler" + index,
+                FilePath = "/music/filler" + index,
+                Title = "Cyan Song " + index,
+                Artist = "Filler",
+                IndexedAt = _clock.UtcNow,
+                SourceModifiedAt = _clock.UtcNow,
+                UpdatedAt = _clock.UtcNow
             }));
             await db.SaveChangesAsync();
         }
