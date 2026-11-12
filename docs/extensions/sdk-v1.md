@@ -68,6 +68,7 @@ Extensions may expose the retained intelligence contract. Its older workspace
 requires the development release profile. AudioMuse's built-in integration is
 [shelved and hidden](../operations/audiomuse.md); it is not a normal setup step.
 External models, workers and indexes remain outside Allstarr.
+External intelligence service implementations remain outside the Allstarr package.
 
 The intelligence capability requires `recommend`; the remaining hooks are optional:
 

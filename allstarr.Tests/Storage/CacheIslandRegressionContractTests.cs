@@ -16,8 +16,8 @@ public sealed class CacheIslandRegressionContractTests
         var keys = File.ReadAllText(Path.Combine(
             _repositoryRoot,
             "allstarr",
-            "Services",
-            "Common",
+            "Core",
+            "Caching",
             "CacheKeyBuilder.cs"));
 
         Assert.DoesNotContain("BuildAdminPlaylistSummaryKey", orchestration, StringComparison.Ordinal);
@@ -30,8 +30,8 @@ public sealed class CacheIslandRegressionContractTests
         var external = File.ReadAllText(Path.Combine(
             _repositoryRoot,
             "allstarr",
-            "Services",
-            "Common",
+            "Core",
+            "Playback",
             "ExternalPlaybackMetadataResolver.cs"));
         var jellyfin = File.ReadAllText(Path.Combine(
             _repositoryRoot,
@@ -108,8 +108,8 @@ public sealed class CacheIslandRegressionContractTests
         var keys = File.ReadAllText(Path.Combine(
             _repositoryRoot,
             "allstarr",
-            "Services",
-            "Common",
+            "Core",
+            "Caching",
             "CacheKeyBuilder.cs"));
 
         Assert.Contains("BuildPlaybackSignalDedupeKey", controller, StringComparison.Ordinal);
@@ -143,8 +143,8 @@ public sealed class CacheIslandRegressionContractTests
         var cleanup = File.ReadAllText(Path.Combine(
             _repositoryRoot,
             "allstarr",
-            "Services",
-            "Common",
+            "Core",
+            "Caching",
             "CacheCleanupService.cs"));
 
         Assert.All(mediaClients, source =>

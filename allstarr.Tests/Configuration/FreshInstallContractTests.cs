@@ -114,8 +114,8 @@ public sealed class FreshInstallContractTests
         var configuration = File.ReadAllText(Path.Combine(
             _repositoryRoot,
             "allstarr",
-            "Services",
-            "Common",
+            "Core",
+            "Configuration",
             "RuntimeEnvConfiguration.cs"));
         var settings = File.ReadAllText(Path.Combine(
             _repositoryRoot,

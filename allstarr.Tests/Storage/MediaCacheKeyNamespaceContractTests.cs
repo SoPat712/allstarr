@@ -28,7 +28,7 @@ public sealed class MediaCacheKeyNamespaceContractTests
     public void MediaCacheKeyDocumentation_IsBackendNeutral()
     {
         var builder = File.ReadAllText(
-            FindRepositoryFile(Path.Combine("allstarr", "Services", "Common", "CacheKeyBuilder.cs")));
+            FindRepositoryFile(Path.Combine("allstarr", "Core", "Caching", "CacheKeyBuilder.cs")));
 
         Assert.DoesNotContain("Images are cached as byte[] in Redis", builder, StringComparison.Ordinal);
     }
