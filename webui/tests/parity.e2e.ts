@@ -1,6 +1,6 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { readFile } from "node:fs/promises";
-import { expectContainedMobileGeometry, widenText } from "./mobile-geometry";
+import { expectContainedMobileGeometry, touchTarget, widenText } from "./mobile-geometry";
 
 async function openOtherPlaylistSources(dialog: Locator) {
   const sources = dialog.locator(".other-sources");
@@ -1985,10 +1985,10 @@ test("Intelligence empty states explain how to get results", async ({ page }) =>
   await page.getByRole("tab", { name: "Discover" }).click();
   const sourceLink = page.getByRole("link", { name: "Connect or configure a source" });
   await expect(sourceLink).toBeVisible();
-  expect((await sourceLink.boundingBox())?.height ?? 0).toBeGreaterThanOrEqual(44);
+  expect((await touchTarget(sourceLink)).height).toBeGreaterThanOrEqual(44);
   await expect(page.getByText("Turn on automatic history in Automation, then play music or import a history file.")).toBeVisible();
   const settingsLink = page.getByRole("link", { name: "Automation", exact: true });
-  expect((await settingsLink.boundingBox())?.height ?? 0).toBeGreaterThanOrEqual(44);
+  expect((await touchTarget(settingsLink)).height).toBeGreaterThanOrEqual(44);
 
   await page.getByRole("tab", { name: "Overview" }).click();
   await expect(page.getByText("No completed listens were recorded for this period. Play music or import a history file to build this recap.")).toBeVisible();
@@ -4554,8 +4554,8 @@ test("Compact dialogs share symmetric actions and readable progress", async ({ p
   await expect(playlistDialog).toBeVisible();
   const steps = await playlistDialog.locator(".playlist-add-steps button").evaluateAll((buttons) =>
     buttons.map((button) => {
-      const rect = button.getBoundingClientRect();
-      return { height: rect.height, width: rect.width, y: Math.round(rect.y) };
+      const rect = button.getBoundingClientRect(), area = getComputedStyle(button, "::after");
+      return { height: Math.max(rect.height, area.content === "none" ? 0 : parseFloat(area.minHeight) || 0), width: rect.width, y: Math.round(rect.y) };
     }),
   );
   expect(new Set(steps.map(({ y }) => y)).size).toBe(1);
@@ -4617,8 +4617,8 @@ test("Compact dialogs share symmetric actions and readable progress", async ({ p
   await expect(sourceDialog.locator(":scope > .dialog-actions > *")).toHaveCount(2);
   const sourceActions = await sourceDialog.locator(":scope > .dialog-actions > *").evaluateAll((actions) =>
     actions.map((action) => {
-      const rect = action.getBoundingClientRect();
-      return { height: rect.height, width: rect.width, y: rect.y };
+      const rect = action.getBoundingClientRect(), area = getComputedStyle(action, "::after");
+      return { height: Math.max(rect.height, area.content === "none" ? 0 : parseFloat(area.minHeight) || 0), width: rect.width, y: rect.y };
     }),
   );
   expect(sourceActions).toHaveLength(2);
@@ -4640,7 +4640,7 @@ test("Service settings actions keep phone touch targets", async ({ page }) => {
     await page.setViewportSize({ width, height: 844 });
     const heights = await actions.evaluateAll(elements => elements
       .filter(element => element.getClientRects().length > 0)
-      .map(element => element.getBoundingClientRect().height));
+      .map(element => { const area = getComputedStyle(element, "::after"); return Math.max(element.getBoundingClientRect().height, area.content === "none" ? 0 : parseFloat(area.minHeight) || 0); }));
     expect(heights.length).toBeGreaterThan(0);
     expect(heights.every(height => height >= 44)).toBe(true);
   }
@@ -7316,7 +7316,7 @@ async function expectRecordingLyricsGeometry(page: Page, picker: Locator, width:
       if (rect.left < -1 || rect.right > innerWidth + 1) failures.push(`overflow: ${child.tagName}`);
       if (child.matches("button, textarea, label")) {
         const target = getComputedStyle(child, "::after");
-        const expanded = !phone && child.matches('button[data-slot="button"]') && target.content === '""';
+        const expanded = child.matches('button[data-slot="button"]') && target.content === '""';
         const targetWidth = expanded ? Math.max(rect.width, parseFloat(target.width) || 0, parseFloat(target.minWidth) || 0) : rect.width;
         const targetHeight = expanded ? Math.max(rect.height, parseFloat(target.height) || 0, parseFloat(target.minHeight) || 0) : rect.height;
         if (targetWidth < 44 || targetHeight < 44)

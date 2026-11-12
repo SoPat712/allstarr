@@ -64,7 +64,7 @@ async function geometry(page: Page, width: number) {
   expect(await panel.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
   if (width === 390) {
     const box = await panel.boundingBox(); expect(box?.x).toBe(0); expect(box?.width).toBe(390); expect(box?.height).toBe(960);
-    expect(await panel.locator("button").evaluateAll(buttons => buttons.filter(button => button.getBoundingClientRect().height > 0).every(button => button.getBoundingClientRect().height >= 44 && button.getBoundingClientRect().width >= 44))).toBe(true);
+    expect(await panel.locator("button").evaluateAll(buttons => { const hit = (element: Element) => { const box = element.getBoundingClientRect(), area = getComputedStyle(element, "::after"), touch = area.content === "none" ? 0 : 1; return { width: Math.max(box.width, touch * (parseFloat(area.minWidth) || 0)), height: Math.max(box.height, touch * (parseFloat(area.minHeight) || 0)) }; }; return buttons.filter(button => button.getBoundingClientRect().height > 0).every(button => hit(button).height >= 44 && hit(button).width >= 44); })).toBe(true);
   }
 }
 

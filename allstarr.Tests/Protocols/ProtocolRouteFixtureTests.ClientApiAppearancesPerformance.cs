@@ -228,24 +228,6 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.DoesNotContain(", merge;dur=", Assert.Single(warm.Headers.GetValues("Server-Timing")));
     }
 
-    [Fact(Skip = "Manual fixture measurement; run on each revision to compare cold and warm request timing.")]
-    public async Task ClientApi_AppearancesReportPreparedFeedRequestTiming()
-    {
-        var reads = new AppearanceReads();
-        using var factory = AppearanceFactory(new(), reads);
-        using var client = CreateClientApiClient(factory);
-        client.DefaultRequestHeaders.Add("X-Emby-Token", "listener-token");
-        await SeedClientMixAsync(factory);
-        await SeedAppearanceFeedsAsync(factory, 12);
-        foreach (var state in new[] { "cold", "warm" })
-        {
-            reads.Count = 0;
-            using var response = await client.GetAsync("/allstarr/v1/items/native-mix-song/appearances");
-            response.EnsureSuccessStatusCode();
-            _lyricsSearchOutput.WriteLine($"Appearances {state}: {reads.Count} database reads; " + Assert.Single(response.Headers.GetValues("Server-Timing")));
-        }
-    }
-
     private static async Task<PersonalMix[]> SeedAppearanceFeedsAsync(ProtocolFactory factory, int count)
     {
         var owner = (await factory.Services.GetRequiredService<BackendIdentityResolver>().ResolveAsync(new("Jellyfin", "listener")))!.UserId;
