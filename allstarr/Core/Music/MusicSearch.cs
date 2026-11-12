@@ -334,6 +334,7 @@ public sealed partial class MusicSearchService(
                 // Service artists that open to nothing stay out; same-named ones are checked for next time.
                 ProbeArtists(context, artists, nativeArtists.Select(item => item.Name));
                 artists = artists.Where(artist => !IsEmptyArtist(artist)).ToList();
+                await RecordArtistCandidatesAsync(context, nativeArtists.Select(item => item.Name).ToArray(), artists, enrichmentToken);
                 IReadOnlySet<string>? linkedArtists = null;
                 if (request.HideLinkedProviderArtists)
                     using (RequestTiming.Current?.Stage("artists"))
@@ -398,6 +399,14 @@ public sealed partial class MusicSearchService(
 
     public static IReadOnlySet<string> LinkedKeys(IReadOnlyDictionary<string, IReadOnlyList<LibraryArtistLink>> saved) =>
         saved.Values.SelectMany(links => links).Select(link => ArtistKey(link.ProviderId, link.ArtistId)).ToHashSet(StringComparer.Ordinal);
+
+    public async Task RecordArtistCandidatesAsync(ProtocolExecutionContext context, IReadOnlyCollection<string> names,
+        IReadOnlyCollection<Artist> artists, CancellationToken token)
+    {
+        if (artistLinks == null || context.Actor?.EffectiveUserId is not { } owner) return;
+        try { await artistLinks.RecordCandidatesAsync(owner, names, artists.Where(artist => !IsEmptyArtist(artist)).ToArray(), token); }
+        catch (Exception error) when (error is not OperationCanceledException) { }
+    }
 
     public bool IsEmptyArtist(Artist artist) => emptyArtists?.IsEmpty(artist) == true;
 

@@ -1,6 +1,7 @@
 using System.Text.Json;
 using allstarr.Core.Jobs;
 using allstarr.Core.Operations;
+using allstarr.Models.Domain;
 
 namespace allstarr.Core.Matching;
 
@@ -24,6 +25,9 @@ public interface ILibraryArtistLinks
 
     /// <summary>Saves a person's "same artist" (true) or "not the same" (false) answer; null takes it back.</summary>
     Task<bool> SetFixAsync(Guid owner, string name, string providerId, string artistId, bool? same, CancellationToken token);
+
+    Task RecordCandidatesAsync(Guid owner, IReadOnlyCollection<string> names, IReadOnlyCollection<Artist> artists,
+        CancellationToken token);
 }
 
 public sealed record LibraryArtistLinkPayload(Guid UserId, string Name);
@@ -43,6 +47,9 @@ public sealed class LibraryArtistLinks(LibraryArtistIndex index, DurableJobQueue
 
     public Task<bool> SetFixAsync(Guid owner, string name, string providerId, string artistId, bool? same, CancellationToken token) =>
         index.SetFixAsync(owner, name, providerId, artistId, same, token);
+
+    public Task RecordCandidatesAsync(Guid owner, IReadOnlyCollection<string> names, IReadOnlyCollection<Artist> artists,
+        CancellationToken token) => index.RecordCandidatesAsync(owner, names, artists, token);
 
     public async Task RequestAsync(Guid owner, string name, CancellationToken token)
     {

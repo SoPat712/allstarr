@@ -1,12 +1,12 @@
 using System.Text.Json;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Intelligence;
+using allstarr.Core.Music;
 using allstarr.Core.Operations;
 using allstarr.Core.Protocols;
 using allstarr.Core.Providers.AppleMusicKit;
 using allstarr.Core.Storage;
 using allstarr.Services.Common;
-using allstarr.Services.Local;
 using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Core.Matching;
@@ -16,9 +16,10 @@ public sealed record LibraryArtistLink(string ProviderId, string ArtistId);
 /// <summary>A person's own answer for one service artist: the same artist as the library one, or not. Household fixes come from administrators.</summary>
 public sealed record LibraryArtistFix(string ProviderId, string ArtistId, bool Same, bool Household);
 
-public sealed class LibraryArtistIndex(IDbContextFactory<AllstarrDbContext> factory,
+public sealed partial class LibraryArtistIndex(IDbContextFactory<AllstarrDbContext> factory,
     IBackendLibraryAccessResolver libraryAccess, IPlatformClock clock, TrackMatchPlayableSearch search,
-    IProtocolProviderGateway providers, ITrackIdentityService identities, IProviderRegistry? registry = null)
+    IProtocolProviderGateway providers, ITrackIdentityService identities, IProviderRegistry? registry = null,
+    EmptyServiceArtists? emptyArtists = null)
 {
     private const string IndexKind = "library-artist-index", BackfillKind = "library-artist-backfill", FixKind = "library-artist-fix";
     private static readonly SemaphoreSlim Gate = new(1, 1);
@@ -53,23 +54,29 @@ public sealed class LibraryArtistIndex(IDbContextFactory<AllstarrDbContext> fact
     /// household, anyone else's only to them, and a person's own answer wins over the household's.
     /// </summary>
     public async Task<bool> SetFixAsync(Guid owner, string name, string providerId, string artistId, bool? same, CancellationToken token = default)
+        => await SetFixAsync(owner, name, providerId, artistId, same, null, token);
+
+    public async Task<bool> SetFixAsync(Guid owner, string name, string providerId, string artistId, bool? same, bool? household,
+        CancellationToken token = default)
     {
         if (!ValidName(name) || string.IsNullOrWhiteSpace(providerId) || string.IsNullOrWhiteSpace(artistId) || artistId.Length > 300) return false;
         var access = await libraryAccess.ResolveUserAsync(owner, token);
         if (access.Context == null || !access.Access.Succeeded) return false;
-        var household = access.Context.Principal?.IsAdministrator == true;
+        var administrator = access.Context.Principal?.IsAdministrator == true;
+        if (household == true && !administrator) return false;
+        var shared = household ?? administrator;
         var provider = NormalizeProvider(providerId);
-        var key = household ? HouseholdKey(access.Context, name) : Key(access.Context, name);
+        var key = shared ? HouseholdKey(access.Context, name) : Key(access.Context, name);
         await Gate.WaitAsync(token);
         try
         {
             await using var db = await factory.CreateDbContextAsync(token);
-            var previous = household ? await LatestHouseholdAsync(db, key, token) : await LatestAsync(db, owner, FixKind, key, token);
-            var fixes = ParseFixes(previous?.PayloadJson, household)
+            var previous = shared ? await LatestHouseholdAsync(db, key, token) : await LatestAsync(db, owner, FixKind, key, token);
+            var fixes = ParseFixes(previous?.PayloadJson, shared)
                 .Where(fix => !(fix.ProviderId == provider && fix.ArtistId == artistId)).ToList();
-            if (same is { } value) fixes.Add(new(provider, artistId, value, household));
+            if (same is { } value) fixes.Add(new(provider, artistId, value, shared));
             // Versions count per person, so a household row continues this administrator's own numbering.
-            var numbered = household ? await LatestAsync(db, owner, FixKind, key, token) : previous;
+            var numbered = shared ? await LatestAsync(db, owner, FixKind, key, token) : previous;
             await SaveAsync(db, access.Context, FixKind, key, fixes.ToArray(), "fix", numbered, token);
             return true;
         }
@@ -136,7 +143,7 @@ public sealed class LibraryArtistIndex(IDbContextFactory<AllstarrDbContext> fact
     }));
 
     private async Task<IReadOnlyList<LibraryArtistLink>> ComputedAsync(AllstarrDbContext db, Guid owner, BackendLibraryAccessContext access,
-        string name, CancellationToken token)
+        string name, CancellationToken token, List<LibraryArtistEvidence>? evidence = null)
     {
         var tracks = await TracksAsync(db, access, name, token);
         if (tracks.Length == 0) return [];
@@ -178,7 +185,7 @@ public sealed class LibraryArtistIndex(IDbContextFactory<AllstarrDbContext> fact
             .OrderBy(item => item.Id).ToArray();
         var fingerprint = CanonicalCatalogKeys.Hash(JsonSerializer.Serialize(new
         {
-            Rule = 3,
+            Rule = 4,
             Tracks = tracks.Select(item => new { item.Id, item.CanonicalRecordingId, item.Artist, item.AlbumArtist, item.Revision }),
             Links = links.Select(item => new
             {
@@ -196,11 +203,11 @@ public sealed class LibraryArtistIndex(IDbContextFactory<AllstarrDbContext> fact
         }));
         var key = Key(context, name);
         var previous = await LatestAsync(db, owner, IndexKind, key, token);
-        if (previous?.ProviderRevision == fingerprint)
+        if (previous?.ProviderRevision == fingerprint && evidence == null)
             return JsonSerializer.Deserialize<LibraryArtistLink[]>(previous.PayloadJson) ?? [];
         var ids = current.Select(item => item.Id).ToArray();
         var metadata = await snapshots.Where(item => ids.Contains(item.Id)).ToArrayAsync(token);
-        var votes = new List<(string Provider, Guid Recording, string[] Artists, bool Named)>();
+        var votes = new List<(string Provider, Guid Recording, string[] Artists, bool Named, string Name)>();
         foreach (var link in links)
         {
             foreach (var snapshot in metadata.Where(item => item.ProviderId == link.ProviderId && item.ExternalIdHash == link.ExternalIdHash &&
@@ -208,11 +215,11 @@ public sealed class LibraryArtistIndex(IDbContextFactory<AllstarrDbContext> fact
                 (link.Scope == ProviderIdentityScope.Catalog || item.ProviderAccountId == link.ProviderAccountId))
                 .OrderByDescending(item => item.RetrievedAt).ThenByDescending(item => item.SnapshotVersion))
             {
-                (string[] Ids, bool Named) artists;
+                (string[] Ids, bool Named, string Name) artists;
                 try { artists = ArtistIds(snapshot.PayloadJson, link.ProviderId, name, soloRecordings.Contains(link.CanonicalRecordingId)); }
                 catch (JsonException) { continue; }
                 if (artists.Ids.Length == 0) continue;
-                votes.Add((NormalizeProvider(link.ProviderId), link.CanonicalRecordingId, artists.Ids, artists.Named));
+                votes.Add((NormalizeProvider(link.ProviderId), link.CanonicalRecordingId, artists.Ids, artists.Named, artists.Name));
                 break;
             }
         }
@@ -221,8 +228,17 @@ public sealed class LibraryArtistIndex(IDbContextFactory<AllstarrDbContext> fact
         {
             // A song linked to several of the service's artists counts against the majority but votes for none.
             var songs = provider.GroupBy(item => item.Recording).Select(group => (
+                Recording: group.Key,
                 Ids: group.SelectMany(item => item.Artists).Distinct(StringComparer.Ordinal).ToArray(),
                 Named: group.Any(item => item.Named))).ToArray();
+            if (evidence != null)
+                foreach (var artist in provider.SelectMany(vote => vote.Artists).Distinct(StringComparer.Ordinal))
+                {
+                    var shared = songs.Where(song => song.Ids.Length == 1 && song.Ids[0] == artist).ToArray();
+                    evidence.Add(new(provider.Key, artist, provider.First(vote => vote.Artists.Contains(artist)).Name, shared.Length,
+                        tracks.Where(track => shared.Any(vote => vote.Recording == track.CanonicalRecordingId))
+                            .DistinctBy(track => track.CanonicalRecordingId).Take(5).Select(track => track.Title).ToArray(), shared.Any(vote => vote.Named)));
+                }
             var best = songs.Where(song => song.Ids.Length == 1).GroupBy(song => song.Ids[0])
                 .OrderByDescending(group => group.Count()).FirstOrDefault();
             if (best == null) continue;
@@ -230,7 +246,8 @@ public sealed class LibraryArtistIndex(IDbContextFactory<AllstarrDbContext> fact
             var needed = best.Any(song => song.Named) ? 1 : 2;
             if (best.Count() >= needed && best.Count() * 2 > songs.Length) result.Add(new(provider.Key, best.Key));
         }
-        await SaveAsync(db, context, IndexKind, key, result.ToArray(), fingerprint, previous, token);
+        if (previous?.ProviderRevision != fingerprint)
+            await SaveAsync(db, context, IndexKind, key, result.ToArray(), fingerprint, previous, token);
         return result;
     }
 
@@ -320,23 +337,31 @@ public sealed class LibraryArtistIndex(IDbContextFactory<AllstarrDbContext> fact
                 .Any(credit => FuzzyMatcher.NormalizeForMatching(credit) == FuzzyMatcher.NormalizeForMatching(name))).ToArray();
     }
 
-    private (string[] Ids, bool Named) ArtistIds(string payload, string provider, string name, bool allowSingleArtist)
+    private (string[] Ids, bool Named, string Name) ArtistIds(string payload, string provider, string name, bool allowSingleArtist)
     {
         var song = TrackIdentityService.ReadDisplaySong(payload, provider, "stored");
-        if (song == null) return ([], false);
+        if (song == null) return ([], false, name);
         var named = song.Artists.Select((artist, index) => (Name: artist, Id: song.ArtistIds.ElementAtOrDefault(index)))
             .Where(item => FuzzyMatcher.NormalizeForMatching(item.Name) == FuzzyMatcher.NormalizeForMatching(name))
             .Select(item => item.Id).Concat(song.AlbumArtists.Where(artist =>
                 FuzzyMatcher.NormalizeForMatching(artist.Name) == FuzzyMatcher.NormalizeForMatching(name)).Select(artist => artist.Id))
             .OfType<string>().Where(id => !string.IsNullOrWhiteSpace(id)).ToArray();
         var ids = named.Length > 0 ? named : song.ArtistIds.Append(song.ArtistId ?? "").Where(id => !string.IsNullOrWhiteSpace(id)).Distinct().ToArray();
-        if (named.Length == 0 && (!allowSingleArtist || ids.Length != 1 || song.Artists.Count != 1)) return ([], false);
+        if (named.Length == 0 && (!allowSingleArtist || ids.Length != 1 || song.Artists.Count != 1)) return ([], false, name);
         // A lone credit can carry its id outside the artist list; the name it shows still counts.
         var sameName = named.Length > 0 || song.Artists.Count == 1 &&
             FuzzyMatcher.NormalizeForMatching(song.Artists[0]) == FuzzyMatcher.NormalizeForMatching(name);
-        return (ids.Select(id => LocalLibraryService.ParseExternalResource(id.StartsWith("ext-", StringComparison.Ordinal) ? id : $"ext-{provider}-artist-{id}"))
-            .Where(id => id.isExternal && id.type == "artist" && NormalizeProvider(id.provider!) == NormalizeProvider(provider) && Usable(id.externalId!))
-            .Select(id => id.externalId!).Distinct(StringComparer.Ordinal).ToArray(), sameName);
+        return (ids.Select(ArtistId).OfType<string>().Distinct(StringComparer.Ordinal).ToArray(), sameName, sameName ? name : song.Artist);
+
+        string? ArtistId(string id)
+        {
+            if (!id.StartsWith("ext-", StringComparison.Ordinal)) return Usable(id) ? id : null;
+            const string marker = "-artist-";
+            var at = id.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+            if (at <= 4 || NormalizeProvider(id[4..at]) != NormalizeProvider(provider)) return null;
+            var value = id[(at + marker.Length)..];
+            return !string.IsNullOrWhiteSpace(value) && Usable(value) ? value : null;
+        }
     }
 
     private string NormalizeProvider(string provider) => registry?.ResolveProviderId(AppleMusicClient.NormalizeProviderId(provider)) ??

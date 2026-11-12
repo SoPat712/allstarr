@@ -12,7 +12,7 @@ namespace allstarr.Core.Music;
 /// artist joins only when it shares an album with the library, so a namesake's discography never leaks in.
 /// Every linked service contributes, and names alone never link.
 /// </summary>
-public sealed class MusicCatalogMerge(IProtocolProviderGateway providers, ILibraryArtistLinks? links = null)
+public sealed class MusicCatalogMerge(IProtocolProviderGateway providers, ILibraryArtistLinks? links = null, EmptyServiceArtists? emptyArtists = null)
 {
     private const int CandidateArtists = 5;
 
@@ -32,11 +32,11 @@ public sealed class MusicCatalogMerge(IProtocolProviderGateway providers, ILibra
         {
             var candidates = (await providers.SearchAsync(context, artistName, 0, 0, 20)).Artists
                 .Where(artist => !string.IsNullOrEmpty(artist.ExternalId) && !string.IsNullOrEmpty(artist.ExternalProvider) &&
-                                 FuzzyMatcher.NormalizeForMatching(artist.Name) == artistKey &&
-                                 !services.Contains(Service(artist.ExternalProvider)))
-                .OrderByDescending(artist => artist.AlbumCount ?? 0)
-                .Take(CandidateArtists);
-            foreach (var candidate in candidates)
+                                 FuzzyMatcher.NormalizeForMatching(artist.Name) == artistKey && emptyArtists?.IsEmpty(artist) != true).ToArray();
+            if (links != null && context.Actor?.EffectiveUserId is { } owner)
+                await links.RecordCandidatesAsync(owner, [artistName], candidates, context.CancellationToken);
+            foreach (var candidate in candidates.Where(artist => !services.Contains(Service(artist.ExternalProvider!)))
+                         .OrderByDescending(artist => artist.AlbumCount ?? 0).Take(CandidateArtists))
             {
                 if (services.Contains(Service(candidate.ExternalProvider!))) continue;
                 var catalog = await AlbumsAsync(context, candidate.ExternalProvider!, candidate.ExternalId!);

@@ -218,6 +218,8 @@ public sealed class SearchController(IProtocolProviderGateway providers, MusicSe
                         await snapshots.AddAsync(provider, prepared, cancellation, alsoOn);
                     }
                 }, token);
+            await music.RecordArtistCandidatesAsync(Execution, (await nativeTask.WaitAsync(token))
+                .Where(item => item.Kind == MusicItemKind.Artist).Select(item => item.Name).ToArray(), seenArtists, token);
             if (libraryTask != null)
             {
                 try { await libraryTask; }

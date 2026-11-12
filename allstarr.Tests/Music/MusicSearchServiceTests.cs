@@ -561,6 +561,9 @@ public sealed class MusicSearchServiceTests
 
         Assert.Equal(["ext-deezer-artist-1", "native-artist"], result.Artists.Select(Id).Order(StringComparer.Ordinal));
         links.Verify(item => item.RequestAsync(listener.Actor!.EffectiveUserId!.Value, "say now", It.IsAny<CancellationToken>()), Times.Once);
+        links.Verify(item => item.RecordCandidatesAsync(listener.Actor!.EffectiveUserId!.Value,
+            It.Is<IReadOnlyCollection<string>>(names => names.Contains("say now")),
+            It.Is<IReadOnlyCollection<Artist>>(artists => artists.Any(artist => artist.ExternalId == "1")), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
