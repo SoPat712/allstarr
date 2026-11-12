@@ -1,6 +1,6 @@
+using allstarr.Core.Providers;
 using System.Net;
 using allstarr.Core.Health;
-using allstarr.Services.Common;
 
 namespace allstarr.Tests;
 

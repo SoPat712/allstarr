@@ -1,4 +1,4 @@
-using allstarr.Services.Common;
+using allstarr.Core.Caching;
 using Microsoft.Extensions.Configuration;
 
 namespace allstarr.Tests;

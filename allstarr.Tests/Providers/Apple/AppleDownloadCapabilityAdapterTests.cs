@@ -465,7 +465,7 @@ public sealed class AppleDownloadCapabilityAdapterTests : IDisposable
     public async Task Lyrics_CacheOnlyReturnsStoredContentWithoutGatewayDiscovery()
     {
         var cached = new ProviderLyricsResult(ProviderLyricsAvailabilityState.Available, "GAMDL", ProviderLyricsFormat.LineTimed, "[00:01]Stored words");
-        var cache = new Moq.Mock<allstarr.Services.Common.IApplicationCache>(Moq.MockBehavior.Strict);
+        var cache = new Moq.Mock<allstarr.Core.Caching.IApplicationCache>(Moq.MockBehavior.Strict);
         cache.Setup(item => item.GetAsync<ProviderLyricsResult>(Moq.It.IsAny<string>())).ReturnsAsync(cached);
         var discovery = new CountingDiscovery();
         var adapter = new AppleDownloadLyricsCapabilityAdapter(new HttpClient(new GatewayHandler([], "audio/flac")),
@@ -483,9 +483,9 @@ public sealed class AppleDownloadCapabilityAdapterTests : IDisposable
     [Fact]
     public async Task Lyrics_CompletedLookupWarmsTheExistingCache()
     {
-        allstarr.Services.Common.CacheExtensions.InitializeCacheSettings(Mock.Of<IServiceProvider>());
+        allstarr.Core.Caching.CacheExtensions.InitializeCacheSettings(Mock.Of<IServiceProvider>());
         var entries = new Dictionary<string, ProviderLyricsResult>();
-        var cache = new Mock<allstarr.Services.Common.IApplicationCache>(MockBehavior.Strict);
+        var cache = new Mock<allstarr.Core.Caching.IApplicationCache>(MockBehavior.Strict);
         cache.Setup(item => item.GetAsync<ProviderLyricsResult>(It.IsAny<string>()))
             .Returns<string>(key => Task.FromResult(entries.GetValueOrDefault(key)));
         cache.Setup(item => item.SetAsync(It.IsAny<string>(), It.IsAny<ProviderLyricsResult>(), It.IsAny<TimeSpan?>()))

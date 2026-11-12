@@ -175,7 +175,7 @@ public sealed partial class RecordingKeptFiles
         await VerifyMoveBytesAsync(owned.CanonicalPath, owned.ContentSha256, token);
         var display = proof.Payload.Metadata;
         if (display.DurationMilliseconds == null &&
-            (await allstarr.Services.Common.AudioMediaFacts.ReadFileAsync(owned.CanonicalPath, token))?.DurationSeconds is { } seconds && seconds > 0)
+            (await allstarr.Core.Playback.AudioMediaFacts.ReadFileAsync(owned.CanonicalPath, token))?.DurationSeconds is { } seconds && seconds > 0)
             display = display with { DurationMilliseconds = (long)Math.Round(seconds * 1000) };
         await using (var transaction = await db.Database.BeginTransactionAsync(token))
         {

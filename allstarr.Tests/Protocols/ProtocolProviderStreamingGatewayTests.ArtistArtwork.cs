@@ -1,7 +1,7 @@
+using allstarr.Core.Caching;
 using allstarr.Core.Capabilities;
 using allstarr.Models.Domain;
 using allstarr.Models.Search;
-using allstarr.Services.Common;
 using Moq;
 
 namespace allstarr.Tests;

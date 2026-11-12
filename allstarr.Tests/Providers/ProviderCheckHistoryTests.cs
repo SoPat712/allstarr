@@ -1,7 +1,7 @@
+using allstarr.Core.Providers;
 using System.Text.Json;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Storage;
-using allstarr.Services.Common;
 using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Tests;

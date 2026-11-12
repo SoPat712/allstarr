@@ -2,7 +2,6 @@ using allstarr.Core.Capabilities;
 using allstarr.Core.Downloads;
 using allstarr.Core.Protocols;
 using allstarr.Models.Domain;
-using allstarr.Services.Common;
 
 namespace allstarr.Tests;
 

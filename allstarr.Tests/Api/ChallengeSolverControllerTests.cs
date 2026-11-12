@@ -1,7 +1,7 @@
+using allstarr.Core.Providers.Lyrics;
 using System.Text.Json;
 using allstarr.Controllers;
 using allstarr.Services.Admin;
-using allstarr.Services.Common;
 using allstarr.Core.Storage;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Http;

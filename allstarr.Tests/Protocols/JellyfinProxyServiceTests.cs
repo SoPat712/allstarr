@@ -1,3 +1,5 @@
+using allstarr.Core.Artwork;
+using allstarr.Core.Caching;
 using allstarr.Core.Protocols;
 using allstarr.Filters;
 using System.Text.Json.Nodes;
@@ -12,7 +14,6 @@ using Moq;
 using Moq.Protected;
 using allstarr.Models.Settings;
 using allstarr.Services.Jellyfin;
-using allstarr.Services.Common;
 using System.Net;
 using System.Text.Json;
 

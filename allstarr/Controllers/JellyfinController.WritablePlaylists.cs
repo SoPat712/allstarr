@@ -39,7 +39,7 @@ public partial class JellyfinController
                 return userId == null ? new JsonResult(Array.Empty<object>()) : new JsonResult(new { UserId = userId, CanEdit = false });
             }
         }
-        if (allstarr.Services.Common.PlaylistIdHelper.IsExternalPlaylist(playlistId))
+        if (allstarr.Core.Playlists.PlaylistIdHelper.IsExternalPlaylist(playlistId))
             return userId == null ? new JsonResult(Array.Empty<object>()) : new JsonResult(new { UserId = userId, CanEdit = false });
         var path = $"Playlists/{Uri.EscapeDataString(playlistId)}/Users" + (userId == null ? "" : $"/{Uri.EscapeDataString(userId)}");
         var (body, status) = await _proxyService.GetJsonAsync(path + Request.QueryString.Value, null, Request.Headers);

@@ -1,9 +1,9 @@
+using allstarr.Core.Artwork;
 using allstarr.Core.Capabilities;
 using allstarr.Core.ClientApi;
 using allstarr.Core.Intelligence;
 using allstarr.Core.Operations;
 using allstarr.Core.Playback;
-using allstarr.Services.Common;
 using Microsoft.AspNetCore.Mvc;
 
 namespace allstarr.Controllers.ClientApi;

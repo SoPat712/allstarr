@@ -1,5 +1,5 @@
+using allstarr.Core.Configuration;
 using allstarr.Core.Extensions;
-using allstarr.Services.Common;
 using Microsoft.Extensions.Configuration;
 using Moq;
 

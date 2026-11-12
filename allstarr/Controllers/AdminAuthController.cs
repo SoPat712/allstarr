@@ -1,3 +1,4 @@
+using allstarr.Core.Artwork;
 using System.Text.Json;
 using System.Text;
 using Microsoft.AspNetCore.Mvc;
@@ -5,7 +6,6 @@ using Microsoft.Extensions.Options;
 using allstarr.Filters;
 using allstarr.Models.Settings;
 using allstarr.Services.Admin;
-using allstarr.Services.Common;
 using allstarr.Core.Identity;
 using allstarr.Core.Jobs;
 using allstarr.Core.Secrets;

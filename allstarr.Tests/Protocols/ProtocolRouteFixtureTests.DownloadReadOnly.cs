@@ -61,7 +61,7 @@ public sealed partial class ProtocolRouteFixtureTests
                 Id = "ext-qobuz-song-42", ExternalProvider = "qobuz", ExternalId = "42",
                 Title = "Original", Artist = "Artist", Album = "Album", AlbumId = "album"
             }]);
-        using var activity = new allstarr.Services.Common.PlaybackDeliveryActivityStore();
+        using var activity = new allstarr.Core.Playback.PlaybackDeliveryActivityStore();
         using var factory = new ProtocolFactory(backend, request =>
             request.RequestUri!.AbsolutePath is "/Users/Me" or "/rest/ping.view"
                 ? DownloadAuthentication(backend)

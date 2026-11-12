@@ -1,10 +1,11 @@
+using allstarr.Core.Caching;
+using allstarr.Core.Playback;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using System.Text.Json;
 using allstarr.Models.Domain;
 using allstarr.Models.Settings;
 using allstarr.Models.Subsonic;
-using allstarr.Services.Common;
 using allstarr.Core.Protocols;
 using allstarr.Core.Music;
 
@@ -43,30 +44,6 @@ public partial class JellyfinResponseBuilder
     public IActionResult CreateItemsResponse(List<Song> songs)
     {
         var items = songs.Select(ConvertSongToJellyfinItem).ToList();
-
-        return CreateJsonResponse(new
-        {
-            Items = items,
-            TotalRecordCount = items.Count,
-            StartIndex = 0
-        });
-    }
-
-    public IActionResult CreateAlbumsResponse(List<Album> albums)
-    {
-        var items = albums.Select(ConvertAlbumToJellyfinItem).ToList();
-
-        return CreateJsonResponse(new
-        {
-            Items = items,
-            TotalRecordCount = items.Count,
-            StartIndex = 0
-        });
-    }
-
-    public IActionResult CreateArtistsResponse(List<Artist> artists)
-    {
-        var items = artists.Select(ConvertArtistToJellyfinItem).ToList();
 
         return CreateJsonResponse(new
         {

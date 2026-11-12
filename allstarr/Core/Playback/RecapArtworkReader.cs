@@ -1,3 +1,5 @@
+using allstarr.Core.Artwork;
+using allstarr.Core.Operations;
 using allstarr.Core.Intelligence;
 using Microsoft.Extensions.Caching.Memory;
 using System.Security.Cryptography;

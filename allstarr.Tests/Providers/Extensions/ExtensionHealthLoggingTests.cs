@@ -1,3 +1,4 @@
+using allstarr.Core.Providers;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Extensions;
 using allstarr.Services.Common;

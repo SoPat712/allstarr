@@ -86,8 +86,8 @@ public sealed partial class ProtocolRouteFixtureTests
                 : Json(200, """{"Items":[{"Id":"album","Type":"MusicAlbum"},{"Id":"artist","Type":"MusicArtist"},{"Id":"song","Type":"Audio"},{"Id":"folder","Type":"Folder"},{"Id":"playlist","Type":"Playlist"}],"TotalRecordCount":5}"""),
             services =>
             {
-                services.RemoveAll<allstarr.Services.Common.IApplicationCache>();
-                services.AddSingleton<allstarr.Services.Common.IApplicationCache>(cache);
+                services.RemoveAll<allstarr.Core.Caching.IApplicationCache>();
+                services.AddSingleton<allstarr.Core.Caching.IApplicationCache>(cache);
             });
         using var client = factory.CreateClient();
         using var response = await client.GetAsync("/Items?Recursive=true&api_key=fixture-key");

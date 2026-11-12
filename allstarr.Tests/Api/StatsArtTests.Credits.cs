@@ -1,8 +1,8 @@
+using allstarr.Core.Artwork;
 using allstarr.Core.Intelligence;
 using System.Data.Common;
 using allstarr.Core.Playback;
 using allstarr.Core.Storage;
-using allstarr.Services.Common;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Logging.Abstractions;

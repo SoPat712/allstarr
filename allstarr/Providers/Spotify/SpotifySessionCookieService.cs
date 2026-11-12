@@ -17,9 +17,6 @@ public class SpotifySessionCookieService
             ? null
             : _spotifyApiSettings.SessionCookie);
 
-    public Task<bool> HasAnyConfiguredCookieAsync() =>
-        Task.FromResult(!string.IsNullOrWhiteSpace(_spotifyApiSettings.SessionCookie));
-
     public Task<(bool HasCookie, bool UsingGlobalFallback)> GetCookieStatusAsync(string? userId) =>
         Task.FromResult((
             !string.IsNullOrWhiteSpace(_spotifyApiSettings.SessionCookie),

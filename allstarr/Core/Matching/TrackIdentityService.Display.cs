@@ -131,7 +131,7 @@ public sealed partial class TrackIdentityService
             retained.ExternalProvider = provider;
             retained.ExternalId = externalId;
             retained.IsLocal = false;
-            retained.CoverArtUrl ??= allstarr.Services.Common.ProviderArtworkFallback.CoverPath(provider);
+            retained.CoverArtUrl ??= allstarr.Core.Artwork.ProviderArtworkFallback.CoverPath(provider);
             retained.CoverArtUrlLarge ??= retained.CoverArtUrl;
             return retained;
         }
@@ -165,7 +165,7 @@ public sealed partial class TrackIdentityService
         duration ??= preciseDuration.HasValue ? (long)preciseDuration.Value.TotalSeconds : null;
         var artwork = Field("CoverArtUrl", "ArtworkUrl", "ArtworkReference") ??
             Text(Property(Property(root, "Artwork"), "PublicUri"));
-        artwork ??= allstarr.Services.Common.ProviderArtworkFallback.CoverPath(provider);
+        artwork ??= allstarr.Core.Artwork.ProviderArtworkFallback.CoverPath(provider);
         List<string> Strings(string name) => Property(root, name) is { ValueKind: JsonValueKind.Array } values
             ? values.EnumerateArray().Select(Text).Where(value => !string.IsNullOrWhiteSpace(value)).Select(value => value!).ToList() : [];
         var media = Property(root, "Media");

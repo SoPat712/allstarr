@@ -1,4 +1,4 @@
-using allstarr.Services.Common;
+using allstarr.Core.Configuration;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Hosting;

@@ -20,14 +20,14 @@ internal sealed class PrefetchedStream(Stream source, HttpContent owner, ReadOnl
         var start = content.Headers.ContentRange?.From;
         if (start is null or 0 && IsErrorBody(prefix.AsSpan(0, count))) return false;
         var size = content.Headers.ContentRange?.Length ?? content.Headers.ContentLength;
-        var facts = start is null or 0 ? allstarr.Services.Common.AudioMediaFacts.ReadPrefix(prefix.AsSpan(0, count), size) : null;
+        var facts = start is null or 0 ? allstarr.Core.Playback.AudioMediaFacts.ReadPrefix(prefix.AsSpan(0, count), size) : null;
         while (start is null or 0 && facts == null && count < prefix.Length &&
-            allstarr.Services.Common.AudioMediaFacts.IsPartialHeader(prefix.AsSpan(0, count)))
+            allstarr.Core.Playback.AudioMediaFacts.IsPartialHeader(prefix.AsSpan(0, count)))
         {
             var read = await source.ReadAsync(prefix.AsMemory(count), cancellationToken).AsTask().WaitAsync(cancellationToken);
             if (read == 0) break;
             count += read;
-            facts = allstarr.Services.Common.AudioMediaFacts.ReadPrefix(prefix.AsSpan(0, count), size);
+            facts = allstarr.Core.Playback.AudioMediaFacts.ReadPrefix(prefix.AsSpan(0, count), size);
         }
         ReplaceContent(response, new PrefetchedStream(source, content, prefix.AsMemory(0, count)), facts);
         if (facts != null) response.Content.Headers.ContentType = new(facts.Media.MimeType);

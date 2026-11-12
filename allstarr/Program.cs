@@ -1,3 +1,6 @@
+using allstarr.Core.Artwork;
+using allstarr.Core.Caching;
+using allstarr.Providers.ListenBrainz;
 using allstarr.Models.Settings;
 using allstarr.Services;
 using allstarr.Core.Providers.Qobuz;
@@ -531,7 +534,6 @@ builder.Services.AddScoped(provider => new allstarr.Core.Releases.ReleaseArtwork
     provider.GetRequiredService<IProtocolProviderGateway>(), provider.GetRequiredService<IMediaAssetResolver>(),
     provider.GetRequiredService<IHttpClientFactory>(), provider.GetRequiredService<ILogger<allstarr.Core.Releases.ReleaseArtworkReader>>()));
 
-builder.Services.AddSingleton<allstarr.Services.Admin.AdminHelperService>();
 builder.Services.AddSingleton<allstarr.Services.Admin.IAdminAuthSessionStore, allstarr.Services.Admin.EfAdminAuthSessionStore>();
 builder.Services.AddSingleton<allstarr.Services.Admin.AdminAuthSessionService>();
 builder.Services.AddSingleton<allstarr.Services.Admin.AdminBasePath>();

@@ -1,3 +1,4 @@
+using allstarr.Core.Playback;
 using System.Security.Cryptography;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Downloads;

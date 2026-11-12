@@ -1,4 +1,5 @@
-using allstarr.Services.Common;
+using allstarr.Core.Artwork;
+using allstarr.Core.Caching;
 using Microsoft.Extensions.Logging.Abstractions;
 using SkiaSharp;
 

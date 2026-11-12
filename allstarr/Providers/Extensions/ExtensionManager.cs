@@ -1,3 +1,7 @@
+using allstarr.Core.Caching;
+using allstarr.Core.Operations;
+using allstarr.Core.Providers;
+using allstarr.Services.Admin;
 using allstarr.Core.Playback;
 using System.Collections.Concurrent;
 using System.Globalization;

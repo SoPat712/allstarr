@@ -1,6 +1,6 @@
+using allstarr.Core.Configuration;
 using allstarr.Core.ClientApi;
 using allstarr.Models.Settings;
-using allstarr.Services.Common;
 
 namespace allstarr.Middleware;
 

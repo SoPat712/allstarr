@@ -1,3 +1,6 @@
+using allstarr.Core.Artwork;
+using allstarr.Core.Caching;
+using allstarr.Core.Providers;
 using System.Text.Json;
 using allstarr.Core.ClientApi;
 using allstarr.Core.Operations;

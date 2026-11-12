@@ -1,5 +1,5 @@
+using allstarr.Core.Artwork;
 using allstarr.Models.Domain;
-using allstarr.Services.Common;
 using allstarr.Services.Jellyfin;
 using SkiaSharp;
 

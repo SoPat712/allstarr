@@ -1,3 +1,4 @@
+using allstarr.Core.Providers;
 using allstarr.Controllers;
 using allstarr.Controllers.ClientApi;
 using Microsoft.AspNetCore.Hosting;
@@ -20,7 +21,6 @@ using allstarr.Core.Intelligence;
 using allstarr.Core.Jobs;
 using allstarr.Core.Playback;
 using allstarr.Filters;
-using allstarr.Services.Common;
 using allstarr.Services;
 using Microsoft.AspNetCore.Mvc.Routing;
 using Moq;
@@ -472,7 +472,7 @@ public sealed class HostCompositionTests
             IsSupported = true,
             IsEnabled = true,
             Configuration = configuration,
-            Health = allstarr.Services.Common.ProviderHealthState.Degraded
+            Health = allstarr.Core.Providers.ProviderHealthState.Degraded
         };
 
         Assert.Equal("needs_config", AdminUiController.AggregateProviderStatus(

@@ -1,10 +1,10 @@
+using allstarr.Core.Artwork;
 using System.Net;
 using System.Text;
 using System.Text.Json;
 using allstarr.Controllers;
 using allstarr.Models.Settings;
 using allstarr.Services.Admin;
-using allstarr.Services.Common;
 using allstarr.Services.Jellyfin;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;

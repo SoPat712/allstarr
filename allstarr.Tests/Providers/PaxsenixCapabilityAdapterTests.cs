@@ -1,3 +1,4 @@
+using allstarr.Core.Caching;
 using System.Collections.Concurrent;
 using System.Net;
 using System.Text.Json;
@@ -6,7 +7,6 @@ using allstarr.Core.Matching;
 using allstarr.Core.Providers.AppleMusicKit;
 using allstarr.Core.Providers.Lyrics;
 using allstarr.Core.Storage;
-using allstarr.Services.Common;
 using Moq;
 
 namespace allstarr.Tests;

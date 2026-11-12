@@ -1,7 +1,8 @@
+using allstarr.Core.Caching;
+using allstarr.Core.Providers;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Providers.Lyrics;
 using allstarr.Models.Settings;
-using allstarr.Services.Common;
 using allstarr.Services.Lyrics;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;

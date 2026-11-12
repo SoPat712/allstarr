@@ -1,3 +1,4 @@
+using allstarr.Core.Caching;
 using System.Text.Json;
 using allstarr.Core.ClientApi;
 using allstarr.Core.Capabilities;
@@ -5,7 +6,6 @@ using allstarr.Core.Operations;
 using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
 using allstarr.Core.Settings;
-using allstarr.Services.Common;
 using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Core.Matching;

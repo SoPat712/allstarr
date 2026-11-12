@@ -1,3 +1,4 @@
+using allstarr.Core.Artwork;
 using System.Net;
 using System.Text.Json;
 using System.Xml.Linq;
@@ -10,7 +11,6 @@ using allstarr.Filters;
 using allstarr.Models.Domain;
 using allstarr.Models.Search;
 using allstarr.Models.Subsonic;
-using allstarr.Services.Common;
 using allstarr.Services.Jellyfin;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Builder;

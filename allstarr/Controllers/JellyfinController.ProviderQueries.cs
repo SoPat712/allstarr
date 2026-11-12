@@ -4,7 +4,6 @@ using allstarr.Core.Music;
 using allstarr.Core.Protocols;
 using allstarr.Models.Domain;
 using allstarr.Services.Jellyfin;
-using allstarr.Services.Common;
 using Microsoft.AspNetCore.Mvc;
 
 namespace allstarr.Controllers;

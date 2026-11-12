@@ -465,8 +465,6 @@ internal static class ActivityJobPresentation
 
     private static Guid? GuidFromPayload(DurableJobRecord job, string name) => GuidFromJson(job.PayloadJson, name);
 
-    private static Guid? GuidFromDetails(string json, string name) => GuidFromJson(json, name);
-
     private static Guid? GuidFromJson(string? json, string name)
     {
         if (string.IsNullOrWhiteSpace(json) || json.Length > 32768) return null;

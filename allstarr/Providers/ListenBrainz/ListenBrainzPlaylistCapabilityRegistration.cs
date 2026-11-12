@@ -1,6 +1,6 @@
+using allstarr.Providers.ListenBrainz;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Providers.Spotify;
-using allstarr.Services.Common;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace allstarr.Core.Providers.ListenBrainz;

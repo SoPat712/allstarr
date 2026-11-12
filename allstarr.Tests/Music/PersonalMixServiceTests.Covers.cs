@@ -1,9 +1,9 @@
+using allstarr.Core.Artwork;
 using System.Text.Json;
 using allstarr.Core.Music;
 using allstarr.Core.Capabilities;
 using Moq;
 using allstarr.Models.Domain;
-using allstarr.Services.Common;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 

@@ -394,7 +394,7 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.Empty(old["results"]!.AsArray());
         await worker.ProcessAsync(id, default);
         Assert.Equal(2, calls);
-        var cache = factory.Services.GetRequiredService<allstarr.Services.Common.IApplicationCache>();
+        var cache = factory.Services.GetRequiredService<allstarr.Core.Caching.IApplicationCache>();
         var key = "lyrics:v3:lrcred:" + CanonicalCatalogKeys.Hash(JsonSerializer.Serialize(new
         {
             Isrc = (string?)null,

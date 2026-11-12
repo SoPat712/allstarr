@@ -1,3 +1,4 @@
+using allstarr.Core.Artwork;
 using System.Net;
 using System.Text.Json;
 using allstarr.Core.AudioMuse;
@@ -9,7 +10,6 @@ using allstarr.Core.Protocols;
 using allstarr.Core.Secrets;
 using allstarr.Core.Storage;
 using allstarr.Models.Search;
-using allstarr.Services.Common;
 using allstarr.Services.Admin;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.EntityFrameworkCore;

@@ -1,3 +1,4 @@
+using allstarr.Core.Caching;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Security.Cryptography;
@@ -5,7 +6,6 @@ using System.Text;
 using System.Text.Json;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Playlists.Sources;
-using allstarr.Services.Common;
 using allstarr.Models.Settings;
 using System.Net.Http.Json;
 
@@ -22,13 +22,8 @@ public sealed partial class SpotifyPathfinderPlaylistClient
     internal const string LibraryQueryHash = SpotifyApiSettings.DefaultLibraryQueryHash;
     internal const string PlaylistOperation = "fetchPlaylist";
     internal const string PlaylistQueryHash = SpotifyApiSettings.DefaultPlaylistQueryHash;
-    internal static readonly PathfinderOperationDefinition LibraryQuery =
-        new(LibraryOperation, LibraryQueryHash, 1);
-    internal static readonly PathfinderOperationDefinition PlaylistQuery =
-        new(PlaylistOperation, PlaylistQueryHash, 1);
     internal const string LikedSongsOperation = "fetchLibraryTracks";
     internal const string LikedSongsQueryHash = SpotifyApiSettings.DefaultLikedSongsQueryHash;
-    internal static readonly PathfinderOperationDefinition LikedSongsQuery = new(LikedSongsOperation, LikedSongsQueryHash, 1);
     private const string ProviderId = SpotifyPlaylistCapabilityAdapter.StableProviderId;
     private readonly SpotifyApiSettings settings;
     private PathfinderOperationDefinition CurrentLibraryQuery => new(LibraryOperation, settings.LibraryQueryHash, 1);

@@ -62,7 +62,7 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
     ILogger<PersonalMixService>? logger = null, IClientEventPublisher? events = null,
     ILibraryIndexService? libraryIndex = null, ITrackIdentityService? identities = null, PublicArtworkWarmer? artwork = null,
     IPlaylistPersistenceService? playlistStore = null, DurableJobQueue? jobQueue = null, IPlaylistOrchestrationService? playlistSync = null, TrackMatchDecisionEngine? feedMatcher = null, MixCoverImageService? coverImages = null,
-    allstarr.Services.Common.IApplicationCache? recordingCache = null, IBackendPlaylistTargetResolver? playlistTargets = null,
+    allstarr.Core.Caching.IApplicationCache? recordingCache = null, IBackendPlaylistTargetResolver? playlistTargets = null,
     Microsoft.Extensions.Options.IOptions<allstarr.Models.Settings.SpotifyImportSettings>? spotifyImportSettings = null)
 {
     public const string PublishKey = "Mixes:PublishToApps", JobType = "mixes.refresh";

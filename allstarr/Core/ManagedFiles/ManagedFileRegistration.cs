@@ -10,7 +10,6 @@ public static class ManagedFileRegistration
         services.AddSingleton<IManagedFileOperations, PhysicalManagedFileOperations>();
         services.AddScoped<FilePlacementService>();
         services.AddScoped<ManagedFileRemovalService>();
-        services.AddScoped<ManagedFileReferenceService>();
         return services;
     }
 }

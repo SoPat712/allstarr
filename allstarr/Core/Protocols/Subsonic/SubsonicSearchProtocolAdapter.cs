@@ -69,9 +69,6 @@ public sealed class SubsonicSearchProtocolAdapter
         };
     }
 
-    public List<T> ApplyAlbumWindow<T>(IEnumerable<T> values, SubsonicSearchWindow window) =>
-        values.Skip(window.AlbumOffset).Take(window.AlbumCount).ToList();
-
     private static int Count(SubsonicRequestParameters parameters, string name) =>
         ReadBounded(parameters, name, 20);
 

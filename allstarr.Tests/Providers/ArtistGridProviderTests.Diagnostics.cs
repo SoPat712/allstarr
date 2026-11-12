@@ -1,3 +1,4 @@
+using allstarr.Core.Providers;
 using System.Net;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Health;
@@ -8,7 +9,6 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
-using allstarr.Services.Common;
 using Moq;
 
 namespace allstarr.Tests.Providers;

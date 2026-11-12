@@ -1,11 +1,12 @@
+using allstarr.Core.Playback;
+using allstarr.Core.Providers;
 using allstarr.Core.Providers.Lyrics;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Health;
 using allstarr.Core.Operations;
 using allstarr.Core.Routing;
 using allstarr.Core.Storage;
-using allstarr.Services.Common;
-using HealthState = allstarr.Services.Common.ProviderHealthState;
+using HealthState = allstarr.Core.Providers.ProviderHealthState;
 
 namespace allstarr.Tests;
 

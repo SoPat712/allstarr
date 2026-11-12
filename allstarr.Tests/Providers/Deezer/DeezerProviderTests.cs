@@ -2,7 +2,6 @@ using allstarr.Core.Providers.Deezer;
 using allstarr.Core.Capabilities;
 using allstarr.Models.Domain;
 using allstarr.Models.Settings;
-using allstarr.Models.Download;
 using allstarr.Models.Search;
 using allstarr.Models.Subsonic;
 using Moq;

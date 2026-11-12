@@ -1,5 +1,5 @@
+using allstarr.Core.Providers;
 using allstarr.Core.Capabilities;
-using allstarr.Services.Common;
 using Moq;
 
 namespace allstarr.Tests;

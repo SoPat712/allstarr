@@ -1,3 +1,4 @@
+using allstarr.Core.Artwork;
 using System.Net;
 using allstarr.Controllers.ClientApi;
 using allstarr.Core.Capabilities;
@@ -11,7 +12,6 @@ using allstarr.Core.Storage;
 using allstarr.Models.Domain;
 using allstarr.Models.Lyrics;
 using allstarr.Models.Settings;
-using allstarr.Services.Common;
 using allstarr.Services.Jellyfin;
 using allstarr.Services.Local;
 using Microsoft.AspNetCore.Http;

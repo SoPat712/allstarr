@@ -1,3 +1,5 @@
+using allstarr.Core.Artwork;
+using allstarr.Core.Caching;
 using System.Collections.Immutable;
 using System.Diagnostics;
 using System.Net;
@@ -7,7 +9,6 @@ using allstarr.Core.Protocols;
 using allstarr.Core.Releases;
 using allstarr.Core.Settings;
 using allstarr.Models.Domain;
-using allstarr.Services.Common;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;

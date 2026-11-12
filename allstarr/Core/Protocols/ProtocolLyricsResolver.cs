@@ -7,7 +7,6 @@ using System.Text;
 using allstarr.Core.Capabilities;
 using allstarr.Models.Domain;
 using allstarr.Models.Lyrics;
-using allstarr.Services.Common;
 using allstarr.Core.Settings;
 using allstarr.Core.Downloads;
 using allstarr.Core.Matching;

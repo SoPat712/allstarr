@@ -1,3 +1,5 @@
+using allstarr.Core.Artwork;
+using allstarr.Providers.Extensions;
 using Microsoft.AspNetCore.Mvc;
 using allstarr.Filters;
 using allstarr.Services.Common;

@@ -1,10 +1,10 @@
+using allstarr.Core.Artwork;
 using System.Net;
 using System.Text.Json;
 using allstarr.Core.Favorites;
 using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
 using allstarr.Models.Domain;
-using allstarr.Services.Common;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;

@@ -1,3 +1,5 @@
+using allstarr.Core.Artwork;
+using allstarr.Core.Caching;
 using System.Collections.Concurrent;
 using System.Text.Json;
 using allstarr.Core.Capabilities;

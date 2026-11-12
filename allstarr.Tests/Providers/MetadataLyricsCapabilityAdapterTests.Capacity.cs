@@ -1,6 +1,6 @@
+using allstarr.Core.Caching;
 using System.Net;
 using allstarr.Core.Capabilities;
-using allstarr.Services.Common;
 using Moq;
 
 namespace allstarr.Tests;

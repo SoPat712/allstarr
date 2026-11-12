@@ -1,3 +1,4 @@
+using allstarr.Core.Artwork;
 using allstarr.Controllers;
 using allstarr.Core.Music;
 using allstarr.Core.Operations;
@@ -7,7 +8,6 @@ using allstarr.Models.Lyrics;
 using allstarr.Services.Admin;
 using allstarr.Services.Jellyfin;
 using allstarr.Services.Subsonic;
-using allstarr.Services.Common;
 using allstarr.Models.Settings;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Configuration;

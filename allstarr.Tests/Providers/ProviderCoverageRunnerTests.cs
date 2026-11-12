@@ -1,10 +1,10 @@
+using allstarr.Core.Providers;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Matching;
 using allstarr.Core.Intelligence;
 using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
 using allstarr.Models.Domain;
-using allstarr.Services.Common;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;

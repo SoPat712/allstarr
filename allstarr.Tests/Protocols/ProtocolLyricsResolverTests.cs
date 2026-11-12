@@ -4,7 +4,6 @@ using allstarr.Core.Settings;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Protocols;
 using allstarr.Models.Domain;
-using allstarr.Services.Common;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using allstarr.Core.Downloads;

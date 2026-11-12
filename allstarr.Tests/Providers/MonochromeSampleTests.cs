@@ -1,8 +1,8 @@
+using allstarr.Core.Providers;
 using System.Net;
 using System.Text.Json;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Providers.Monochrome;
-using allstarr.Services.Common;
 
 namespace allstarr.Tests;
 

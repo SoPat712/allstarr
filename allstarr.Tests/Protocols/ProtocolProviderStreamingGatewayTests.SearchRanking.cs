@@ -1,3 +1,4 @@
+using allstarr.Core.Caching;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Matching;
 using allstarr.Core.Protocols;

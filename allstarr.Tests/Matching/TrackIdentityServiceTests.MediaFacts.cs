@@ -1,3 +1,4 @@
+using allstarr.Core.Caching;
 using allstarr.Core.Music;
 using allstarr.Core.Matching;
 using allstarr.Models.Domain;
@@ -5,7 +6,6 @@ using Microsoft.EntityFrameworkCore;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Protocols;
 using allstarr.Core.Routing;
-using allstarr.Services.Common;
 using Moq;
 
 namespace allstarr.Tests;

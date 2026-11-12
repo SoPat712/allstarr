@@ -49,7 +49,7 @@ public class AppleMusicController : ControllerBase
             ? "/app/apple-upload"
             : settings.Value.SetupUploadDirectory;
 
-        if (allstarr.Services.Common.OutboundRequestGuard.TryCreateConfiguredServiceUri(
+        if (allstarr.Core.Operations.OutboundRequestGuard.TryCreateConfiguredServiceUri(
                 settings.Value.BaseUrl, out var baseUri, out _))
         {
             _httpClient.BaseAddress = baseUri;

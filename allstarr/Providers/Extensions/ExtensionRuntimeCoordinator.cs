@@ -1,3 +1,5 @@
+using allstarr.Core.Caching;
+using allstarr.Core.Playback;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Providers.Spotify;
 using allstarr.Core.Storage;
@@ -33,7 +35,7 @@ public sealed partial class ExtensionRuntimeCoordinator : IHostedService, IAsync
     private readonly SemaphoreSlim _runtimeGate = new(1, 1);
     private readonly SemaphoreSlim _sessionAccountGate = new(1, 1);
     private const string SessionSourceSetting = "__extensionSessionSource";
-    private readonly allstarr.Services.Common.IProviderCheckRequests? _checkRequests;
+    private readonly allstarr.Core.Providers.IProviderCheckRequests? _checkRequests;
     private int _startupRenewalAttempted;
     private readonly ExtensionSessionVerificationClient? _sessionVerification;
     private readonly allstarr.Core.Jobs.DurableJobQueue? _sessionJobs;
@@ -50,7 +52,7 @@ public sealed partial class ExtensionRuntimeCoordinator : IHostedService, IAsync
         IConfiguration configuration,
         ILogger<ExtensionRuntimeCoordinator> logger,
         IDataProtectionProvider? dataProtectionProvider = null,
-        allstarr.Services.Common.IProviderCheckRequests? checkRequests = null,
+        allstarr.Core.Providers.IProviderCheckRequests? checkRequests = null,
         TimeProvider? timeProvider = null,
         ExtensionSessionVerificationClient? sessionVerification = null,
         allstarr.Core.Jobs.DurableJobQueue? sessionJobs = null, MediaConversionGate? conversions = null)

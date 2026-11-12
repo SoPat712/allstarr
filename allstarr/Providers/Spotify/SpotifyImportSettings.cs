@@ -107,12 +107,8 @@ public sealed class SpotifyImportSettings
     public bool Enabled { get; set; }
     public int MatchingIntervalHours { get; set; } = 24;
     public List<SpotifyPlaylistConfig> Playlists { get; set; } = new();
-    public SpotifyPlaylistConfig? GetPlaylistById(string playlistId) =>
-        Playlists.FirstOrDefault(p => p.Id.Equals(playlistId, StringComparison.OrdinalIgnoreCase));
     public SpotifyPlaylistConfig? GetPlaylistByJellyfinId(string jellyfinPlaylistId) =>
         Playlists.FirstOrDefault(p => p.JellyfinId.Equals(jellyfinPlaylistId, StringComparison.OrdinalIgnoreCase));
-    public SpotifyPlaylistConfig? GetPlaylistByName(string name) =>
-        Playlists.FirstOrDefault(p => p.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
     public bool IsSpotifyPlaylist(string jellyfinPlaylistId) =>
         Playlists.Any(p => p.JellyfinId.Equals(jellyfinPlaylistId, StringComparison.OrdinalIgnoreCase));
 }

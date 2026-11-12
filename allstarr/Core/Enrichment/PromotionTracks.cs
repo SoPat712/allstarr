@@ -20,7 +20,7 @@ public sealed class PromotionTrack
     public long Length { get; set; }
     public long? DurationMilliseconds { get; set; }
     public bool Lossy { get; set; }
-    public allstarr.Services.Common.AudioQualityCheck? QualityCheck { get; set; }
+    public allstarr.Core.Playback.AudioQualityCheck? QualityCheck { get; set; }
     public List<PromotionSourceAttempt> SourceAttempts { get; set; } = [];
     public Dictionary<string, string>? PendingTags { get; set; }
     public PromotionTrackStep? PendingMetadataStep { get; set; }

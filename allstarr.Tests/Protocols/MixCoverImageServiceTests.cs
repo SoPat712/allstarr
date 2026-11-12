@@ -193,7 +193,7 @@ public sealed class MixCoverImageServiceTests
             {
                 Assert.Equal(owner, listener);
                 Assert.Equal(input, selected);
-                return Task.FromResult<allstarr.Services.Common.ResolvedMediaAsset?>(new(bytes, "image/png", "hash", null, null, true));
+                return Task.FromResult<allstarr.Core.Artwork.ResolvedMediaAsset?>(new(bytes, "image/png", "hash", null, null, true));
             });
         var context = new DefaultHttpContext();
         var result = Assert.IsType<FileContentResult>(await service.CreateResponseAsync(input, context, owner: owner));

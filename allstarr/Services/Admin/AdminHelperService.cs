@@ -1,24 +1,9 @@
 using System.Text.Json;
-using Microsoft.Extensions.Options;
-using allstarr.Models.Settings;
-using allstarr.Services.Common;
 
 namespace allstarr.Services.Admin;
 
 public class AdminHelperService
 {
-    private readonly JellyfinSettings _jellyfinSettings;
-
-    public AdminHelperService(IOptions<JellyfinSettings> jellyfinSettings)
-    {
-        _jellyfinSettings = jellyfinSettings.Value;
-    }
-
-    public string GetJellyfinAuthHeader()
-    {
-        return $"MediaBrowser Client=\"Allstarr\", Device=\"Server\", DeviceId=\"allstarr-admin\", Version=\"{AppVersion.Version}\", Token=\"{_jellyfinSettings.ApiKey}\"";
-    }
-
     public static string MaskValue(string? value, int showLast = 0)
     {
         if (string.IsNullOrEmpty(value)) return "(not set)";
@@ -143,16 +128,6 @@ public class AdminHelperService
         if (obj == null) return false;
         if (obj is JsonElement jsonEl) return jsonEl.ValueKind != JsonValueKind.Null && jsonEl.ValueKind != JsonValueKind.Undefined;
         return true;
-    }
-
-    /// <summary>
-    /// Create an authenticated HTTP request to Jellyfin API
-    /// </summary>
-    public HttpRequestMessage CreateJellyfinRequest(HttpMethod method, string url)
-    {
-        var request = new HttpRequestMessage(method, url);
-        request.Headers.Add("Authorization", GetJellyfinAuthHeader());
-        return request;
     }
 
 }

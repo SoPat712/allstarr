@@ -38,14 +38,6 @@ public static partial class MusicLyrics
         return new ProviderSongLyrics(song, found);
     }
 
-    public static Task<LyricsInfo?> FindForLibrarySongAsync(
-        IProtocolLyricsResolver lyrics,
-        ProtocolExecutionContext protocol,
-        Song song,
-        string resourceKey,
-        string? spotifyTrackId) =>
-        lyrics.FindAsync(protocol, ForLookup(song), resourceKey, spotifyTrackId: spotifyTrackId);
-
     // Provider labels are presentation-only and degrade lyric matching.
     public static Song ForLookup(Song song)
     {

@@ -8,7 +8,6 @@ using allstarr.Core.Protocols.Subsonic;
 using allstarr.Core.Storage;
 using allstarr.Models.Settings;
 using allstarr.Services.Subsonic;
-using allstarr.Services.Common;
 using allstarr.Core.Capabilities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -692,7 +691,7 @@ public sealed partial class PlaybackSignalPipelineTests : IAsyncLifetime
     public async Task EligibleProgressScrobblesOnceAndStopDoesNotDuplicateIt()
     {
         var target = new Target("lastfm", true);
-        var activity = new allstarr.Services.Common.PlaybackDeliveryActivityStore();
+        var activity = new allstarr.Core.Playback.PlaybackDeliveryActivityStore();
         var delivery = new ScopedPlaybackScrobbleDelivery(
             factory,
             [target],
@@ -1119,14 +1118,14 @@ public sealed partial class PlaybackSignalPipelineTests : IAsyncLifetime
         }
     }
     private sealed class EmptyServices : IServiceProvider { public static readonly EmptyServices Instance = new(); public object? GetService(Type t) => null; }
-    private sealed class BackendMetadataResolver(allstarr.Services.Common.PlaybackTrackMetadata metadata)
-        : allstarr.Services.Common.IPlaybackMetadataResolver
+    private sealed class BackendMetadataResolver(allstarr.Core.Playback.PlaybackTrackMetadata metadata)
+        : allstarr.Core.Playback.IPlaybackMetadataResolver
     {
-        public Task<allstarr.Services.Common.PlaybackTrackMetadata?> ResolveAsync(string itemId, CancellationToken cancellationToken) =>
-            Task.FromResult<allstarr.Services.Common.PlaybackTrackMetadata?>(metadata);
+        public Task<allstarr.Core.Playback.PlaybackTrackMetadata?> ResolveAsync(string itemId, CancellationToken cancellationToken) =>
+            Task.FromResult<allstarr.Core.Playback.PlaybackTrackMetadata?>(metadata);
 
-        public Task<allstarr.Services.Common.PlaybackArtwork?> ResolveArtworkAsync(string itemId, CancellationToken cancellationToken) =>
-            Task.FromResult<allstarr.Services.Common.PlaybackArtwork?>(null);
+        public Task<allstarr.Core.Playback.PlaybackArtwork?> ResolveArtworkAsync(string itemId, CancellationToken cancellationToken) =>
+            Task.FromResult<allstarr.Core.Playback.PlaybackArtwork?>(null);
     }
 }
 

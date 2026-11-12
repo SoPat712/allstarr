@@ -1,3 +1,4 @@
+using allstarr.Core.Playlists;
 using System.Net;
 using System.Text.Json;
 using System.Xml.Linq;
@@ -5,7 +6,6 @@ using allstarr.Core.Protocols;
 using allstarr.Models.Domain;
 using allstarr.Models.Search;
 using allstarr.Models.Subsonic;
-using allstarr.Services.Common;
 using Moq;
 
 namespace allstarr.Tests;

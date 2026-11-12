@@ -1,3 +1,5 @@
+using allstarr.Core.Caching;
+using allstarr.Core.Providers;
 using System.Diagnostics;
 using allstarr.Core.Health;
 using allstarr.Core.Configuration;
@@ -293,12 +295,12 @@ public class AdminUiController : ControllerBase
                     }).ToArray(),
                     enabledAccountCount = enabled.Count,
                     capabilityTotal = samples.Count,
-                    healthyCapabilityCount = samples.Count(item => item.Health == Services.Common.ProviderHealthState.Healthy),
-                    failedCapabilityCount = samples.Count(item => item.Health == Services.Common.ProviderHealthState.Degraded),
+                    healthyCapabilityCount = samples.Count(item => item.Health == allstarr.Core.Providers.ProviderHealthState.Healthy),
+                    failedCapabilityCount = samples.Count(item => item.Health == allstarr.Core.Providers.ProviderHealthState.Degraded),
                     lastCheckedAt = samples.Max(item => item.TestedAt),
                     successRate = (double?)null,
                     p95LatencyMilliseconds = (long?)null,
-                    lastFailureCode = samples.Where(item => item.Health == Services.Common.ProviderHealthState.Degraded)
+                    lastFailureCode = samples.Where(item => item.Health == allstarr.Core.Providers.ProviderHealthState.Degraded)
                         .OrderByDescending(item => item.TestedAt).Select(item => item.ReasonCode).FirstOrDefault()
                 };
             })
@@ -1891,7 +1893,7 @@ public class AdminUiController : ControllerBase
             return "disabled";
         }
 
-        if (statuses.Any(status => status.Health == Services.Common.ProviderHealthState.Testing))
+        if (statuses.Any(status => status.Health == allstarr.Core.Providers.ProviderHealthState.Testing))
         {
             return "testing";
         }
@@ -1909,7 +1911,7 @@ public class AdminUiController : ControllerBase
             return "partial_config";
         }
 
-        if (enabledSupported.Any(status => status.Health == Services.Common.ProviderHealthState.Degraded))
+        if (enabledSupported.Any(status => status.Health == allstarr.Core.Providers.ProviderHealthState.Degraded))
         {
             return "degraded";
         }

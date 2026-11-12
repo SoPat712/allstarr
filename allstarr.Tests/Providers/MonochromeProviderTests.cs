@@ -1,9 +1,9 @@
+using allstarr.Core.Providers;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Providers.Monochrome;
-using allstarr.Services.Common;
 
 namespace allstarr.Tests.Providers;
 
@@ -163,7 +163,7 @@ public sealed partial class MonochromeProviderTests
                 return new HttpResponseMessage(HttpStatusCode.OK)
                 {
                     Content = new StringContent(System.Text.Json.JsonSerializer.Serialize(new
-                    { tracks = allstarr.Services.Common.ProviderDiagnosticSamples.Recordings("monochrome").Select(sample => new { id = TrackId, isrc = sample.Isrc }) }))
+                    { tracks = allstarr.Core.Providers.ProviderDiagnosticSamples.Recordings("monochrome").Select(sample => new { id = TrackId, isrc = sample.Isrc }) }))
                 };
             Assert.Equal($"/track/{TrackId}", request.RequestUri.AbsolutePath);
             return Audio();

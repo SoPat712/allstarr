@@ -1,8 +1,8 @@
+using allstarr.Core.Providers;
 using System.Net;
 using System.Text;
 using allstarr.Models.Settings;
 using allstarr.Services.AppleMusic;
-using allstarr.Services.Common;
 using Microsoft.Extensions.Options;
 
 namespace allstarr.Tests;

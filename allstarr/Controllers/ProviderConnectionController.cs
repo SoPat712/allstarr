@@ -1,3 +1,5 @@
+using allstarr.Core.Operations;
+using allstarr.Core.Providers;
 using System.Text.Json;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Identity;
@@ -6,7 +8,6 @@ using allstarr.Core.Settings;
 using allstarr.Core.Storage;
 using allstarr.Filters;
 using allstarr.Services.Admin;
-using allstarr.Services.Common;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -377,12 +378,12 @@ public sealed class ProviderConnectionController(ILogger<ProviderConnectionContr
             var accountFreeLatencyMs = accountFreeTimer.ElapsedMilliseconds;
             return Ok(new
             {
-                success = testedAccountFree.Health == allstarr.Services.Common.ProviderHealthState.Healthy,
+                success = testedAccountFree.Health == allstarr.Core.Providers.ProviderHealthState.Healthy,
                 provider = testedAccountFree.Provider,
                 capability = testedAccountFree.Capability,
                 health = testedAccountFree.Health.ToString().ToLowerInvariant(),
                 latencyMs = accountFreeLatencyMs,
-                bars = ConnectivityQuality.Bars(accountFreeLatencyMs, testedAccountFree.Health == allstarr.Services.Common.ProviderHealthState.Healthy, ConnectivityMetric.ApiLatency),
+                bars = ConnectivityQuality.Bars(accountFreeLatencyMs, testedAccountFree.Health == allstarr.Core.Providers.ProviderHealthState.Healthy, ConnectivityMetric.ApiLatency),
                 metric = "api-latency",
                 testedAt = testedAccountFree.TestedAt,
                 reasonCode = testedAccountFree.ReasonCode
@@ -444,7 +445,7 @@ public sealed class ProviderConnectionController(ILogger<ProviderConnectionContr
                     normalizedProvider,
                     account.Id,
                     accountSecrets, account.Revision)
-                .Where(item => item.Health == allstarr.Services.Common.ProviderHealthState.Degraded)
+                .Where(item => item.Health == allstarr.Core.Providers.ProviderHealthState.Degraded)
                 .Select(item => new FailedCapability(item.Capability, item.ReasonCode))
                 .ToArray();
             string? mediaReason = null;
@@ -501,13 +502,13 @@ public sealed class ProviderConnectionController(ILogger<ProviderConnectionContr
         var capabilityLatencyMs = capabilityTimer.ElapsedMilliseconds;
         return Ok(new
         {
-            success = tested.Health == allstarr.Services.Common.ProviderHealthState.Healthy,
+            success = tested.Health == allstarr.Core.Providers.ProviderHealthState.Healthy,
             provider = tested.Provider,
             providerAccountId = account.Id,
             capability = tested.Capability,
             health = tested.Health.ToString().ToLowerInvariant(),
             latencyMs = capabilityLatencyMs,
-            bars = ConnectivityQuality.Bars(capabilityLatencyMs, tested.Health == allstarr.Services.Common.ProviderHealthState.Healthy, ConnectivityMetric.ApiLatency),
+            bars = ConnectivityQuality.Bars(capabilityLatencyMs, tested.Health == allstarr.Core.Providers.ProviderHealthState.Healthy, ConnectivityMetric.ApiLatency),
             metric = "api-latency",
             testedAt = tested.TestedAt,
             reasonCode = tested.ReasonCode

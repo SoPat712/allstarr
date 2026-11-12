@@ -13,7 +13,7 @@ public sealed record KeptFavoriteInterest(Guid OwnerUserId, Guid JobId, int Atte
 public sealed record KeptRecordingArtwork(string ProviderId, string ExternalId);
 
 public sealed record KeptRecordingMetadata(string Title, string[] Artists, string? Album = null,
-    long? DurationMilliseconds = null, int? ExplicitContentLyrics = null, allstarr.Services.Common.AudioQualityCheck? QualityCheck = null,
+    long? DurationMilliseconds = null, int? ExplicitContentLyrics = null, allstarr.Core.Playback.AudioQualityCheck? QualityCheck = null,
     int? Track = null, string? AlbumArtist = null, KeptRecordingArtwork? Artwork = null);
 
 public sealed partial class RecordingKeptFiles

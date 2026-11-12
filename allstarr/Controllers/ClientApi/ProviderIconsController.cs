@@ -1,5 +1,5 @@
+using allstarr.Core.Artwork;
 using System.ComponentModel.DataAnnotations;
-using allstarr.Services.Common;
 using Microsoft.AspNetCore.Mvc;
 
 namespace allstarr.Controllers.ClientApi;

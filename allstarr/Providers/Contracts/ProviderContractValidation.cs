@@ -132,21 +132,6 @@ internal static partial class ProviderContractValidation
     public static IReadOnlyList<T> Copy<T>(IEnumerable<T>? values) =>
         Array.AsReadOnly((values ?? []).ToArray());
 
-    public static IReadOnlyList<T> CopyDistinct<T>(
-        IEnumerable<T>? values,
-        string parameterName,
-        IEqualityComparer<T>? comparer = null)
-    {
-        var copy = (values ?? []).ToArray();
-        var distinct = new HashSet<T>(comparer);
-        if (copy.Any(item => !distinct.Add(item)))
-        {
-            throw new ArgumentException($"{parameterName} cannot contain duplicates.", parameterName);
-        }
-
-        return Array.AsReadOnly(copy);
-    }
-
     [GeneratedRegex("^[a-z0-9]+(?:-[a-z0-9]+)*$", RegexOptions.CultureInvariant)]
     private static partial Regex ProviderIdPattern();
 

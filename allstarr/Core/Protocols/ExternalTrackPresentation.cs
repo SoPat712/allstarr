@@ -10,7 +10,7 @@ public static class ExternalTrackPresentation
 {
     public static string VirtualPath(Song song, string? container = null)
     {
-        static string Segment(string value) => allstarr.Services.Common.PathHelper.SanitizeFileName(value);
+        static string Segment(string value) => allstarr.Core.Playback.PathHelper.SanitizeFileName(value);
         var identity = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
             System.Text.Encoding.UTF8.GetBytes(song.Id))).ToLowerInvariant()[..12];
         var number = song.Track is > 0 ? song.DiscNumber is > 0

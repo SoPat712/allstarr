@@ -1,6 +1,6 @@
+using allstarr.Core.Settings;
 using allstarr.Models.Domain;
 using allstarr.Models.Settings;
-using allstarr.Services.Common;
 using Xunit;
 
 namespace allstarr.Tests;

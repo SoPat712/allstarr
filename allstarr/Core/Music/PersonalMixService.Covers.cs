@@ -1,7 +1,7 @@
+using allstarr.Core.Artwork;
 using System.Text.Json;
 using allstarr.Core.Playlists;
 using allstarr.Core.Capabilities;
-using allstarr.Services.Common;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.EntityFrameworkCore;
 

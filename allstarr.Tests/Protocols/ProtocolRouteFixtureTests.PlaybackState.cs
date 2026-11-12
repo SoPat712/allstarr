@@ -1,3 +1,4 @@
+using allstarr.Core.Caching;
 using System.Net;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -7,7 +8,6 @@ using allstarr.Core.Operations;
 using allstarr.Core.Protocols;
 using allstarr.Models.Domain;
 using allstarr.Services.Jellyfin;
-using allstarr.Services.Common;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Moq;

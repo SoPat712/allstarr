@@ -1,3 +1,4 @@
+using allstarr.Core.Artwork;
 using System.Net;
 using System.Text;
 using allstarr.Core.Identity;
@@ -5,7 +6,6 @@ using allstarr.Core.Operations;
 using allstarr.Core.Storage;
 using allstarr.Filters;
 using allstarr.Models.Settings;
-using allstarr.Services.Common;
 using allstarr.Services.Jellyfin;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;

@@ -1,7 +1,6 @@
 using System.Net.WebSockets;
 using Microsoft.Extensions.Options;
 using allstarr.Models.Settings;
-using allstarr.Services.Common;
 using allstarr.Services.Jellyfin;
 using allstarr.Core.Identity;
 using allstarr.Filters;

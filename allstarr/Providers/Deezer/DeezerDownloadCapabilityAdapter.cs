@@ -1,3 +1,4 @@
+using allstarr.Core.Operations;
 using System.Net;
 using System.Security.Cryptography;
 using System.Text;
@@ -7,7 +8,6 @@ using allstarr.Core.Capabilities;
 using allstarr.Core.Downloads;
 using allstarr.Core.Providers.Spotify;
 using allstarr.Models.Settings;
-using allstarr.Services.Common;
 using allstarr.Services.Deezer;
 using Microsoft.Extensions.Options;
 

@@ -476,8 +476,8 @@ public sealed partial class PlaybackSignalPipelineTests
             .AddSingleton(new DurablePlaylistProjectionReader(factory, null!)).BuildServiceProvider();
         var matches = new allstarr.Core.Matching.TrackMatchCommandService(factory, new allstarr.Core.Matching.TrackMatchDecisionEngine(),
             new ProviderAccountResolver(factory), clock, Moq.Mock.Of<allstarr.Core.Protocols.IBackendLibraryAccessResolver>());
-        var status = new allstarr.Services.Common.ProviderStatusManager(new ConfigurationBuilder().Build(), null!,
-            Microsoft.Extensions.Logging.Abstractions.NullLogger<allstarr.Services.Common.ProviderStatusManager>.Instance,
+        var status = new allstarr.Core.Providers.ProviderStatusManager(new ConfigurationBuilder().Build(), null!,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<allstarr.Core.Providers.ProviderStatusManager>.Instance,
             Options.Create(new SpotifyApiSettings()), Options.Create(new AppleDownloadSettings()),
             Options.Create(new DeezerSettings()), Options.Create(new QobuzSettings()));
         var controller = new AdminUiController(new ConfigurationBuilder().Build(),

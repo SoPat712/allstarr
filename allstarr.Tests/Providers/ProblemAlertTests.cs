@@ -1,3 +1,4 @@
+using allstarr.Core.Providers;
 using System.Net;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
@@ -17,7 +18,6 @@ using allstarr.Core.Secrets;
 using allstarr.Core.Storage;
 using allstarr.Models.Settings;
 using allstarr.Services.Admin;
-using allstarr.Services.Common;
 
 namespace allstarr.Tests;
 

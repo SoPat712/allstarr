@@ -258,7 +258,7 @@ public sealed class ProviderDownloadArtifactResolver(IProviderDownloadArtifactSt
         // Published progressive playback is verified by its streaming consumer. A second decoder
         // here can hold up source EOF while that consumer owns the conversion capacity.
         var media = progressivePlayback
-            ? (await allstarr.Services.Common.AudioMediaFacts.ReadFileAsync(path, cancellationToken))?.Media ?? output.Media
+            ? (await allstarr.Core.Playback.AudioMediaFacts.ReadFileAsync(path, cancellationToken))?.Media ?? output.Media
             : await VerifyAudioAsync(path, output.Media, cancellationToken);
         return new(path, info.Length, media);
     }
@@ -266,7 +266,7 @@ public sealed class ProviderDownloadArtifactResolver(IProviderDownloadArtifactSt
     private async Task<ProviderMediaFormat> VerifyAudioAsync(string path, ProviderMediaFormat claimed,
         CancellationToken cancellationToken)
     {
-        var measured = await allstarr.Services.Common.AudioMediaFacts.ReadFileAsync(path, cancellationToken);
+        var measured = await allstarr.Core.Playback.AudioMediaFacts.ReadFileAsync(path, cancellationToken);
         var complete = await verifier.VerifyFileAsync(path, measured?.Media ?? claimed, null, cancellationToken);
         return complete.Media;
     }

@@ -71,7 +71,7 @@ public sealed partial class ProtocolRouteFixtureTests
         using var factory = ClientApiFactory(_ => throw new InvalidOperationException("Unexpected upstream request"));
         var brands = "applemusic spotify deezer youtubemusic tidal soundcloud amazonmusic qobuz jiosaavn melon genie bugs lastfm listenbrainz musicbrainz genius musixmatch jellyfin lrclib lrcred amll netease qqmusic kugou lrcmux lyricsplus unison paxsenix spicylyrics monochrome artistgrid koito multiscrobbler allstarr".Split(' ');
         foreach (var provider in factory.Services.GetRequiredService<allstarr.Core.Capabilities.IProviderRegistry>().Providers)
-            Assert.Contains(allstarr.Services.Common.ProviderArtworkResolver.Brand(provider.Id), brands);
+            Assert.Contains(allstarr.Core.Artwork.ProviderArtworkResolver.Brand(provider.Id), brands);
     }
 
     private static void AssertLibraryProvider(JsonElement provider, bool glyph = true)

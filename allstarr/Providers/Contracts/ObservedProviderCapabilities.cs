@@ -1,5 +1,5 @@
+using allstarr.Core.Playback;
 using allstarr.Core.Providers.Lyrics;
-using allstarr.Services.Common;
 using System.Diagnostics;
 using allstarr.Core.Health;
 
@@ -321,7 +321,7 @@ public static class ObservedProviderCapabilities
             InvokeAsync(context, () => Implementation.ProbeAsync(context, request),
                 observedCapability: request.TargetCapability,
                 observationError: outcome => !outcome.IsSuccess ? outcome.Error :
-                    allstarr.Services.Common.ProviderRuntimeStatus.IsNeutralReason(outcome.RequireValue().SafeCode)
+                    allstarr.Core.Providers.ProviderRuntimeStatus.IsNeutralReason(outcome.RequireValue().SafeCode)
                         ? new ProviderError(ProviderErrorKind.NotFound) : outcome.RequireValue().Status switch
                         {
                             ProviderProbeStatus.Healthy => null,

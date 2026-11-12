@@ -1,10 +1,10 @@
+using allstarr.Core.Operations;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using allstarr.Core.Capabilities;
-using allstarr.Services.Common;
 
 namespace allstarr.Core.Providers.ArtistGrid;
 
@@ -189,15 +189,6 @@ public sealed class ArtistGridCatalog
     {
         _http = http ?? throw new ArgumentNullException(nameof(http));
         _clock = clock ?? TimeProvider.System;
-    }
-
-    internal bool TryGetCachedArtistIndex(out ArtistGridArtistIndex? index)
-    {
-        lock (_cacheGate)
-        {
-            index = _artistIndex;
-            return index != null;
-        }
     }
 
     internal IReadOnlyList<(ArtistGridArtist Artist, ArtistGridTracker Tracker)> GetCachedTrackers()

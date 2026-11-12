@@ -1,3 +1,4 @@
+using allstarr.Core.Artwork;
 using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
@@ -7,7 +8,6 @@ using allstarr.Core.Matching;
 using allstarr.Core.Protocols;
 using allstarr.Core.Settings;
 using allstarr.Core.Storage;
-using allstarr.Services.Common;
 using allstarr.Services.Local;
 using allstarr.Services.Spotify;
 using Microsoft.EntityFrameworkCore;

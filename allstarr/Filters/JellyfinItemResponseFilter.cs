@@ -1,3 +1,4 @@
+using allstarr.Core.Artwork;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using allstarr.Core.Playlists;
@@ -5,7 +6,6 @@ using allstarr.Core.Favorites;
 using allstarr.Core.Music;
 using allstarr.Core.Protocols;
 using allstarr.Services.Jellyfin;
-using allstarr.Services.Common;
 using allstarr.Services.Local;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Filters;

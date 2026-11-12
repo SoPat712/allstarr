@@ -167,11 +167,11 @@ public sealed partial class RecordingKeptFilesTests
         var kept = Assert.IsType<KeptRecordingFile>(await ExplicitKeepService().RetainRequestedKeepAsync(await AcceptKeepAsync()));
         var configuration = new Microsoft.Extensions.Configuration.ConfigurationBuilder().AddInMemoryCollection(
             new Dictionary<string, string?> { ["Library:DownloadPath"] = root }).Build();
-        await using var cache = new allstarr.Services.Common.ManagedTrackCacheService(configuration,
+        await using var cache = new allstarr.Core.Playback.ManagedTrackCacheService(configuration,
             Microsoft.Extensions.Options.Options.Create(new allstarr.Models.Settings.SubsonicSettings
             { StorageMode = allstarr.Models.Settings.StorageMode.Cache }),
             new Moq.Mock<allstarr.Services.Local.ILocalLibraryService>(Moq.MockBehavior.Strict).Object,
-            Microsoft.Extensions.Logging.Abstractions.NullLogger<allstarr.Services.Common.ManagedTrackCacheService>.Instance,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<allstarr.Core.Playback.ManagedTrackCacheService>.Instance,
             mappings: new EfDownloadedSongMappingStore(factory));
         var replay = await cache.TryOpenAsync(new("deezer", allstarr.Core.Capabilities.ProviderResourceKind.Track, "source-track"),
             scope, default, 7, originalDownload: true, retainOriginalMedia: true);

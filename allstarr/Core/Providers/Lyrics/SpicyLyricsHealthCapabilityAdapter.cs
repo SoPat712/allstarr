@@ -1,7 +1,6 @@
 using System.Diagnostics;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Providers.Spotify;
-using allstarr.Services.Common;
 
 namespace allstarr.Core.Providers.Lyrics;
 

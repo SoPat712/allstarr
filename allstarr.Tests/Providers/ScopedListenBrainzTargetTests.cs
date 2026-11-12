@@ -149,9 +149,9 @@ public sealed class ScopedListenBrainzTargetTests
     [InlineData("2001:4860:4860::8888", false)]
     public void HttpConnection_RequiresEveryResolvedAddressToBePrivate(string address, bool expected)
     {
-        Assert.Equal(expected, allstarr.Services.Common.ListenBrainzServiceEndpoint.AllowsResolvedAddresses(
+        Assert.Equal(expected, allstarr.Providers.ListenBrainz.ListenBrainzServiceEndpoint.AllowsResolvedAddresses(
             new("http://scrobbler.internal/1/"), [IPAddress.Parse(address)]));
-        Assert.False(allstarr.Services.Common.ListenBrainzServiceEndpoint.AllowsResolvedAddresses(
+        Assert.False(allstarr.Providers.ListenBrainz.ListenBrainzServiceEndpoint.AllowsResolvedAddresses(
             new("http://scrobbler.internal/1/"), [IPAddress.Parse("10.0.0.1"), IPAddress.Parse("8.8.8.8")]));
     }
 
@@ -201,7 +201,7 @@ public sealed class ScopedListenBrainzTargetTests
         });
         try
         {
-            using var http = new HttpClient(allstarr.Services.Common.ListenBrainzServiceEndpoint.CreateHttpHandler());
+            using var http = new HttpClient(allstarr.Providers.ListenBrainz.ListenBrainzServiceEndpoint.CreateHttpHandler());
             var target = new ListenBrainzScopedPlaybackScrobbleTarget(http,
                 new AccountAccessor(JsonSerializer.Serialize(new { token = "fixture-token", baseUrl = root + "1/" })));
             var result = await target.DeliverAsync(Scope(), PlaybackTransition.Submission,

@@ -1,3 +1,4 @@
+using allstarr.Core.Caching;
 using System.Threading.Channels;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Matching;
@@ -5,7 +6,6 @@ using allstarr.Core.Protocols;
 using allstarr.Core.Routing;
 using allstarr.Models.Search;
 using allstarr.Models.Settings;
-using allstarr.Services.Common;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Moq;

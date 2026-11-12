@@ -1,3 +1,4 @@
+using allstarr.Core.Caching;
 using System.Collections.Concurrent;
 using System.Text.Json;
 using allstarr.Core.Capabilities;
@@ -9,7 +10,6 @@ using allstarr.Core.Protocols;
 using allstarr.Core.Settings;
 using allstarr.Core.Storage;
 using allstarr.Models.Domain;
-using allstarr.Services.Common;
 using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Core.Music;
@@ -409,9 +409,6 @@ public sealed class SavedLibraryReader(IDbContextFactory<AllstarrDbContext> fact
                 ? item with { Display = item.Display with { Count = visibleAlbumCounts.GetValueOrDefault(item.ItemId) } }
                 : item).ToArray();
     }
-
-    internal Task PreferSavedSongIdsAsync(ProtocolExecutionContext execution, IReadOnlyList<Song> songs,
-        CancellationToken cancellationToken) => PreferSavedIdsAsync(execution, songs, [], cancellationToken);
 
     internal async Task PreferSavedIdsAsync(ProtocolExecutionContext execution, IReadOnlyList<Song> songs,
         IReadOnlyList<Album> albums, CancellationToken cancellationToken)

@@ -1,7 +1,8 @@
+using allstarr.Core.Artwork;
+using allstarr.Core.Operations;
 using allstarr.Models.Domain;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Protocols;
-using allstarr.Services.Common;
 using allstarr.Services.Jellyfin;
 using allstarr.Services.Local;
 using System.Security.Cryptography;

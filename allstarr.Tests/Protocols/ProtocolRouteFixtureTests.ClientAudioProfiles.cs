@@ -1,3 +1,4 @@
+using allstarr.Core.Playback;
 using System.Net;
 using System.Text;
 using System.Text.Json;
@@ -6,7 +7,6 @@ using System.Xml.Linq;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Protocols;
 using allstarr.Models.Domain;
-using allstarr.Services.Common;
 using Moq;
 
 namespace allstarr.Tests;

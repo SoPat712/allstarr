@@ -127,7 +127,7 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.InRange(nativeReads, 2, 3);
         await using var readDb = await contexts.CreateDbContextAsync();
         var key = readDb.FeedReadKey(observed!, "mixes:UTC", new(true, ["library"]));
-        await factory.Services.GetRequiredService<allstarr.Services.Common.ApplicationCacheRequestCoalescer>()
+        await factory.Services.GetRequiredService<allstarr.Core.Caching.ApplicationCacheRequestCoalescer>()
             .RunAsync(key, () => Task.FromResult<object?>(null), default);
         _lyricsSearchOutput.WriteLine($"Mix list, 25 saved mixes with 50-song fixtures: cold {cold:F1} ms; warm {elapsed:F1} ms; native detail reads 1 -> 0; response bytes equal.");
     }
@@ -180,7 +180,7 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.Equal(2, summaries);
         Assert.Single(requests, request => request.Contains("IncludeItemTypes=Playlist", StringComparison.Ordinal));
         _lyricsSearchOutput.WriteLine($"Playlist count with 36 served summaries and 150 ms native pages: full-list merge {baseline:F1} ms -> count-only warm {warm:F1} ms; native pages 3 -> 1; summary reads 1 -> 0; response content/order equal.");
-        await factory.Services.GetRequiredService<allstarr.Services.Common.IApplicationCache>().DeleteByPatternAsync("feed:read:v1:*");
+        await factory.Services.GetRequiredService<allstarr.Core.Caching.IApplicationCache>().DeleteByPatternAsync("feed:read:v1:*");
         watch.Restart();
         var uncachedList = await client.GetStringAsync(query + "&Limit=200");
         var listBefore = watch.Elapsed.TotalMilliseconds;

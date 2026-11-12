@@ -1,3 +1,4 @@
+using allstarr.Core.Artwork;
 using System.Collections.Concurrent;
 using System.Net;
 using Microsoft.AspNetCore.Http;
@@ -6,7 +7,6 @@ using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Configuration;
 using allstarr.Core.Identity;
 using allstarr.Models.Settings;
-using allstarr.Services.Common;
 using allstarr.Services.Jellyfin;
 
 namespace allstarr.Tests;

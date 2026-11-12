@@ -1,4 +1,4 @@
-using allstarr.Services.Common;
+using allstarr.Core.Playback;
 using System.Collections.ObjectModel;
 using System.Globalization;
 using System.Security.Cryptography;
@@ -754,13 +754,6 @@ public sealed partial class DurableRuntimeSettingsService : BackgroundService, I
     internal static EffectiveRuntimeSetting ProjectStoredRecord(RuntimeSettingRecord record) =>
         FromRecord(record, RuntimeSettingCatalog.Require(record.Key));
 
-    internal static void ValidateStoredRecord(RuntimeSettingRecord record)
-    {
-        var definition = RuntimeSettingCatalog.Require(record.Key);
-        if (record.ValueType != definition.ValueType) throw new InvalidOperationException($"Runtime setting '{record.Key}' has an invalid stored type.");
-        _ = ParseStored(definition, record.ValueJson);
-    }
-
     private EffectiveRuntimeSetting FromBootstrap(RuntimeSettingDefinition definition)
     {
         var bootstrapKey = ResolveBootstrapKey(definition);
@@ -820,7 +813,7 @@ public sealed partial class DurableRuntimeSettingsService : BackgroundService, I
         if (definition.Key is "Backend:ServiceCredentialReference" or "Admin:Oidc:ClientSecretReference" && (!Guid.TryParseExact(value, "D", out var reference) || reference == Guid.Empty))
             throw new ArgumentException("The backend credential reference must identify an encrypted service credential.");
         if (definition.Key is "LyricsPlus:BaseUrl" or "Backend:Url" &&
-            !allstarr.Services.Common.OutboundRequestGuard.TryCreateConfiguredServiceUri(value, out _, out _))
+            !allstarr.Core.Operations.OutboundRequestGuard.TryCreateConfiguredServiceUri(value, out _, out _))
             throw new ArgumentException($"The {(definition.Key == "Backend:Url" ? "media-server" : "LyricsPlus")} URL must be an HTTP or HTTPS service URL without credentials, query or fragment.");
         if (definition.Key == "Library:PlaylistsDirectory" &&
             (value is "." or ".." || value.Contains('/') || value.Contains('\\') || value.Contains('\0')))

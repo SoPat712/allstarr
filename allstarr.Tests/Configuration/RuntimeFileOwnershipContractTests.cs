@@ -58,10 +58,10 @@ public sealed class RuntimeFileOwnershipContractTests
             ["Providers/Extensions/ExtensionHostBridge.Binary.cs"] = "invocation-scoped temporary audio",
             ["Providers/Extensions/ExtensionDownloadPostProcessor.cs"] = "invocation-scoped temporary audio",
             ["Providers/Extensions/ExtensionProgressiveTransfer.Deezer.cs"] = "invocation-scoped temporary audio",
-            ["Services/Common/FileMediaApplicationCache.cs"] = "bounded media cache",
-            ["Services/Common/ManagedTrackCacheService.cs"] = "managed audio cache",
-            ["Services/Common/ProgressiveAudioFinalizer.cs"] = "managed audio cache",
-            ["Services/Common/ProviderTryMediaStore.cs"] = "private temporary provider previews",
+            ["Core/Caching/FileMediaApplicationCache.cs"] = "bounded media cache",
+            ["Core/Playback/ManagedTrackCacheService.cs"] = "managed audio cache",
+            ["Core/Playback/ProgressiveAudioFinalizer.cs"] = "managed audio cache",
+            ["Core/Providers/ProviderTryMediaStore.cs"] = "private temporary provider previews",
             ["Services/Lyrics/KeptLyricsSidecarService.cs"] = "lyrics sidecar",
         };
 
@@ -113,7 +113,7 @@ public sealed class RuntimeFileOwnershipContractTests
             "Core/Storage/DurableBackupService.Restore.cs",
             "Core/Secrets/FileSecretKeyRingProvider.cs",
             "Providers/Extensions/ExtensionManager.cs",
-            "Services/Common/FileMediaApplicationCache.cs"
+            "Core/Caching/FileMediaApplicationCache.cs"
         };
 
         Assert.Empty(jsonWriters.Except(allowed, StringComparer.Ordinal));

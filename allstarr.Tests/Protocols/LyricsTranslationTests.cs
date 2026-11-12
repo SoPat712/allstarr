@@ -1,8 +1,8 @@
+using allstarr.Core.Caching;
 using System.Net;
 using System.Text.Json;
 using allstarr.Core.ClientApiV2;
 using allstarr.Core.Settings;
-using allstarr.Services.Common;
 using Moq;
 
 namespace allstarr.Tests;

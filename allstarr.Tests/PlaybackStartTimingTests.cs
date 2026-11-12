@@ -5,7 +5,6 @@ using allstarr.Core.Capabilities;
 using allstarr.Core.Identity;
 using allstarr.Core.Music;
 using allstarr.Core.Protocols;
-using allstarr.Services.Common;
 using Microsoft.Extensions.Configuration;
 using Moq;
 using allstarr.Core.Storage;

@@ -1,3 +1,4 @@
+using allstarr.Core.Caching;
 using System.Collections.Concurrent;
 using System.Text.Json;
 using allstarr.Core.Capabilities;
@@ -5,7 +6,6 @@ using allstarr.Core.Protocols;
 using allstarr.Core.Routing;
 using allstarr.Core.Storage;
 using allstarr.Models.Search;
-using allstarr.Services.Common;
 using Moq;
 
 namespace allstarr.Tests;

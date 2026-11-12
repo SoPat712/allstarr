@@ -1,7 +1,7 @@
+using allstarr.Core.Artwork;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Extensions;
 using allstarr.Core.Storage;
-using allstarr.Services.Common;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.FileProviders;
 using Moq;

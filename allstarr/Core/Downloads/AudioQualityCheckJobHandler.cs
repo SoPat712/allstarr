@@ -1,9 +1,9 @@
+using allstarr.Core.Playback;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using allstarr.Core.Jobs;
 using allstarr.Core.ManagedFiles;
 using allstarr.Core.Storage;
-using allstarr.Services.Common;
 using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Core.Downloads;
@@ -74,7 +74,7 @@ public sealed class AudioQualityCheckJobHandler(IDbContextFactory<AllstarrDbCont
             await transaction.CommitAsync(cancellationToken);
             return DurableJobCompletion.Success();
         }
-        catch (allstarr.Services.Common.LocalCapacityException)
+        catch (allstarr.Core.Playback.LocalCapacityException)
         {
             return DurableJobCompletion.Retry("local-capacity-unavailable", "Media conversion capacity is full. Retry shortly.", TimeSpan.FromSeconds(5));
         }

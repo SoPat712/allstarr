@@ -1,3 +1,5 @@
+using allstarr.Core.Playback;
+using allstarr.Core.Providers;
 using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Headers;

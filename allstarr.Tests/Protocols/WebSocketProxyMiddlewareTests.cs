@@ -88,8 +88,8 @@ public class WebSocketProxyMiddlewareTests
         var cache = new DisabledApplicationCache();
         var proxy = new allstarr.Services.Jellyfin.JellyfinProxyService(new OwnerClients(handler), settings,
             new HttpContextAccessor(), Microsoft.Extensions.Logging.Abstractions.NullLogger<allstarr.Services.Jellyfin.JellyfinProxyService>.Instance,
-            cache, new allstarr.Services.Common.MediaAssetResolver(cache,
-                Microsoft.Extensions.Logging.Abstractions.NullLogger<allstarr.Services.Common.MediaAssetResolver>.Instance),
+            cache, new allstarr.Core.Artwork.MediaAssetResolver(cache,
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<allstarr.Core.Artwork.MediaAssetResolver>.Instance),
             new Microsoft.Extensions.Configuration.ConfigurationBuilder().Build());
         var middleware = new WebSocketProxyMiddleware(_ => Task.CompletedTask, settings,
             Microsoft.Extensions.Logging.Abstractions.NullLogger<WebSocketProxyMiddleware>.Instance, [], proxy,

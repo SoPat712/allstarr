@@ -1,4 +1,4 @@
-using allstarr.Services.Common;
+using allstarr.Services.Admin;
 using Microsoft.Extensions.Configuration;
 using System.Net;
 

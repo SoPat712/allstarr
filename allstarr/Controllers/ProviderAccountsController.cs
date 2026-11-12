@@ -1,3 +1,5 @@
+using allstarr.Core.Caching;
+using allstarr.Providers.ListenBrainz;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -9,7 +11,6 @@ using allstarr.Core.Storage;
 using allstarr.Filters;
 using allstarr.Middleware;
 using allstarr.Services.Admin;
-using allstarr.Services.Common;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -407,7 +408,7 @@ public sealed partial class ProviderAccountsController : ControllerBase
     // Account changes are checked straight away instead of waiting for the next scheduled sweep.
     private void RequestCheck(ProviderAccountRecord account)
     {
-        HttpContext?.RequestServices?.GetService<allstarr.Services.Common.IProviderCheckRequests>()?.Request(account.ProviderId, account.Id);
+        HttpContext?.RequestServices?.GetService<allstarr.Core.Providers.IProviderCheckRequests>()?.Request(account.ProviderId, account.Id);
         HttpContext?.RequestServices?.GetService<allstarr.Core.Settings.RuntimeSettingsChangeSignal>()?.Publish();
     }
 

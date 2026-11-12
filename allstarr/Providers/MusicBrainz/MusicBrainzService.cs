@@ -1,3 +1,4 @@
+using allstarr.Core.Caching;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
@@ -5,7 +6,6 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using allstarr.Models.Settings;
 using allstarr.Core.Settings;
-using allstarr.Services.Common;
 using Microsoft.Extensions.Options;
 
 namespace allstarr.Services.MusicBrainz;
@@ -259,28 +259,6 @@ public sealed class MusicBrainzService : IMusicBrainzCatalogClient
         if (selected == null) return null;
         var full = await LookupByMbidAsync(selected.Value.Recording.Id!, cancellationToken);
         return full == null ? null : new(full, selected.Value.Confidence, _sourceRevision);
-    }
-
-    public async Task<IReadOnlyList<string>> GetGenresForSongAsync(
-        string title,
-        string artist,
-        string? isrc = null,
-        string? recordingMbid = null,
-        long? durationMilliseconds = null,
-        CancellationToken cancellationToken = default)
-    {
-        if (!await SourceAvailableAsync(true, cancellationToken)) return [];
-        var match = await ResolveRecordingAsync(
-            recordingMbid, isrc, title, artist, durationMilliseconds, cancellationToken);
-        if (match?.Recording.Genres is not { Count: > 0 } genres) return [];
-        return genres
-            .Where(genre => !string.IsNullOrWhiteSpace(genre.Name))
-            .OrderByDescending(genre => genre.Count)
-            .ThenBy(genre => genre.Name, StringComparer.OrdinalIgnoreCase)
-            .Select(genre => genre.Name!.Trim())
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .Take(5)
-            .ToArray();
     }
 
     private async Task<bool> SourceAvailableAsync(bool automatic, CancellationToken cancellationToken)

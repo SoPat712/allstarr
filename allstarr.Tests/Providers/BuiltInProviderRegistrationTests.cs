@@ -43,7 +43,7 @@ public sealed class BuiltInProviderRegistrationTests
     public void PublicTimedLyricsRegisterUsableAccountFreeCapabilities()
     {
         var services = new ServiceCollection();
-        services.AddSingleton<allstarr.Services.Common.IApplicationCache>(new TestMemoryApplicationCache());
+        services.AddSingleton<allstarr.Core.Caching.IApplicationCache>(new TestMemoryApplicationCache());
         services.AddOptions<CacheSettings>();
         services.AddSingleton<allstarr.Services.Lyrics.LrclibService>();
         services.AddSingleton(Mock.Of<IProviderAccountSecretAccessor>());
@@ -61,7 +61,7 @@ public sealed class BuiltInProviderRegistrationTests
             Assert.Equal(ProviderAccountRequirement.None, capability.AccountRequirement);
             Assert.True(capability.HasUsableImplementation);
             Assert.NotNull(registry.GetRequiredCapability<IProviderLyricsCapability>(id, ProviderCapabilityKind.Lyrics));
-            var operation = Assert.Single(Assert.Single(allstarr.Services.Common.ProviderTryOperations.Describe(descriptor, null).Capabilities).Operations);
+            var operation = Assert.Single(Assert.Single(allstarr.Core.Providers.ProviderTryOperations.Describe(descriptor, null).Capabilities).Operations);
             Assert.Equal("lyrics", operation.Id);
         }
     }

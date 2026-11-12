@@ -9,7 +9,6 @@ using allstarr.Core.Identity;
 using allstarr.Core.Playback;
 using allstarr.Core.Storage;
 using allstarr.Models.Settings;
-using allstarr.Services.Common;
 using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Services.Jellyfin;
@@ -451,33 +450,6 @@ public partial class JellyfinSessionManager : IDisposable
                 key,
                 timeout.TotalSeconds);
         }
-    }
-
-    public object GetSessionsInfo()
-    {
-        var now = DateTime.UtcNow;
-        var sessions = _sessions.Values.Select(s => new
-        {
-            DeviceId = s.DeviceId,
-            Client = s.Client,
-            Device = s.Device,
-            Version = s.Version,
-            ClientIp = s.ClientIp,
-            LastActivity = s.LastActivity,
-            InactiveMinutes = Math.Round((now - s.LastActivity).TotalMinutes, 1),
-            HasWebSocket = s.HasProxiedWebSocket || s.WebSocket != null,
-            HasProxiedWebSocket = s.HasProxiedWebSocket,
-            HasSyntheticWebSocket = s.WebSocket != null,
-            WebSocketState = s.HasProxiedWebSocket ? "Proxied" : s.WebSocket?.State.ToString() ?? "None"
-        }).ToList();
-
-        return new
-        {
-            TotalSessions = sessions.Count,
-            ActiveSessions = sessions.Count(s => s.InactiveMinutes < 2),
-            StaleSessions = sessions.Count(s => s.InactiveMinutes >= 2),
-            Sessions = sessions.OrderBy(s => s.InactiveMinutes)
-        };
     }
 
     public async Task RemoveSessionAsync(JellyfinSessionKey key)

@@ -1,3 +1,4 @@
+using allstarr.Core.Caching;
 using System.Net;
 using System.Text;
 using System.Text.Json;
@@ -8,7 +9,6 @@ using allstarr.Core.Playlists.Sources;
 using allstarr.Core.Providers.LastFm;
 using allstarr.Core.Providers.Spotify;
 using allstarr.Core.Storage;
-using allstarr.Services.Common;
 
 namespace allstarr.Tests;
 

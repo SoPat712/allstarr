@@ -1,3 +1,5 @@
+using allstarr.Core.Caching;
+using allstarr.Core.Providers;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Routing;
 using System.Net;
@@ -15,7 +17,6 @@ using allstarr.Controllers;
 using allstarr.Models.Admin;
 using allstarr.Models.Settings;
 using allstarr.Services.Admin;
-using allstarr.Services.Common;
 using allstarr.Services.Spotify;
 using allstarr.Core.Storage;
 using allstarr.Core.Health;
@@ -864,7 +865,7 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
 
         var observation = healthStore.Get(ProviderRuntimeStatusKey.CreateManaged("deezer", "streaming", _providerAccountId), accountRevision);
         Assert.NotNull(observation);
-        Assert.Equal(allstarr.Services.Common.ProviderHealthState.Healthy, observation.Health);
+        Assert.Equal(allstarr.Core.Providers.ProviderHealthState.Healthy, observation.Health);
         Assert.Null(healthStore.Get(ProviderRuntimeStatusKey.CreateManaged("deezer", "download", _providerAccountId)));
         using var sampleDocument = JsonDocument.Parse(JsonSerializer.Serialize(result.Value));
         Assert.Equal(65536, sampleDocument.RootElement.GetProperty("sampleBytes").GetInt32());

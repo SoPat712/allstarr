@@ -1,7 +1,7 @@
+using allstarr.Core.Caching;
 using System.Net;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Providers.Lyrics;
-using allstarr.Services.Common;
 
 namespace allstarr.Tests;
 

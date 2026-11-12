@@ -215,8 +215,6 @@ public class LocalLibraryService : ILocalLibraryService
     private static string NormalizeProvider(string providerId) =>
         providerId.Trim().ToLowerInvariant();
 
-    public string GetDownloadDirectory() => _downloadDirectory;
-
     public async Task<bool> TriggerLibraryScanAsync()
     {
         // Debounce: avoid triggering too many successive scans

@@ -1,9 +1,9 @@
+using allstarr.Core.Caching;
 using System.Net;
 using System.Text;
 using System.Text.Json;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Providers.Lyrics;
-using allstarr.Services.Common;
 using Moq;
 
 namespace allstarr.Tests;

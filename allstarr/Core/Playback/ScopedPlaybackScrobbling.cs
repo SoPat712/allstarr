@@ -6,7 +6,6 @@ using System.Runtime.ExceptionServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using allstarr.Services.Common;
 using allstarr.Models.Settings;
 using allstarr.Services.Jellyfin;
 using Microsoft.Extensions.Options;

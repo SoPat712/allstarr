@@ -1,3 +1,4 @@
+using allstarr.Core.Caching;
 using System.Collections.Immutable;
 using System.Text.Json;
 using allstarr.Core.Downloads;

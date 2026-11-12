@@ -1,3 +1,4 @@
+using allstarr.Core.Caching;
 using System.Net;
 using System.Text.Json;
 using allstarr.Core.Providers.Lyrics;
@@ -5,7 +6,6 @@ using Moq;
 using Moq.Protected;
 using Microsoft.Extensions.Logging;
 using allstarr.Services.Lyrics;
-using allstarr.Services.Common;
 using allstarr.Models.Settings;
 using Microsoft.Extensions.Options;
 

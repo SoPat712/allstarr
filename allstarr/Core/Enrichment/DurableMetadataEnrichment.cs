@@ -1,52 +1,15 @@
-using System.Text.Json;
 using allstarr.Core.Operations;
 using allstarr.Core.Storage;
 using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Core.Enrichment;
 
-public sealed record DurableEnrichmentPlanRequest(Guid OwnerUserId, Guid LineageJobId,
-    Guid ManagedArtifactId, MetadataEnrichmentPlan Plan);
 public sealed record DurableEnrichmentApplicationRequest(Guid OwnerUserId, Guid LineageJobId,
     Guid ManagedArtifactId, Guid PlanId, string ArtifactContentSha256);
 
 /// <summary>Persists explainable plans and idempotent applications without storing media bytes.</summary>
 public sealed class DurableMetadataEnrichmentService(IDbContextFactory<AllstarrDbContext> factory, IPlatformClock clock)
 {
-    public async Task<MetadataEnrichmentPlanRecord> SavePlanAsync(DurableEnrichmentPlanRequest request,
-        CancellationToken cancellationToken = default)
-    {
-        ArgumentNullException.ThrowIfNull(request.Plan);
-        if (request.OwnerUserId == Guid.Empty || request.LineageJobId == Guid.Empty ||
-            request.ManagedArtifactId == Guid.Empty || request.Plan.Fingerprint.Length != 64)
-            throw new ArgumentException("The durable enrichment plan request is invalid.", nameof(request));
-        await using var db = await factory.CreateDbContextAsync(cancellationToken);
-        if (!await db.Jobs.AsNoTracking().AnyAsync(item => item.Id == request.LineageJobId &&
-            item.OwnerUserId == request.OwnerUserId, cancellationToken))
-            throw new InvalidOperationException("The enrichment plan lineage job is outside the requested user scope.");
-        var existing = await db.MetadataEnrichmentPlans.AsNoTracking().SingleOrDefaultAsync(item =>
-            item.OwnerUserId == request.OwnerUserId &&
-            item.ManagedArtifactId == request.ManagedArtifactId && item.Fingerprint == request.Plan.Fingerprint, cancellationToken);
-        if (existing != null) return existing;
-        var record = new MetadataEnrichmentPlanRecord
-        {
-            Id = Guid.CreateVersion7(),
-            OwnerUserId = request.OwnerUserId,
-            LineageJobId = request.LineageJobId,
-            ManagedArtifactId = request.ManagedArtifactId,
-            Fingerprint = request.Plan.Fingerprint,
-            PlanVersion = request.Plan.Version,
-            SourceRevisionsJson = JsonSerializer.Serialize(request.Plan.SourceRevisions),
-            DecisionsJson = JsonSerializer.Serialize(request.Plan.Decisions),
-            TagsJson = JsonSerializer.Serialize(request.Plan.Tags),
-            PathValuesJson = JsonSerializer.Serialize(request.Plan.PathValues),
-            CreatedAt = clock.UtcNow
-        };
-        db.MetadataEnrichmentPlans.Add(record);
-        await db.SaveChangesAsync(cancellationToken);
-        return record;
-    }
-
     public async Task<MetadataEnrichmentApplicationRecord> BeginApplicationAsync(DurableEnrichmentApplicationRequest request,
         CancellationToken cancellationToken = default)
     {
@@ -97,10 +60,6 @@ public sealed class DurableMetadataEnrichmentService(IDbContextFactory<AllstarrD
     public Task MarkAppliedAsync(Guid ownerUserId, Guid applicationId, CancellationToken cancellationToken = default) =>
         UpdateAsync(ownerUserId, applicationId, MetadataEnrichmentApplicationState.Applied, null, null, cancellationToken);
 
-    public Task MarkFailedAsync(Guid ownerUserId, Guid applicationId, string errorCode, string safeMessage,
-        CancellationToken cancellationToken = default) => UpdateAsync(ownerUserId, applicationId,
-            MetadataEnrichmentApplicationState.Failed, Required(errorCode, 100), Required(safeMessage, 1000), cancellationToken);
-
     private async Task UpdateAsync(Guid ownerUserId, Guid id, MetadataEnrichmentApplicationState state,
         string? errorCode, string? safeMessage, CancellationToken cancellationToken)
     {
@@ -114,6 +73,4 @@ public sealed class DurableMetadataEnrichmentService(IDbContextFactory<AllstarrD
         record.UpdatedAt = clock.UtcNow; record.Revision++;
         await db.SaveChangesAsync(cancellationToken);
     }
-    private static string Required(string value, int max) => string.IsNullOrWhiteSpace(value) || value.Trim().Length > max
-        ? throw new ArgumentException("A bounded safe error value is required.") : value.Trim();
 }

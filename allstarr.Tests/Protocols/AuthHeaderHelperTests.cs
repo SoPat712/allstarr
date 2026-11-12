@@ -1,4 +1,4 @@
-using allstarr.Services.Common;
+using allstarr.Core.Identity;
 using Microsoft.AspNetCore.Http;
 using Xunit;
 

@@ -353,15 +353,15 @@ public sealed partial class LibraryPromotionTests
     public async Task PromotionQuality_ExposesMeasuredBandsAndKeepsOldChecksCompatible()
     {
         var source = await WaveSourceAsync(42000);
-        var cache = new allstarr.Services.Common.FileMediaApplicationCache(new allstarr.Services.Common.FileMediaCacheOptions(Path.Combine(directory, "band-cache")),
-            new allstarr.Core.Operations.SystemPlatformClock(), Microsoft.Extensions.Logging.Abstractions.NullLogger<allstarr.Services.Common.FileMediaApplicationCache>.Instance);
-        var check = await new allstarr.Services.Common.AudioQualityAnalyzer(cache).AnalyzeAsync(source.SourcePath);
+        var cache = new allstarr.Core.Caching.FileMediaApplicationCache(new allstarr.Core.Caching.FileMediaCacheOptions(Path.Combine(directory, "band-cache")),
+            new allstarr.Core.Operations.SystemPlatformClock(), Microsoft.Extensions.Logging.Abstractions.NullLogger<allstarr.Core.Caching.FileMediaApplicationCache>.Instance);
+        var check = await new allstarr.Core.Playback.AudioQualityAnalyzer(cache).AnalyzeAsync(source.SourcePath);
         Assert.Equal(22000, check.FrequencyMaxHz);
         Assert.Equal(24, check.EnergyByFrequency!.Length);
         Assert.Contains(check.EnergyByFrequency, value => value == 1);
         Assert.Contains(check.EnergyByFrequency, value => value == null);
         Assert.All(check.EnergyByFrequency.Where(value => value.HasValue), value => Assert.InRange(value!.Value, 0, 1));
-        var old = JsonSerializer.Deserialize<allstarr.Services.Common.AudioQualityCheck>("{\"claimedSampleRate\":44100,\"claimedBitDepth\":16,\"effectiveBandwidthHz\":21000,\"verdict\":\"standard\",\"confidence\":0.9}");
+        var old = JsonSerializer.Deserialize<allstarr.Core.Playback.AudioQualityCheck>("{\"claimedSampleRate\":44100,\"claimedBitDepth\":16,\"effectiveBandwidthHz\":21000,\"verdict\":\"standard\",\"confidence\":0.9}");
         Assert.Null(old!.EnergyByFrequency);
         Assert.Null(old.FrequencyMaxHz);
     }

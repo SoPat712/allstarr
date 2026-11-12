@@ -1,3 +1,4 @@
+using allstarr.Core.Artwork;
 using System.Net;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
@@ -9,7 +10,6 @@ using Moq;
 using allstarr.Controllers;
 using allstarr.Models.Settings;
 using allstarr.Services.Admin;
-using allstarr.Services.Common;
 using allstarr.Core.Identity;
 using Microsoft.Extensions.Logging.Abstractions;
 

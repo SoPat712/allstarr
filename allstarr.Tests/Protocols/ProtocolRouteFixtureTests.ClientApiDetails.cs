@@ -1,3 +1,4 @@
+using allstarr.Core.Caching;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -7,7 +8,6 @@ using allstarr.Core.Favorites;
 using allstarr.Core.Downloads;
 using allstarr.Core.ManagedFiles;
 using allstarr.Core.Settings;
-using allstarr.Services.Common;
 using System.Collections.Immutable;
 using Moq;
 using Microsoft.Extensions.DependencyInjection.Extensions;

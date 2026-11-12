@@ -1,3 +1,4 @@
+using allstarr.Core.Operations;
 using System.Net;
 using System.Security.Cryptography;
 using System.Text;
@@ -9,7 +10,6 @@ using allstarr.Core.Providers.Spotify;
 using allstarr.Core.Storage;
 using allstarr.Models.Settings;
 using allstarr.Services;
-using allstarr.Services.Common;
 using Microsoft.Extensions.Options;
 
 namespace allstarr.Core.Providers.Qobuz;

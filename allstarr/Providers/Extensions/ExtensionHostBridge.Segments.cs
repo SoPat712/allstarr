@@ -1,3 +1,4 @@
+using allstarr.Core.Operations;
 using allstarr.Core.Playback;
 // Adapted from SpotiFLAC-Mobile (MIT), rust_backend/crates/extensions/src/download/segments.rs.
 using System.Text.Json;

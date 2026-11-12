@@ -97,7 +97,7 @@ public sealed partial class ProtocolRouteFixtureTests
         if (svg) Assert.Equal(expected, actual);
         else
         {
-            Assert.Equal(allstarr.Services.Common.ProviderIconRenderer.Render(expected, size ?? 96, false), actual);
+            Assert.Equal(allstarr.Core.Artwork.ProviderIconRenderer.Render(expected, size ?? 96, false), actual);
             using var raster = SkiaSharp.SKBitmap.Decode(actual);
             Assert.Equal(size ?? 96, raster.Width);
             Assert.Equal(size ?? 96, raster.Height);

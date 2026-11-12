@@ -1,3 +1,4 @@
+using allstarr.Core.Artwork;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -19,7 +20,6 @@ using allstarr.Filters;
 using allstarr.Middleware;
 using allstarr.Models.Domain;
 using allstarr.Services.Admin;
-using allstarr.Services.Common;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Hosting;

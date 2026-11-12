@@ -1,7 +1,7 @@
+using allstarr.Core.Playback;
 using System.Net;
 using System.Text.Json;
 using allstarr.Core.Providers.Deezer;
-using allstarr.Services.Common;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace allstarr.Tests;

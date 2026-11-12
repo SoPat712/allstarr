@@ -1,7 +1,7 @@
+using allstarr.Core.Providers;
 using System.Net;
 using allstarr.Core.Providers.AppleMusicKit;
 using allstarr.Models.Settings;
-using allstarr.Services.Common;
 using Moq;
 
 namespace allstarr.Tests;

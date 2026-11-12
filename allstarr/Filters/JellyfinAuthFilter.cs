@@ -1,7 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Filters;
 using allstarr.Services.Jellyfin;
-using allstarr.Services.Common;
 using allstarr.Core.Identity;
 
 namespace allstarr.Filters;

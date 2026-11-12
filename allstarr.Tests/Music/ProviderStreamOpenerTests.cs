@@ -43,7 +43,7 @@ public sealed partial class ProviderStreamOpenerTests
         var principal = new allstarr.Core.Identity.AllstarrPrincipal(Guid.NewGuid(), "jellyfin", "backend", "principal", "Listener", false);
         var context = new ProtocolExecutionContext(ProtocolKind.Jellyfin, "backend", "principal", principal,
             "failed-stream", DateTimeOffset.UtcNow.AddMinutes(1), default, new("client", "device"));
-        using var activity = new allstarr.Services.Common.PlaybackDeliveryActivityStore();
+        using var activity = new allstarr.Core.Playback.PlaybackDeliveryActivityStore();
         using var cancellation = new CancellationTokenSource();
         if (clientAbort) cancellation.Cancel();
         var http = new DefaultHttpContext { RequestAborted = cancellation.Token };
@@ -205,10 +205,10 @@ public sealed partial class ProviderStreamOpenerTests
             .Returns(Task.CompletedTask);
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         { ["Library:DownloadPath"] = root }).Build();
-        var cache = cacheEnabled ? new allstarr.Services.Common.ManagedTrackCacheService(configuration,
+        var cache = cacheEnabled ? new allstarr.Core.Playback.ManagedTrackCacheService(configuration,
             Microsoft.Extensions.Options.Options.Create(new allstarr.Models.Settings.SubsonicSettings
             { StorageMode = allstarr.Models.Settings.StorageMode.Cache }), library.Object,
-            Microsoft.Extensions.Logging.Abstractions.NullLogger<allstarr.Services.Common.ManagedTrackCacheService>.Instance,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<allstarr.Core.Playback.ManagedTrackCacheService>.Instance,
             audioVerifier: FixtureAudioVerifier.Instance) : null;
         using var source = new ProgressiveAudioTail(Flac(), abort);
         using var upstream = new HttpResponseMessage(HttpStatusCode.OK) { Content = new StreamContent(source) };
@@ -221,7 +221,7 @@ public sealed partial class ProviderStreamOpenerTests
             .ReturnsAsync(routed);
         gateway.Setup(item => item.GetSongAsync(protocol, "apple-musickit", "101"))
             .ReturnsAsync(new Song { Title = "Fixture", Duration = 3 });
-        using var activity = new allstarr.Services.Common.PlaybackDeliveryActivityStore();
+        using var activity = new allstarr.Core.Playback.PlaybackDeliveryActivityStore();
         activity.StreamOpened(protocol, "ext-apple-musickit-song-101", ProviderAudioQuality.Any, routed);
         var http = new DefaultHttpContext();
         try
@@ -293,17 +293,17 @@ public sealed partial class ProviderStreamOpenerTests
             .Returns(Task.CompletedTask);
         var configuration = new Microsoft.Extensions.Configuration.ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?> { ["Library:DownloadPath"] = root }).Build();
-        var cache = cacheEnabled ? new allstarr.Services.Common.ManagedTrackCacheService(configuration,
+        var cache = cacheEnabled ? new allstarr.Core.Playback.ManagedTrackCacheService(configuration,
             Microsoft.Extensions.Options.Options.Create(new allstarr.Models.Settings.SubsonicSettings
             { StorageMode = allstarr.Models.Settings.StorageMode.Cache }), library.Object,
-            Microsoft.Extensions.Logging.Abstractions.NullLogger<allstarr.Services.Common.ManagedTrackCacheService>.Instance,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<allstarr.Core.Playback.ManagedTrackCacheService>.Instance,
             audioVerifier: FixtureAudioVerifier.Instance) : null;
         using var canceled = new CancellationTokenSource();
         var source = new DelayedAudio(Flac());
         using var upstream = new HttpResponseMessage(HttpStatusCode.OK) { Content = new StreamContent(source) };
         upstream.Content.Headers.ContentType = new("audio/flac");
         if (truncated) upstream.Content.Headers.ContentLength = Flac().Length + 1;
-        using var activity = new allstarr.Services.Common.PlaybackDeliveryActivityStore();
+        using var activity = new allstarr.Core.Playback.PlaybackDeliveryActivityStore();
         var routed = new ProtocolProviderStream(upstream, SequentialLease(), "deezer", "42");
         activity.StreamOpened(protocol, "ext-deezer-song-42", ProviderAudioQuality.Any, routed);
         var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);

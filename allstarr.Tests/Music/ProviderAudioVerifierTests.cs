@@ -1,7 +1,7 @@
+using allstarr.Core.Playback;
 using System.Net;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Music;
-using allstarr.Services.Common;
 using Microsoft.Extensions.Configuration;
 
 namespace allstarr.Tests;

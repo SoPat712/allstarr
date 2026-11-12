@@ -1,7 +1,7 @@
+using allstarr.Core.Artwork;
 using allstarr.Core.Capabilities;
 using allstarr.Filters;
 using allstarr.Services.Admin;
-using allstarr.Services.Common;
 using Microsoft.AspNetCore.Mvc;
 
 namespace allstarr.Controllers;

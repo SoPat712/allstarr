@@ -29,7 +29,7 @@ public sealed class UpcomingSongPreparationTests
     [InlineData(true)]
     public void ClientOpenedUpcomingSongSuppressesPreparationAcrossTheHousehold(bool anotherListener)
     {
-        using var activity = new allstarr.Services.Common.PlaybackDeliveryActivityStore();
+        using var activity = new allstarr.Core.Playback.PlaybackDeliveryActivityStore();
         var context = Context();
         var client = anotherListener
             ? new ProtocolExecutionContext(ProtocolKind.Jellyfin, "backend", "other",
@@ -320,7 +320,7 @@ public sealed class UpcomingSongPreparationTests
     [InlineData(true)]
     public void DataSaverCurrentStreamForbidsPreparation(bool withoutDevice)
     {
-        using var activity = new allstarr.Services.Common.PlaybackDeliveryActivityStore();
+        using var activity = new allstarr.Core.Playback.PlaybackDeliveryActivityStore();
         var context = withoutDevice ? new ProtocolExecutionContext(ProtocolKind.Subsonic, "backend", "principal",
             new AllstarrPrincipal(Guid.NewGuid(), "subsonic", "backend", "principal", "Listener", false),
             "upcoming-test", DateTimeOffset.UtcNow.AddMinutes(1), CancellationToken.None, new ProtocolClientDescriptor("client")) : Context();

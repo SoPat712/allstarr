@@ -1,6 +1,6 @@
+using allstarr.Services.Jellyfin;
 using System.Text.Json;
 using allstarr.Models.Domain;
-using allstarr.Services.Common;
 
 namespace allstarr.Tests;
 

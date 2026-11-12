@@ -5,7 +5,6 @@ using allstarr.Core.Identity;
 using allstarr.Core.Playback;
 using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
-using allstarr.Services.Common;
 using allstarr.Services.Jellyfin;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;

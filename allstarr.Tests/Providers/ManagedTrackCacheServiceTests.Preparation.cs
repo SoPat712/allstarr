@@ -23,10 +23,10 @@ public sealed partial class ManagedTrackCacheServiceTests
             await File.WriteAllBytesAsync(Path.Combine(root, "cache", "protected.flac"), new byte[8]);
             var configuration = new ConfigurationBuilder().AddInMemoryCollection(
                 new Dictionary<string, string?> { ["Library:DownloadPath"] = root }).Build();
-            await using var cache = new allstarr.Services.Common.ManagedTrackCacheService(configuration,
+            await using var cache = new allstarr.Core.Playback.ManagedTrackCacheService(configuration,
                 Microsoft.Extensions.Options.Options.Create(new allstarr.Models.Settings.SubsonicSettings
                 { StorageMode = allstarr.Models.Settings.StorageMode.Cache }), Mock.Of<ILocalLibraryService>(MockBehavior.Strict),
-                Microsoft.Extensions.Logging.Abstractions.NullLogger<allstarr.Services.Common.ManagedTrackCacheService>.Instance,
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<allstarr.Core.Playback.ManagedTrackCacheService>.Instance,
                 audioMaximumBytes: () => 8);
             var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
             var opener = new ProviderStreamOpener(gateway.Object, new ProtocolStreamingResponseAdapter(), cache);
@@ -45,10 +45,10 @@ public sealed partial class ManagedTrackCacheServiceTests
         {
             var configuration = new Microsoft.Extensions.Configuration.ConfigurationBuilder().AddInMemoryCollection(
                 new Dictionary<string, string?> { ["Library:DownloadPath"] = root, ["Cache:MediaMaximumBytes"] = "1024" }).Build();
-            await using var cache = new allstarr.Services.Common.ManagedTrackCacheService(configuration,
+            await using var cache = new allstarr.Core.Playback.ManagedTrackCacheService(configuration,
                 Microsoft.Extensions.Options.Options.Create(new allstarr.Models.Settings.SubsonicSettings
                 { StorageMode = allstarr.Models.Settings.StorageMode.Cache }), Mock.Of<ILocalLibraryService>(MockBehavior.Strict),
-                Microsoft.Extensions.Logging.Abstractions.NullLogger<allstarr.Services.Common.ManagedTrackCacheService>.Instance, audioMaximumBytes: () => 8);
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<allstarr.Core.Playback.ManagedTrackCacheService>.Instance, audioMaximumBytes: () => 8);
             using var response = Response(System.Net.HttpStatusCode.OK, new byte[16]);
             var original = response.Content;
             await cache.WrapAsync(ProviderStream(response), Context() with { IsPreparation = true }, "deezer", "track-1", false,
@@ -117,7 +117,7 @@ public sealed partial class ManagedTrackCacheServiceTests
         var playing = await fixture.OpenAsync();
         Assert.NotNull(playing);
         using var response = playing.Response;
-        using var activity = new allstarr.Services.Common.PlaybackDeliveryActivityStore();
+        using var activity = new allstarr.Core.Playback.PlaybackDeliveryActivityStore();
         var context = Context();
         const string itemId = "ext-apple-musickit-song-track-1";
         activity.StreamOpened(context, itemId, playing.EffectiveQuality, playing);
