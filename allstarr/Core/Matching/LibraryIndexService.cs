@@ -189,9 +189,10 @@ public sealed partial class LibraryIndexService : ILibraryIndexService
             throw new KeyNotFoundException("The canonical recording does not exist.");
         }
 
+        var prepared = false;
         if (string.Equals(principal.BackendType, "jellyfin", StringComparison.OrdinalIgnoreCase))
         {
-            await PrepareJellyfinUpsertAsync(principal.BackendInstanceId, input.BackendItemId,
+            prepared = await PrepareJellyfinUpsertAsync(principal.BackendInstanceId, input.BackendItemId,
                 input.BackendLibraryId, input.CanonicalRecordingId, executionContext.CorrelationId, cancellationToken);
         }
 
@@ -294,8 +295,11 @@ public sealed partial class LibraryIndexService : ILibraryIndexService
             });
         }
         await db.SaveChangesAsync(cancellationToken);
-        await _identities.LinkLibraryRecordingsAsync(executionContext.RequireActor(), executionContext.CorrelationId,
-            libraryTrackId: record.Id, cancellationToken: cancellationToken);
+        if (changed || prepared)
+        {
+            await _identities.LinkLibraryRecordingsAsync(executionContext.RequireActor(), executionContext.CorrelationId,
+                libraryTrackId: record.Id, cancellationToken: cancellationToken);
+        }
         await db.Entry(record).ReloadAsync(cancellationToken);
         if (changed) _lyricsChanges?.LibraryChanged(record.Id);
         return Map(record);

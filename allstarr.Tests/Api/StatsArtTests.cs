@@ -24,7 +24,7 @@ using Xunit.Abstractions;
 
 namespace allstarr.Tests;
 
-public sealed class StatsArtTests(ITestOutputHelper output)
+public sealed partial class StatsArtTests(ITestOutputHelper output)
 {
     [Fact]
     public async Task PreparedArtworkIsReadableWhileDiskPersistenceIsBusy()

@@ -98,6 +98,19 @@ public sealed partial class TrackMatchCommandService
         };
         db.ExternalMetadataSnapshots.Add(record);
         await db.SaveChangesAsync(cancellationToken);
+        if (trackIdentities != null && (resourceKind == "track" || resourceKind == "playback-metadata"))
+        {
+            var recordingIds = await db.ProviderTrackIdentities.AsNoTracking().Where(item =>
+                item.ProviderId == providerId && item.ResourceKind == ProviderResourceKind.Track &&
+                item.ExternalIdHash == input.ExternalIdHash &&
+                (!input.ProviderTrackIdentityId.HasValue || item.Id == input.ProviderTrackIdentityId) &&
+                (item.Scope == ProviderIdentityScope.Catalog && input.ProviderAccountId == null ||
+                 item.Scope == ProviderIdentityScope.Account && item.ProviderAccountId == input.ProviderAccountId))
+                .Select(item => item.CanonicalRecordingId).Distinct().ToArrayAsync(cancellationToken);
+            foreach (var recordingId in recordingIds)
+                await trackIdentities.LinkLibraryRecordingsAsync(actor, context.CorrelationId, recordingId,
+                    cancellationToken: cancellationToken);
+        }
         return record;
     }
 

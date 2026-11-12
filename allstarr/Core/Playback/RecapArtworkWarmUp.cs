@@ -27,7 +27,7 @@ public sealed class RecapArtworkWarmUp(RecapArtworkReader artwork, ILogger<Recap
     {
         lock (queued)
         {
-            if (!queued.Add(image.Identity)) return;
+            if (artwork.IsNegative(image.Identity) || !queued.Add(image.Identity)) return;
             pending.Writer.TryWrite(image);
         }
     }

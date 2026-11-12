@@ -278,6 +278,7 @@ public sealed partial class PlaylistOrchestrationService : IPlaylistOrchestratio
     private readonly ILogger<PlaylistOrchestrationService>? _logger;
     private readonly allstarr.Core.ManagedFiles.RecordingKeptFiles? _kept;
     private readonly DurableJobQueue _jobs;
+    private readonly ITrackIdentityService? _trackIdentities;
 
     public PlaylistOrchestrationService(
         IDbContextFactory<AllstarrDbContext> factory,
@@ -293,11 +294,12 @@ public sealed partial class PlaylistOrchestrationService : IPlaylistOrchestratio
         IEffectiveProviderPolicyResolver? effectivePolicies = null,
         IProtocolProviderGateway? providerGateway = null, IProviderRegistry? registry = null,
         allstarr.Core.ManagedFiles.RecordingKeptFiles? kept = null, DurableJobQueue? jobs = null,
-        allstarr.Core.Music.PublicArtworkWarmer? artwork = null)
+        allstarr.Core.Music.PublicArtworkWarmer? artwork = null, ITrackIdentityService? trackIdentities = null)
     {
         (_factory, _source, _targets, _planner, _matcher, _trackMatches, _clock, _logger) =
             (factory, source, targets, planner, matcher, trackMatches, clock, logger);
         _artwork = artwork;
+        _trackIdentities = trackIdentities;
         _effectivePolicies = effectivePolicies;
         _locks = locks;
         _libraryAccess = libraryAccess;
@@ -968,6 +970,15 @@ public sealed partial class PlaylistOrchestrationService : IPlaylistOrchestratio
             }));
         await db.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
+        if (_trackIdentities != null)
+        {
+            var recordingIds = newExternals.Values.Select(external =>
+                    providerIdentityByHash.GetValueOrDefault(external.ExternalIdHash)?.CanonicalRecordingId)
+                .OfType<Guid>().Distinct();
+            foreach (var recordingId in recordingIds)
+                await _trackIdentities.LinkLibraryRecordingsAsync(execution.RequireActor(), execution.CorrelationId,
+                    recordingId, cancellationToken: cancellationToken);
+        }
         _logger?.LogInformation(
             "Provider playlist snapshot decision. Account: {Account}. PlaylistLink: {PlaylistLink}. ProviderRevision: {ProviderRevision}. ContentFingerprint: {ContentFingerprint}. SnapshotVersion: {SnapshotVersion}. MappedCount: {MappedCount}. PersistedCount: {PersistedCount}. Decision: {Decision}",
             Hash(link.ProviderAccountId?.ToString("N") ?? $"public:{link.OwnerUserId:N}:{link.SourceProviderId}")[..12],

@@ -43,6 +43,7 @@ public sealed partial class ListeningStatsService
             if (access?.Context != null) tracks = candidates.Where(item => LibraryTrackAccess.Allows(item, access.Context, access.Access)).ToArray();
             foreach (var batch in tracks.Select(item => item.BackendItemId).Distinct().Chunk(100))
             {
+                token.ThrowIfCancellationRequested();
                 JsonDocument? body;
                 int status;
                 try
@@ -72,19 +73,7 @@ public sealed partial class ListeningStatsService
                 }
             }
         }
-        var metadata = await (from snapshot in db.ExternalMetadataSnapshots.AsNoTracking()
-                              join identity in db.ProviderTrackIdentities on new { snapshot.ProviderId, snapshot.ExternalIdHash }
-                                  equals new { identity.ProviderId, identity.ExternalIdHash }
-                              where snapshot.OwnerUserId == scope.OwnerUserId && snapshot.Protocol == scope.Protocol &&
-                                  snapshot.BackendInstanceId == scope.BackendInstanceId && (snapshot.ResourceKind == "track" || snapshot.ResourceKind == "playback-metadata") &&
-                                  snapshot.BackendPrincipalId == db.Users.Where(user => user.Id == scope.OwnerUserId).Select(user => user.BackendPrincipalId).First() &&
-                                  (recordings.Contains(identity.CanonicalRecordingId) || identities.Contains(identity.Id)) && identity.ResourceKind == ProviderResourceKind.Track &&
-                                  (snapshot.ProviderAccountId == null || db.ProviderAccounts.Any(account => account.Id == snapshot.ProviderAccountId &&
-                                      account.Enabled && (account.OwnerUserId == null || account.OwnerUserId == scope.OwnerUserId))) &&
-                                  (identity.Scope == ProviderIdentityScope.Catalog || identity.Scope == ProviderIdentityScope.Account &&
-                                      identity.ProviderAccountId != null && identity.ProviderAccountId == snapshot.ProviderAccountId)
-                              orderby snapshot.RetrievedAt descending
-                              select new { Snapshot = snapshot, Identity = identity }).ToArrayAsync(token);
+        var metadata = await ArtistMetadataAsync(db, scope, recordings, identities, token);
         var byRecording = metadata.ToLookup(item => item.Identity.CanonicalRecordingId);
         var byIdentity = metadata.ToLookup(item => item.Identity.Id);
         var byTrack = tracks.ToLookup(item => item.Id);
@@ -94,13 +83,14 @@ public sealed partial class ListeningStatsService
         var covers = new Dictionary<(string, Guid?, string?), (string? Library, string? Url)>();
         foreach (var source in sources)
         {
+            token.ThrowIfCancellationRequested();
             var track = source.LibraryTrackId is { } local ? byTrack[local].FirstOrDefault() : byReference[source.TrackReference].FirstOrDefault();
             track ??= source.CanonicalRecordingId is { } recording ? byLocalRecording[recording].FirstOrDefault() : null;
             var credits = track == null ? [] : native.GetValueOrDefault(track.BackendItemId) ?? [];
             var saved = source.ProviderTrackIdentityId is { } identity ? byIdentity[identity].FirstOrDefault() :
-                source.CanonicalRecordingId is { } canonical ? byRecording[canonical].FirstOrDefault() : null;
+                source.CanonicalRecordingId is { } canonical ? byRecording[canonical].FirstOrDefault() : default;
             string? coverUrl = null;
-            if (credits.Length == 0 && saved != null)
+            if (credits.Length == 0 && saved.Snapshot != null)
                 try
                 {
                     using var document = JsonDocument.Parse(saved.Snapshot.PayloadJson);
@@ -143,6 +133,55 @@ public sealed partial class ListeningStatsService
             result[key] = SplitArtistNames(key.Item3, known).Select(name => new ListeningArtist(name,
                 LibraryCover: covers[key].Library, CoverUrl: covers[key].Url)).ToArray();
         return result;
+    }
+
+    internal static async Task<(ExternalMetadataSnapshotRecord Snapshot, ProviderTrackIdentityRecord Identity)[]> ArtistMetadataAsync(
+        AllstarrDbContext db, IntelligenceScope scope, Guid[] recordings, Guid[] identities, CancellationToken token)
+    {
+        // Keep each indexed lookup small so cancellation can stop between synchronous SQLite reads.
+        const int batchSize = 100;
+        var found = new Dictionary<Guid, ProviderTrackIdentityRecord>();
+        foreach (var batch in identities.Chunk(batchSize))
+        {
+            token.ThrowIfCancellationRequested();
+            foreach (var identity in await db.ProviderTrackIdentities.AsNoTracking()
+                .Where(item => batch.Contains(item.Id) && item.ResourceKind == ProviderResourceKind.Track).ToArrayAsync(token))
+                found[identity.Id] = identity;
+        }
+        foreach (var batch in recordings.Chunk(batchSize))
+        {
+            token.ThrowIfCancellationRequested();
+            foreach (var identity in await db.ProviderTrackIdentities.AsNoTracking()
+                .Where(item => batch.Contains(item.CanonicalRecordingId) && item.ResourceKind == ProviderResourceKind.Track).ToArrayAsync(token))
+                found[identity.Id] = identity;
+        }
+        if (found.Count == 0) return [];
+        token.ThrowIfCancellationRequested();
+        var principal = await db.Users.Where(item => item.Id == scope.OwnerUserId).Select(item => item.BackendPrincipalId).FirstAsync(token);
+        var accounts = await db.ProviderAccounts.AsNoTracking().Where(item => item.Enabled &&
+            (item.OwnerUserId == null || item.OwnerUserId == scope.OwnerUserId)).Select(item => item.Id).ToArrayAsync(token);
+        var result = new List<(ExternalMetadataSnapshotRecord Snapshot, ProviderTrackIdentityRecord Identity)>();
+        foreach (var provider in found.Values.GroupBy(item => item.ProviderId))
+        {
+            var byHash = provider.ToLookup(item => item.ExternalIdHash);
+            foreach (var account in accounts.Select(item => (Guid?)item).Prepend(null))
+                foreach (var kind in new[] { "track", "playback-metadata" })
+                    foreach (var batch in byHash.Select(item => item.Key).Chunk(batchSize))
+                    {
+                        token.ThrowIfCancellationRequested();
+                        var snapshots = await db.ExternalMetadataSnapshots.AsNoTracking().Where(item =>
+                            item.OwnerUserId == scope.OwnerUserId && item.Protocol == scope.Protocol && item.BackendInstanceId == scope.BackendInstanceId &&
+                            item.BackendPrincipalId == principal && item.ProviderId == provider.Key && item.ProviderAccountId == account &&
+                            item.ResourceKind == kind && batch.Contains(item.ExternalIdHash)).ToArrayAsync(token);
+                        token.ThrowIfCancellationRequested();
+                        foreach (var snapshot in snapshots)
+                            foreach (var identity in byHash[snapshot.ExternalIdHash])
+                                if (identity.Scope == ProviderIdentityScope.Catalog || identity.Scope == ProviderIdentityScope.Account &&
+                                    identity.ProviderAccountId != null && identity.ProviderAccountId == snapshot.ProviderAccountId)
+                                    result.Add((snapshot, identity));
+                    }
+        }
+        return result.OrderByDescending(item => item.Snapshot.RetrievedAt).ToArray();
     }
 
     private static string[] SplitArtistNames(string? value, IReadOnlyList<string> known)

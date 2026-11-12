@@ -22,7 +22,7 @@ public sealed partial class LibraryIndexService
     }
 
     // A fresh catalog response can confirm a move between libraries; maintenance cannot.
-    internal async Task PrepareJellyfinUpsertAsync(
+    internal async Task<bool> PrepareJellyfinUpsertAsync(
         string backendInstanceId,
         string backendItemId,
         string backendLibraryId,
@@ -40,12 +40,12 @@ public sealed partial class LibraryIndexService
         if (rows.Count == 0)
         {
             await transaction.CommitAsync(cancellationToken);
-            return;
+            return false;
         }
         if (rows.Count == 1 && rows[0].BackendLibraryId == backendLibraryId)
         {
             await transaction.CommitAsync(cancellationToken);
-            return;
+            return false;
         }
 
         var survivor = rows.FirstOrDefault(item => item.BackendLibraryId == backendLibraryId) ?? rows[0];
@@ -74,6 +74,7 @@ public sealed partial class LibraryIndexService
 
             await db.SaveChangesAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);
+            return true;
         }
         catch (DbUpdateException)
         {
