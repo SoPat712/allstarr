@@ -8055,6 +8055,25 @@
     border-top: 0;
   }
 
+  .service-check-reason {
+    grid-column: 1 / -1;
+    margin: calc(-1 * var(--space-2)) 0 var(--space-2);
+    color: var(--color-ink-muted);
+    font-size: var(--text-xs);
+    line-height: 1.4;
+  }
+
+  .service-check-reason > .text-button,
+  .service-check-reason > a {
+    border: 0;
+    background: transparent;
+    color: var(--color-signal-text);
+    cursor: pointer;
+    padding: 0;
+    font: inherit;
+    font-weight: 600;
+  }
+
   .service-check-name {
     color: var(--color-ink);
     font-size: var(--text-sm);
@@ -8102,28 +8121,14 @@
     padding-inline: var(--space-4);
   }
 
+  /* Name, state and Test stay on one line; a reason, when there is one, goes underneath. */
   .service-check {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--space-2) var(--space-3);
-    padding-block: var(--space-2);
-  }
-
-  .service-check-name {
-    flex: 1 1 9rem;
+    gap: var(--space-2);
+    padding-block: var(--space-1);
   }
 
   .service-check > span:empty {
     display: none;
-  }
-
-  .service-check-status {
-    max-width: none;
-    flex-basis: 100%;
-    order: 3;
-    justify-items: start;
-    padding-block: 0;
-    text-align: left;
   }
 }
 
@@ -9925,6 +9930,9 @@ summary > svg:last-child {
 :root .workspace .library-rows .item-row { border-bottom: 0; }
 
 @media (max-width: 899px), (pointer: coarse) {
-  :root { --control-md: 2.75rem; }
+  /* Material 3 buttons look 40px tall on phones; their ::after area (touch-target.css) keeps a 44px tap target.
+     Other tappable rows and tabs have no such area, so they stay 44px themselves. */
+  :root { --control-md: 2.5rem; }
+  :root :is(button:not([data-slot="button"]):not(.touch-target):not([data-slot="checkbox"]):not([data-slot="switch"]):not([data-slot="radio-group-item"]), summary, [role="button"]:not([data-slot="button"]):not(.touch-target), [role="tab"]:not([data-slot="button"]):not(.touch-target), .bits-menu-item) { min-height: 2.75rem; }
   :is(.tabs, .seg) > :is(a, button, label), .icon-button.icon-button, .sidebar-expander { min-width: 44px; min-height: 44px; }
 }

@@ -38,10 +38,15 @@
   .settings-surface .settings-row output { text-align: left; }
   .settings-table :is(td, th) { padding: var(--space-2) var(--space-3); }
   .settings-table .desktop-column { display: none; }
-  .settings-surface :is(button:not([role="checkbox"]):not([data-slot="checkbox"]), summary, input:not([type="hidden"]):not([type="checkbox"]), a[data-slot="button"]) { min-height: 44px; }
+  .settings-surface :is(button:not([role="checkbox"]):not([data-slot="checkbox"]):not([data-slot="button"]), summary, input:not([type="hidden"]):not([type="checkbox"])) { min-height: 44px; }
+  /* Material 3 buttons look 40px tall; their ::after area keeps the 44px tap target. */
+  .settings-surface [data-slot="button"] { min-height: 40px; }
 }
 
-@media (max-width: 650px) { .settings-flow-dialog :is(button:not([role="checkbox"]):not([data-slot="checkbox"]), input:not([type="hidden"]):not([type="checkbox"]), summary) { min-height: 44px; } }
+@media (max-width: 650px) {
+  .settings-flow-dialog :is(button:not([role="checkbox"]):not([data-slot="checkbox"]):not([data-slot="button"]), input:not([type="hidden"]):not([type="checkbox"]), summary) { min-height: 44px; }
+  .settings-flow-dialog [data-slot="button"] { min-height: 40px; }
+}
 
 .settings-surface .cache-actions > [data-slot="button"]:not(:last-child), .settings-surface .cache-category-list [data-slot="button"] { border-color: transparent; background: transparent; color: var(--danger); box-shadow: none; }
 

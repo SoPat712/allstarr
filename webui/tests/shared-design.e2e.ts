@@ -1,3 +1,4 @@
+import { touchTarget } from "./mobile-geometry";
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { mkdir } from "node:fs/promises";
 import { panelFixture, settingsFixture, homeFixture } from "./shared-design-fixtures";
@@ -54,9 +55,9 @@ async function sharedControls(page: Page, width: number) {
   if (width === 390) {
     for (const control of await page.locator('.seg > :is(a, button, label), .tabs > :is(a, button)').all()) {
       if (!await control.isVisible()) continue;
-      const bounds = await control.boundingBox();
-      expect(bounds!.width).toBeGreaterThanOrEqual(44);
-      expect(bounds!.height).toBeGreaterThanOrEqual(44);
+      const bounds = await touchTarget(control);
+      expect(bounds.width).toBeGreaterThanOrEqual(44);
+      expect(bounds.height).toBeGreaterThanOrEqual(44);
     }
   }
   for (const count of await page.locator(".filter-segments .segment-count").all()) {

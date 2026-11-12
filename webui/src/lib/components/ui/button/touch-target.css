@@ -22,9 +22,10 @@
     --touch-target-min: 44px;
   }
 
+  /* Material 3: buttons look 40px tall on phones; the ::after area above keeps the tap target at 44px. */
   .touch-target.touch-target,
   .touch-targets button {
-    min-width: 44px;
-    min-height: 44px;
+    min-width: 40px;
+    min-height: 40px;
   }
 }

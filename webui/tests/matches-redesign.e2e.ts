@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { mkdir } from "node:fs/promises";
-import { expectContainedMobileGeometry } from "./mobile-geometry";
+import { expectContainedMobileGeometry, touchTarget } from "./mobile-geometry";
 import { trackMatchSearch, trackMatchStateFilter } from "./track-matches-fixtures";
 
 const playlistNames = ["First playlist", "Second playlist"];
@@ -261,7 +261,7 @@ for (const width of [320, 390, 760, 899]) test(`Matches redesign provides full t
   await page.goto("#/library/matches");
   await expect(page.locator(".mapping-row").first()).toBeVisible();
   for (const control of [page.getByRole("button", { name: "Refresh", exact: true }), page.getByRole("button", { name: "More actions for Song One", exact: true })]) {
-    const bounds = await control.boundingBox();
+    const bounds = await touchTarget(control);
     expect(bounds!.width).toBeGreaterThanOrEqual(44);
     expect(bounds!.height).toBeGreaterThanOrEqual(44);
   }
@@ -275,7 +275,7 @@ for (const width of [320, 390, 760, 899]) test(`Matches redesign provides full t
     return [...range.getClientRects()].every(rect => rect.left >= bounds.left - 1 && rect.right <= bounds.right + 1);
   })).toBe(true);
   for (const label of ["Previous song", "Next song", "More", "Close", "Search for another version…"]) {
-    const bounds = await panel.getByRole("button", { name: label, exact: true }).boundingBox();
+    const bounds = await touchTarget(panel.getByRole("button", { name: label, exact: true }));
     expect(bounds!.width).toBeGreaterThanOrEqual(44);
     expect(bounds!.height).toBeGreaterThanOrEqual(44);
   }
@@ -289,12 +289,12 @@ test.describe("Matches redesign with a coarse pointer", () => {
     await fixture(page);
     await page.goto("#/library/matches");
     expect(await page.evaluate(() => matchMedia("(pointer: coarse)").matches)).toBe(true);
-    const refresh = await page.getByRole("button", { name: "Refresh", exact: true }).boundingBox();
+    const refresh = await touchTarget(page.getByRole("button", { name: "Refresh", exact: true }));
     expect(refresh!.width).toBeGreaterThanOrEqual(44);
     expect(refresh!.height).toBeGreaterThanOrEqual(44);
     const { panel } = await openSong(page);
     for (const label of ["Previous song", "Next song", "More", "Close", "Search for another version…"]) {
-      const bounds = await panel.getByRole("button", { name: label, exact: true }).boundingBox();
+      const bounds = await touchTarget(panel.getByRole("button", { name: label, exact: true }));
       expect(bounds!.width).toBeGreaterThanOrEqual(44);
       expect(bounds!.height).toBeGreaterThanOrEqual(44);
     }

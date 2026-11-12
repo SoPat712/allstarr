@@ -44,7 +44,7 @@
     {disabled}
     onValueChange={(next) => onchange?.(next)}
   >
-    <Select.Trigger class={`select-trigger ${className}`.trim()} aria-label={label}>
+    <Select.Trigger class={`select-trigger touch-target ${className}`.trim()} aria-label={label}>
       <Select.Value placeholder={visiblePlaceholder} />
       <ChevronDown class="select-chevron" size={16} aria-hidden="true" />
     </Select.Trigger>

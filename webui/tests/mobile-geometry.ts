@@ -76,6 +76,11 @@ export async function expectContainedMobileGeometry(page: Page) {
         const hit = getComputedStyle(target, "::after");
         if (hit.content !== "none" && Number.parseFloat(hit.width) >= 44 && Number.parseFloat(hit.height) >= 44) continue;
       }
+      // Buttons look 40px tall (Material 3); their ::after area provides the 44px target.
+      if (target.matches('[data-slot="button"], .touch-target')) {
+        const hit = getComputedStyle(target, "::after");
+        if (hit.content !== "none" && Number.parseFloat(hit.minWidth) >= 44 && Number.parseFloat(hit.minHeight) >= 44 && rect.height >= 39) continue;
+      }
       if (target.matches(".add-chip")) {
         const hit = getComputedStyle(target, "::after");
         if (!matchMedia("(pointer: coarse)").matches || hit.content !== "none" && Number.parseFloat(hit.minWidth) >= 44 && Number.parseFloat(hit.minHeight) >= 44) continue;
@@ -99,4 +104,14 @@ export async function expectContainedMobileGeometry(page: Page) {
   expect(audit.groupEscapes, "controls must stay inside their navigation/action outline").toEqual([]);
   expect(audit.undersizedTargets, "touch controls must provide a 44px target").toEqual([]);
   expect(audit.navReserveErrors, "fixed mobile navigation must have matching content clearance").toEqual([]);
+}
+
+/** The area a finger can hit: a control's own box, or its ::after touch area when that is larger (Material 3 buttons look 40px and tap at 44px). */
+export async function touchTarget(control: Locator) {
+  const bounds = (await control.boundingBox())!;
+  const hit = await control.evaluate(element => {
+    const area = getComputedStyle(element, "::after");
+    return area.content === "none" ? { width: 0, height: 0 } : { width: Number.parseFloat(area.minWidth) || 0, height: Number.parseFloat(area.minHeight) || 0 };
+  });
+  return { width: Math.max(bounds.width, hit.width), height: Math.max(bounds.height, hit.height), visualHeight: bounds.height };
 }
