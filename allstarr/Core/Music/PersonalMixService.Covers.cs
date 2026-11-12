@@ -26,7 +26,8 @@ public sealed partial class PersonalMixService
         }
     });
 
-    public async Task<PersonalMix> GetCoverAsync(Guid owner, Guid id, CancellationToken token = default)
+    public async Task<PersonalMix> GetCoverAsync(Guid owner, Guid id, CancellationToken token = default,
+        DurablePlaylistProjection? projection = null)
     {
         await using var db = await factory.CreateDbContextAsync(token);
         var user = await UserAsync(db, owner, token);
@@ -37,7 +38,7 @@ public sealed partial class PersonalMixService
         var selected = document.Mixes.SingleOrDefault(item => item.Value.Id == id);
         if (selected.Key != null)
             return (await VisibleAsync(owner, new() { Mixes = new() { [selected.Key] = selected.Value } }, token)).Single();
-        return (await ServiceMixesAsync(user, token, id, coverOnly: true)).SingleOrDefault()
+        return (await ServiceMixesAsync(user, token, id, coverOnly: true, projection: projection)).SingleOrDefault()
             ?? throw new KeyNotFoundException();
     }
 
@@ -52,6 +53,11 @@ public sealed partial class PersonalMixService
             if (document.RootElement.TryGetProperty("Mixes", out var stored) &&
                 stored.EnumerateObject().Any(mix => mix.Value.GetProperty("Id").GetGuid() == id)) return;
         }
+        var link = await ExternalLinks(db, user).AsNoTracking().SingleOrDefaultAsync(item => item.Id == id && item.Enabled, token);
+        if (link != null && IsExternalLink(link) &&
+            (bool)(await settings.GetAsync(PublishKey, token)).Value &&
+            await db.PlaylistSourceSnapshots.AsNoTracking().AnyAsync(snapshot => snapshot.PlaylistLinkId == id &&
+                snapshot.OwnerUserId == owner && snapshot.ProviderAccountId == link.ProviderAccountId && snapshot.PublishedAt.HasValue, token)) return;
         var mix = (await ServiceMixesAsync(user, token, id, coverOnly: true)).SingleOrDefault();
         if (mix != null && mix.Kind == "external")
         {

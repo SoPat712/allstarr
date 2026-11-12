@@ -77,6 +77,7 @@ public sealed class SimilarAlbumsReader(IProtocolProviderGateway providers, Save
         JsonElement[] libraryAlbums;
         (string Id, string Name)[]? libraryArtists;
         bool complete;
+        var cacheable = 0;
         try
         {
             var libraryTask = LibraryAlbumsAsync(http, execution, fields);
@@ -88,22 +89,24 @@ public sealed class SimilarAlbumsReader(IProtocolProviderGateway providers, Save
             var rows = await libraryTask.WaitAsync(token);
             libraryAlbums = rows ?? [];
             libraryArtists = await artistsTask.WaitAsync(token);
-            complete = rows != null && libraryArtists != null &&
-                (rows.Length == 0 || libraryArtists.Length > 0 && rows.All(album => AlbumArtists(album).Any()));
+            cacheable = rows != null && libraryArtists != null ? 1 : 0;
+            complete = cacheable != 0 &&
+                (libraryAlbums.Length == 0 || libraryArtists is { Length: > 0 } && libraryAlbums.All(album => AlbumArtists(album).Any()));
             library = await providerTask.WaitAsync(token);
         }
         catch (OperationCanceledException) when (timeout.IsCancellationRequested && !original.CancellationToken.IsCancellationRequested)
         { return new(itemId, null, []); }
+        void MarkUnavailable() => Interlocked.Exchange(ref cacheable, 0);
         var icons = new ConcurrentDictionary<string, ItemDetailsProvider?>(StringComparer.Ordinal);
         using var slots = new SemaphoreSlim(Lookups);
         var work = related.Take(Math.Min(RelatedArtists, limit * 2)).Select(async artist =>
         {
             try { await slots.WaitAsync(token); }
             catch (OperationCanceledException) when (timeout.IsCancellationRequested) { return null; }
-            try { return await PickAsync(http, execution, artist, library, icons, libraryAlbums, libraryArtists).WaitAsync(token); }
+            try { return await PickAsync(http, execution, artist, library, icons, libraryAlbums, libraryArtists, complete, MarkUnavailable).WaitAsync(token); }
             catch (Exception exception) when (exception is HttpRequestException or JsonException or InvalidOperationException ||
                 exception is OperationCanceledException && timeout.IsCancellationRequested)
-            { return null; }
+            { MarkUnavailable(); return null; }
             finally { slots.Release(); }
         }).ToArray();
         var picks = await Task.WhenAll(work);
@@ -116,7 +119,7 @@ public sealed class SimilarAlbumsReader(IProtocolProviderGateway providers, Save
             .DistinctBy(album => album.GetProperty("Id").GetString(), StringComparer.OrdinalIgnoreCase)
             .ToDictionary(album => album.GetProperty("Id").GetString()!, StringComparer.OrdinalIgnoreCase);
         http.Items[NativeItemsKey] = native;
-        if (!token.IsCancellationRequested && complete && access?.Succeeded != false && libraryKey == db?.FeedReadKey(execution, "library-similar", access))
+        if (!token.IsCancellationRequested && Volatile.Read(ref cacheable) != 0 && access?.Succeeded != false && libraryKey == db?.FeedReadKey(execution, "library-similar", access))
         {
             var entry = new CachedSimilar(clock.GetUtcNow(), result, native);
             Recent[key] = entry;
@@ -287,9 +290,9 @@ public sealed class SimilarAlbumsReader(IProtocolProviderGateway providers, Save
 
     private async Task<ClientSimilarAlbum?> PickAsync(HttpContext http, ProtocolExecutionContext execution, Artist artist,
         ItemDetailsProvider library, ConcurrentDictionary<string, ItemDetailsProvider?> icons, IReadOnlyList<JsonElement> libraryAlbums,
-        (string Id, string Name)[]? libraryArtists)
+        (string Id, string Name)[]? libraryArtists, bool libraryComplete, Action unavailable)
     {
-        if (await LibraryAlbumAsync(http, execution, artist.Name, libraryAlbums, libraryArtists) is { } owned) return owned with { Provider = library };
+        if (await LibraryAlbumAsync(http, execution, artist.Name, libraryAlbums, libraryArtists, libraryComplete, unavailable) is { } owned) return owned with { Provider = library };
         if (artist.ExternalProvider is not { } source || artist.ExternalId is not { } artistId) return null;
         var albums = MusicAlbumReleases.Collapse(await providers.GetArtistAlbumsAsync(execution, source, artistId, ArtistAlbumSample).WaitAsync(execution.CancellationToken))
             .OrderByDescending(item => item.ReleaseDate ?? item.Year?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "", StringComparer.Ordinal)
@@ -317,7 +320,7 @@ public sealed class SimilarAlbumsReader(IProtocolProviderGateway providers, Save
 
     // The listener's best-rated album by this artist, if the library has one.
     private async Task<ClientSimilarAlbum?> LibraryAlbumAsync(HttpContext http, ProtocolExecutionContext execution, string artist,
-        IReadOnlyList<JsonElement> libraryAlbums, (string Id, string Name)[]? libraryArtists)
+        IReadOnlyList<JsonElement> libraryAlbums, (string Id, string Name)[]? libraryArtists, bool libraryComplete, Action unavailable)
     {
         var credits = libraryArtists ?? [];
         var matches = credits.Where(item => SameName(item.Name, artist)).ToArray();
@@ -326,6 +329,7 @@ public sealed class SimilarAlbumsReader(IProtocolProviderGateway providers, Save
         {
             var best = libraryAlbums.FirstOrDefault(album => AlbumArtists(album).Any(item => item.Id == matches[0].Id));
             if (best.ValueKind == JsonValueKind.Object) return LibraryAlbum(best, artist, matches[0].Id);
+            if (libraryComplete) return null;
         }
         else if (matches.Length == 0 && libraryArtists is { Length: > 0 } && libraryAlbums.Count > 0 &&
             libraryAlbums.All(album => AlbumArtists(album).Any()))
@@ -344,7 +348,8 @@ public sealed class SimilarAlbumsReader(IProtocolProviderGateway providers, Save
         using (artists)
         {
             if (status != 200 || artists == null || !artists.RootElement.TryGetProperty("Items", out var items) ||
-                items.ValueKind != JsonValueKind.Array) return null;
+                items.ValueKind != JsonValueKind.Array)
+            { unavailable(); return null; }
             artistId = items.EnumerateArray().FirstOrDefault(item => item.TryGetProperty("Name", out var name) &&
                 SameName(name.GetString(), artist)) is { ValueKind: JsonValueKind.Object } match ? match.GetProperty("Id").GetString() : null;
         }
@@ -365,7 +370,9 @@ public sealed class SimilarAlbumsReader(IProtocolProviderGateway providers, Save
         using (albums)
         {
             if (albumStatus != 200 || albums == null || !albums.RootElement.TryGetProperty("Items", out var items) ||
-                items.ValueKind != JsonValueKind.Array || items.GetArrayLength() == 0) return null;
+                items.ValueKind != JsonValueKind.Array)
+            { unavailable(); return null; }
+            if (items.GetArrayLength() == 0) return null;
             return LibraryAlbum(items[0], artist, artistId);
         }
     }
@@ -389,7 +396,6 @@ public sealed class SimilarAlbumsReader(IProtocolProviderGateway providers, Save
         !string.IsNullOrWhiteSpace(first) && !string.IsNullOrWhiteSpace(second) &&
         FuzzyMatcher.NormalizeForMatching(first) == FuzzyMatcher.NormalizeForMatching(second);
 
-    internal static int CacheCountForTests() => Recent.Count;
     internal static bool ContainsCacheForTests(string key) => Recent.ContainsKey(key);
     internal static void PutCacheForTests(string key, DateTimeOffset at) => Recent[key] = new(at, new(key, null, []), new());
     internal static void RemoveCacheForTests(string key) => Recent.TryRemove(key, out _);

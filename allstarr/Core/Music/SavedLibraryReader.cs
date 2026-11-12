@@ -9,14 +9,17 @@ using allstarr.Core.Protocols;
 using allstarr.Core.Settings;
 using allstarr.Core.Storage;
 using allstarr.Models.Domain;
+using allstarr.Services.Common;
 using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Core.Music;
 
 public sealed class SavedLibraryReader(IDbContextFactory<AllstarrDbContext> factory,
     IBackendPlaylistTargetResolver? targets = null, IEffectiveProviderPolicyResolver? effectivePolicies = null,
-    ITrackIdentityService? identities = null, TimeProvider? timeProvider = null)
+    ITrackIdentityService? identities = null, TimeProvider? timeProvider = null,
+    IApplicationCache? cache = null, ApplicationCacheRequestCoalescer? readCoalescer = null)
 {
+    private sealed record SavedDatesEntry(IReadOnlyDictionary<string, DateTimeOffset> Dates, bool SharedScope);
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
     private static readonly TimeSpan SearchIndexFreshFor = TimeSpan.FromMinutes(1);
     private readonly ConcurrentDictionary<(Guid Owner, string Protocol, string Instance, string Principal), SearchIndexEntry> searchIndexes = new();
@@ -128,11 +131,53 @@ public sealed class SavedLibraryReader(IDbContextFactory<AllstarrDbContext> fact
             await ReadAsync(execution, http.RequestAborted, await new FavoriteViewReader(factory).ReadForRequestAsync(http));
     }
 
+    internal async Task<IReadOnlyDictionary<string, DateTimeOffset>> ReadDatesForRequestAsync(HttpContext http)
+    {
+        var execution = http.GetProtocolExecutionContext();
+        if (execution == null || execution.Principal == null || new[] { http.Request.RouteValues.GetValueOrDefault("userId")?.ToString(),
+                http.Request.Query["UserId"].ToString() }.Any(user => !string.IsNullOrEmpty(user) && user != execution.VerifiedBackendPrincipalId)) return new Dictionary<string, DateTimeOffset>();
+        return Dates(await ReadCurrentAsync());
+
+        static IReadOnlyDictionary<string, DateTimeOffset> Dates(SavedDatesEntry entry) =>
+            new Dictionary<string, DateTimeOffset>(entry.Dates, FavoriteViewReader.ItemComparer(entry.SharedScope));
+
+        async Task<SavedDatesEntry> ReadCurrentAsync()
+        {
+            if (cache?.IsEnabled != true || readCoalescer == null || execution.Protocol != ProtocolKind.Jellyfin || execution.Principal == null)
+                return await LoadAsync();
+            await using var db = await factory.CreateDbContextAsync(http.RequestAborted);
+            HashSet<string>? visible = null;
+            if (targets != null && (await db.PlaylistLinks.AsNoTracking().AnyAsync(link => link.TargetBackendInstanceId == execution.BackendInstanceId &&
+                link.TargetProtocol == execution.Principal!.BackendType && link.Enabled && link.TargetPlaylistId != null, http.RequestAborted) ||
+                await db.ExternalMetadataSnapshots.AsNoTracking().AnyAsync(item => item.Protocol == execution.Principal!.BackendType &&
+                    item.BackendInstanceId == execution.BackendInstanceId && item.ResourceKind == "playlist-membership" && item.ProviderId == "allstarr", http.RequestAborted)))
+                visible = await VisiblePlaylistKeysAsync(execution, http.RequestAborted);
+            var scope = "saved-dates:" + CanonicalCatalogKeys.Hash(string.Join(',', (visible ?? []).Order(StringComparer.Ordinal)));
+            string Key() => db.FeedReadKey(execution, scope) + ":" + db.FeedReadLibraryRevisionFor(execution.Actor?.EffectiveUserId);
+            var key = Key();
+            if (await cache.GetAsync<SavedDatesEntry>(key) is { } retained) return retained;
+            return await readCoalescer.RunAsync(key, async () =>
+            {
+                if (await cache.GetAsync<SavedDatesEntry>(key) is { } shared) return shared;
+                var entry = await LoadAsync(visible);
+                if (key == Key()) await cache.SetAsync(key, entry, TimeSpan.FromSeconds(60));
+                return entry;
+            }, http.RequestAborted);
+        }
+
+        async Task<SavedDatesEntry> LoadAsync(HashSet<string>? visible = null)
+        {
+            var view = await ReadAsync(execution, http.RequestAborted, await new FavoriteViewReader(factory).ReadForRequestAsync(http), visible);
+            return new(view.GroupBy(item => item.ItemId, FavoriteViewReader.ItemComparer(view))
+                .ToDictionary(group => group.Key, group => group.Min(item => item.FavoritedAt), StringComparer.Ordinal), view.Any(item => item.SharedScope));
+        }
+    }
+
     public Task<IReadOnlyList<FavoriteViewItem>> ReadAsync(ProtocolExecutionContext execution,
         CancellationToken cancellationToken = default) => ReadAsync(execution, cancellationToken, null);
 
     private async Task<IReadOnlyList<FavoriteViewItem>> ReadAsync(ProtocolExecutionContext execution,
-        CancellationToken cancellationToken, IReadOnlyList<FavoriteViewItem>? favoriteView)
+        CancellationToken cancellationToken, IReadOnlyList<FavoriteViewItem>? favoriteView, HashSet<string>? visible = null)
     {
         if (execution.Principal is not { } principal || execution.Actor?.EffectiveUserId is not { } owner) return [];
         await using var db = await factory.CreateDbContextAsync(cancellationToken);
@@ -164,8 +209,7 @@ public sealed class SavedLibraryReader(IDbContextFactory<AllstarrDbContext> fact
             item.Protocol == principal.BackendType && item.BackendInstanceId == execution.BackendInstanceId &&
             item.ResourceKind == "playlist-membership" &&
             item.ProviderId == "allstarr").ToArrayAsync(cancellationToken);
-        var visible = snapshots.Length == 0 ? null :
-            await VisiblePlaylistKeysAsync(execution, cancellationToken);
+        if (snapshots.Length > 0 && visible == null) visible = await VisiblePlaylistKeysAsync(execution, cancellationToken);
         var excludedSources = new HashSet<string>(StringComparer.Ordinal);
         foreach (var snapshot in snapshots)
         {
@@ -493,9 +537,11 @@ public sealed class SavedLibraryReader(IDbContextFactory<AllstarrDbContext> fact
     private static async Task LoadSourceChangesAsync(AllstarrDbContext db, Guid[] linkIds,
         List<MembershipChange> changes, CancellationToken cancellationToken)
     {
+        if (linkIds.Length == 0) return;
         var snapshots = await db.PlaylistSourceSnapshots.AsNoTracking().Where(snapshot => linkIds.Contains(snapshot.PlaylistLinkId) &&
             snapshot.PublishedAt != null).ToArrayAsync(cancellationToken);
         var snapshotIds = snapshots.Select(snapshot => snapshot.Id).ToArray();
+        if (snapshotIds.Length == 0) return;
         var rows = await (from entry in db.PlaylistSourceEntries.AsNoTracking()
                           join metadata in db.ExternalMetadataSnapshots.AsNoTracking() on entry.ExternalMetadataSnapshotId equals metadata.Id
                           join identity in db.ProviderTrackIdentities.AsNoTracking() on metadata.ProviderTrackIdentityId equals identity.Id

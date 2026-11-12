@@ -311,22 +311,19 @@ public sealed partial class ProtocolRouteFixtureTests
     {
         var prefix = "cap-" + Guid.NewGuid().ToString("N") + "-";
         var expired = prefix + "expired";
-        var keys = Array.Empty<string>();
+        // Tests running alongside share this cache, so this test overfills it with its own entries. They are older
+        // than other tests' fresh entries, so the trim takes these first and keys[0] goes whatever else is cached.
+        var keys = Enumerable.Range(0, SimilarAlbumsReader.MaxCacheEntries + 1).Select(index => prefix + index.ToString("D4")).ToArray();
         try
         {
-            SimilarAlbumsReader.TrimCacheForTests();
             SimilarAlbumsReader.PutCacheForTests(expired, DateTimeOffset.UnixEpoch);
-            var fresh = SimilarAlbumsReader.CacheCountForTests() - 1;
-            var room = Math.Max(1, SimilarAlbumsReader.MaxCacheEntries - fresh + 1);
-            keys = Enumerable.Range(0, room).Select(index => prefix + index.ToString("D4")).ToArray();
-            var start = DateTimeOffset.UtcNow.AddMinutes(-1);
+            var start = DateTimeOffset.UtcNow.AddSeconds(-90);
             for (var index = 0; index < keys.Length; index++)
-                SimilarAlbumsReader.PutCacheForTests(keys[index], start.AddSeconds(index));
+                SimilarAlbumsReader.PutCacheForTests(keys[index], start.AddMilliseconds(index));
             SimilarAlbumsReader.TrimCacheForTests();
             Assert.False(SimilarAlbumsReader.ContainsCacheForTests(expired));
             Assert.False(SimilarAlbumsReader.ContainsCacheForTests(keys[0]));
-            if (keys.Length > 1) Assert.True(SimilarAlbumsReader.ContainsCacheForTests(keys[^1]));
-            Assert.InRange(SimilarAlbumsReader.CacheCountForTests(), 0, SimilarAlbumsReader.MaxCacheEntries);
+            Assert.True(SimilarAlbumsReader.ContainsCacheForTests(keys[^1]));
         }
         finally
         {

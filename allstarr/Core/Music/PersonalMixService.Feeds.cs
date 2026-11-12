@@ -151,12 +151,13 @@ public sealed partial class PersonalMixService
         }
     }
 
-    private async Task<IReadOnlyList<PersonalMix>> ServiceMixesAsync(UserRecord user, CancellationToken token, Guid? id = null, bool cardsOnly = false, bool background = false, bool coverOnly = false)
+    private async Task<IReadOnlyList<PersonalMix>> ServiceMixesAsync(UserRecord user, CancellationToken token, Guid? id = null, bool cardsOnly = false, bool background = false, bool coverOnly = false,
+        DurablePlaylistProjection? projection = null)
     {
         var cards = await ServiceFeedCardsAsync(user, token, refresh: !background && !coverOnly && id == null,
             queuePreparation: !background && !coverOnly);
         if (!coverOnly) await RepairExternalAppsAsync(await ContextAsync(user, token), token, cards);
-        var linked = await ExternalMixesAsync(user, token, id, cardsOnly, cards);
+        var linked = await ExternalMixesAsync(user, token, id, cardsOnly, cards, projection);
         await using var db = await factory.CreateDbContextAsync(token);
         var links = await ExternalLinks(db, user, availableOnly: false).AsNoTracking().OrderByDescending(link => link.Enabled).ThenBy(link => link.CreatedAt).ToArrayAsync(token);
         var result = linked.ToList();

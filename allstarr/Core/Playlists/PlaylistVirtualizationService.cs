@@ -460,7 +460,7 @@ public sealed class PlaylistVirtualizationService(
         if (publishedProjection == null)
         {
             cover = allstarr.Core.Music.MixCoverInput.From(await personalMixes.GetCoverAsync(
-                link.OwnerUserId, link.Id, cancellationToken));
+                link.OwnerUserId, link.Id, cancellationToken, projection));
             if (cover.Kind == "external")
                 cover = cover with { Source = link.SourceProviderId, SourcePlaylistId = link.SourcePlaylistId };
         }

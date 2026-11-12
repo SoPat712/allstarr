@@ -3,6 +3,7 @@ using System.Data.Common;
 using System.Security.Cryptography;
 using System.Text.Json;
 using allstarr.Core.Capabilities;
+using allstarr.Core.Favorites;
 using allstarr.Core.Protocols;
 using allstarr.Core.Settings;
 using Microsoft.EntityFrameworkCore;
@@ -22,6 +23,7 @@ public sealed partial class AllstarrDbContext
         FeedReadVersions.GetValueOrDefault((Database.GetConnectionString() ?? "", owner, model));
 
     private static string FeedReadModel(string scope) => scope.StartsWith("library-", StringComparison.Ordinal) ? "library" :
+        scope.StartsWith("saved-", StringComparison.Ordinal) ? "saved" :
         scope.StartsWith("mix", StringComparison.Ordinal) ? "mixes" :
         scope.StartsWith("releases", StringComparison.Ordinal) ? "releases" : "playlists";
 
@@ -59,7 +61,7 @@ public sealed partial class AllstarrDbContext
     private HashSet<(Guid? Owner, string Model)> ChangesFeedReads()
     {
         HashSet<(Guid? Owner, string Model)> changed = [];
-        void All(Guid? owner) { changed.Add((owner, "mixes")); changed.Add((owner, "releases")); changed.Add((owner, "playlists")); changed.Add((owner, "library")); }
+        void All(Guid? owner) { changed.Add((owner, "mixes")); changed.Add((owner, "releases")); changed.Add((owner, "playlists")); changed.Add((owner, "library")); changed.Add((owner, "saved")); }
         void MixesAndPlaylists(Guid? owner) { changed.Add((owner, "mixes")); changed.Add((owner, "playlists")); }
         var snapshotOwners = new Dictionary<Guid, Guid?>();
         var linkOwners = new Dictionary<Guid, Guid?>();
@@ -120,6 +122,7 @@ public sealed partial class AllstarrDbContext
                         case "playlist-fork":
                         case "playlist-membership":
                             MixesAndPlaylists(snapshot.OwnerUserId);
+                            if (snapshot.ResourceKind == "playlist-membership") changed.Add((null, "saved"));
                             break;
                         case "release-follows":
                         case "release-dismissal":
@@ -143,18 +146,22 @@ public sealed partial class AllstarrDbContext
                             break;
                     }
                     break;
-                case PlaylistLinkRecord link: MixesAndPlaylists(link.OwnerUserId); break;
-                case PlaylistSourceSnapshotRecord playlistSnapshot: MixesAndPlaylists(playlistSnapshot.OwnerUserId); break;
-                case PlaylistSourceEntryRecord source: MixesAndPlaylists(SnapshotOwner(source.PlaylistSourceSnapshotId)); break;
+                case PlaylistLinkRecord link: MixesAndPlaylists(link.OwnerUserId); changed.Add((null, "saved")); break;
+                case PlaylistSourceSnapshotRecord playlistSnapshot: MixesAndPlaylists(playlistSnapshot.OwnerUserId); changed.Add((null, "saved")); break;
+                case PlaylistSourceEntryRecord source: MixesAndPlaylists(SnapshotOwner(source.PlaylistSourceSnapshotId)); changed.Add((null, "saved")); break;
                 case PlaylistSyncRunRecord run: MixesAndPlaylists(run.OwnerUserId); break;
                 case PlaylistSyncEntryResultRecord result: MixesAndPlaylists(RunOwner(result.PlaylistSyncRunId)); break;
-                case PlaylistTargetMembershipRecord member: MixesAndPlaylists(LinkOwner(member.PlaylistLinkId)); break;
+                case PlaylistTargetMembershipRecord member: MixesAndPlaylists(LinkOwner(member.PlaylistLinkId)); changed.Add((null, "saved")); break;
                 case ManualTrackOverrideRecord manual:
                     MixesAndPlaylists(manual.OwnerUserId);
                     changed.Add((manual.OwnerUserId, "library"));
                     break;
-                case AuditEventRecord audit when audit.Action == "promotion.library-linked":
+                case AuditEventRecord audit when audit.Action is "promotion.library-linked" or "promotion.favorite-moved":
                     changed.Add((null, "library"));
+                    break;
+                case FavoriteEventRecord or FavoriteStateRecord or ProviderFavoriteLinkRecord or
+                    ProviderFavoriteLinkMemberRecord or LinkedProviderFavoriteStateRecord:
+                    changed.Add((null, "saved"));
                     break;
                 case LibraryTrackRecord when entry.State == EntityState.Modified && !entry.Properties.Any(property => property.IsModified &&
                     property.Metadata.Name is not (nameof(LibraryTrackRecord.IndexedAt) or nameof(LibraryTrackRecord.UpdatedAt) or
@@ -196,7 +203,7 @@ public sealed partial class AllstarrDbContext
             FeedReadVersions.AddOrUpdate((database, owner, model), 1, (_, revision) => revision + 1);
     }
 
-    internal void InvalidateFeedReads(Guid owner) => FeedReadsSaved([(owner, "mixes"), (owner, "playlists")]);
+    internal void InvalidateFeedReads(Guid owner) => FeedReadsSaved([(owner, "mixes"), (owner, "playlists"), (null, "saved")]);
 
     private sealed class FeedReadTransactions : DbTransactionInterceptor
     {

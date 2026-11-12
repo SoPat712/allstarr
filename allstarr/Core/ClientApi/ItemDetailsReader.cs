@@ -80,7 +80,7 @@ public sealed class ItemDetailsReader(
             foreach (var item in await identities.ResolveRecordingsAsync(execution.RequireActor(), remaining, token)) resolved[item.Key] = item.Value;
         var recordingIds = resolved.Values.OfType<CanonicalRecordingIdentity>().Select(item => item.Id).Distinct().ToArray();
         var hashes = external.Select(item => CanonicalCatalogKeys.Hash(item.ExternalId)).Distinct().ToArray();
-        var snapshots = await db.ExternalMetadataSnapshots.AsNoTracking().Where(item => item.OwnerUserId == owner &&
+        var snapshots = hashes.Length == 0 && recordingIds.Length == 0 ? [] : await db.ExternalMetadataSnapshots.AsNoTracking().Where(item => item.OwnerUserId == owner &&
             item.Protocol == protocol && item.BackendInstanceId == execution.BackendInstanceId &&
             item.BackendPrincipalId == execution.VerifiedBackendPrincipalId &&
             (item.ResourceKind == "track" || item.ResourceKind == "playback-metadata") &&
@@ -91,7 +91,7 @@ public sealed class ItemDetailsReader(
                 account.Enabled && (account.OwnerUserId == null || account.OwnerUserId == owner))))
             .ToArrayAsync(token);
         var snapshotIds = snapshots.Select(item => item.Id).ToArray();
-        var decisions = await db.TrackMatches.AsNoTracking().Where(item => item.OwnerUserId == owner && snapshotIds.Contains(item.ExternalSnapshotId))
+        var decisions = snapshotIds.Length == 0 ? [] : await db.TrackMatches.AsNoTracking().Where(item => item.OwnerUserId == owner && snapshotIds.Contains(item.ExternalSnapshotId))
             .ToArrayAsync(token);
         recordingIds = recordingIds.Concat(decisions.Where(item => item.CanonicalRecordingId.HasValue)
             .Select(item => item.CanonicalRecordingId!.Value)).Distinct().ToArray();
@@ -104,7 +104,7 @@ public sealed class ItemDetailsReader(
             .GroupBy(item => new { item.CanonicalRecordingId, item.LibraryTrackId, item.TrackReference })
             .Select(group => new { group.Key, Count = group.LongCount(), Last = group.Max(item => item.ListenedAt ?? item.StartedAt) })
             .ToArrayAsync(token);
-        var links = await db.ProviderTrackIdentities.AsNoTracking().Where(item => recordingIds.Contains(item.CanonicalRecordingId) &&
+        var links = recordingIds.Length == 0 ? [] : await db.ProviderTrackIdentities.AsNoTracking().Where(item => recordingIds.Contains(item.CanonicalRecordingId) &&
             item.ResourceKind == ProviderResourceKind.Track && item.Verification == ProviderIdentityVerification.Verified &&
             item.VerificationMethod != "automatic-suggestion" && item.VerificationMethod != "source-snapshot-hash" &&
             item.VerificationMethod != CatalogIdentityPolicy.SupersededVerificationMethod &&
@@ -114,11 +114,12 @@ public sealed class ItemDetailsReader(
                 account.Enabled && (account.OwnerUserId == null || account.OwnerUserId == owner))))
             .ToArrayAsync(token);
         var layers = ManualTrackOverrides.Index(snapshots, await ManualTrackOverrides.LoadAsync(db, owner, snapshots, token), owner);
-        var recordings = await db.CanonicalRecordings.AsNoTracking().Where(item => recordingIds.Contains(item.Id)).ToDictionaryAsync(item => item.Id, token);
-        var identifiers = await db.RecordingIdentifiers.AsNoTracking().Where(item => recordingIds.Contains(item.RecordingId) && item.Kind == RecordingIdentifierKinds.Isrc)
+        var recordings = recordingIds.Length == 0 ? new Dictionary<Guid, CanonicalRecordingRecord>() :
+            await db.CanonicalRecordings.AsNoTracking().Where(item => recordingIds.Contains(item.Id)).ToDictionaryAsync(item => item.Id, token);
+        var identifiers = recordingIds.Length == 0 ? [] : await db.RecordingIdentifiers.AsNoTracking().Where(item => recordingIds.Contains(item.RecordingId) && item.Kind == RecordingIdentifierKinds.Isrc)
             .ToArrayAsync(token);
         Step("stored records");
-        var view = await favorites.ReadForRequestAsync(http);
+        IReadOnlyList<FavoriteViewItem> view = external.Length == 0 ? [] : await favorites.ReadForRequestAsync(http);
         Step("favourites");
         var saved = view.Select(item => item.ItemId).ToHashSet(FavoriteViewReader.ItemComparer(view));
         var states = await (from state in db.FavoriteStates.AsNoTracking()
@@ -137,13 +138,13 @@ public sealed class ItemDetailsReader(
                                                              accepted.Operation == FavoriteOperation.Favorite && eventIds.Contains(accepted.Id) && action.ActionType == "download"
                                                          select action).ToArrayAsync(token);
         var heartKeys = states.Where(item => item.IsFavorite).Select(item => $"heart:{item.Id:N}").ToArray();
-        var retained = await (from route in db.Set<RecordingKeptRouteEntity>().AsNoTracking()
-                              join recording in db.CanonicalRecordings on route.CanonicalRecordingId equals recording.Id
-                              join file in db.ManagedFiles on route.ManagedFileId equals file.Id
-                              join artifact in db.ProviderDownloadArtifacts on route.SourceArtifactId equals artifact.Id
-                              where (recordingIds.Contains(recording.Id) || recording.MergedIntoId.HasValue && recordingIds.Contains(recording.MergedIntoId.Value)) &&
-                                  file.IsManaged && file.RemovedAt == null && file.OwnerUserId == null && file.SourceJobId == null && file.Length > 0
-                              select new { RecordingId = recording.MergedIntoId ?? recording.Id, File = file, Artifact = artifact }).ToArrayAsync(token);
+        var retained = recordingIds.Length == 0 ? [] : await (from route in db.Set<RecordingKeptRouteEntity>().AsNoTracking()
+                                                              join recording in db.CanonicalRecordings on route.CanonicalRecordingId equals recording.Id
+                                                              join file in db.ManagedFiles on route.ManagedFileId equals file.Id
+                                                              join artifact in db.ProviderDownloadArtifacts on route.SourceArtifactId equals artifact.Id
+                                                              where (recordingIds.Contains(recording.Id) || recording.MergedIntoId.HasValue && recordingIds.Contains(recording.MergedIntoId.Value)) &&
+                                                                  file.IsManaged && file.RemovedAt == null && file.OwnerUserId == null && file.SourceJobId == null && file.Length > 0
+                                                              select new { RecordingId = recording.MergedIntoId ?? recording.Id, File = file, Artifact = artifact }).ToArrayAsync(token);
         var placement = http.RequestServices.GetRequiredService<FilePlacementService>();
         retained = retained.Where(item => AvailableFile(placement, item.File, token)).ToArray();
         var fileIds = retained.Select(item => item.File.Id).ToArray();
@@ -211,7 +212,7 @@ public sealed class ItemDetailsReader(
             providers[providerId] = registry.TryGet(providerId, out var descriptor)
                 ? icons.GetValueOrDefault(providerId)?.Provider(providerId, descriptor!.DisplayName) ?? new(providerId, descriptor!.DisplayName, null) : null;
         }
-        var choices = await db.RecordingLyricsChoices.AsNoTracking().Where(item => recordingIds.Contains(item.CanonicalRecordingId) &&
+        var choices = recordingIds.Length == 0 ? [] : await db.RecordingLyricsChoices.AsNoTracking().Where(item => recordingIds.Contains(item.CanonicalRecordingId) &&
             item.RevokedAt == null && (item.OwnerUserId == owner || item.OwnerUserId == null)).ToArrayAsync(token);
         var lyricsEndpoint = (await settings.GetAsync("LyricsPlus:BaseUrl", token)).NormalizedValue;
         var retainedLyrics = refreshStore == null ? new Dictionary<Guid, allstarr.Models.Lyrics.LyricsInfo>() :
@@ -220,7 +221,7 @@ public sealed class ItemDetailsReader(
         // Each song's match and lyrics reads stand alone, so a batch reads a few songs at once instead of one after another.
         using var gate = new SemaphoreSlim(Math.Clamp(Environment.ProcessorCount / 2, 1, 4));
         var libraryMemo = new TrackMatchLibraryMemo();
-        await matches.PrepareSummariesAsync(http, execution, requested.Select(id => (Id: id,
+        if (snapshots.Length > 0) await matches.PrepareSummariesAsync(http, execution, requested.Select(id => (Id: id,
             Recording: resolved.GetValueOrDefault(id)?.Id ?? library.FirstOrDefault(item => SameNativeId(item.BackendItemId, localIds.GetValueOrDefault(id) ?? id))?.CanonicalRecordingId))
             .SelectMany(item => item.Recording.HasValue ? new[] { item, (Id: CanonicalRecordingRecord.DefaultPublicId(item.Recording.Value), item.Recording) } : new[] { item })
             .DistinctBy(item => item.Id).ToDictionary(item => item.Id, item => item.Recording, StringComparer.Ordinal), libraryMemo);

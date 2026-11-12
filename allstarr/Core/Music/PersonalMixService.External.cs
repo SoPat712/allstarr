@@ -12,6 +12,9 @@ namespace allstarr.Core.Music;
 
 public sealed partial class PersonalMixService
 {
+    private sealed record ExternalAppsEntry(bool Complete);
+    private sealed record ExternalVisibilityEntry(bool Visible);
+
     internal static bool IsExternalLink(PlaylistLinkRecord link) => link.ImportMode == PlaylistImportMode.Linked &&
         (link.SourceProviderId == "listenbrainz" && (link.SourcePlaylistId.StartsWith("createdfor:", StringComparison.Ordinal) ||
             link.SourcePlaylistId is Providers.ListenBrainz.ListenBrainzPlaylistCapabilityAdapter.Recommended
@@ -31,12 +34,17 @@ public sealed partial class PersonalMixService
     internal async Task RepairExternalAppsAsync(ProtocolExecutionContext context, CancellationToken token, IReadOnlyList<PersonalMix>? feeds = null)
     {
         if (context.Actor?.EffectiveUserId is not { } owner) return;
-        await using var repair = await feedReads.AcquireAsync("apps:" + owner, token);
         await using var db = await factory.CreateDbContextAsync(token);
+        var scope = "mix-apps:" + (feeds == null ? "" : string.Join(',', feeds.Select(feed =>
+            $"{feed.ProviderAccountId}:{feed.Source}:{feed.SourcePlaylistId}").Order(StringComparer.Ordinal)));
+        var key = db.FeedReadKey(context, scope);
+        if (recordingCache != null && await recordingCache.GetAsync<ExternalAppsEntry>(key) is { Complete: true }) return;
+        await using var repair = await feedReads.AcquireAsync("apps:" + owner, token);
+        if (recordingCache != null && await recordingCache.GetAsync<ExternalAppsEntry>(key) is { Complete: true }) return;
         var user = await BrowseUserAsync(db, owner, token, context);
         if (user == null) return;
         var links = await ExternalLinks(db, user).Where(link => link.Enabled && link.TargetPlaylistId == null).ToArrayAsync(token);
-        if (links.Length == 0) return;
+        if (links.Length == 0) { await RememberAsync(); return; }
         var kinds = await PlaylistSourceKinds.LatestAsync(db, links.Select(link => link.Id).ToArray(), token);
         var publish = (bool)(await settings.GetAsync(PublishKey, token)).Value;
         links = links.Where(link => context.Policy?.IsEnabled(link.SourceProviderId) != false && (IsExternalLink(link) ? publish :
@@ -51,10 +59,12 @@ public sealed partial class PersonalMixService
             link.Revision++;
         }
         await db.SaveChangesAsync(token);
-        if (jobQueue == null || links.Length == 0) return;
+        if (links.Length == 0) { await RememberAsync(); return; }
         var ids = links.Select(link => link.Id).ToArray();
         var published = await db.PlaylistSourceSnapshots.AsNoTracking().Where(snapshot => ids.Contains(snapshot.PlaylistLinkId) &&
             snapshot.OwnerUserId == owner && snapshot.PublishedAt.HasValue).Select(snapshot => snapshot.PlaylistLinkId).Distinct().ToArrayAsync(token);
+        if (published.Length == links.Length) { await RememberAsync(); return; }
+        if (jobQueue == null) return;
         var pending = await db.Jobs.AsNoTracking().Where(job => job.OwnerUserId == owner &&
             (job.Type == "playlist.materialize" || job.Type == DurableScheduleEngine.PlaylistSyncJobType) &&
             (job.State == DurableJobState.Pending || job.State == DurableJobState.Running || job.State == DurableJobState.RetryScheduled))
@@ -64,9 +74,16 @@ public sealed partial class PersonalMixService
             await jobQueue.EnqueueAsync(new DurableJobEnqueueRequest<PlaylistMaterializationJobPayload>("playlist.materialize",
                 $"service-feed-publication:{link.Id:N}:{link.Revision}", new(link.Id, Math.Max(1, link.UpdatedAt.UtcTicks + 1)), owner,
                 ProviderAccountId: link.ProviderAccountId, Capability: "playlist"), token);
+
+        async Task RememberAsync()
+        {
+            if (recordingCache != null && key == db.FeedReadKey(context, scope))
+                await recordingCache.SetAsync(key, new ExternalAppsEntry(true), TimeSpan.FromSeconds(60));
+        }
     }
 
-    private async Task<IReadOnlyList<PersonalMix>> ExternalMixesAsync(UserRecord user, CancellationToken token, Guid? id = null, bool cardsOnly = false, IReadOnlyList<PersonalMix>? feeds = null)
+    private async Task<IReadOnlyList<PersonalMix>> ExternalMixesAsync(UserRecord user, CancellationToken token, Guid? id = null, bool cardsOnly = false, IReadOnlyList<PersonalMix>? feeds = null,
+        DurablePlaylistProjection? publishedProjection = null)
     {
         await using var db = await factory.CreateDbContextAsync(token);
         var available = await ExternalLinks(db, user, availableOnly: false).Where(link => id == null || link.Id == id).AsNoTracking()
@@ -109,7 +126,7 @@ public sealed partial class PersonalMixService
         var result = new List<PersonalMix>(links.Length);
         foreach (var link in links)
         {
-            var projection = id.HasValue
+            var projection = publishedProjection?.LinkId == link.Id ? publishedProjection : id.HasValue
                 ? await reader.ReadByLinkIdAsync(user.Id, link.Id, token, user.Id)
                 : projections.GetValueOrDefault(link.Id);
             var songs = projection?.Entries.Where(entry => entry.RouteKind is "local" or "external").Select(entry =>
@@ -255,8 +272,19 @@ public sealed partial class PersonalMixService
         return true;
     }
 
-    internal async Task<bool> IsExternalVisibleAsync(ProtocolExecutionContext context, PlaylistLinkRecord link, CancellationToken token) =>
-        !(await HiddenExternalAsync(context, [link], token)).Contains(link.Id);
+    internal async Task<bool> IsExternalVisibleAsync(ProtocolExecutionContext context, PlaylistLinkRecord link, CancellationToken token)
+    {
+        await using var db = await factory.CreateDbContextAsync(token);
+        var scope = "mix-external-visible:" + link.Id;
+        var key = db.FeedReadKey(context, scope);
+        if (recordingCache != null && await recordingCache.GetAsync<ExternalVisibilityEntry>(key) is { } cached) return cached.Visible;
+        await using var visibility = await feedReads.AcquireAsync(key, token);
+        if (recordingCache != null && await recordingCache.GetAsync<ExternalVisibilityEntry>(key) is { } shared) return shared.Visible;
+        var visible = !(await HiddenExternalAsync(context, [link], token)).Contains(link.Id);
+        if (recordingCache != null && key == db.FeedReadKey(context, scope))
+            await recordingCache.SetAsync(key, new ExternalVisibilityEntry(visible), TimeSpan.FromSeconds(60));
+        return visible;
+    }
 
     // Checks a whole playlist list at once so listing stays a fixed number of queries. Ordinary playlists stay
     // visible; mixes and service feeds need their owner's enabled link and a connected account.

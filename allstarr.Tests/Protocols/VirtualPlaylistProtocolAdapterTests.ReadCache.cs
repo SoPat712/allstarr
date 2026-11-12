@@ -56,7 +56,8 @@ public sealed partial class VirtualPlaylistProtocolAdapterTests
                     PreciseDuration = TimeSpan.FromMilliseconds(180123)
                 };
             });
-        using var cache = new MemoryApplicationCache(new SystemPlatformClock());
+        var clock = new PlaylistReadClock();
+        using var cache = new MemoryApplicationCache(clock);
         var adapter = new JellyfinVirtualPlaylistProtocolAdapter(service.Object, new StubJellyfinMutationResolver(null),
             responseBuilder: new JellyfinResponseBuilder(), providerGateway: gateway.Object, readContexts: factory, readCache: cache);
         var uncached = new JellyfinVirtualPlaylistProtocolAdapter(service.Object, new StubJellyfinMutationResolver(null),
@@ -88,6 +89,15 @@ public sealed partial class VirtualPlaylistProtocolAdapterTests
         Assert.Equal(before, first);
         Assert.Equal(1, reads);
         Assert.Equal(4, providerReads);
+        clock.UtcNow = clock.UtcNow.AddMinutes(2);
+        using (var timing = RequestTiming.Begin())
+        {
+            var afterIdle = JsonSerializer.Serialize(Assert.IsType<JsonResult>(await adapter.ReadItemsAsync(context, ProtocolId, null, query, default)).Value);
+            Assert.Equal(first, afterIdle);
+            _output.WriteLine($"Playlist after two idle minutes: {reads} view builds; {timing.Snapshot("jellyfin").Header}");
+            Assert.Equal(1, reads);
+            Assert.Equal(4, providerReads);
+        }
         query = new QueryCollection(new Dictionary<string, Microsoft.Extensions.Primitives.StringValues> { ["StartIndex"] = "50", ["Limit"] = "50" });
         var page = Assert.IsType<JsonResult>(await adapter.ReadItemsAsync(context, ProtocolId, null, query, default));
         using var json = JsonDocument.Parse(JsonSerializer.Serialize(page.Value));
@@ -302,4 +312,6 @@ public sealed partial class VirtualPlaylistProtocolAdapterTests
     {
         public AllstarrDbContext CreateDbContext() => new(options);
     }
+
+    private sealed class PlaylistReadClock : IPlatformClock { public DateTimeOffset UtcNow { get; set; } = DateTimeOffset.UtcNow; }
 }

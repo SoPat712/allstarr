@@ -202,6 +202,7 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
 
     private async Task<VirtualPlaylistReadModel?> ReadViewAsync(ProtocolExecutionContext context, string id, CancellationToken cancellationToken)
     {
+        if (allstarr.Services.Local.LocalLibraryService.ParseExternalResource(id) is { isExternal: true, type: "song" or "album" or "artist" }) return null;
         using var saved = RequestTiming.Current?.Stage("saved");
         if (readContexts == null || readCache?.IsEnabled != true || context.Actor == null || !IsVirtualPlaylistId(id))
             return await ReadAsync();
@@ -217,7 +218,8 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
             var playlist = await ReadAsync();
             // Native target permissions and membership are checked against the backend on every read.
             if (playlist != null && playlist.TargetPlaylistId == null && key == Key())
-                await readCache.SetAsync(key, playlist, TimeSpan.FromSeconds(60));
+                await readCache.SetAsync(key, playlist, playlist.SourceProviderId == "allstarr"
+                    ? TimeSpan.FromSeconds(60) : TimeSpan.FromMinutes(10));
             return playlist;
         }, cancellationToken);
 

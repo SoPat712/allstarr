@@ -189,9 +189,149 @@ public sealed partial class ProtocolRouteFixtureTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task Jellyfin_SimilarFallsBackWithoutCachingUnavailableBulkReads(bool albumsUnavailable)
+    public async Task Jellyfin_SimilarDoesNotRepeatLookupsForAnArtistWithoutLibraryAlbums(bool emptyAlbums)
     {
-        var reads = new SimilarLibraryReads { AlbumsUnavailable = albumsUnavailable, ArtistsUnavailable = !albumsUnavailable };
+        RequestTiming.Result before;
+        JsonElement[] previous;
+        using (var timing = RequestTiming.Begin())
+        using (var handler = new RequestTimingHandler(true)
+        { InnerHandler = new SimilarLibraryReads { Delay = 15, ArtistWithoutAlbums = true, EmptyAlbums = emptyAlbums } })
+        using (var backend = new HttpClient(handler) { BaseAddress = new Uri("http://backend") })
+        {
+            previous = await PreviousSimilarNativePicksAsync(backend, readNativeSeed: false);
+            before = timing.Snapshot("similar-no-album-before");
+        }
+        var reads = new SimilarLibraryReads { Delay = 15, ArtistWithoutAlbums = true, EmptyAlbums = emptyAlbums };
+        var gateway = SimilarPerformanceGateway();
+        gateway.Setup(service => service.GetArtistAlbumsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "velvet", It.IsAny<int>()))
+            .ReturnsAsync([new() { Id = "ext-deezer-album-velvet-remote", Title = "Velvet remote", Artist = "Velvet" }]);
+        using var factory = SimilarPerformanceFactory(reads, gateway);
+        using var client = CreateClientApiClient(factory);
+        client.DefaultRequestHeaders.Add("X-Emby-Token", "listener-token");
+        const string path = "/Items/ext-deezer-album-performance-seed/Similar?Limit=3";
+        using var cold = await client.GetAsync(path);
+        cold.EnsureSuccessStatusCode();
+        using var body = JsonDocument.Parse(await cold.Content.ReadAsStringAsync());
+        var items = body.RootElement.GetProperty("Items").EnumerateArray().ToArray();
+        Assert.Equal(emptyAlbums
+            ? new[] { "ext-deezer-album-quartz-remote", "ext-deezer-album-velvet-remote", "ext-deezer-album-cedar-new" }
+            : new[] { "quartz-best", "velvet-best", "ext-deezer-album-cedar-new" },
+            items.Select(item => item.GetProperty("Id").GetString()));
+        var native = items.Where(item => item.GetProperty("AllstarrSource").GetString() == "library").Select(item =>
+        {
+            var row = JsonNode.Parse(item.GetRawText())!.AsObject();
+            row.Remove("AllstarrSource");
+            row.Remove("AllstarrProvider");
+            return JsonSerializer.SerializeToElement(row);
+        }).ToArray();
+        Assert.Equal(previous.Select(item => item.GetRawText()), native.Select(item => item.GetRawText()));
+        Assert.Equal("Newest full album [A]", items[^1].GetProperty("Name").GetString());
+        Assert.Equal("deezer", items[^1].GetProperty("AllstarrSource").GetString());
+        Assert.Equal("deezer", items[^1].GetProperty("AllstarrProvider").GetProperty("id").GetString());
+        var libraryCalls = reads.Requests.Where(uri => uri.AbsolutePath is "/Users/listener/Items" or "/Artists/AlbumArtists").ToArray();
+        var calls = reads.Requests.Count;
+        using var warm = await client.GetAsync(path);
+        warm.EnsureSuccessStatusCode();
+        Assert.Equal(await cold.Content.ReadAsByteArrayAsync(), await warm.Content.ReadAsByteArrayAsync());
+        _lyricsSearchOutput.WriteLine($"Synthetic no-album lookup loop (empty albums: {emptyAlbums}), 15 ms per backend call, concurrency 4: " + before.Header);
+        _lyricsSearchOutput.WriteLine("Synthetic no-album optimized cold: " + Assert.Single(cold.Headers.GetValues("Server-Timing")));
+        _lyricsSearchOutput.WriteLine("Synthetic no-album optimized warm: " + Assert.Single(warm.Headers.GetValues("Server-Timing")));
+        Assert.Equal(2, libraryCalls.Length);
+        Assert.DoesNotContain(libraryCalls, uri => QueryHelpers.ParseQuery(uri.Query).ContainsKey("searchTerm"));
+        Assert.DoesNotContain(libraryCalls, uri => QueryHelpers.ParseQuery(uri.Query).ContainsKey("albumArtistIds"));
+        Assert.Equal(7, before.JellyfinCalls);
+        Assert.Equal(2, reads.Requests.Count(uri => uri.AbsolutePath != "/Users/Me"));
+        Assert.Equal(calls, reads.Requests.Count);
+        gateway.Verify(service => service.GetArtistAlbumsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "cedar", It.IsAny<int>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Jellyfin_SimilarCachesSuccessfulArtistFallbackWhenBulkCreditsAreMissing()
+    {
+        var reads = new SimilarLibraryReads { Delay = 15, MissingCredits = true, ArtistWithoutAlbums = true };
+        var gateway = SimilarPerformanceGateway();
+        using var factory = SimilarPerformanceFactory(reads, gateway);
+        using var client = CreateClientApiClient(factory);
+        client.DefaultRequestHeaders.Add("X-Emby-Token", "listener-token");
+        const string path = "/Items/ext-deezer-album-performance-seed/Similar?Limit=3";
+        using var cold = await client.GetAsync(path);
+        cold.EnsureSuccessStatusCode();
+        var expected = await cold.Content.ReadAsStringAsync();
+        var calls = reads.Requests.Count;
+        var coldLibraryCalls = reads.Requests.Count(uri => uri.AbsolutePath != "/Users/Me");
+        var providerCalls = SimilarUpstreamProviderCalls(gateway);
+        using var warm = await client.GetAsync(path);
+        warm.EnsureSuccessStatusCode();
+        var timing = Assert.Single(warm.Headers.GetValues("Server-Timing"));
+        var warmCalls = reads.Requests.Count - calls;
+        var warmProviderCalls = SimilarUpstreamProviderCalls(gateway) - providerCalls;
+        Assert.Equal(expected, await warm.Content.ReadAsStringAsync());
+        _lyricsSearchOutput.WriteLine("Synthetic missing-credit cold, 15 ms per backend call, concurrency 4: " + Assert.Single(cold.Headers.GetValues("Server-Timing")));
+        _lyricsSearchOutput.WriteLine($"Synthetic missing-credit warm, backend calls {warmCalls}, provider calls {warmProviderCalls}: " + timing);
+        using var body = JsonDocument.Parse(expected);
+        var items = body.RootElement.GetProperty("Items").EnumerateArray().ToArray();
+        Assert.Equal(new[] { "quartz-best", "velvet-best", "ext-deezer-album-cedar-new" }, items.Select(item => item.GetProperty("Id").GetString()));
+        Assert.Equal("native-overview", items[0].GetProperty("Overview").GetString());
+        Assert.Equal("native-art", items[0].GetProperty("ImageTags").GetProperty("Primary").GetString());
+        Assert.Equal(8, coldLibraryCalls);
+        Assert.True(warmCalls == 0 && warmProviderCalls == 0,
+            $"Expected no warm upstream calls; backend calls {warmCalls}, provider calls {warmProviderCalls}. {timing}");
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Jellyfin_SimilarRetriesFailedArtistFallbackAndRecoversTheLibraryAlbum(bool albumLookup)
+    {
+        var reads = new SimilarLibraryReads
+        {
+            MissingCredits = true,
+            ArtistWithoutAlbums = true,
+            ArtistLookupUnavailable = !albumLookup,
+            AlbumLookupUnavailable = albumLookup
+        };
+        var gateway = SimilarPerformanceGateway();
+        using var factory = SimilarPerformanceFactory(reads, gateway);
+        using var client = CreateClientApiClient(factory);
+        client.DefaultRequestHeaders.Add("X-Emby-Token", "listener-token");
+        const string path = "/Items/ext-deezer-album-performance-seed/Similar?Limit=3";
+        using var failed = await client.GetAsync(path);
+        failed.EnsureSuccessStatusCode();
+        using var first = JsonDocument.Parse(await failed.Content.ReadAsStringAsync());
+        Assert.Equal(new[] { "ext-deezer-album-quartz-remote", "velvet-best", "ext-deezer-album-cedar-new" },
+            first.RootElement.GetProperty("Items").EnumerateArray().Select(item => item.GetProperty("Id").GetString()));
+        reads.ArtistLookupUnavailable = reads.AlbumLookupUnavailable = false;
+        using var recovered = await client.GetAsync(path);
+        recovered.EnsureSuccessStatusCode();
+        var expected = await recovered.Content.ReadAsStringAsync();
+        using var body = JsonDocument.Parse(expected);
+        var items = body.RootElement.GetProperty("Items").EnumerateArray().ToArray();
+        Assert.Equal(new[] { "quartz-best", "velvet-best", "ext-deezer-album-cedar-new" }, items.Select(item => item.GetProperty("Id").GetString()));
+        Assert.Equal("native-art", items[0].GetProperty("ImageTags").GetProperty("Primary").GetString());
+        gateway.Verify(service => service.GetSimilarArtistsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "performance-seed", It.IsAny<int>()), Times.Exactly(2));
+        var calls = reads.Requests.Count;
+        var providerCalls = SimilarUpstreamProviderCalls(gateway);
+        using var warm = await client.GetAsync(path);
+        warm.EnsureSuccessStatusCode();
+        Assert.Equal(expected, await warm.Content.ReadAsStringAsync());
+        var timing = Assert.Single(warm.Headers.GetValues("Server-Timing"));
+        Assert.True(calls == reads.Requests.Count && providerCalls == SimilarUpstreamProviderCalls(gateway),
+            $"Expected recovered response to be cached; backend calls {reads.Requests.Count - calls}, provider calls {SimilarUpstreamProviderCalls(gateway) - providerCalls}. {timing}");
+    }
+
+    [Theory]
+    [InlineData(true, false, false)]
+    [InlineData(false, true, false)]
+    [InlineData(false, false, true)]
+    public async Task Jellyfin_SimilarFallsBackWithoutCachingUnavailableBulkReads(bool albumsUnavailable, bool artistsUnavailable, bool truncatedAlbums)
+    {
+        var reads = new SimilarLibraryReads
+        {
+            AlbumsUnavailable = albumsUnavailable,
+            ArtistsUnavailable = artistsUnavailable,
+            TruncatedAlbums = truncatedAlbums,
+            ArtistWithoutAlbums = true
+        };
         var gateway = SimilarPerformanceGateway();
         using var factory = SimilarPerformanceFactory(reads, gateway);
         using var client = CreateClientApiClient(factory);
@@ -207,6 +347,8 @@ public sealed partial class ProtocolRouteFixtureTests
         using var body = JsonDocument.Parse(await again.Content.ReadAsStringAsync());
         var ids = body.RootElement.GetProperty("Items").EnumerateArray().Select(item => item.GetProperty("Id").GetString()).ToArray();
         Assert.Equal(new[] { "quartz-best", "velvet-best", "ext-deezer-album-cedar-new" }, ids);
+        Assert.Equal(2, reads.Requests.Count(uri => QueryHelpers.ParseQuery(uri.Query).TryGetValue("searchTerm", out var term) && term.ToString() == "Cedar"));
+        Assert.Equal(2, reads.Requests.Count(uri => QueryHelpers.ParseQuery(uri.Query).TryGetValue("albumArtistIds", out var id) && id.ToString() == "cedar-id"));
         gateway.Verify(service => service.GetSimilarArtistsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "performance-seed", It.IsAny<int>()), Times.Exactly(2));
     }
 
@@ -235,10 +377,13 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.Equal(!truncated, native.Any(item => item.GetProperty("Id").GetString() == "quartz-best"));
     }
 
-    private static async Task<JsonElement[]> PreviousSimilarNativePicksAsync(HttpClient backend)
+    private static async Task<JsonElement[]> PreviousSimilarNativePicksAsync(HttpClient backend, bool readNativeSeed = true)
     {
-        using (RequestTiming.Current?.Stage("library"))
-        using (var seed = await backend.GetAsync("/Users/listener/Items/native-seed")) seed.EnsureSuccessStatusCode();
+        if (readNativeSeed)
+        {
+            using (RequestTiming.Current?.Stage("library"))
+            using (var seed = await backend.GetAsync("/Users/listener/Items/native-seed")) seed.EnsureSuccessStatusCode();
+        }
         using var slots = new SemaphoreSlim(4);
         var picks = await Task.WhenAll(SimilarPerformanceArtists().Select(async artist =>
         {
@@ -292,6 +437,11 @@ public sealed partial class ProtocolRouteFixtureTests
         return gateway;
     }
 
+    private static int SimilarUpstreamProviderCalls(Mock<IProtocolProviderGateway> gateway) =>
+        gateway.Invocations.Count(call => call.Method.Name is nameof(IProtocolProviderGateway.GetAlbumAsync) or
+            nameof(IProtocolProviderGateway.GetSimilarArtistsAsync) or nameof(IProtocolProviderGateway.GetArtistAlbumsAsync) or
+            nameof(IProtocolProviderGateway.SearchAsync));
+
     private static ProtocolFactory SimilarPerformanceFactory(SimilarLibraryReads reads, Mock<IProtocolProviderGateway> gateway,
         Action<IServiceCollection>? configure = null) => ClientDetailsFactory(_ => Json(404, "{}"), services =>
     {
@@ -323,6 +473,12 @@ public sealed partial class ProtocolRouteFixtureTests
         public bool Truncated;
         public bool AlbumsUnavailable;
         public bool ArtistsUnavailable;
+        public bool ArtistWithoutAlbums;
+        public bool EmptyAlbums;
+        public bool MissingCredits;
+        public bool TruncatedAlbums;
+        public bool ArtistLookupUnavailable;
+        public bool AlbumLookupUnavailable;
         public string[] VisibleLibraries = ["music"];
         public TaskCompletionSource? BulkStarted;
         public bool BulkFinished;
@@ -338,15 +494,29 @@ public sealed partial class ProtocolRouteFixtureTests
             if (bulk) BulkFinished = true;
             if (bulk && AlbumsUnavailable || uri.AbsolutePath == "/Artists/AlbumArtists" && !query.ContainsKey("searchTerm") && ArtistsUnavailable)
                 return Json(503, "{}");
+            if (ArtistLookupUnavailable && uri.AbsolutePath == "/Artists/AlbumArtists" && query.GetValueOrDefault("searchTerm").ToString() == "Quartz" ||
+                AlbumLookupUnavailable && uri.AbsolutePath == "/Users/listener/Items" && query.GetValueOrDefault("albumArtistIds").ToString() == "quartz-id")
+                return Json(503, "{}");
             const string rows = """{"Items":[{"Id":"velvet-best","Type":"MusicAlbum","Name":"Velvet favorite","AlbumArtist":"Velvet","AlbumArtists":[{"Id":"velvet-id","Name":"Velvet"}],"ProductionYear":1999},{"Id":"quartz-best","Type":"MusicAlbum","Name":"Quartz favorite","AlbumArtist":"Quartz","AlbumArtists":[{"Id":"quartz-id","Name":"Quartz"}],"ProductionYear":2010,"ChildCount":9,"Overview":"native-overview","Genres":["Rock"],"PrimaryImageAspectRatio":1.25,"ImageTags":{"Primary":"native-art"},"BackdropImageTags":["backdrop-art"],"UserData":{"PlayCount":19}},{"Id":"quartz-new","Type":"MusicAlbum","Name":"Quartz newest","AlbumArtist":"Quartz","AlbumArtists":[{"Id":"quartz-id","Name":"Quartz"}],"ProductionYear":2025},{"Id":"native-seed","Type":"MusicAlbum","Name":"Seed album","AlbumArtist":"Seed","AlbumArtists":[{"Id":"seed-id","Name":"Seed"}]}]}""";
             using var document = JsonDocument.Parse(rows);
             var albums = document.RootElement.GetProperty("Items").EnumerateArray().Select(item => item.Clone()).ToList();
+            if (EmptyAlbums) albums.Clear();
+            if (MissingCredits && bulk)
+            {
+                for (var index = 0; index < albums.Count; index++)
+                {
+                    var row = JsonNode.Parse(albums[index].GetRawText())!.AsObject();
+                    row.Remove("AlbumArtists");
+                    albums[index] = JsonSerializer.SerializeToElement(row);
+                }
+            }
             if (Ambiguous)
                 albums.Insert(0, JsonSerializer.SerializeToElement(new { Id = "quartz-namesake", Type = "MusicAlbum", Name = "Wrong namesake", AlbumArtist = "Quartz", AlbumArtists = new[] { new { Id = "quartz-other", Name = "Quartz" } } }));
-            if (bulk) return Json(200, JsonSerializer.Serialize(new { Items = albums }));
+            if (bulk) return Json(200, JsonSerializer.Serialize(new { Items = albums, TotalRecordCount = albums.Count + (TruncatedAlbums ? 1 : 0) }));
             if (uri.AbsolutePath == "/Artists/AlbumArtists")
             {
                 var artists = new List<object> { new { Id = "quartz-id", Name = "Quartz" }, new { Id = "velvet-id", Name = "Velvet" }, new { Id = "seed-id", Name = "Seed" } };
+                if (ArtistWithoutAlbums) artists.Add(new { Id = "cedar-id", Name = "Cedar" });
                 if (Ambiguous) artists.Insert(0, new { Id = "quartz-other", Name = "Quartz" });
                 var term = query.GetValueOrDefault("searchTerm").ToString();
                 if (term == "Quartz" && Ambiguous)

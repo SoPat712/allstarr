@@ -28,12 +28,15 @@ public sealed class ItemAppearancesReader(PersonalMixService mixes, IDbContextFa
         using var matching = RequestTiming.Current?.Stage("match");
         var owner = execution.RequireActor().EffectiveUserId!.Value;
         var token = execution.CancellationToken;
-        var songs = await SongsAsync(http, execution, itemId);
+        var mixRead = MixMembershipsAsync(execution);
+        var itemSongs = SongsAsync(http, execution, itemId);
+        await Task.WhenAll(itemSongs, mixRead);
+        var songs = await itemSongs;
         var recordings = songs.Select(song => song.CanonicalRecordingId).OfType<Guid>().ToHashSet();
         var locals = songs.Where(song => song.LocalId != null).Select(song => Native(song.LocalId!)).ToHashSet(StringComparer.Ordinal);
         var externals = songs.Where(song => song.Provider != null).Select(song => External(song.Provider!, song.ExternalId!))
             .ToHashSet(StringComparer.Ordinal);
-        var mixMemberships = await MixMembershipsAsync(execution);
+        var mixMemberships = await mixRead;
         var result = mixMemberships.Select(mix => mix.Item with
         { MatchedSongCount = mix.Songs.Count(song => Matches(song, recordings, locals, externals)) })
             .Where(item => item.MatchedSongCount > 0).ToList();
