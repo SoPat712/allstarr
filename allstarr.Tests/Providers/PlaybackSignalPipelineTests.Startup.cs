@@ -18,7 +18,7 @@ public sealed partial class PlaybackSignalPipelineTests
         var target = new RecoveryTarget(await AddScrobbleAccountAsync());
         await new PlaybackSignalPipeline(jobs, scrobbleAcceptance: new(factory, jobs, [target]))
             .RecordAsync(Signal(PlaybackTransition.Stop, "track-1", TimeSpan.FromSeconds(100).Ticks) with
-            { SubmittedTrack = new(null, null, "track-1", "Track", "Artist", null, null) });
+            { SubmittedTrack = new(null, null, "track-1", "Track", "", null, null) });
         await using (var db = await factory.CreateDbContextAsync())
         {
             (await db.Jobs.SingleAsync()).State = DurableJobState.Failed;

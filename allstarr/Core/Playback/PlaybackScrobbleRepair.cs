@@ -2,18 +2,20 @@ using System.Text.Json;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Jobs;
 using allstarr.Core.Intelligence;
+using allstarr.Core.Operations;
 using allstarr.Core.Storage;
 using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Core.Playback;
 
 public sealed class PlaybackScrobbleRepair(IDbContextFactory<AllstarrDbContext> factory, DurableJobQueue jobs,
-    IPlaybackTrackResolver? tracks = null)
+    IPlaybackTrackResolver? tracks = null, IPlatformClock? clock = null)
 {
     internal static readonly TimeSpan ReservationLifetime = TimeSpan.FromHours(1);
     internal static readonly TimeSpan MetadataRecoveryLifetime = TimeSpan.FromDays(7);
     internal const string MissingListenReason = "This delivery has no saved completed listen, so it cannot be resent or confirmed. You can dismiss it.";
     private Guid? recoveryBefore;
+    private DateTimeOffset UtcNow => clock?.UtcNow ?? DateTimeOffset.UtcNow;
 
     public async Task ReconcileStartupAsync(CancellationToken token)
     {
@@ -47,7 +49,10 @@ public sealed class PlaybackScrobbleRepair(IDbContextFactory<AllstarrDbContext> 
             x.TargetId,
             Recoverable = x.State == ScopedPlaybackScrobbleOutcome.Retrying && (x.DestinationJson != null || x.Kind == PlaybackScrobbleDeliveryKind.NowPlaying ||
                 x.Kind == PlaybackScrobbleDeliveryKind.Completed && x.SendCount == 0 && x.AttemptStartedAt == null &&
-                x.SubmissionJson == null && x.SignalPayloadJson == null)
+                x.SubmissionJson == null && x.SignalPayloadJson == null) ||
+                x.State == ScopedPlaybackScrobbleOutcome.PermanentFailure && x.Kind == PlaybackScrobbleDeliveryKind.Completed &&
+                x.DestinationJson != null && (x.TargetId == "lastfm" || x.TargetId == "listenbrainz") &&
+                (x.ProviderCode == "delivery-not-attempted" || x.ProviderCode == "song-unidentified" && x.SendCount == 0 && x.AttemptStartedAt == null)
         });
         var recent = await page.Take(100).ToArrayAsync(token);
         var history = owner == null && occurrence == null && recoveryBefore is { } before
@@ -66,7 +71,10 @@ public sealed class PlaybackScrobbleRepair(IDbContextFactory<AllstarrDbContext> 
     {
         await using var db = await factory.CreateDbContextAsync(token);
         var row = await db.PlaybackDeliveryCheckpoints.SingleAsync(x => x.Id == id, token);
-        if (row.State != ScopedPlaybackScrobbleOutcome.Retrying) return;
+        var priorState = row.State;
+        var unidentified = row.State == ScopedPlaybackScrobbleOutcome.PermanentFailure && row.ProviderCode == "song-unidentified";
+        if (row.State != ScopedPlaybackScrobbleOutcome.Retrying && row.ProviderCode is not ("delivery-not-attempted" or "song-unidentified")) return;
+        if (row.RetryAfter > UtcNow) return;
         var savedPayload = row.SignalPayloadJson == null ? null : JsonSerializer.Deserialize<PlaybackSignalPayload>(row.SignalPayloadJson);
         if (await IgnoreSyntheticAsync(db, row, savedPayload, token))
         {
@@ -75,13 +83,13 @@ public sealed class PlaybackScrobbleRepair(IDbContextFactory<AllstarrDbContext> 
         }
         if (row.Kind == PlaybackScrobbleDeliveryKind.Completed && row.ProviderCode == "pending" &&
             row.SendCount == 0 && row.AttemptStartedAt == null && row.SubmissionJson == null && row.SignalPayloadJson == null &&
-            row.UpdatedAt < DateTimeOffset.UtcNow - ReservationLifetime)
+            row.UpdatedAt < UtcNow - ReservationLifetime)
         {
             row.State = ScopedPlaybackScrobbleOutcome.Ignored;
             row.ProviderCode = "listen-not-completed";
             row.SafeMessage = null;
             row.Revision++;
-            row.UpdatedAt = DateTimeOffset.UtcNow;
+            row.UpdatedAt = UtcNow;
             await db.SaveChangesAsync(token);
             return;
         }
@@ -101,9 +109,10 @@ public sealed class PlaybackScrobbleRepair(IDbContextFactory<AllstarrDbContext> 
         }
         var restored = await RestorePayloadAsync(db, row, token);
         var payload = restored.Payload;
+        if (unidentified && (payload == null || !HasSavedCompletedListen(row))) return;
         await using var transaction = await db.Database.BeginTransactionAsync(token);
         if (!await db.PlaybackDeliveryCheckpoints.AsNoTracking().AnyAsync(x => x.Id == row.Id &&
-                x.Revision == row.Revision && x.State == ScopedPlaybackScrobbleOutcome.Retrying, token) ||
+                x.Revision == row.Revision && x.State == priorState, token) ||
             await HasActiveDeliveryAsync(db, row, token)) return;
         if (await IgnoreSyntheticAsync(db, row, payload, token))
         {
@@ -123,7 +132,7 @@ public sealed class PlaybackScrobbleRepair(IDbContextFactory<AllstarrDbContext> 
         {
             var observedAt = row.SignalPayloadJson == null ? row.UpdatedAt :
                 JsonSerializer.Deserialize<PlaybackSignalPayload>(row.SignalPayloadJson)?.ObservedAt ?? row.UpdatedAt;
-            var expired = DateTimeOffset.UtcNow - observedAt >= MetadataRecoveryLifetime;
+            var expired = UtcNow - observedAt >= MetadataRecoveryLifetime;
             row.State = expired ? ScopedPlaybackScrobbleOutcome.PermanentFailure : ScopedPlaybackScrobbleOutcome.Retrying;
             row.ProviderCode = expired ? "song-unidentified" : "metadata-unavailable";
             row.SafeMessage = expired ? "We couldn't identify this song after seven days. This listen cannot be sent. You can dismiss it."
@@ -134,30 +143,34 @@ public sealed class PlaybackScrobbleRepair(IDbContextFactory<AllstarrDbContext> 
         {
             var reservation = row.Kind == PlaybackScrobbleDeliveryKind.Completed && row.SendCount == 0 &&
                 row.AttemptStartedAt == null && row.SubmissionJson == null;
-            var ended = row.UpdatedAt < DateTimeOffset.UtcNow - ReservationLifetime || row.SignalPayloadJson != null &&
+            var ended = row.UpdatedAt < UtcNow - ReservationLifetime || row.SignalPayloadJson != null &&
                 JsonSerializer.Deserialize<PlaybackSignalPayload>(row.SignalPayloadJson)?.Transition is PlaybackTransition.Stop or PlaybackTransition.InferredStop;
             row.State = reservation ? ScopedPlaybackScrobbleOutcome.Ignored : ScopedPlaybackScrobbleOutcome.PermanentFailure;
             row.ProviderCode = reservation ? ended ? "listen-not-completed" : "listen-incomplete" : "payload-unavailable";
             row.SafeMessage = reservation ? null : "No completed playback observation is available for this delivery.";
         }
-        else if (!enabled || row.SendCount > 0 || row.ProviderCode == "recovery-queued")
+        else if (!enabled)
         {
-            row.State = ScopedPlaybackScrobbleOutcome.PermanentFailure;
+            row.State = ScopedPlaybackScrobbleOutcome.Retrying;
             row.ProviderCode = "delivery-not-attempted";
-            row.SafeMessage = "The delivery job ended without completing this destination. Check the saved account and explicitly retry this listen.";
+            row.SafeMessage = "The saved listener is unavailable. Delivery will retry when it is available.";
+            row.RetryAfter = UtcNow + BoundPlaybackScrobbleDelivery.RetryDelay(row.Revision - row.SendCount + 1);
         }
         else
         {
+            DateTimeOffset? availableAt = row.ProviderCode == "recovery-queued" || row.SendCount > 0
+                ? UtcNow + BoundPlaybackScrobbleDelivery.RetryDelay(row.Revision - row.SendCount + 1) : null;
+            row.State = ScopedPlaybackScrobbleOutcome.Retrying;
             row.ProviderCode = "recovery-queued";
             row.SafeMessage = "The unsent listen was queued again for its saved destination.";
             row.RetryAfter = null;
             row.SignalPayloadJson = JsonSerializer.Serialize(payload with { DestinationTargets = [row.TargetId] });
             await jobs.EnqueueInExistingTransactionAsync(db, new DurableJobEnqueueRequest<PlaybackSignalPayload>(
                 PlaybackSignalPipeline.JobType, $"scrobble-recover:{row.Id:N}:{row.Revision + 1}",
-                payload with { DestinationTargets = [row.TargetId] }, row.OwnerUserId), token);
+                payload with { DestinationTargets = [row.TargetId] }, row.OwnerUserId, AvailableAt: availableAt), token);
         }
         row.Revision++;
-        row.UpdatedAt = DateTimeOffset.UtcNow;
+        row.UpdatedAt = UtcNow;
         await db.SaveChangesAsync(token);
         await transaction.CommitAsync(token);
     }
@@ -201,15 +214,8 @@ public sealed class PlaybackScrobbleRepair(IDbContextFactory<AllstarrDbContext> 
                 ScopedPlaybackScrobbleDelivery.CheckpointKey(saved) != row.SignalKey) return new(null, metadataUnavailable);
             if (await SyntheticActivityPolicy.IsExcludedAsync(db, saved.Scope, saved.ItemId, token)) return new(saved);
             if (row.Kind == PlaybackScrobbleDeliveryKind.NowPlaying || row.SubmissionJson != null) return new(saved);
-            var metadata = saved.SubmittedTrack;
-            if ((metadata?.DurationMilliseconds is not > 0 || string.IsNullOrWhiteSpace(metadata?.Title) || string.IsNullOrWhiteSpace(metadata?.Artist)) && tracks != null)
-            {
-                try { metadata = await tracks.ResolveAsync(saved, token) ?? metadata; }
-                catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
-                catch (Exception) { }
-            }
-            metadataUnavailable |= saved.Transition != PlaybackTransition.Submission && metadata?.DurationMilliseconds is not > 0 ||
-                string.IsNullOrWhiteSpace(metadata?.Title) || string.IsNullOrWhiteSpace(metadata?.Artist);
+            var metadata = await RestoreMetadataAsync(db, saved, token);
+            metadataUnavailable |= string.IsNullOrWhiteSpace(metadata?.Title) || string.IsNullOrWhiteSpace(metadata?.Artist);
             if (PlaybackSignalJobHandler.Classify(saved, metadata) == ListeningEventState.Completed && metadata != null &&
                 !string.IsNullOrWhiteSpace(metadata.Title) && !string.IsNullOrWhiteSpace(metadata.Artist))
             {
@@ -221,7 +227,7 @@ public sealed class PlaybackScrobbleRepair(IDbContextFactory<AllstarrDbContext> 
                 row.SubmissionJson ??= JsonSerializer.Serialize(new PlaybackScrobbleSubmission(saved.Transition,
                     new(metadata.Title, metadata.Artist, metadata.Album, metadata.DurationMilliseconds,
                         metadata.AlbumArtist, metadata.RecordingMusicBrainzId, metadata.TrackNumber,
-                        ClientClass: saved.ClientClass, DeviceClass: saved.DeviceClass), saved.PositionTicks, occurredAt));
+                        ClientClass: saved.ClientClass, DeviceClass: saved.DeviceClass, Isrc: metadata.Isrc), saved.PositionTicks, occurredAt));
                 return new(saved);
             }
         }
@@ -244,15 +250,8 @@ public sealed class PlaybackScrobbleRepair(IDbContextFactory<AllstarrDbContext> 
                 row.SignalPayloadJson ??= JsonSerializer.Serialize(saved);
                 if (await SyntheticActivityPolicy.IsExcludedAsync(db, saved.Scope, saved.ItemId, token))
                     return new(saved);
-                var metadata = saved.SubmittedTrack;
-                if ((metadata?.DurationMilliseconds is not > 0 || string.IsNullOrWhiteSpace(metadata?.Title) || string.IsNullOrWhiteSpace(metadata?.Artist)) && tracks != null)
-                {
-                    try { metadata = await tracks.ResolveAsync(saved, token) ?? metadata; }
-                    catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
-                    catch (Exception) { }
-                }
-                metadataUnavailable |= saved.Transition != PlaybackTransition.Submission && metadata?.DurationMilliseconds is not > 0 ||
-                    string.IsNullOrWhiteSpace(metadata?.Title) || string.IsNullOrWhiteSpace(metadata?.Artist);
+                var metadata = await RestoreMetadataAsync(db, saved, token);
+                metadataUnavailable |= string.IsNullOrWhiteSpace(metadata?.Title) || string.IsNullOrWhiteSpace(metadata?.Artist);
                 if (PlaybackSignalJobHandler.Classify(saved, metadata) != ListeningEventState.Completed ||
                     metadata == null || string.IsNullOrWhiteSpace(metadata.Title) || string.IsNullOrWhiteSpace(metadata.Artist)) continue;
                 var occurredAt = saved.ObservedAt;
@@ -261,7 +260,7 @@ public sealed class PlaybackScrobbleRepair(IDbContextFactory<AllstarrDbContext> 
                 row.SubmissionJson ??= JsonSerializer.Serialize(new PlaybackScrobbleSubmission(saved.Transition,
                     new(metadata.Title, metadata.Artist, metadata.Album, metadata.DurationMilliseconds,
                         metadata.AlbumArtist, metadata.RecordingMusicBrainzId, metadata.TrackNumber,
-                        ClientClass: saved.ClientClass, DeviceClass: saved.DeviceClass), saved.PositionTicks, occurredAt));
+                        ClientClass: saved.ClientClass, DeviceClass: saved.DeviceClass, Isrc: metadata.Isrc), saved.PositionTicks, occurredAt));
                 row.SignalPayloadJson = JsonSerializer.Serialize(saved with { SubmittedTrack = metadata, DestinationTargets = [row.TargetId] });
                 return new(saved);
             }
@@ -269,18 +268,37 @@ public sealed class PlaybackScrobbleRepair(IDbContextFactory<AllstarrDbContext> 
         }
         var track = new ScopedPlaybackTrack(listen.Title, listen.Artist, listen.Album, listen.DurationMilliseconds,
             listen.AlbumArtist, listen.RecordingMusicBrainzId, listen.TrackNumber, listen.ChosenByUser,
-            listen.ClientClass, listen.DeviceClass);
+            listen.ClientClass, listen.DeviceClass, listen.Isrc);
         var payload = new PlaybackSignalPayload(new(row.OwnerUserId, listen.Protocol, listen.BackendInstanceId),
             PlaybackTransition.Submission, listen.TrackReference, null, null, listen.PositionTicks, listen.ListenedAt.Value,
             row.SignalKey, listen.OccurrenceKey, listen.ClientClass, listen.DeviceClass,
             new(listen.LibraryTrackId, listen.CanonicalRecordingId, listen.TrackReference, listen.Title, listen.Artist,
-                listen.Album, listen.DurationMilliseconds, listen.AlbumArtist, listen.RecordingMusicBrainzId, listen.TrackNumber),
+                listen.Album, listen.DurationMilliseconds, listen.AlbumArtist, listen.RecordingMusicBrainzId, listen.TrackNumber, Isrc: listen.Isrc),
             SourceKind: listen.SourceKind, DestinationTargets: [row.TargetId]);
         if (ScopedPlaybackScrobbleDelivery.CheckpointKey(payload) != row.SignalKey) return new(null, metadataUnavailable);
         row.SignalPayloadJson = JsonSerializer.Serialize(payload);
         row.SubmissionJson ??= JsonSerializer.Serialize(new PlaybackScrobbleSubmission(PlaybackTransition.Submission,
             track, listen.PositionTicks, listen.ListenedAt.Value));
         return new(payload);
+    }
+
+    private async Task<PlaybackTrackSnapshot?> RestoreMetadataAsync(AllstarrDbContext db, PlaybackSignalPayload payload, CancellationToken token)
+    {
+        var metadata = payload.SubmittedTrack;
+        if (!string.IsNullOrWhiteSpace(metadata?.Title) && !string.IsNullOrWhiteSpace(metadata.Artist)) return metadata;
+        var listen = await db.ListeningEvents.AsNoTracking().SingleOrDefaultAsync(x => x.OwnerUserId == payload.Scope.OwnerUserId &&
+            x.Protocol == payload.Scope.Protocol && x.BackendInstanceId == payload.Scope.BackendInstanceId &&
+            x.OccurrenceKey == (payload.OccurrenceKey ?? payload.SignalKey), token);
+        if (!string.IsNullOrWhiteSpace(listen?.Title) && !string.IsNullOrWhiteSpace(listen.Artist))
+            return new(listen.LibraryTrackId, listen.CanonicalRecordingId, payload.ItemId, listen.Title, listen.Artist,
+                listen.Album, listen.DurationMilliseconds, listen.AlbumArtist, listen.RecordingMusicBrainzId, listen.TrackNumber, Isrc: listen.Isrc);
+        if (tracks != null)
+        {
+            try { metadata = await tracks.ResolveAsync(payload, token) ?? metadata; }
+            catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
+            catch (Exception) { }
+        }
+        return metadata;
     }
 
     public async Task<bool> ResolveAsync(Guid userId, Guid deliveryId, long revision, string action,
@@ -316,6 +334,10 @@ public sealed class PlaybackScrobbleRepair(IDbContextFactory<AllstarrDbContext> 
     internal static bool CanConfirm(PlaybackDeliveryCheckpointEntity row) =>
         row.ProviderCode is "ambiguous" or "verification-pending" or "destination-unbound" || BoundPlaybackScrobbleDelivery.IsUncertain(row);
 
+    internal static bool CanDismiss(PlaybackDeliveryCheckpointEntity row) =>
+        row.Kind == PlaybackScrobbleDeliveryKind.Completed && row.State == ScopedPlaybackScrobbleOutcome.PermanentFailure &&
+        (row.ProviderCode == "song-unidentified" || !HasSavedCompletedListen(row));
+
     private async Task<bool> ResolveCoreAsync(Guid userId, Guid deliveryId, long revision, string action,
         long? accountRevision, CancellationToken token, Guid? destinationAccountId)
     {
@@ -330,11 +352,11 @@ public sealed class PlaybackScrobbleRepair(IDbContextFactory<AllstarrDbContext> 
             throw new InvalidOperationException("Now-playing notices expire and cannot be resent or confirmed.");
         if (action == "dismiss")
         {
-            if (row.State != ScopedPlaybackScrobbleOutcome.PermanentFailure || HasSavedCompletedListen(row))
+            if (!CanDismiss(row))
                 throw new InvalidOperationException("Only a delivery without a saved completed listen can be dismissed.");
             row.State = ScopedPlaybackScrobbleOutcome.Ignored;
             row.ProviderCode = "dismissed";
-            row.SafeMessage = "The listener dismissed this delivery because no saved completed listen was available.";
+            row.SafeMessage = "The listener dismissed this delivery.";
             row.RetryAfter = null;
             row.AttemptStartedAt = null;
             row.RequiresReauthentication = false;

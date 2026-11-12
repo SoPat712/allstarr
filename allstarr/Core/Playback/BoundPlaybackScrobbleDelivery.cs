@@ -71,6 +71,9 @@ public sealed class BoundPlaybackScrobbleDelivery(IDbContextFactory<AllstarrDbCo
     internal static bool IsUncertain(PlaybackDeliveryCheckpointEntity row) =>
         !row.ReplaySafe && (row.AttemptStartedAt != null || row.ProviderCode is "ambiguous" or "verification-pending");
 
+    internal static TimeSpan RetryDelay(long attempt) =>
+        TimeSpan.FromSeconds(Math.Min(21600, 30 * Math.Pow(2, Math.Clamp(attempt - 1, 0, 10))));
+
     internal static SemaphoreSlim Gate(Guid owner, string key, string target) =>
         Gates[(int)((uint)HashCode.Combine(owner, key, target) % Gates.Length)];
 
@@ -128,6 +131,19 @@ public sealed class BoundPlaybackScrobbleDelivery(IDbContextFactory<AllstarrDbCo
             if (db.Entry(row).State == EntityState.Detached) db.Add(row);
         }
         var account = JsonSerializer.Deserialize<ProviderAccountContext>(row.DestinationJson!)!;
+        if (row.RequiresReauthentication && !IsUncertain(row))
+        {
+            var current = await db.ProviderAccounts.AsNoTracking().SingleOrDefaultAsync(x => x.Id == account.AccountId &&
+                x.ProviderId == target.ProviderId && x.Enabled && x.OwnerUserId == account.OwnerUserId &&
+                (x.OwnerUserId == payload.Scope.OwnerUserId || x.OwnerUserId == null), token);
+            if (current != null && current.Revision > account.Revision)
+            {
+                account = new(current.Id, current.ProviderId, current.Scope, current.Revision, current.Enabled,
+                    current.OwnerUserId, "scrobble-repair", current.SecretReferenceId);
+                row.DestinationAccountRevision = current.Revision;
+                row.DestinationJson = JsonSerializer.Serialize(account);
+            }
+        }
         row.SubmissionJson ??= JsonSerializer.Serialize(new PlaybackScrobbleSubmission(payload.Transition, track, payload.PositionTicks, occurredAt));
         row.SignalPayloadJson ??= JsonSerializer.Serialize(payload);
         var submission = JsonSerializer.Deserialize<PlaybackScrobbleSubmission>(row.SubmissionJson)!;
@@ -149,8 +165,10 @@ public sealed class BoundPlaybackScrobbleDelivery(IDbContextFactory<AllstarrDbCo
         }
         catch (Exception ex) when (ex is UnauthorizedAccessException or KeyNotFoundException or InvalidOperationException)
         {
-            var unavailable = ScopedPlaybackScrobbleResult.Permanent("destination-changed",
-                "Reconnect the saved destination account, then explicitly retry this listen with its current revision.", true);
+            var unavailable = ScopedPlaybackScrobbleResult.Retrying("destination-changed",
+                "Reconnect the saved destination account. This listen will retry automatically with that account.", RetryDelay(row.Revision - row.SendCount + 1))
+                with
+            { RequiresReauthentication = true };
             unavailable = EfPlaybackDeliveryCheckpointStore.ExpireNotice(kind, unavailable);
             await db.SaveChangesAsync(token);
             await checkpoints.RecordAsync(payload.Scope.OwnerUserId, occurrence, key, kind, target.ProviderId, unavailable, token);
@@ -173,7 +191,10 @@ public sealed class BoundPlaybackScrobbleDelivery(IDbContextFactory<AllstarrDbCo
         catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
         catch (UnauthorizedAccessException)
         {
-            result = ScopedPlaybackScrobbleResult.Permanent("destination-changed", "The saved destination account needs reauthentication or revision repair.", true);
+            result = ScopedPlaybackScrobbleResult.Retrying("destination-changed",
+                "Reconnect the saved destination account. This listen will retry automatically with that account.", RetryDelay(row.Revision - row.SendCount + 1))
+                with
+            { RequiresReauthentication = true };
         }
         catch (Exception)
         {
@@ -184,10 +205,10 @@ public sealed class BoundPlaybackScrobbleDelivery(IDbContextFactory<AllstarrDbCo
         result = EfPlaybackDeliveryCheckpointStore.ExpireNotice(kind, result);
         if (result.Outcome == ScopedPlaybackScrobbleOutcome.Retrying)
         {
-            if (!replay && result.ProviderCode is not ("29" or "429" or "http-429" or "8" or "11" or "16"))
+            if (!replay && result.ProviderCode is not ("29" or "429" or "http-429" or "8" or "11" or "16" or "destination-changed"))
                 result = ScopedPlaybackScrobbleResult.Permanent("ambiguous", "The destination did not confirm whether it accepted this listen. Check its history before explicitly retrying.");
             else
-                result = result with { RetryAfter = result.RetryAfter ?? TimeSpan.FromSeconds(Math.Min(21600, 30 * Math.Pow(2, Math.Min(row.SendCount - 1, 10)))) };
+                result = result with { RetryAfter = result.RetryAfter ?? RetryDelay(row.SendCount) };
         }
         if (result.ProviderCode == "ambiguous" && target is IVerifiablePlaybackScrobbleTarget)
             result = await VerifyUncertainAsync(target, payload, account, submission, row, token)

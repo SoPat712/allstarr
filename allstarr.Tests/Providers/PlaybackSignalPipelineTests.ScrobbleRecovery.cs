@@ -537,7 +537,7 @@ public sealed partial class PlaybackSignalPipelineTests
     }
 
     [Fact]
-    public async Task ScrobbleRecovery_UnprocessedRecoveryJobRequiresAttentionInsteadOfLooping()
+    public async Task ScrobbleRecovery_InterruptedRecoveryJobStaysRetryableWithDelay()
     {
         var target = new RecoveryTarget(await AddScrobbleAccountAsync());
         await new PlaybackSignalPipeline(jobs, scrobbleAcceptance: new(factory, jobs, [target]))
@@ -547,18 +547,19 @@ public sealed partial class PlaybackSignalPipelineTests
             (await db.Jobs.SingleAsync()).State = DurableJobState.Failed;
             await db.SaveChangesAsync();
         }
-        var handler = new PlaybackSignalJobHandler(new Writer(), new Scrobbles(), new Lyrics(), factory, playbackTracks, recoveryJobs: jobs);
-        await handler.RecoverAsync(default);
+        var repair = new PlaybackScrobbleRepair(factory, jobs, playbackTracks, clock);
+        await repair.ReconcileStartupAsync(default);
         var claim = (await jobs.ClaimNextAsync("recovery", [PlaybackSignalPipeline.JobType]))!;
-        await jobs.CompleteAsync(claim, DurableJobCompletion.Success());
-        await ((IDurableJobRecoveryHandler)handler).RecoverCompletedAsync(claim, default);
-        await handler.RecoverAsync(default);
+        await jobs.CompleteAsync(claim, DurableJobCompletion.Cancelled());
+        await repair.RecoverPendingAsync(default);
+        await repair.RecoverPendingAsync(default);
         await using var verify = await factory.CreateDbContextAsync();
-        Assert.Equal(2, await verify.Jobs.CountAsync());
+        Assert.Equal(3, await verify.Jobs.CountAsync());
         var row = await verify.PlaybackDeliveryCheckpoints.SingleAsync();
-        Assert.Equal(ScopedPlaybackScrobbleOutcome.PermanentFailure, row.State);
-        Assert.Equal("delivery-not-attempted", row.ProviderCode);
-        Assert.True(await new PlaybackScrobbleRepair(factory, jobs).ResolveAsync(user, row.Id, row.Revision, "retry", 1, default));
+        Assert.Equal(ScopedPlaybackScrobbleOutcome.Retrying, row.State);
+        Assert.Equal("recovery-queued", row.ProviderCode);
+        Assert.Null(await jobs.ClaimNextAsync("recovery", [PlaybackSignalPipeline.JobType]));
+        clock.UtcNow += TimeSpan.FromMinutes(5);
         await AssertRecoveredDestinationAsync(target);
     }
 

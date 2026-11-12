@@ -183,7 +183,7 @@ public sealed class PlaybackSignalJobHandler(IRecommendationSignalWriter signals
             }
             if (payload.Transition is PlaybackTransition.Start or PlaybackTransition.InferredStart) await lyrics.PrefetchAsync(payload, cancellationToken);
             if (payload.RelayExternally)
-                await scrobbles.DeliverAsync(payload, cancellationToken);
+                await scrobbles.DeliverAsync(payload with { SubmittedTrack = track }, cancellationToken);
             return DurableJobCompletion.Success();
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { return DurableJobCompletion.Cancelled(); }
@@ -194,7 +194,7 @@ public sealed class PlaybackSignalJobHandler(IRecommendationSignalWriter signals
             {
                 var key = ScopedPlaybackScrobbleDelivery.CheckpointKey(payload);
                 await ownerDb.PlaybackDeliveryCheckpoints.Where(x => x.OwnerUserId == payload.Scope.OwnerUserId &&
-                        x.SignalKey == key && x.Kind == PlaybackScrobbleDeliveryKind.Completed && x.State == ScopedPlaybackScrobbleOutcome.Retrying && x.AttemptStartedAt == null && x.SendCount > 0)
+                        x.SignalKey == key && x.Kind == PlaybackScrobbleDeliveryKind.Completed && x.State == ScopedPlaybackScrobbleOutcome.Retrying && x.AttemptStartedAt == null && x.SendCount > 0 && x.ProviderCode != "destination-changed")
                     .ExecuteUpdateAsync(setters => setters.SetProperty(x => x.State, ScopedPlaybackScrobbleOutcome.PermanentFailure)
                         .SetProperty(x => x.ProviderCode, "retry-exhausted")
                         .SetProperty(x => x.SafeMessage, "Automatic retries are exhausted. Check the destination and explicitly retry this saved listen.")
@@ -348,7 +348,7 @@ public sealed class PlaybackSignalJobHandler(IRecommendationSignalWriter signals
         {
             PlaybackTransition.Submission => ListeningEventState.Completed,
             PlaybackTransition.Progress or PlaybackTransition.Stop or PlaybackTransition.InferredStop
-                when ScopedPlaybackScrobbleDelivery.EligibleForCompletedScrobble(track?.DurationMilliseconds, payload.PositionTicks)
+                when track != null && ScopedPlaybackScrobbleDelivery.EligibleForCompletedScrobble(track.DurationMilliseconds, payload.PositionTicks)
                 => ListeningEventState.Completed,
             PlaybackTransition.Stop when started && track != null && !payload.Failed && payload.StreamSource?.RejectionReason == null
                 => ListeningEventState.Skipped,

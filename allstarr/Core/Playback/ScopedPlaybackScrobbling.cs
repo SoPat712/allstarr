@@ -44,7 +44,7 @@ public sealed class ScopedPlaybackScrobbleDeliveryException(
 }
 public sealed record ScopedPlaybackTrack(string Title, string Artist, string? Album, long? DurationMilliseconds,
     string? AlbumArtist = null, string? RecordingMusicBrainzId = null, int? TrackNumber = null,
-    bool ChosenByUser = true, string? ClientClass = null, string? DeviceClass = null);
+    bool ChosenByUser = true, string? ClientClass = null, string? DeviceClass = null, string? Isrc = null);
 public interface IExactScopePlaybackScrobbleTarget
 {
     string ProviderId { get; }
@@ -86,8 +86,8 @@ public sealed class ScopedPlaybackScrobbleDelivery(IDbContextFactory<AllstarrDbC
         var item = saved != null ? null : occurrence == null || string.IsNullOrWhiteSpace(occurrence.Title) || string.IsNullOrWhiteSpace(occurrence.Artist)
             ? payload.SubmittedTrack ?? await trackResolver.ResolveAsync(payload, cancellationToken)
             : null;
-        var title = saved?.Track.Title ?? occurrence?.Title ?? item?.Title;
-        var artist = saved?.Track.Artist ?? occurrence?.Artist ?? item?.Artist;
+        var title = saved?.Track.Title ?? (string.IsNullOrWhiteSpace(occurrence?.Title) ? item?.Title : occurrence.Title);
+        var artist = saved?.Track.Artist ?? (string.IsNullOrWhiteSpace(occurrence?.Artist) ? item?.Artist : occurrence.Artist);
         if (string.IsNullOrWhiteSpace(title) || string.IsNullOrWhiteSpace(artist)) return;
         var track = saved?.Track ?? new ScopedPlaybackTrack(title, artist, occurrence?.Album ?? item?.Album,
             occurrence?.DurationMilliseconds ?? item?.DurationMilliseconds,
@@ -96,7 +96,7 @@ public sealed class ScopedPlaybackScrobbleDelivery(IDbContextFactory<AllstarrDbC
             occurrence?.TrackNumber ?? item?.TrackNumber,
             occurrence?.ChosenByUser ?? true,
             occurrence?.ClientClass ?? payload.ClientClass,
-            occurrence?.DeviceClass ?? payload.DeviceClass);
+            occurrence?.DeviceClass ?? payload.DeviceClass, occurrence?.Isrc ?? item?.Isrc);
         if (payload.Transition is PlaybackTransition.Progress or PlaybackTransition.Stop or PlaybackTransition.InferredStop &&
             !EligibleForCompletedScrobble(track.DurationMilliseconds, payload.PositionTicks)) return;
         var kind = payload.Transition is PlaybackTransition.Start or PlaybackTransition.InferredStart
@@ -359,10 +359,11 @@ public sealed class ScopedPlaybackScrobbleDelivery(IDbContextFactory<AllstarrDbC
 
     public static bool EligibleForCompletedScrobble(long? durationMilliseconds, long? positionTicks)
     {
-        if (!durationMilliseconds.HasValue) return false;
-        var durationSeconds = durationMilliseconds.Value / 1000d;
-        if (durationSeconds < 30 || positionTicks is null || positionTicks < 0) return false;
+        if (positionTicks is null || positionTicks < 0) return false;
         var playedSeconds = positionTicks.Value / (double)TimeSpan.TicksPerSecond;
+        if (durationMilliseconds is not > 0) return playedSeconds >= 30;
+        var durationSeconds = durationMilliseconds.Value / 1000d;
+        if (durationSeconds < 30) return false;
         return playedSeconds >= Math.Min(durationSeconds / 2d, 240d);
     }
 }

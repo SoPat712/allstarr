@@ -21,7 +21,13 @@ public sealed partial class LastFmScopedPlaybackScrobbleTarget(HttpClient http, 
     public string ProviderId => "lastfm";
     public Task<bool> IsConfiguredAsync(IntelligenceScope scope, CancellationToken token) => accounts.HasAccountAsync(scope, ProviderId, token);
     public Task<bool> CanReplayAsync(IntelligenceScope scope, ProviderAccountContext account, CancellationToken token) =>
-        accounts.UseExactAsync(scope, account, (_, _) => Task.FromResult(false), token);
+        accounts.UseExactAsync(scope, account, (secret, _) =>
+        {
+            Required(secret, "apiKey");
+            Required(secret, "sharedSecret");
+            Required(secret, "sessionKey");
+            return Task.FromResult(false);
+        }, token);
     public Task<ProviderAccountContext?> FindDestinationAsync(IntelligenceScope scope, CancellationToken token) =>
         accounts.FindAccountAsync(scope, ProviderId, token);
     public Task<ScopedPlaybackScrobbleResult> DeliverBoundAsync(IntelligenceScope scope, ProviderAccountContext account,
@@ -259,8 +265,12 @@ public class ListenBrainzScopedPlaybackScrobbleTarget(HttpClient http, IScopedRe
     public string ProviderId => providerId;
     public Task<bool> IsConfiguredAsync(IntelligenceScope scope, CancellationToken token) => accounts.HasAccountAsync(scope, ProviderId, token);
     public Task<bool> CanReplayAsync(IntelligenceScope scope, ProviderAccountContext account, CancellationToken token) =>
-        accounts.UseExactAsync(scope, account, (secret, _) => Task.FromResult(
-            ProviderId == "listenbrainz" && ListenBrainzServiceEndpoint.FromSecret(secret, ProviderId).AbsoluteUri == "https://api.listenbrainz.org/1/"), token);
+        accounts.UseExactAsync(scope, account, (secret, _) =>
+        {
+            Required(secret, "token");
+            return Task.FromResult(ProviderId == "listenbrainz" &&
+                ListenBrainzServiceEndpoint.FromSecret(secret, ProviderId).AbsoluteUri == "https://api.listenbrainz.org/1/");
+        }, token);
     public Task<ProviderAccountContext?> FindDestinationAsync(IntelligenceScope scope, CancellationToken token) =>
         accounts.FindAccountAsync(scope, ProviderId, token);
     public Task<ScopedPlaybackScrobbleResult> DeliverBoundAsync(IntelligenceScope scope, ProviderAccountContext account,
@@ -296,6 +306,7 @@ public class ListenBrainzScopedPlaybackScrobbleTarget(HttpClient http, IScopedRe
         if (track.DurationMilliseconds is > 0 and <= MaximumDurationMilliseconds) additionalInfo["duration_ms"] = track.DurationMilliseconds.Value;
         if (Guid.TryParseExact(track.RecordingMusicBrainzId, "D", out var mbid) && mbid != Guid.Empty)
             additionalInfo["recording_mbid"] = mbid.ToString("D");
+        if (ProviderId == "listenbrainz" && !string.IsNullOrWhiteSpace(track.Isrc)) additionalInfo["isrc"] = track.Isrc;
         if (track.TrackNumber is > 0) additionalInfo["tracknumber"] = track.TrackNumber.Value.ToString(CultureInfo.InvariantCulture);
         if (!string.IsNullOrWhiteSpace(track.ClientClass)) additionalInfo["media_player"] = track.ClientClass;
         var metadata = new Dictionary<string, object>

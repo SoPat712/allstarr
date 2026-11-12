@@ -22,7 +22,8 @@ public sealed class ScrobbleDeliveriesController(IDbContextFactory<AllstarrDbCon
             x.Kind == PlaybackScrobbleDeliveryKind.Completed);
         if (targetId != null) query = query.Where(x => x.TargetId == targetId);
         if (attentionOnly) query = query.Where(x => x.State == ScopedPlaybackScrobbleOutcome.PermanentFailure ||
-            x.State == ScopedPlaybackScrobbleOutcome.Retrying && (x.SubmissionJson != null || x.ProviderCode == "metadata-unavailable"));
+            x.State == ScopedPlaybackScrobbleOutcome.Retrying && (x.SubmissionJson != null || x.ProviderCode == "metadata-unavailable" ||
+                x.ProviderCode == "delivery-not-attempted" || x.ProviderCode == "destination-changed"));
         if (before is { } cursor) query = query.Where(x => x.Id.CompareTo(cursor) < 0);
         var rows = await query.OrderByDescending(x => x.Id).Take(100).ToArrayAsync(token);
         var candidates = await db.ProviderAccounts.AsNoTracking().Where(x => x.Enabled &&
@@ -37,7 +38,7 @@ public sealed class ScrobbleDeliveriesController(IDbContextFactory<AllstarrDbCon
             state = x.State.ToString().ToLowerInvariant(),
             canResend = x.State is ScopedPlaybackScrobbleOutcome.PermanentFailure or ScopedPlaybackScrobbleOutcome.Retrying && PlaybackScrobbleRepair.HasSavedCompletedListen(x),
             canConfirm = x.State is ScopedPlaybackScrobbleOutcome.PermanentFailure or ScopedPlaybackScrobbleOutcome.Retrying && PlaybackScrobbleRepair.HasSavedCompletedListen(x) && PlaybackScrobbleRepair.CanConfirm(x),
-            canDismiss = x.State == ScopedPlaybackScrobbleOutcome.PermanentFailure && !PlaybackScrobbleRepair.HasSavedCompletedListen(x),
+            canDismiss = PlaybackScrobbleRepair.CanDismiss(x),
             unavailableReason = PlaybackScrobbleRepair.HasSavedCompletedListen(x) ? null : x.ProviderCode is "metadata-unavailable" or "song-unidentified" ? x.SafeMessage : PlaybackScrobbleRepair.MissingListenReason,
             x.ProviderCode,
             x.SafeMessage,
