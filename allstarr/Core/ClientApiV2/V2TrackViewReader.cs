@@ -6,18 +6,14 @@ namespace allstarr.Core.ClientApiV2;
 /// <summary>Reads the views of one track with the same readers as the v1 routes, so both answer alike.</summary>
 public sealed class V2TrackViewReader(ItemLyricsReader lyrics, ItemMatchReader matches, ILogger<V2TrackViewReader> logger)
 {
+    // Reading a track never opens its audio; a stream link comes only from POST /playback/resolve.
     public static readonly IReadOnlySet<string> Names = new HashSet<string>(StringComparer.Ordinal) { "lyrics", "lyricsSources", "match", "autoplay" };
-
-    // Reading a track never opens its audio; playback is only POST /playback/resolve. Older clients still ask for
-    // `playback`, so the name is accepted and always reported unavailable instead of failing the whole read.
-    public static readonly IReadOnlySet<string> Accepted = new HashSet<string>(Names, StringComparer.Ordinal) { "playback" };
 
     /// <param name="source">The library or service item the track was read from.</param>
     public async Task<(V2TrackViews Views, IReadOnlyDictionary<string, string> Status)> ReadAsync(HttpContext http,
         ProtocolExecutionContext execution, string source, IReadOnlySet<string> requested)
     {
         var status = new Dictionary<string, string>(StringComparer.Ordinal);
-        if (requested.Contains("playback")) status["playback"] = "unavailable";
         var views = new V2TrackViews();
         // The views share this request's per-request caches, so they are read one after another.
         if (requested.Contains("lyrics"))

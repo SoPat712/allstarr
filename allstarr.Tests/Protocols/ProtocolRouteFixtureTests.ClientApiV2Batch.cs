@@ -252,6 +252,7 @@ public sealed partial class ProtocolRouteFixtureTests
     [Theory]
     [InlineData("/allstarr/v2/tracks?ids=native1&views=lyrics,lyrics", 400)]
     [InlineData("/allstarr/v2/tracks?ids=native1&views=playback", 400)]
+    [InlineData("/allstarr/v2/tracks/native1?views=playback", 400)]
     [InlineData("/allstarr/v2/albums/album1?include=track", 400)]
     [InlineData("/allstarr/v2/albums/album1?views=more-by-artist,more-by-artist", 400)]
     [InlineData("/allstarr/v2/albums/trk_sbmF0aXZlMQ", 404)]

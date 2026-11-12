@@ -52,7 +52,7 @@ public sealed class V2TrackEndpoints(V2TrackReader reader, V2TrackViewReader vie
 
     public async Task<V2Result> GetAsync(HttpContext http, ProtocolExecutionContext execution, string id, string? include, string? view)
     {
-        if (!V2Query.TryNames(include, Includes, out var included) || !V2Query.TryNames(view, V2TrackViewReader.Accepted, out var requested))
+        if (!V2Query.TryNames(include, Includes, out var included) || !V2Query.TryNames(view, V2TrackViewReader.Names, out var requested))
             return new(400, null);
         var deadline = requested.Contains("autoplay") ? PageDeadline(execution) : execution.Deadline;
         using var timeout = requested.Contains("autoplay") ? new CancellationTokenSource(Remaining(deadline), clock) : null;
