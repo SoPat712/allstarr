@@ -349,6 +349,8 @@
     if (waiting) return `${waiting} waiting`;
     if (!provider(account.providerId)?.usesSignedSession && (!account.secret.configured || account.secret.revoked)) return "Sign in again";
     const checks = providerHealth(account.providerId).filter(item => !item.providerAccountId || item.providerAccountId === account.id);
+    // The service refused this account's own sign-in (an expired ARL, a revoked session): reconnecting fixes it.
+    if (checks.some(item => item.providerAccountId === account.id && item.signInExpired)) return "Sign-in expired";
     if (checks.some(item => item.health === "degraded" && item.reasonCode?.replaceAll("-", "_") === "service_unavailable")) return "Service down";
     return checks.some(item => item.health === "degraded") ? "Needs attention" : "Working";
   }

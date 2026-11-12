@@ -143,6 +143,7 @@
         next.stats = overview.stats;
         next.activity = overview.activity.items;
         next.providers = overview.providerHealth.providers;
+        next.signInExpired = overview.signInExpiredAccounts ?? [];
       }
       if (label === "Now playing") {
         nextPlayback = result.value as Awaited<ReturnType<typeof readNowPlaying>>;
@@ -222,6 +223,18 @@
   const attention = $derived.by(() => {
     if (!snapshot || !summary) return [];
     const items: Array<{ key: string; title: string; detail: string; consequence?: string; href: string; action: string }> = [];
+    // An expired sign-in comes first, and listeners see their own: they're the ones who can reconnect it.
+    const expired = snapshot.signInExpired ?? [];
+    const sourceName = (id: string) => providerDisplayName(snapshot?.providerCatalog ?? [], id);
+    if (expired.length)
+      items.push({
+        key: "signin",
+        title: expired.length === 1 ? `${sourceName(expired[0].providerId)} sign-in expired` : `${expired.length} sign-ins expired`,
+        detail: expired.map(account => `${sourceName(account.providerId)} · ${account.accountName}`).join(", ") + ".",
+        consequence: "Songs from them play from other sources until you reconnect.",
+        href: "#/integrations/accounts",
+        action: "Reconnect",
+      });
     if (summary.unresolved > 0)
       items.push({
         key: "unresolved",
@@ -250,7 +263,8 @@
       });
     else if (sourceIssues.length)
       items.push({ key: "source:unavailable", title: `${sourceIssues[0].providerName} can't play songs`, detail: humanize(sourceIssues[0].reason), href: "#/sources/services", action: "Review sources" });
-    return administrator ? items.toSorted((a, b) => Number(b.key.startsWith("health:") || b.key.startsWith("source:")) - Number(a.key.startsWith("health:") || a.key.startsWith("source:"))) : [];
+    const rank = (key: string) => key === "signin" ? 2 : key.startsWith("health:") || key.startsWith("source:") ? 1 : 0;
+    return administrator ? items.toSorted((a, b) => rank(b.key) - rank(a.key)) : items.filter(item => item.key === "signin");
   });
 
   onMount(() => {

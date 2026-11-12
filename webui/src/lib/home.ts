@@ -6,6 +6,7 @@ import type {
   HomeOverview,
   ActivityTask,
   ActivityItem,
+  SignInExpiredAccount,
 } from "./api";
 import { formatPlaybackSource } from "./sources";
 import { isProblem, isRoutineActivity } from "./activity";
@@ -17,6 +18,7 @@ export type HomeSnapshot = {
   providers?: ProviderSummary[];
   nowPlaying?: NowPlayingItem[];
   stats?: HomeOverview["stats"];
+  signInExpired?: SignInExpiredAccount[];
   failures: string[];
 };
 

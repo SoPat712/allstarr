@@ -300,7 +300,11 @@ export type HomeOverview = {
   };
   providerHealth: { providers: ProviderSummary[] };
   activity: ActivityResponse;
+  // Accounts the viewer may manage whose sign-in a service refused (an expired ARL, a revoked session).
+  signInExpiredAccounts?: SignInExpiredAccount[];
 };
+
+export type SignInExpiredAccount = { providerId: string; accountId: string; accountName: string };
 
 export type ProviderSetting = {
   key: string;
@@ -562,6 +566,9 @@ export type ProviderHealth = {
   provider: string;
   providerAccountId: string | null;
   providerAccountName: string | null;
+  // Set on an account's own row when the service refused its sign-in at the last decisive check.
+  signInExpired?: boolean;
+  signInCheckedAt?: string | null;
   capability: string;
   accountScope: string;
   supported: boolean;
