@@ -174,9 +174,10 @@ public sealed class PlaylistVirtualizationService(
             .OrderBy(link => link.CreatedAt).ToArrayAsync(token);
         var authorizedLinks = new List<PlaylistLinkRecord>();
         var authorizedTargetIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var hidden = personalMixes == null ? null : await personalMixes.HiddenExternalAsync(context, links, token);
         foreach (var link in links)
         {
-            if (personalMixes != null && !await personalMixes.IsExternalVisibleAsync(context, link, token)) continue;
+            if (hidden?.Contains(link.Id) == true) continue;
             if (link.TargetPlaylistId != null)
             {
                 if (visibleTargetIds != null)
@@ -258,11 +259,11 @@ public sealed class PlaylistVirtualizationService(
                 snapshot.OwnerUserId == owner && snapshot.PublishedAt.HasValue))
             .ToArrayAsync(token);
         var count = 0;
+        var hidden = personalMixes == null ? null : await personalMixes.HiddenExternalAsync(context, links, token);
         foreach (var link in links)
         {
             if (link.ProjectionMode == PlaylistProjectionMode.Target) continue;
-            if (personalMixes == null ? allstarr.Core.Music.PersonalMixService.IsExternalLink(link) :
-                !await personalMixes.IsExternalVisibleAsync(context, link, token)) continue;
+            if (hidden == null ? allstarr.Core.Music.PersonalMixService.IsExternalLink(link) : hidden.Contains(link.Id)) continue;
             count++;
         }
         return count + (personalMixes == null ? 0 : await personalMixes.PublishedCountAsync(context, token));

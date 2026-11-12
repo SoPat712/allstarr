@@ -74,6 +74,7 @@ public sealed partial class PersonalMixService
         var kinds = await PlaylistSourceKinds.LatestAsync(db, available.Select(link => link.Id).ToArray(), token);
         var links = available.Where(link => IsExternalLink(link) || (link.SourceProviderId is "spotify" or "apple-musickit") && kinds.GetValueOrDefault(link.Id) == PlaylistSourceKinds.Feed ||
             feeds?.Any(feed => (feed.ProviderAccountId == link.ProviderAccountId || link.ProviderAccountId == null) && feed.Source == link.SourceProviderId && feed.SourcePlaylistId == link.SourcePlaylistId) == true).ToArray();
+        if (links.Length == 0) return [];
         var reader = new DurablePlaylistProjectionReader(factory, libraryAccess, providers, policies);
         var policy = await policies.ResolveForUserAsync(user.Id, token);
         var publish = (bool)(await settings.GetAsync(PublishKey, token)).Value;
@@ -254,22 +255,48 @@ public sealed partial class PersonalMixService
         return true;
     }
 
-    internal async Task<bool> IsExternalVisibleAsync(ProtocolExecutionContext context, PlaylistLinkRecord link, CancellationToken token)
+    internal async Task<bool> IsExternalVisibleAsync(ProtocolExecutionContext context, PlaylistLinkRecord link, CancellationToken token) =>
+        !(await HiddenExternalAsync(context, [link], token)).Contains(link.Id);
+
+    // Checks a whole playlist list at once so listing stays a fixed number of queries. Ordinary playlists stay
+    // visible; mixes and service feeds need their owner's enabled link and a connected account.
+    internal async Task<IReadOnlySet<Guid>> HiddenExternalAsync(ProtocolExecutionContext context, IReadOnlyCollection<PlaylistLinkRecord> links,
+        CancellationToken token)
     {
+        var hidden = new HashSet<Guid>();
+        if (links.Count == 0) return hidden;
         await using var db = await factory.CreateDbContextAsync(token);
-        if (!IsExternalLink(link) && (link.ImportMode != PlaylistImportMode.Linked || link.SourceProviderId is not ("spotify" or "apple-musickit") ||
-            (await PlaylistSourceKinds.LatestAsync(db, [link.Id], token)).GetValueOrDefault(link.Id) != PlaylistSourceKinds.Feed)) return true;
-        if (context.Actor?.EffectiveUserId is not { } owner || link.OwnerUserId != owner ||
-            IsExternalLink(link) && !(bool)(await settings.GetAsync(PublishKey, token)).Value) return false;
-        var user = await BrowseUserAsync(db, owner, token, context);
-        if (user == null) return false;
+        var kinds = await PlaylistSourceKinds.LatestAsync(db, links.Where(link => !IsExternalLink(link) &&
+            link.ImportMode == PlaylistImportMode.Linked && link.SourceProviderId is "spotify" or "apple-musickit").Select(link => link.Id).ToArray(), token);
+        var gated = links.Where(link => IsExternalLink(link) || kinds.GetValueOrDefault(link.Id) == PlaylistSourceKinds.Feed).ToArray();
+        if (gated.Length == 0) return hidden;
+        var owner = context.Actor?.EffectiveUserId;
+        var owned = gated.Where(link => link.OwnerUserId == owner).ToArray();
+        hidden.UnionWith(gated.Where(link => link.OwnerUserId != owner).Select(link => link.Id));
+        if (owned.Length == 0) return hidden;
+        if (owned.Any(IsExternalLink) && !(bool)(await settings.GetAsync(PublishKey, token)).Value)
+        {
+            hidden.UnionWith(owned.Where(IsExternalLink).Select(link => link.Id));
+            owned = owned.Where(link => !IsExternalLink(link)).ToArray();
+            if (owned.Length == 0) return hidden;
+        }
+        var user = await BrowseUserAsync(db, owner!.Value, token, context);
+        if (user == null)
+        {
+            hidden.UnionWith(owned.Select(link => link.Id));
+            return hidden;
+        }
         var row = await RowAsync(db, user, token);
         if (row != null && System.Text.Json.JsonSerializer.Deserialize<PersonalMixDocument>(row.PayloadJson)!.AppsOptInVersion < 3)
-            await SnapshotAsync(owner, token);
-        var enabled = await db.PlaylistLinks.AsNoTracking().AnyAsync(item => item.Id == link.Id && item.Enabled, token);
-        return enabled &&
-            await db.ProviderAccounts.AsNoTracking().AnyAsync(account => (account.Id == link.ProviderAccountId || link.ProviderAccountId == null) &&
-                account.ProviderId == link.SourceProviderId && account.OwnerUserId == owner && account.Enabled, token);
+            await SnapshotAsync(user.Id, token);
+        var ids = owned.Select(link => link.Id).ToArray();
+        var enabled = (await db.PlaylistLinks.AsNoTracking().Where(item => ids.Contains(item.Id) && item.Enabled)
+            .Select(item => item.Id).ToArrayAsync(token)).ToHashSet();
+        var accounts = await db.ProviderAccounts.AsNoTracking().Where(account => account.OwnerUserId == user.Id && account.Enabled)
+            .Select(account => new { account.Id, account.ProviderId }).ToArrayAsync(token);
+        hidden.UnionWith(owned.Where(link => !enabled.Contains(link.Id) || !accounts.Any(account =>
+            (account.Id == link.ProviderAccountId || link.ProviderAccountId == null) && account.ProviderId == link.SourceProviderId)).Select(link => link.Id));
+        return hidden;
     }
 
     internal async Task<VirtualPlaylistReadModel> FilterExternalTracksAsync(ProtocolExecutionContext context,
