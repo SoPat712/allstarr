@@ -162,7 +162,7 @@ test("listener navigation exposes personal surfaces and blocks operator workspac
 
   await page.getByRole("button", { name: "More destinations" }).click();
   const more = page.getByRole("navigation", { name: "More destinations" });
-  await expect(more.getByRole("link", { name: /Playback settings/ })).toBeVisible();
+  await expect(more.getByRole("link", { name: /Listening settings/ })).toBeVisible();
   await expect(more.getByRole("link", { name: /Sources/ })).toBeVisible();
   await expect(more.getByRole("link", { name: /Connect apps/ })).toBeVisible();
   await expect(more.getByRole("link", { name: /Settings/ })).toHaveCount(0);
@@ -190,7 +190,7 @@ test("listener navigation exposes personal surfaces and blocks operator workspac
     expect(requests.filter((request) => !request.includes("/api/admin/auth/") && !request.includes("/api/admin/updates/stream"))).toEqual([]);
   }
   await expect(page.getByRole("link", { name: "Go to Home" })).toBeVisible();
-  await expect(page.getByRole("link", { name: "Playback settings" }).last()).toBeVisible();
+  await expect(page.getByRole("link", { name: "Listening settings" }).last()).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 });
 
@@ -212,7 +212,7 @@ test("administrator navigation and household now-playing remain available", asyn
   await page.goto("/#/integrations/services");
   await expect(page.getByRole("button", { name: "Add extension" })).toBeVisible();
   await page.goto("/#/settings/playback");
-  await expect(page.getByRole("heading", { name: "Listening", level: 2 })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Sound quality", level: 2 })).toBeVisible();
 });
 
 test("listeners always use Mine even when this browser remembers Everyone", async ({ page }) => {

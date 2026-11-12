@@ -95,8 +95,8 @@ for (const width of [1280, 390]) {
     await page.route("**/api/admin/storage", route => route.fulfill({ json: storage }));
     await page.goto("/#/settings/backups");
     await expect(page.getByText("3 MB database", { exact: true })).toBeVisible();
-    await expect(page.getByRole("table").locator(width === 390 ? ".phone-backup-size" : ".number")).toHaveText("2 MB");
-    await expect(page.getByRole("table").locator(width === 390 ? ".phone-backup-size" : ".number")).toBeVisible();
+    await expect(page.getByRole("article", { name: "Saved backups" }).getByRole("table").locator(width === 390 ? ".phone-backup-size" : ".number")).toHaveText("2 MB");
+    await expect(page.getByRole("article", { name: "Saved backups" }).getByRole("table").locator(width === 390 ? ".phone-backup-size" : ".number")).toBeVisible();
     await capture(page, "backups", width);
     if (width === 390) await expectContainedMobileGeometry(page);
   });

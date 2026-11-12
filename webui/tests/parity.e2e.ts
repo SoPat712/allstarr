@@ -4417,7 +4417,7 @@ test("Mobile primary navigation stays contained and moves secondary tasks into M
     await expect(sheet).toBeVisible();
     await expect(sheet.getByRole("link", { name: /Sources/ })).toBeVisible();
     await expect(sheet.getByRole("link", { name: /Settings/ })).toBeVisible();
-    await expect(sheet.getByRole("link", { name: /Playback settings/ })).toBeVisible();
+    await expect(sheet.getByRole("link", { name: /Listening settings/ })).toBeVisible();
     await expect(sheet.getByRole("link", { name: /Intelligence|Insights/ })).toHaveCount(0);
     expect(await sheet.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
     if (process.env.ALLSTARR_SCREENSHOT_DIR)
@@ -5399,7 +5399,7 @@ test("Administrators can reopen durable setup from Maintenance", async ({ page }
   await page.setViewportSize({ width: 320, height: 844 });
   await mockApi(page);
   await page.goto("#/settings/maintenance");
-  await page.getByRole("tab", { name: "Setup guide", exact: true }).click();
+  await page.getByRole("link", { name: /^Walk through setup again/ }).click();
   const setup = page.getByRole("region", { name: "Set up Allstarr" });
   await expect(setup).toBeVisible();
   await setup.getByRole("button", { name: "Open", exact: true }).click();
@@ -8317,7 +8317,7 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
     await page.goto("#/integrations/routing");
     const group = page.locator(".routing-group");
     await expect(group.getByRole("heading", { name: "Search source order", exact: true })).toBeVisible();
-    await expect(group.getByText("Everyone", { exact: true })).toBeVisible();
+    await expect(page.locator(".settings-page-head").getByText("Everyone", { exact: true })).toBeVisible();
     await expect(group.getByText("Drag to reorder. Saves as you drop.", { exact: true })).toBeVisible();
     await expect(group.getByRole("listitem").first()).toContainText("Deezer");
     await group.locator('summary[aria-label="Reorder SoundCloud"]').click();
@@ -8399,7 +8399,7 @@ test("Cross-service links explain built-in lookups and preserve the optional mas
       "Odesli:Enabled": true, "Odesli:RateLimitMs": 6000, "Odesli:ApiKey": "********",
     } } });
   });
-  await page.goto("#/integrations/services");
+  await page.goto("#/settings/advanced");
   const card = page.getByRole("form", { name: "song.link settings" });
   await expect(card.getByText("Find links to the same song across your enabled services.", { exact: true })).toBeVisible();
   await expect(card.getByText("Optional. With a key, the official API is tried first. Leave unchanged to keep it.")).toBeVisible();
@@ -8938,10 +8938,10 @@ for (const width of [390, 1280]) for (const scheme of ["light", "dark"] as const
       return route.fulfill({ json: { ok: true, message: "Solver reachable", version: "unknown" } });
     });
     await page.goto("#/settings/people");
-    await expect(page.getByRole("heading", { name: "People and access", level: 2 })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "People and sign-in", level: 2 })).toBeVisible();
     await expect(page.getByLabel(/^Challenge solver URL/)).toHaveCount(0);
-    await page.goto("#/integrations/services");
-    await expect(page.getByRole("heading", { name: "Helpers for every source", exact: true })).toBeVisible();
+    await page.goto("#/settings/advanced");
+    await expect(page.getByRole("heading", { name: "Cloudflare checks", exact: true })).toBeVisible();
     const url = page.getByRole("textbox", { name: /^Challenge solver URL/ });
     await expect(url).toHaveValue("http://saved-solver:8191");
     await expect(url).toHaveAttribute("placeholder", "http://flaresolverr:8191");

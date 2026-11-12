@@ -84,7 +84,7 @@
   ].filter(item => item.fields.length));
   const libraryGroups = $derived([
     group("libraries", "Libraries Allstarr uses", pickPath(/MusicLibraryIds/)),
-    group("downloads", "Downloads", pick("DOWNLOAD_MODE", "STORAGE_MODE")),
+    group("downloads", "Downloads", pick("DOWNLOAD_MODE")),
     group("imported-playlists", "Imported playlists", sectionFor("spotify-import")),
     group("paths", "Folders", sectionFor("paths")),
   ].filter(item => item.fields.length));
@@ -93,7 +93,7 @@
     group("connecting", "Connecting", pick("PUBLIC_LISTENER_URL")),
   ].filter(item => item.fields.length));
   const browserOrigins = $derived(group("browser-apps", "Browser apps", pickPath(/Cors:AllowedOrigins/)));
-  const browserAdvanced = $derived(group("browser-advanced", "Methods, headers and credentials", pickPath(/Cors:Allow(Methods|Headers|Credentials)/)));
+  const browserAdvanced = $derived(group("browser-advanced", "Methods, headers and credentials", pickPath(/Cors:(AllowedMethods|AllowedHeaders|AllowCredentials)/)));
   const similarSongs = $derived(group("similar-songs", "When a service has no similar songs", pick("PLAYBACK_LASTFM_SIMILAR_ENABLED", "PLAYBACK_LISTENBRAINZ_SIMILAR_ENABLED")));
   const scrobbling = $derived(group("scrobbling", "Songs from your own library", pick("SCROBBLING_LOCAL_TRACKS_ENABLED")));
   const activityHistory = $derived(group("activity-history", "Activity history", pick("EVENT_LOG_RETENTION_DAYS", "EVENT_LOG_MAXIMUM_ROWS")));
@@ -105,7 +105,7 @@
   const mediaServer = $derived(group("media-server", "Media server", pick("BACKEND_TYPE")));
   // Settings no page claims yet still show, so nothing new is ever hidden.
   const unplaced = $derived(group("more", "More", fields.filter(field => settingPage(field.key) === null)));
-  const songCache = $derived(group("song-cache", "Song cache", pick("CACHE_AUDIO_MAXIMUM_GIB", "CACHE_DURATION_HOURS")));
+  const songCache = $derived(group("song-cache", "Song cache", pick("STORAGE_MODE", "CACHE_AUDIO_MAXIMUM_GIB", "CACHE_DURATION_HOURS")));
   const speed = $derived(group("speed", "Speed", pick("PROVIDER_STREAMS_PER_LISTENER", "MEDIA_MAXIMUM_CONCURRENT_CONVERSIONS", "CACHE_SEARCH_BUDGET_MILLISECONDS")));
   const storageAdvanced = $derived(fields.filter(field => /BackupRetention/.test(field.valuePath ?? "") || sectionFor("cache").includes(field))
     .filter(field => !["CACHE_DURATION_HOURS", "CACHE_SEARCH_BUDGET_MILLISECONDS"].includes(field.key)));
@@ -194,7 +194,7 @@
 {/snippet}
 {#snippet qualitySends(requested: readonly string[])}
   <button type="button" class="settings-row settings-link-row" onclick={() => sendsOpen = true}><div><strong>What each source sends</strong><small>What Allstarr asks each service for at this setting, and what it actually got.</small></div><span>Open<ChevronRight size={18} aria-hidden="true" /></span></button>
-  <SidePanel bind:open={sendsOpen} title="What each source sends" description="Asked for at this setting, and measured from real plays over the last 30 days." width={420} minimumContentWidth={560} wrapTitle>
+  <SidePanel bind:open={sendsOpen} title="What each source sends" description="Asked for at this setting, and measured from real plays over the last 30 days." width={420} minimumContentWidth={560} wrapTitle browsable={false}>
     <ul class="source-sends">{#each sendsRows(requested) as row (row.source)}<li><div><strong>{row.source}</strong><small>Asks for {row.asked}</small></div><span>{row.got ?? "Not measured yet"}</span></li>{/each}</ul>
     <p class="settings-muted source-sends-note">Your library always plays as it is. A listener's own limit lowers what they get.</p>
   </SidePanel>
@@ -305,7 +305,7 @@
   </div>{/key}
 </section>
 {#if administrator}
-  <SidePanel bind:open={addingOpen} title="Adding songs to the library" description="Listeners without their own profile use this one." width={420} minimumContentWidth={560} wrapTitle>
+  <SidePanel bind:open={addingOpen} title="Adding songs to the library" description="Listeners without their own profile use this one." width={420} minimumContentWidth={560} wrapTitle browsable={false}>
     {#if addingOpen}{#await import("./LibraryPromotionSettings.svelte") then { default: Promotion }}<Promotion {administrator} />{/await}{/if}
   </SidePanel>
 {/if}

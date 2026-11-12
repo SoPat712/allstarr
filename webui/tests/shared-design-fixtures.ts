@@ -137,6 +137,7 @@ export async function settingsFixture(page: Page, libraryFailure = false) {
       ] }, { id: "operator", label: "Library", fields: [
         { key: "BACKEND_MUSIC_LIBRARY_IDS", label: "Libraries to use", type: "text", valuePath: "operatorSettings.Backend:MusicLibraryIds", requiresRestart: true },
         { key: "CORS_ALLOWED_ORIGINS", label: "Browser origins", type: "text", valuePath: "operatorSettings.Cors:AllowedOrigins", requiresRestart: true },
+        { key: "CORS_ALLOWED_METHODS", label: "Browser methods", type: "text", valuePath: "operatorSettings.Cors:AllowedMethods", requiresRestart: true },
         { key: "ODESLI_ENABLED", label: "Find the same song on other services", type: "toggle", valuePath: "odesli.enabled" },
         { key: "ODESLI_RATE_LIMIT_MS", label: "Wait between song.link lookups (milliseconds)", type: "number", valuePath: "odesli.rateLimitMs" },
       ] },

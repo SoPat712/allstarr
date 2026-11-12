@@ -87,13 +87,13 @@ test("Accounts omit unavailable labels while retaining source and owner", async 
 
 test("Advanced settings fold inside their card without nesting forms", async ({ page }) => {
   await settingsFixture(page);
-  await page.goto("/#/settings/people");
-  const network = page.getByRole("form", { name: "Network settings", exact: true });
+  await page.goto("/#/settings/apps");
+  const network = page.getByRole("form", { name: "Browser apps settings", exact: true });
   const fold = network.locator(":scope > .settings-fold");
-  await expect(fold.locator("summary")).toHaveText("Advanced: browser origins, methods and headers");
+  await expect(fold.locator("summary")).toHaveText("Advanced: methods, headers and credentials");
   await fold.locator("summary").click();
   await expect(network.locator("form")).toHaveCount(0);
-  await expect(fold.getByRole("group", { name: "Browser access settings", exact: true })).toBeVisible();
+  await expect(fold.getByRole("group", { name: "Methods, headers and credentials settings", exact: true })).toBeVisible();
   await capture(page, "settings");
 });
 

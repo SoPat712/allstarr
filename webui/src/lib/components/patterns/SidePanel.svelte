@@ -28,6 +28,8 @@
     wrapTitle = false,
     inlineFooter = false,
     persistenceKey = "",
+    // Panels that never step to a neighbouring item leave out the previous and next buttons.
+    browsable = true,
   }: {
     open?: boolean;
     title: string;
@@ -50,6 +52,7 @@
     wrapTitle?: boolean;
     inlineFooter?: boolean;
     persistenceKey?: string;
+    browsable?: boolean;
   } = $props();
 
   let navigation: HTMLElement | null = null;
@@ -184,7 +187,7 @@
                 {#if description}<Dialog.Description>{description}</Dialog.Description>{/if}
               </div>
               <div class="panel-controls touch-targets">
-                {#if onPrevious || onNext || previousLabel || nextLabel}<nav class="panel-navigation" aria-label="Browse items">
+                {#if browsable}<nav class="panel-navigation" aria-label="Browse items">
                   <Button variant="text" size="icon" aria-label={previousLabel ?? `Previous ${navigationLabel}`} disabled={!onPrevious} onclick={onPrevious}><ArrowUp size={16} aria-hidden="true" /></Button>
                   <Button variant="text" size="icon" aria-label={nextLabel ?? `Next ${navigationLabel}`} disabled={!onNext} onclick={onNext}><ArrowDown size={16} aria-hidden="true" /></Button>
                 </nav>{/if}

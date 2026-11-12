@@ -118,7 +118,7 @@
 
   const route = $derived(currentRoute(`/${page.params.path ?? ""}`));
   const forbiddenRoute = $derived(!administrator && (
-    (route.startsWith("/settings") && !["/settings", "/settings/listening", "/settings/appearance", "/settings/adding", "/settings/playback", "/settings/preferences", "/settings/general", "/settings/alerts", "/settings/adding-to-library"].includes(route)) ||
+    (route.startsWith("/settings") && !["/settings", "/settings/listening", "/settings/appearance", "/settings/adding", "/settings/playback", "/settings/preferences", "/settings/alerts", "/settings/adding-to-library"].includes(route)) ||
     route === "/library/cached" ||
     route === "/library/kept" ||
     (route === "/intelligence" && developmentIntelligence)

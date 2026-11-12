@@ -151,8 +151,8 @@ test("guide rejects private URL fields and offers copy selection when clipboard 
 
 test("the administrator address field loads its durable value and updates the guide without restart", async ({ page }) => {
   const state = await mockSupport(page, true);
-  await page.goto("/#/settings/people");
-  const form = page.getByRole("form", { name: "Apps settings", exact: true });
+  await page.goto("/#/settings/apps");
+  const form = page.getByRole("form", { name: "Connecting settings", exact: true });
   const address = form.getByRole("textbox", { name: "Music-client address", exact: true });
   await expect(address).toHaveValue("http://music.test:5274");
   await address.fill("https://music.test/gateway");
