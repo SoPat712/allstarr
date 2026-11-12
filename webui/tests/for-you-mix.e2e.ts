@@ -17,7 +17,7 @@ test("Mix explanation is omitted when recipe evidence is unavailable", async ({ 
 });
 test("Song feedback and preference undo", async ({ page }) => {
   const state = await mockForYou(page); await page.goto("/#/for-you?mix=daily-1");
-  await page.getByRole("button", { name: "Actions for Blue morning", exact: true }).click(); await page.getByRole("menuitem", { name: "Not for me", exact: true }).click();
+  await page.getByRole("button", { name: "Actions for Blue morning", exact: true }).click(); await page.getByRole("menuitem", { name: "Not for me", exact: true }).focus(); await page.keyboard.press("Enter");
   await expect(page.getByRole("dialog").getByText("Blue morning", { exact: true })).toHaveCount(0);
   await page.getByRole("button", { name: "Undo", exact: true }).click(); await expect.poll(() => state.taste.nudges.length).toBe(0);
   expect(state.calls.some(call => call.method === "DELETE" && call.path === "/api/admin/taste/nudge")).toBe(true);
@@ -79,7 +79,8 @@ test("Refresh throttle stays in effect after a rejected request", async ({ page 
 });
 test("Undo preserves other and subsequently edited preferences", async ({ page }) => {
   const state = await mockForYou(page); await page.goto("/#/for-you?mix=daily-1");
-  await page.getByRole("button", { name: "Actions for Blue morning", exact: true }).click(); await page.getByRole("menuitem", { name: "Not for me", exact: true }).click();
+  // Chosen from the keyboard, so the docked panel's resize can't move the menu item from under the pointer.
+  await page.getByRole("button", { name: "Actions for Blue morning", exact: true }).click(); await page.getByRole("menuitem", { name: "Not for me", exact: true }).focus(); await page.keyboard.press("Enter");
   await expect(page.getByRole("button", { name: "Undo", exact: true })).toBeVisible();
   state.taste.nudges.push({ kind: "tag", name: "pop", mode: "more", expiresAt: null }); state.taste.nudges[0].mode = "never";
   await page.getByRole("button", { name: "Undo", exact: true }).click(); await expect(page.getByText("Your choice has changed since then. You can edit it in Your taste.")).toBeVisible();
