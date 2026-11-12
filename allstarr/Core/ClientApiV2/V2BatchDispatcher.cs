@@ -14,7 +14,8 @@ public sealed class V2BatchDispatcher(IServiceScopeFactory scopes, ILogger<V2Bat
 {
     private const string Prefix = "/allstarr/v2/";
     private const int Parallelism = 4;
-    private static readonly string[] ListKeys = ["ids", "include"];
+    private static readonly string[] ListKeys = ["ids", "include", "views"];
+    private static readonly string[] AlbumKeys = ["include", "views"];
     private static readonly string[] TrackKeys = ["include", "views", "tier"];
     private static readonly string[] AutoplayKeys = ["cursor", "limit"];
 
@@ -24,18 +25,18 @@ public sealed class V2BatchDispatcher(IServiceScopeFactory scopes, ILogger<V2Bat
         var results = await Task.WhenAll(requests.Select(async request =>
         {
             await gate.WaitAsync(execution.CancellationToken);
-            try { return (request.Id, Result: await RunOneAsync(http, execution, request.Path)); }
+            try { return (request.Id, Result: await RunOneAsync(http, execution, request)); }
             finally { gate.Release(); }
         }));
         return new(results.ToDictionary(item => item.Id, item => item.Result, StringComparer.Ordinal));
     }
 
-    private async Task<V2BatchResult> RunOneAsync(HttpContext parent, ProtocolExecutionContext execution, string path)
+    private async Task<V2BatchResult> RunOneAsync(HttpContext parent, ProtocolExecutionContext execution, V2BatchItem request)
     {
         V2Result result;
         try
         {
-            result = await DispatchAsync(parent, execution, path);
+            result = (await DispatchAsync(parent, execution, request.Path)).Conditional(request.IfNoneMatch);
         }
         catch (Exception error) when (error is not OperationCanceledException || !execution.CancellationToken.IsCancellationRequested)
         {
@@ -43,7 +44,7 @@ public sealed class V2BatchDispatcher(IServiceScopeFactory scopes, ILogger<V2Bat
             result = new(503, null);
         }
         var status = result.Status < 400 ? result.Status : ClientApiError.NormalizeStatus(result.Status);
-        return new(status, status < 400 && result.Body != null ? result.Body : ClientApiError.ForStatus(status));
+        return new(status, status == 304 ? null : status < 400 && result.Body != null ? result.Body : ClientApiError.ForStatus(status), result.ETag);
     }
 
     private async Task<V2Result> DispatchAsync(HttpContext parent, ProtocolExecutionContext execution, string path)
@@ -61,7 +62,9 @@ public sealed class V2BatchDispatcher(IServiceScopeFactory scopes, ILogger<V2Bat
         var tracks = scope.ServiceProvider.GetRequiredService<V2TrackEndpoints>();
         return segments switch
         {
-            ["tracks"] when Allowed(query, ListKeys) => await tracks.ListAsync(http, execution, Value(query, "ids"), Value(query, "include")),
+            ["tracks"] when Allowed(query, ListKeys) => await tracks.ListAsync(http, execution, Value(query, "ids"), Value(query, "include"), Value(query, "views")),
+            ["albums", var id] when Allowed(query, AlbumKeys) => await scope.ServiceProvider.GetRequiredService<V2AlbumEndpoints>()
+                .GetAsync(http, execution, id, Value(query, "include"), Value(query, "views")),
             ["tracks", var id] when Allowed(query, TrackKeys) => await tracks.GetAsync(http, execution, id, Value(query, "include"), Value(query, "views"), Value(query, "tier")),
             ["tracks", var id, "lyrics", "translation"] when Allowed(query, ["to"]) => await tracks.TranslationAsync(http, execution, id, Value(query, "to")),
             ["tracks", _, "lyrics", "translation"] => new(400, null),
@@ -69,7 +72,7 @@ public sealed class V2BatchDispatcher(IServiceScopeFactory scopes, ILogger<V2Bat
                 System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var limit) =>
                 await tracks.AutoplayAsync(http, execution, id, Value(query, "cursor"), limit),
             ["tracks", _, "autoplay"] => new(400, null),
-            ["tracks"] or ["tracks", _] => new(400, null),
+            ["tracks"] or ["tracks", _] or ["albums", _] => new(400, null),
             _ => new(404, null)
         };
     }

@@ -442,6 +442,30 @@ builder.Services.AddOpenApi("v2", options =>
         document.Servers = [];
         return Task.CompletedTask;
     });
+    options.AddOperationTransformer((operation, context, cancellationToken) =>
+    {
+        if (operation.Responses?.ContainsKey("304") != true) return Task.CompletedTask;
+        operation.Parameters ??= [];
+        operation.Parameters.Add(new OpenApiParameter
+        {
+            Name = "If-None-Match",
+            In = ParameterLocation.Header,
+            Description = "The stored ETag; a matching representation returns 304 without a body.",
+            Schema = new OpenApiSchema { Type = JsonSchemaType.String }
+        });
+        foreach (var status in new[] { "200", "304" })
+            if (operation.Responses.TryGetValue(status, out var value) && value is OpenApiResponse response)
+            {
+                response.Headers ??= new Dictionary<string, IOpenApiHeader>();
+                response.Headers["ETag"] = new OpenApiHeader
+                {
+                    Description = "Representation validator, also returned by the batch entry.",
+                    Schema = new OpenApiSchema { Type = JsonSchemaType.String }
+                };
+                if (status == "304") response.Content?.Clear();
+            }
+        return Task.CompletedTask;
+    });
 });
 builder.Services.AddHttpContextAccessor();
 var dataProtectionKeysPath = Path.Combine(builder.Configuration["Storage:DataDirectory"] ?? "/app/data", "data-protection");
@@ -481,6 +505,8 @@ builder.Services.AddScoped<V2PlaybackReader>();
 builder.Services.AddSingleton<V2PlaybackTokens>();
 builder.Services.AddScoped<V2TrackViewReader>();
 builder.Services.AddScoped<V2TrackEndpoints>();
+builder.Services.AddScoped<V2AlbumEndpoints>();
+builder.Services.AddSingleton<V2ServingStreams>();
 builder.Services.AddScoped<LyricsTranslation>();
 builder.Services.AddScoped<V2ArtistLinkEndpoints>();
 builder.Services.AddScoped<V2BatchDispatcher>();

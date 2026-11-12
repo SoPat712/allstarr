@@ -102,7 +102,8 @@ public sealed class ProviderStreamOpener(
         string externalId,
         ProviderAudioQuality quality,
         ProviderAudioDeliveryRequest? delivery = null,
-        bool preserveSourceBytes = false)
+        bool preserveSourceBytes = false,
+        Action<ProviderMediaFormat, string>? serving = null)
     {
         ArgumentNullException.ThrowIfNull(http);
         ArgumentNullException.ThrowIfNull(context);
@@ -267,6 +268,7 @@ public sealed class ProviderStreamOpener(
                     enableRangeProcessing: conversion == null && (timeSeek || routed.IsCached || cacheRung != null), providerStream: true, responseLease: capacity,
                     interrupted: () => Interrupted(routed));
                 capacity = null;
+                if (!headOnly) serving?.Invoke(conversion?.Media ?? sourceMedia, routed.ServingProviderId);
                 return result;
             }
             catch

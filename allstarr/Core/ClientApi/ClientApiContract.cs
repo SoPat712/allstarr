@@ -57,6 +57,11 @@ public sealed record ClientFeatures
     [JsonPropertyName("v2Tracks")] public bool V2Tracks { get; init; } = true;
     [JsonPropertyName("v2Playback")] public bool V2Playback { get; init; } = true;
     [JsonPropertyName("v2Batch")] public bool V2Batch { get; init; } = true;
+    [JsonPropertyName("v2Albums")] public bool V2Albums { get; init; } = true;
+    [JsonPropertyName("v2BulkLyrics")] public bool V2BulkLyrics { get; init; } = true;
+    [JsonPropertyName("v2TrackMetadata")] public bool V2TrackMetadata { get; init; } = true;
+    [JsonPropertyName("v2BatchConditional")] public bool V2BatchConditional { get; init; } = true;
+    [JsonPropertyName("v2PlaybackServing")] public bool V2PlaybackServing { get; init; } = true;
     [JsonPropertyName("v2LyricsTranslation")] public bool V2LyricsTranslation { get; init; } = true;
     [JsonPropertyName("v2ArtistLinks")] public bool V2ArtistLinks { get; init; } = true;
     [JsonPropertyName("v2Events")] public bool V2Events { get; init; } = true;

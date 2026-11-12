@@ -22,4 +22,8 @@ public sealed class V2PlaybackTokens(IDataProtectionProvider protection)
 }
 
 internal sealed record V2PlaybackTicket(Guid Listener, string Backend, string Principal, string Item, string Tier, string PlaybackId,
-    ProviderAudioQuality Quality, ProviderAudioDeliveryRequest Delivery, ProviderMediaFormat Source);
+    ProviderAudioQuality Quality, ProviderAudioDeliveryRequest Delivery, ProviderMediaFormat Source)
+{
+    public string? DeviceId { get; init; }
+    public string? TrackId { get; init; }
+}

@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using allstarr.Core.Capabilities;
+using allstarr.Core.ClientApi;
 using allstarr.Core.Identity;
 using allstarr.Core.Music;
 using allstarr.Core.Playback;
@@ -17,7 +18,7 @@ namespace allstarr.Core.ClientApiV2;
 public sealed class V2PlaybackReader(V2TrackReader tracks, ProviderStreamOpener streams, V2PlaybackTokens tokens,
     JellyfinProxyService jellyfin, IEffectiveProviderPolicyResolver policies, IUpcomingTrackPreparation preparation,
     BackendIdentityResolver identities, IdentityOptions identityOptions, ProtocolStreamingResponseAdapter responses,
-    IProviderRegistry registry, TimeProvider clock, MediaConversionGate conversions)
+    IProviderRegistry registry, TimeProvider clock, MediaConversionGate conversions, V2ServingStreams serving, PlaybackReader current)
 {
     internal static bool ValidTier(string tier) => tier is "lossless" or "high" or "normal" or "low" or "original";
 
@@ -60,7 +61,8 @@ public sealed class V2PlaybackReader(V2TrackReader tracks, ProviderStreamOpener 
         var playback = Guid.NewGuid().ToString("N");
         var expires = clock.GetUtcNow().AddHours(12);
         var ticket = new V2PlaybackTicket(execution.Principal!.UserId, execution.BackendInstanceId,
-            execution.VerifiedBackendPrincipalId, item, tier, playback, quality, Freeze(delivery, delivered), source);
+            execution.VerifiedBackendPrincipalId, item, tier, playback, quality, Freeze(delivery, delivered), source)
+        { DeviceId = execution.Client.DeviceId, TrackId = V2AutoplayReader.Identity(track) };
         var lowered = tier != request.Tier || LimitChanged(source, step, request.Tier)
             ? step != household.AudioQuality ? "listener" : "household" : null;
         var reason = routed?.SelectionReason ?? "library";
@@ -72,7 +74,17 @@ public sealed class V2PlaybackReader(V2TrackReader tracks, ProviderStreamOpener 
         return new($"{http.Request.Scheme}://{http.Request.Host}{http.Request.PathBase}/allstarr/v2/stream/" + tokens.Protect(ticket, expires), expires, playback, key, Format(source), Format(delivered),
             converted, converted ? null : inspected.Content.Headers.ContentLength,
             !converted && (routed?.Lease.SupportsByteRanges == true || inspected.Headers.AcceptRanges.Contains("bytes")) ? "bytes" : "none",
-            track.TrackGainDb, track.AlbumGainDb, new(provider, (registry.TryGet(provider, out var descriptor) ? descriptor!.DisplayName : null) ?? track.Provider?.Name ?? provider), reason, lowered);
+            track.TrackGainDb, track.AlbumGainDb, new(provider, (registry.TryGet(provider, out var descriptor) ? descriptor!.DisplayName : null) ?? track.Provider?.Name ?? provider), reason, lowered)
+        { Serving = await ServingAsync(http, execution, track, item) };
+    }
+
+    private async Task<V2ServingFacts?> ServingAsync(HttpContext http, ProtocolExecutionContext execution, V2Track track, string source)
+    {
+        if ((serving.Read(execution, V2AutoplayReader.Identity(track)) ?? serving.Read(execution, source)) is { } active) return active;
+        var playing = await current.CurrentAsync(http, execution);
+        if (playing?.Delivered is not { } media || playing.Provider?.Id is not { } provider ||
+            !track.Aliases.Append(track.Id).Append(source).Contains(playing.ItemId, StringComparer.Ordinal)) return null;
+        return new(media.Codec, media.Bitrate, media.BitDepth, media.SampleRate, provider);
     }
 
     public async Task<IActionResult> OpenAsync(HttpContext http, string token)
@@ -92,7 +104,7 @@ public sealed class V2PlaybackReader(V2TrackReader tracks, ProviderStreamOpener 
         if (principal == null || principal.UserId != ticket.Listener) return new NotFoundResult();
         var execution = new ProtocolExecutionContext(ProtocolKind.Jellyfin, ticket.Backend, ticket.Principal,
             principal with { IsAdministrator = false }, ticket.PlaybackId, clock.GetUtcNow().AddMinutes(3), http.RequestAborted,
-            new(deviceId: ticket.PlaybackId))
+            new(deviceId: ticket.DeviceId))
         {
             RequestedItemId = ticket.Item,
             UseStoredBackendCredentials = true,
@@ -112,7 +124,8 @@ public sealed class V2PlaybackReader(V2TrackReader tracks, ProviderStreamOpener 
         var parsed = LocalLibraryService.ParseExternalResource(ticket.Item);
         if (parsed.isExternal)
             return await streams.OpenAsync(http, execution, parsed.provider!, parsed.externalId!, ticket.Quality, ticket.Delivery,
-                preserveSourceBytes: conversion == null);
+                preserveSourceBytes: conversion == null,
+                serving: (media, provider) => serving.Observe(http, execution, ticket.TrackId ?? ticket.Item, media, provider));
         var response = await jellyfin.OpenAudioSourceAsync(ticket.Item, HttpMethods.IsHead(http.Request.Method),
             conversion == null ? http.Request.Headers : null, http.RequestAborted);
         if (!response.IsSuccessStatusCode)
@@ -124,7 +137,9 @@ public sealed class V2PlaybackReader(V2TrackReader tracks, ProviderStreamOpener 
                 if (HttpMethods.IsHead(http.Request.Method)) ProviderAudioTranscoder.ApplyHead(response, http.Response, conversion);
                 else await ProviderAudioTranscoder.ApplyAsync(response, http.Response, conversion, conversions, http.RequestAborted);
             }
-            return await responses.CreateAsync(http, response, http.RequestAborted, enableRangeProcessing: false);
+            var result = await responses.CreateAsync(http, response, http.RequestAborted, enableRangeProcessing: false);
+            serving.Observe(http, execution, ticket.TrackId ?? ticket.Item, conversion?.Media ?? ticket.Source, "jellyfin");
+            return result;
         }
         catch { response.Dispose(); throw; }
     }

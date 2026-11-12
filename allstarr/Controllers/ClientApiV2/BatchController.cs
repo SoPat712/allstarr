@@ -9,7 +9,7 @@ public sealed class BatchController(V2BatchDispatcher dispatcher) : ClientApiV2C
     [HttpPost]
     [EndpointName("batch")]
     [EndpointDescription("Runs up to 20 v2 reads in one round trip and returns each one's status and body by its `id`. Only v2 GET " +
-        "routes can be batched. One failing read never fails the others.")]
+        "routes can be batched. Each result carries the standalone route's ETag; `ifNoneMatch` returns 304 without a body on a match. One failing read never fails the others.")]
     [ProducesResponseType<V2BatchResponse>(200)]
     public async Task<IActionResult> Post([FromBody] V2BatchRequest request)
     {

@@ -25,7 +25,7 @@ public sealed record V2Track(
     [property: JsonPropertyName("artists")] IReadOnlyList<V2Ref> Artists,
     [property: JsonPropertyName("albumArtists")] IReadOnlyList<V2Ref> AlbumArtists,
     [property: JsonPropertyName("featuring"), Description("Track artists after the first who are not album artists.")] IReadOnlyList<V2Ref> Featuring,
-    [property: JsonPropertyName("album")] V2Ref? Album,
+    [property: JsonPropertyName("album")] V2AlbumRef? Album,
     [property: JsonPropertyName("disc")] int? Disc,
     [property: JsonPropertyName("track")] int? Track,
     [property: JsonPropertyName("durationMs")] long? DurationMs,
@@ -49,6 +49,13 @@ public sealed record V2Track(
 public sealed record V2Ref(
     [property: JsonPropertyName("id")] string? Id,
     [property: JsonPropertyName("name")] string Name);
+
+public sealed record V2AlbumRef(
+    [property: JsonPropertyName("id")] string? Id,
+    [property: JsonPropertyName("name")] string Name)
+{
+    [JsonPropertyName("title")] public string Title => Name;
+}
 
 public sealed record V2Provider(
     [property: JsonPropertyName("id")] string Id,
@@ -110,6 +117,20 @@ public sealed record V2AlbumSummary(
     [property: JsonPropertyName("isExternal")] bool IsExternal,
     [property: JsonPropertyName("artwork")] V2Artwork? Artwork);
 
+public sealed record V2AlbumResponse([property: JsonPropertyName("album")] V2AlbumSummary Album)
+{
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull), JsonPropertyName("tracks")]
+    public IReadOnlyList<V2Track>? Tracks { get; init; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull), JsonPropertyName("missing")]
+    public IReadOnlyList<string>? Missing { get; init; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull), JsonPropertyName("views")]
+    public V2AlbumViews? Views { get; init; }
+}
+
+public sealed record V2AlbumViews([property: JsonPropertyName("moreByArtist")] IReadOnlyList<V2AlbumSummary> MoreByArtist);
+
 public sealed record V2TracksResponse(
     [property: JsonPropertyName("tracks")] IReadOnlyList<V2Track> Tracks,
     [property: JsonPropertyName("missing")] IReadOnlyList<string> Missing)
@@ -117,6 +138,13 @@ public sealed record V2TracksResponse(
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     [JsonPropertyName("albums")]
     public IReadOnlyDictionary<string, V2AlbumSummary>? Albums { get; init; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull), JsonPropertyName("views")]
+    [Description("Requested views keyed by returned track id.")]
+    public IReadOnlyDictionary<string, V2TrackViews>? Views { get; init; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull), JsonPropertyName("viewStatus")]
+    public IReadOnlyDictionary<string, IReadOnlyDictionary<string, string>>? ViewStatus { get; init; }
 }
 
 public sealed record V2TrackResponse([property: JsonPropertyName("track")] V2Track Track)
@@ -176,6 +204,9 @@ public sealed record V2BatchItem
 
     [Required, StringLength(8192, MinimumLength = 1), JsonPropertyName("path"), Description("A v2 GET path with its query, such as `/allstarr/v2/tracks/trk_…?views=lyrics`.")]
     public required string Path { get; init; }
+
+    [StringLength(8192), JsonPropertyName("ifNoneMatch"), Description("The route's stored ETag. A match returns 304 with no body.")]
+    public string? IfNoneMatch { get; init; }
 }
 
 public sealed record V2BatchResponse(
@@ -184,4 +215,5 @@ public sealed record V2BatchResponse(
 /// <summary>One sub-request's answer: the body that route returns on its own, or its <c>{code,error}</c>.</summary>
 public sealed record V2BatchResult(
     [property: JsonPropertyName("status")] int Status,
-    [property: JsonPropertyName("body")] object Body);
+    [property: JsonPropertyName("body"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] object? Body,
+    [property: JsonPropertyName("etag")] string? ETag);

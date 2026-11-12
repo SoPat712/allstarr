@@ -5,6 +5,130 @@
     "version": "2"
   },
   "paths": {
+    "/allstarr/v2/albums/{id}": {
+      "get": {
+        "tags": [
+          "Albums"
+        ],
+        "description": "Reads a library or service album by its native or older id. Can also be read inside a batch.",
+        "operationId": "getAlbum",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "include",
+            "in": "query",
+            "description": "\u0060tracks\u0060 includes the album\u0027s native track shapes in disc and track order.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "views",
+            "in": "query",
+            "description": "\u0060more-by-artist\u0060 includes up to 20 other album summaries by the first identified album artist.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "If-None-Match",
+            "in": "header",
+            "description": "The stored ETag; a matching representation returns 304 without a body.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "headers": {
+              "ETag": {
+                "description": "Representation validator, also returned by the batch entry.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V2AlbumResponse"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Not Modified",
+            "headers": {
+              "ETag": {
+                "description": "Representation validator, also returned by the batch entry.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/allstarr/v2/artists/{libraryArtistId}/links": {
       "get": {
         "tags": [
@@ -287,7 +411,7 @@
         "tags": [
           "Batch"
         ],
-        "description": "Runs up to 20 v2 reads in one round trip and returns each one\u0027s status and body by its \u0060id\u0060. Only v2 GET routes can be batched. One failing read never fails the others.",
+        "description": "Runs up to 20 v2 reads in one round trip and returns each one\u0027s status and body by its \u0060id\u0060. Only v2 GET routes can be batched. Each result carries the standalone route\u0027s ETag; \u0060ifNoneMatch\u0060 returns 304 without a body on a match. One failing read never fails the others.",
         "operationId": "batch",
         "requestBody": {
           "content": {
@@ -732,6 +856,22 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "views",
+            "in": "query",
+            "description": "\u0060lyrics\u0060 adds each track\u0027s lyrics view and status, keyed by returned track id.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "If-None-Match",
+            "in": "header",
+            "description": "The stored ETag; a matching representation returns 304 without a body.",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -787,10 +927,29 @@
           },
           "200": {
             "description": "OK",
+            "headers": {
+              "ETag": {
+                "description": "Representation validator, also returned by the batch entry.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/V2TracksResponse"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Not Modified",
+            "headers": {
+              "ETag": {
+                "description": "Representation validator, also returned by the batch entry.",
+                "schema": {
+                  "type": "string"
                 }
               }
             }
@@ -837,6 +996,14 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "If-None-Match",
+            "in": "header",
+            "description": "The stored ETag; a matching representation returns 304 without a body.",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -892,10 +1059,29 @@
           },
           "200": {
             "description": "OK",
+            "headers": {
+              "ETag": {
+                "description": "Representation validator, also returned by the batch entry.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/V2TrackResponse"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Not Modified",
+            "headers": {
+              "ETag": {
+                "description": "Representation validator, also returned by the batch entry.",
+                "schema": {
+                  "type": "string"
                 }
               }
             }
@@ -926,6 +1112,14 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "If-None-Match",
+            "in": "header",
+            "description": "The stored ETag; a matching representation returns 304 without a body.",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -981,10 +1175,29 @@
           },
           "200": {
             "description": "OK",
+            "headers": {
+              "ETag": {
+                "description": "Representation validator, also returned by the batch entry.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/V2LyricsTranslationResponse"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Not Modified",
+            "headers": {
+              "ETag": {
+                "description": "Representation validator, also returned by the batch entry.",
+                "schema": {
+                  "type": "string"
                 }
               }
             }
@@ -1027,6 +1240,14 @@
               "format": "int32",
               "default": 25
             }
+          },
+          {
+            "name": "If-None-Match",
+            "in": "header",
+            "description": "The stored ETag; a matching representation returns 304 without a body.",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -1082,10 +1303,29 @@
           },
           "200": {
             "description": "OK",
+            "headers": {
+              "ETag": {
+                "description": "Representation validator, also returned by the batch entry.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/V2AutoplayResponse"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Not Modified",
+            "headers": {
+              "ETag": {
+                "description": "Representation validator, also returned by the batch entry.",
+                "schema": {
+                  "type": "string"
                 }
               }
             }
@@ -1605,6 +1845,73 @@
           }
         }
       },
+      "V2AlbumRef": {
+        "required": [
+          "id",
+          "name"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "title": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
+      "V2AlbumResponse": {
+        "required": [
+          "album"
+        ],
+        "type": "object",
+        "properties": {
+          "album": {
+            "$ref": "#/components/schemas/V2AlbumSummary"
+          },
+          "tracks": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/V2Track"
+            }
+          },
+          "missing": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "views": {
+            "type": [
+              "null",
+              "object"
+            ],
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/V2AlbumViews"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
       "V2AlbumSummary": {
         "required": [
           "id",
@@ -1651,6 +1958,20 @@
                 "type": "null"
               }
             ]
+          }
+        }
+      },
+      "V2AlbumViews": {
+        "required": [
+          "moreByArtist"
+        ],
+        "type": "object",
+        "properties": {
+          "moreByArtist": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/V2AlbumSummary"
+            }
           }
         }
       },
@@ -1779,6 +2100,15 @@
             "minLength": 1,
             "type": "string",
             "description": "A v2 GET path with its query, such as \u0060/allstarr/v2/tracks/trk_\u2026?views=lyrics\u0060."
+          },
+          "ifNoneMatch": {
+            "maxLength": 8192,
+            "minLength": 0,
+            "type": [
+              "null",
+              "string"
+            ],
+            "description": "The route\u0027s stored ETag. A match returns 304 with no body."
           }
         }
       },
@@ -1815,7 +2145,8 @@
       "V2BatchResult": {
         "required": [
           "status",
-          "body"
+          "body",
+          "etag"
         ],
         "type": "object",
         "properties": {
@@ -1823,7 +2154,13 @@
             "type": "integer",
             "format": "int32"
           },
-          "body": {}
+          "body": {},
+          "etag": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
         }
       },
       "V2Format": {
@@ -2239,6 +2576,20 @@
               "null",
               "string"
             ]
+          },
+          "serving": {
+            "type": [
+              "null",
+              "object"
+            ],
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/V2ServingFacts"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         }
       },
@@ -2285,6 +2636,48 @@
             ]
           },
           "name": {
+            "type": "string"
+          }
+        }
+      },
+      "V2ServingFacts": {
+        "required": [
+          "codec",
+          "bitrate",
+          "bitDepth",
+          "sampleRate",
+          "source"
+        ],
+        "type": "object",
+        "properties": {
+          "codec": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "bitrate": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int32"
+          },
+          "bitDepth": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int32"
+          },
+          "sampleRate": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int32"
+          },
+          "source": {
             "type": "string"
           }
         }
@@ -2391,7 +2784,7 @@
             ],
             "anyOf": [
               {
-                "$ref": "#/components/schemas/V2Ref"
+                "$ref": "#/components/schemas/V2AlbumRef"
               },
               {
                 "type": "null"
@@ -2585,6 +2978,28 @@
             "additionalProperties": {
               "$ref": "#/components/schemas/V2AlbumSummary"
             }
+          },
+          "views": {
+            "type": [
+              "null",
+              "object"
+            ],
+            "additionalProperties": {
+              "$ref": "#/components/schemas/V2TrackViews"
+            },
+            "description": "Requested views keyed by returned track id."
+          },
+          "viewStatus": {
+            "type": [
+              "null",
+              "object"
+            ],
+            "additionalProperties": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            }
           }
         }
       },
@@ -2666,6 +3081,9 @@
     }
   },
   "tags": [
+    {
+      "name": "Albums"
+    },
     {
       "name": "ArtistLinks"
     },

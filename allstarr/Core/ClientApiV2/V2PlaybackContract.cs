@@ -47,7 +47,19 @@ public sealed record V2PlaybackResponse(
     [property: JsonPropertyName("albumGainDb")] double? AlbumGainDb,
     [property: JsonPropertyName("provider")] V2PlaybackProvider Provider,
     [property: JsonPropertyName("routeReason")] string RouteReason,
-    [property: JsonPropertyName("loweredBy")] string? LoweredBy);
+    [property: JsonPropertyName("loweredBy")] string? LoweredBy)
+{
+    [JsonPropertyName("serving")]
+    public V2ServingFacts? Serving { get; init; }
+}
+
+/// <summary>The caller's active stream as delivered; null when no stream of this track is active.</summary>
+public sealed record V2ServingFacts(
+    [property: JsonPropertyName("codec")] string? Codec,
+    [property: JsonPropertyName("bitrate")] int? Bitrate,
+    [property: JsonPropertyName("bitDepth")] int? BitDepth,
+    [property: JsonPropertyName("sampleRate")] int? SampleRate,
+    [property: JsonPropertyName("source")] string Source);
 
 public sealed record V2PlaybackProvider(
     [property: JsonPropertyName("id")] string Id,

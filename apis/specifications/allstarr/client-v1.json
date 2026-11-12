@@ -4396,6 +4396,21 @@
           "v2Batch": {
             "type": "boolean"
           },
+          "v2Albums": {
+            "type": "boolean"
+          },
+          "v2BulkLyrics": {
+            "type": "boolean"
+          },
+          "v2TrackMetadata": {
+            "type": "boolean"
+          },
+          "v2BatchConditional": {
+            "type": "boolean"
+          },
+          "v2PlaybackServing": {
+            "type": "boolean"
+          },
           "v2LyricsTranslation": {
             "type": "boolean"
           },

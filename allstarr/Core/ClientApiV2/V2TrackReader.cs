@@ -71,6 +71,8 @@ public sealed class V2TrackReader(
             try { return (Id: id, Song: await ReadSongAsync(execution, id)); }
             finally { gate.Release(); }
         }))).Where(item => item.Song != null).ToDictionary(item => item.Id, item => item.Song!, StringComparer.Ordinal);
+        if (identities is ITrackMediaFactsStore mediaFacts)
+            await mediaFacts.ApplyStoredMediaFactsAsync(execution.RequireActor(), songs.Values.ToArray(), token);
 
         var tracks = new List<V2Track>();
         var albums = includeAlbums ? new Dictionary<string, V2AlbumSummary>(StringComparer.Ordinal) : null;
@@ -125,7 +127,7 @@ public sealed class V2TrackReader(
     }
 
     private static V2Track Compose(string id, ItemDetails item, string? libraryItemId, IReadOnlyDictionary<string, string> externalIds,
-        string title, IReadOnlyList<V2Ref> artists, IReadOnlyList<V2Ref> albumArtists, V2Ref? album, int? disc, int? track,
+        string title, IReadOnlyList<V2Ref> artists, IReadOnlyList<V2Ref> albumArtists, V2AlbumRef? album, int? disc, int? track,
         long? durationMs, int? year, V2Artwork? artwork, V2Format? format, double? trackGain, double? albumGain) =>
         new(id, [], item.IsExternal, libraryItemId,
             item.Provider == null ? null : new(item.Provider.Id, item.Provider.Name, item.Provider.IconUrl, item.Provider.GlyphUrl),
@@ -142,7 +144,7 @@ public sealed class V2TrackReader(
         if (item.Isrc is { Length: > 0 } isrc) externalIds["isrc"] = isrc;
         if (local.MusicBrainzRecording is { } musicBrainz) externalIds["musicbrainzRecording"] = musicBrainz;
         var album = local.AlbumId is { } albumId && V2Ids.IsValidSource(albumId, V2IdKind.Album) && local.Album is { } albumName
-            ? new V2Ref(V2Ids.Album(albumId), albumName) : null;
+            ? new V2AlbumRef(V2Ids.Album(albumId), albumName) : null;
         var albumArtwork = V2ArtworkUrls.For(local.AlbumId, local.AlbumImageTag);
         if (album != null && albums != null)
             albums.TryAdd(album.Id!, new(album.Id!, album.Name, local.AlbumArtists, local.Year, false, albumArtwork));
@@ -167,14 +169,15 @@ public sealed class V2TrackReader(
         var albumArtistName = !string.IsNullOrWhiteSpace(song.AlbumArtist) ? song.AlbumArtist.Trim() : names.FirstOrDefault();
         V2Ref[] albumArtists = albumArtistName == null ? [] : [new(ArtistId(song.ArtistId), albumArtistName)];
         var album = song.AlbumId is { } albumId && V2Ids.IsValidSource(albumId, V2IdKind.Album) && !string.IsNullOrWhiteSpace(song.Album)
-            ? new V2Ref(V2Ids.Album(albumId), song.Album) : null;
+            ? new V2AlbumRef(V2Ids.Album(albumId), song.Album) : null;
         var artwork = V2ArtworkUrls.For(target, JellyfinItemArtwork.PrimaryImageTag(target, false));
         if (album != null && albums != null)
             albums.TryAdd(album.Id!, new(album.Id!, album.Name, albumArtists, song.Year, true,
                 V2ArtworkUrls.For(song.AlbumId, JellyfinItemArtwork.AlbumImageTag(song.AlbumId!, false))));
         var duration = song.PreciseDuration is { TotalMilliseconds: > 0 } precise ? (long)precise.TotalMilliseconds
             : song.Duration is > 0 ? song.Duration.Value * 1000L : (long?)null;
-        var format = item.Audio is { } audio ? FormatOf(null, audio.Codec, audio.Bitrate, audio.SampleRate, audio.BitDepth, null) : null;
+        var format = item.Audio is { } audio
+            ? FormatOf(song.Container, audio.Codec, audio.Bitrate, audio.SampleRate, audio.BitDepth, song.Channels) : null;
         return Compose(TrackId(target, item.CanonicalRecordingId), item, null, externalIds, song.Title, artists, albumArtists, album,
             song.DiscNumber is > 0 ? song.DiscNumber : null, song.Track is > 0 ? song.Track : null, duration, song.Year, artwork, format,
             song.ReplayGain?.TrackGain, song.ReplayGain?.AlbumGain);
@@ -218,13 +221,13 @@ public sealed class V2TrackReader(
         return result;
     }
 
-    private static string? String(JsonElement element, string name) =>
+    internal static string? String(JsonElement element, string name) =>
         element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
 
-    private static int? Int(JsonElement element, string name) =>
+    internal static int? Int(JsonElement element, string name) =>
         element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out var number) ? number : null;
 
-    private static IReadOnlyList<V2Ref> Refs(JsonElement element, string name) =>
+    internal static IReadOnlyList<V2Ref> Refs(JsonElement element, string name) =>
         element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.Array
             ? value.EnumerateArray().Select(artist => (Name: String(artist, "Name"), Id: String(artist, "Id")))
                 .Where(artist => !string.IsNullOrWhiteSpace(artist.Name))
