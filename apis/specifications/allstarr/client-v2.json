@@ -984,15 +984,7 @@
           {
             "name": "views",
             "in": "query",
-            "description": "Comma-separated views: \u0060lyrics\u0060, \u0060lyricsSources\u0060, \u0060match\u0060, \u0060autoplay\u0060, \u0060playback\u0060. \u0060viewStatus\u0060 says how each one went; autoplay returns 25 tracks by default.",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "tier",
-            "in": "query",
-            "description": "Playback tier: lossless, high (default), normal, low or original.",
+            "description": "Comma-separated views: \u0060lyrics\u0060, \u0060lyricsSources\u0060, \u0060match\u0060, \u0060autoplay\u0060. \u0060viewStatus\u0060 says how each one went; autoplay returns 25 tracks by default. Reading a track never opens its audio: get a stream link from \u0060POST /allstarr/v2/playback/resolve\u0060.",
             "schema": {
               "type": "string"
             }
@@ -3006,20 +2998,6 @@
       "V2TrackViews": {
         "type": "object",
         "properties": {
-          "playback": {
-            "type": [
-              "null",
-              "object"
-            ],
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/V2PlaybackResponse"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
           "lyrics": {
             "type": [
               "null",

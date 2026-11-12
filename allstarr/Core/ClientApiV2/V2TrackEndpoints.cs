@@ -46,14 +46,13 @@ public sealed class V2TrackEndpoints(V2TrackReader reader, V2TrackViewReader vie
         var readViews = new Dictionary<string, V2TrackViews>(StringComparer.Ordinal);
         var statuses = new Dictionary<string, IReadOnlyDictionary<string, string>>(StringComparer.Ordinal);
         foreach (var track in result.Tracks)
-            (readViews[track.Id], statuses[track.Id]) = await views.ReadAsync(http, execution, sources[track.Id], requestedViews, track, "high");
+            (readViews[track.Id], statuses[track.Id]) = await views.ReadAsync(http, execution, sources[track.Id], requestedViews);
         return new(200, result with { Views = readViews, ViewStatus = statuses });
     }
 
-    public async Task<V2Result> GetAsync(HttpContext http, ProtocolExecutionContext execution, string id, string? include, string? view, string? tier = null)
+    public async Task<V2Result> GetAsync(HttpContext http, ProtocolExecutionContext execution, string id, string? include, string? view)
     {
-        if (!V2Query.TryNames(include, Includes, out var included) || !V2Query.TryNames(view, V2TrackViewReader.Names, out var requested) ||
-            tier != null && !V2PlaybackReader.ValidTier(tier))
+        if (!V2Query.TryNames(include, Includes, out var included) || !V2Query.TryNames(view, V2TrackViewReader.Accepted, out var requested))
             return new(400, null);
         var deadline = requested.Contains("autoplay") ? PageDeadline(execution) : execution.Deadline;
         using var timeout = requested.Contains("autoplay") ? new CancellationTokenSource(Remaining(deadline), clock) : null;
@@ -68,7 +67,7 @@ public sealed class V2TrackEndpoints(V2TrackReader reader, V2TrackViewReader vie
         var response = new V2TrackResponse(track) { Albums = result.Albums };
         if (requested.Count == 0) return new(200, response);
         (V2TrackViews Views, IReadOnlyDictionary<string, string> Status) readViews;
-        try { readViews = await views.ReadAsync(http, bounded, sources[track.Id], requested, track, tier ?? "high").WaitAsync(stop.Token); }
+        try { readViews = await views.ReadAsync(http, bounded, sources[track.Id], requested).WaitAsync(stop.Token); }
         catch (OperationCanceledException) when (!execution.CancellationToken.IsCancellationRequested)
         {
             readViews = (new(), requested.Where(name => name != "autoplay").ToDictionary(name => name, _ => "unavailable", StringComparer.Ordinal));

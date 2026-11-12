@@ -29,9 +29,8 @@ public sealed class TracksController(V2TrackEndpoints tracks) : ClientApiV2Contr
     [ProducesResponseType<V2TrackResponse>(200)]
     [ProducesResponseType(304)]
     public async Task<IActionResult> Get(string id, [FromQuery, Description(IncludeDescription)] string? include,
-        [FromQuery, Description("Comma-separated views: `lyrics`, `lyricsSources`, `match`, `autoplay`, `playback`. `viewStatus` says how each one went; autoplay returns 25 tracks by default.")] string? views,
-        [FromQuery, Description("Playback tier: lossless, high (default), normal, low or original.")] string? tier) =>
-        Respond(await tracks.GetAsync(HttpContext, Execution, id, include, views, tier));
+        [FromQuery, Description("Comma-separated views: `lyrics`, `lyricsSources`, `match`, `autoplay`. `viewStatus` says how each one went; autoplay returns 25 tracks by default. Reading a track never opens its audio: get a stream link from `POST /allstarr/v2/playback/resolve`.")] string? views) =>
+        Respond(await tracks.GetAsync(HttpContext, Execution, id, include, views));
 
     [HttpGet("{id}/lyrics/translation")]
     [EndpointName("getLyricsTranslation")]

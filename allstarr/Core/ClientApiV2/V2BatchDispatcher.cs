@@ -16,7 +16,7 @@ public sealed class V2BatchDispatcher(IServiceScopeFactory scopes, ILogger<V2Bat
     private const int Parallelism = 4;
     private static readonly string[] ListKeys = ["ids", "include", "views"];
     private static readonly string[] AlbumKeys = ["include", "views"];
-    private static readonly string[] TrackKeys = ["include", "views", "tier"];
+    private static readonly string[] TrackKeys = ["include", "views"];
     private static readonly string[] AutoplayKeys = ["cursor", "limit"];
 
     public async Task<V2BatchResponse> RunAsync(HttpContext http, ProtocolExecutionContext execution, IReadOnlyList<V2BatchItem> requests)
@@ -65,7 +65,7 @@ public sealed class V2BatchDispatcher(IServiceScopeFactory scopes, ILogger<V2Bat
             ["tracks"] when Allowed(query, ListKeys) => await tracks.ListAsync(http, execution, Value(query, "ids"), Value(query, "include"), Value(query, "views")),
             ["albums", var id] when Allowed(query, AlbumKeys) => await scope.ServiceProvider.GetRequiredService<V2AlbumEndpoints>()
                 .GetAsync(http, execution, id, Value(query, "include"), Value(query, "views")),
-            ["tracks", var id] when Allowed(query, TrackKeys) => await tracks.GetAsync(http, execution, id, Value(query, "include"), Value(query, "views"), Value(query, "tier")),
+            ["tracks", var id] when Allowed(query, TrackKeys) => await tracks.GetAsync(http, execution, id, Value(query, "include"), Value(query, "views")),
             ["tracks", var id, "lyrics", "translation"] when Allowed(query, ["to"]) => await tracks.TranslationAsync(http, execution, id, Value(query, "to")),
             ["tracks", _, "lyrics", "translation"] => new(400, null),
             ["tracks", var id, "autoplay"] when Allowed(query, AutoplayKeys) && int.TryParse(Value(query, "limit") ?? "25",

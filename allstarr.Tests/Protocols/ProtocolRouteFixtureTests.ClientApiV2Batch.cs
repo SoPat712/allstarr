@@ -49,12 +49,17 @@ public sealed partial class ProtocolRouteFixtureTests
         client.DefaultRequestHeaders.Authorization = new("Bearer", "listener-token");
         if (external) await SeedClientDetailsAsync(factory, "listener", "known", personal: true);
         var source = external ? "ext-deezer-song-known" : "native1";
-        var path = $"/allstarr/v2/tracks/{source}?views=playback";
-        using var before = await client.GetAsync(path);
-        var unplayed = JsonNode.Parse(await before.Content.ReadAsStringAsync())!["views"]!["playback"]!;
+        // Serving facts come with a stream link from resolve; reading the track itself never touches the audio.
+        async Task<JsonNode> Resolve(string query = "")
+        {
+            using var response = await client.PostAsJsonAsync("/allstarr/v2/playback/resolve" + query, new { trackId = source, tier = "high", purpose = "prefetch" });
+            var text = await response.Content.ReadAsStringAsync();
+            Assert.True(response.StatusCode == HttpStatusCode.OK, text);
+            return JsonNode.Parse(text)!;
+        }
+        var unplayed = await Resolve();
         Assert.True(unplayed.AsObject().ContainsKey("serving"));
         Assert.Null(unplayed["serving"]);
-        Assert.Null((await ReadV2Batch(client, path))["body"]!["views"]!["playback"]!["serving"]);
         var playback = await ResolveV2Playback(client, source, "original");
         opening = true;
         using var request = new HttpRequestMessage(HttpMethod.Get, playback["url"]!.GetValue<string>());
@@ -63,8 +68,7 @@ public sealed partial class ProtocolRouteFixtureTests
         opening = false;
         try
         {
-            using var current = await client.GetAsync(path);
-            var view = JsonNode.Parse(await current.Content.ReadAsStringAsync())!["views"]!["playback"]!;
+            var view = await Resolve();
             Assert.Equal(96000, view["source"]!["sampleRate"]!.GetValue<int>());
             var serving = view["serving"]!;
             Assert.Equal("flac", serving["codec"]!.GetValue<string>());
@@ -72,15 +76,11 @@ public sealed partial class ProtocolRouteFixtureTests
             Assert.Equal(96000, serving["sampleRate"]!.GetValue<int>());
             Assert.Equal(24, serving["bitDepth"]!.GetValue<int>());
             Assert.Equal(external ? "tidal" : "jellyfin", serving["source"]!.GetValue<string>());
-            var batch = await ReadV2Batch(client, path);
-            Assert.True(JsonNode.DeepEquals(serving, batch["body"]!["views"]!["playback"]!["serving"]));
-            using var otherDevice = await client.GetAsync(path + "&deviceId=other-device");
-            Assert.Null(JsonNode.Parse(await otherDevice.Content.ReadAsStringAsync())!["views"]!["playback"]!["serving"]);
+            Assert.Null((await Resolve("?deviceId=other-device"))["serving"]);
         }
         finally { release.TrySetResult(); }
         await streaming.Content.ReadAsByteArrayAsync();
-        using var after = await client.GetAsync(path);
-        Assert.Null(JsonNode.Parse(await after.Content.ReadAsStringAsync())!["views"]!["playback"]!["serving"]);
+        Assert.Null((await Resolve())["serving"]);
     }
 
     [Theory]

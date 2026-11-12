@@ -171,21 +171,32 @@ public sealed partial class ProtocolRouteFixtureTests
     }
 
     [Fact]
-    public async Task ClientApiV2_PlaybackViewWorksInsideBatchAndResolveStaysOutside()
+    public async Task ClientApiV2_TrackReadsNeverOpenAudioAndResolveStaysOutsideBatch()
     {
-        using var factory = V2PlaybackFactory();
+        var opened = 0;
+        using var factory = V2PlaybackFactory(audio: request => { Interlocked.Increment(ref opened); return V2AudioResponse(request); },
+            source: () => { Interlocked.Increment(ref opened); return V2ServiceAudio(); });
         using var client = CreateClientApiClient(factory);
         client.DefaultRequestHeaders.Authorization = new("Bearer", "listener-token");
+        await SeedClientDetailsAsync(factory, "listener", "known", personal: true);
+        // Older clients still ask for the retired playback view; the read succeeds and says it is unavailable.
         using var response = await client.PostAsJsonAsync("/allstarr/v2/batch", new
         {
-            requests = new[] { new { id = "next", path = "/allstarr/v2/tracks/native1?views=playback&tier=lossless" },
+            requests = new[] { new { id = "library", path = "/allstarr/v2/tracks/native1?views=playback" },
+                new { id = "service", path = "/allstarr/v2/tracks/ext-deezer-song-known?views=playback" },
                 new { id = "closed", path = "/allstarr/v2/playback/resolve" } }
         });
         var body = JsonNode.Parse(await response.Content.ReadAsStringAsync())!;
-        var next = body["responses"]!["next"]!;
-        Assert.Equal(200, next["status"]!.GetValue<int>());
-        Assert.Equal("ok", next["body"]!["viewStatus"]!["playback"]!.GetValue<string>());
-        Assert.Equal("flac", next["body"]!["views"]!["playback"]!["delivered"]!["codec"]!.GetValue<string>());
+        foreach (var name in new[] { "library", "service" })
+        {
+            var read = body["responses"]![name]!;
+            Assert.Equal(200, read["status"]!.GetValue<int>());
+            Assert.Equal("unavailable", read["body"]!["viewStatus"]!["playback"]!.GetValue<string>());
+            Assert.Null(read["body"]!["views"]?["playback"]);
+        }
+        using var standalone = await client.GetAsync("/allstarr/v2/tracks/native1?views=playback");
+        Assert.Equal(HttpStatusCode.OK, standalone.StatusCode);
+        Assert.Equal(0, opened);
         Assert.Equal(404, body["responses"]!["closed"]!["status"]!.GetValue<int>());
     }
 

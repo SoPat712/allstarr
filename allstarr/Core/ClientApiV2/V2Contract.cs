@@ -167,10 +167,6 @@ public sealed record V2TrackResponse([property: JsonPropertyName("track")] V2Tra
 public sealed record V2TrackViews
 {
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    [JsonPropertyName("playback")]
-    public V2PlaybackResponse? Playback { get; init; }
-
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     [JsonPropertyName("lyrics")]
     public RichLyrics? Lyrics { get; init; }
 
