@@ -1,5 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using allstarr.Core.Capabilities;
@@ -17,6 +19,106 @@ namespace allstarr.Tests;
 
 public sealed partial class ProtocolRouteFixtureTests
 {
+    [Fact]
+    public async Task ClientApiV2_AutoplayBatchesMatchSerialPagesAndCursorsWithMissingAndDuplicateIds()
+    {
+        string[] ids = ["seed", "missing1", "first", "first", "copy-first", "second", "missing2", "third", "second", "copy-second", "fourth", "missing3", "fifth", "sixth", "seventh"];
+        using var factory = AutoplayBatchFactory(ids, []);
+        using var client = CreateClientApiClient(factory);
+        client.DefaultRequestHeaders.Authorization = new("Bearer", "listener-token");
+        var seen = new HashSet<string>(StringComparer.Ordinal) { Hash("id:" + V2Ids.TrackSource("seed")), Hash("musicbrainzRecording:SEED") };
+        var offset = 0;
+        string? cursor = null;
+        do
+        {
+            var expected = new List<string>();
+            while (offset < ids.Length && expected.Count < 2)
+            {
+                var serial = JsonNode.Parse(await client.GetStringAsync("/allstarr/v2/tracks?ids=" + ids[offset]))!;
+                foreach (var track in serial["tracks"]!.AsArray())
+                {
+                    var keys = new[] { Hash("id:" + track!["id"]!.GetValue<string>()), Hash("musicbrainzRecording:" + track["externalIds"]!["musicbrainzRecording"]!.GetValue<string>().Replace("-", "", StringComparison.Ordinal).Trim().ToUpperInvariant()) };
+                    if (keys.Any(seen.Contains)) continue;
+                    seen.UnionWith(keys);
+                    expected.Add(track["title"]!.GetValue<string>());
+                }
+                offset++;
+            }
+            var page = JsonNode.Parse(await client.GetStringAsync("/allstarr/v2/tracks/seed/autoplay?limit=2" + (cursor == null ? "" : "&cursor=" + cursor)))!;
+            Assert.Equal(expected, AutoplayTitles(page));
+            cursor = page["next"]?.GetValue<string>();
+            if (offset < ids.Length)
+            {
+                var bytes = JsonSerializer.SerializeToUtf8Bytes(new V2AutoplayReader.Cursor(V2Ids.TrackSource("seed"), 0, offset, seen.Order(StringComparer.Ordinal).ToArray()));
+                Assert.Equal(WebEncoders.Base64UrlEncode(bytes) + "." + WebEncoders.Base64UrlEncode(SHA256.HashData(bytes)[..16]), cursor);
+            }
+            else Assert.Null(cursor);
+        } while (cursor != null);
+
+        static string Hash(string value) => WebEncoders.Base64UrlEncode(SHA256.HashData(Encoding.UTF8.GetBytes(value))[..16]);
+    }
+
+    [Fact]
+    public async Task ClientApiV2_AutoplayTwentyTracksUseFewTrackReads()
+    {
+        var reads = new List<string[]>();
+        using var factory = AutoplayBatchFactory(Enumerable.Range(1, 40).Select(index => "song" + index).ToArray(), reads);
+        using var client = CreateClientApiClient(factory);
+        client.DefaultRequestHeaders.Authorization = new("Bearer", "listener-token");
+        var page = JsonNode.Parse(await client.GetStringAsync("/allstarr/v2/tracks/seed/autoplay?limit=20"))!;
+        Assert.Equal(Enumerable.Range(1, 20).Select(index => "song" + index), AutoplayTitles(page));
+        Assert.InRange(reads.Count, 2, 3); // Includes the seed read; each track read shapes library rows once.
+        Assert.Contains(reads, ids => ids.Length is >= 20 and <= 25);
+    }
+
+    [Fact]
+    public async Task ClientApiV2_AutoplayCancellationDuringChunkKeepsCursorAndMarksPartial()
+    {
+        var clock = new ManualTimeProvider(DateTimeOffset.UtcNow);
+        var cancel = true;
+        using var factory = AutoplayBatchFactory(new[] { "seed" }.Concat(Enumerable.Range(1, 30).Select(index => "song" + index)).ToArray(), [], ids =>
+        {
+            if (!cancel || !ids.Contains("song26")) return;
+            cancel = false;
+            clock.Advance(TimeSpan.FromSeconds(5));
+            throw new OperationCanceledException();
+        }, new RecommendationClock(clock));
+        using var client = CreateClientApiClient(factory);
+        client.DefaultRequestHeaders.Authorization = new("Bearer", "listener-token");
+        var view = JsonNode.Parse(await client.GetStringAsync("/allstarr/v2/tracks/seed?views=autoplay"))!;
+        Assert.Equal("partial", view["viewStatus"]!["autoplay"]!.GetValue<string>());
+        var page = view["views"]!["autoplay"]!;
+        Assert.Equal(Enumerable.Range(1, 24).Select(index => "song" + index), AutoplayTitles(page));
+        var cursor = page["next"]!.GetValue<string>();
+        Assert.True(V2AutoplayReader.TryCursor("seed", cursor, out var position));
+        Assert.Equal(25, position.Offset);
+        var next = JsonNode.Parse(await client.GetStringAsync("/allstarr/v2/tracks/seed/autoplay?cursor=" + cursor))!;
+        Assert.Equal(Enumerable.Range(25, 6).Select(index => "song" + index), AutoplayTitles(next));
+        Assert.Null(next["next"]);
+    }
+
+    private static ProtocolFactory AutoplayBatchFactory(string[] candidates, List<string[]> reads, Action<string[]>? beforeRead = null, TimeProvider? clock = null)
+    {
+        var songs = candidates.Append("seed").Distinct().Where(id => !id.StartsWith("missing", StringComparison.Ordinal))
+            .ToDictionary(id => id, id => new { Id = id, Type = "Audio", Name = id, ProviderIds = new { MusicBrainzTrack = id.Replace("copy-", "", StringComparison.Ordinal) } });
+        return ClientDetailsFactory(request =>
+        {
+            if (request.RequestUri!.AbsolutePath == "/Users/Me") return Json(200, """{"Id":"listener"}""");
+            var query = QueryHelpers.ParseQuery(request.RequestUri.Query);
+            if (query.TryGetValue("ids", out var requested))
+            {
+                var ids = requested.ToString().Split(',');
+                if (query.ContainsKey("fields")) { reads.Add(ids); beforeRead?.Invoke(ids); }
+                return Json(200, JsonSerializer.Serialize(new { Items = ids.Reverse().Where(songs.ContainsKey).Select(id => songs[id]).ToArray() }));
+            }
+            var selected = request.RequestUri.AbsolutePath.EndsWith("/InstantMix", StringComparison.Ordinal) ? candidates : [];
+            return Json(200, JsonSerializer.Serialize(new { Items = selected.Select(id => new { Id = id }).ToArray() }));
+        }, services =>
+        {
+            if (clock != null) services.AddSingleton(clock);
+        });
+    }
+
     [Fact]
     public async Task ClientApiV2_AutoplayRecognizesLibraryGuidAliasesAcrossPages()
     {

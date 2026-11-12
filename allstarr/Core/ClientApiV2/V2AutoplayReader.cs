@@ -92,16 +92,20 @@ public sealed class V2AutoplayReader(V2TrackReader tracks, MusicMixService mixes
                 // A completed radio can return its gathered rows just as its timer fires.
                 while (offset < ids.Count && result.Count < limit && seen.Count <= MaximumSeen - 4)
                 {
-                    var id = ids[offset];
-                    var page = await tracks.ReadAsync(http, context, [id], false).WaitAsync(caller.Token);
-                    foreach (var track in page.Tracks)
+                    var chunk = ids.Skip(offset).Take(Math.Min(25, limit - result.Count + 4)).ToArray();
+                    var page = await tracks.ReadAsync(http, context, chunk, false).WaitAsync(caller.Token);
+                    foreach (var id in chunk)
                     {
+                        if (result.Count >= limit || seen.Count > MaximumSeen - 4) break;
+                        // Aliases retain every requested id, including ids merged into one returned track.
+                        var track = page.Tracks.FirstOrDefault(track => track.Id == id || track.Aliases.Contains(id, StringComparer.Ordinal));
+                        offset++;
+                        if (track == null) continue;
                         var keys = Keys(track).ToArray();
                         if (keys.Any(seen.Contains)) continue;
                         seen.UnionWith(keys);
                         result.Add(track);
                     }
-                    offset++;
                 }
                 if (interrupted) { partial = true; break; }
                 if (offset >= ids.Count) { stage++; offset = 0; }
