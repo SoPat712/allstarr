@@ -74,7 +74,8 @@ public sealed class ClientLibraryAdditions(IDbContextFactory<AllstarrDbContext> 
     public async Task<ClientLibraryAdditionCapabilities> CapabilitiesAsync(ProtocolExecutionContext context, CancellationToken token = default)
     {
         var direct = await promotions.CanAddDirectlyAsync(context, token);
-        return new(direct, !direct, (await profiles.GetMineAsync(context, token)).Values.DefaultUnit);
+        // Apps read this at startup, so it skips working out which folder adds would go to.
+        return new(direct, !direct, (await profiles.GetMineAsync(context, token, effectiveRoot: false)).Values.DefaultUnit);
     }
 
     public async Task<ClientLibraryAddition> AddAsync(ProtocolExecutionContext context, AddClientLibraryItem request,

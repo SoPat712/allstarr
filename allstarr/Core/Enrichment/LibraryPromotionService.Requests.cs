@@ -21,7 +21,7 @@ public sealed partial class LibraryPromotionService
     {
         await using var db = await factory.CreateDbContextAsync(token);
         var user = await PromotionProfiles.RequireUserAsync(db, context, token);
-        var household = (await (profiles ?? new PromotionProfiles(factory)).GetMineAsync(context, token)).HouseholdDefault;
+        var household = (await (profiles ?? new PromotionProfiles(factory)).GetMineAsync(context, token, effectiveRoot: false)).HouseholdDefault;
         return user.IsAdmin || user.IsTrustedListener && household.AddWithoutApproval == "admins-and-trusted-listeners";
     }
 
