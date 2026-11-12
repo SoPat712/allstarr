@@ -13,7 +13,7 @@
 - Desktop navigation stays pinned while pages scroll, with the profile and all destinations reachable in short windows.
 - Jellyfin root discovery returns music libraries and native playlist folders, allowing sign-in and playlist browsing to complete.
 - Favorites and playlist entries make provider music available in normal library browsing. Linked listening profiles can share hearts; mixed playlists and offline downloads preserve stable track entries.
-- Scheduled Health checks exercise playback without adding synthetic plays to listening history or scrobbles. Backup controls include retention and restore verification.
+- Subsonic's listener Health checks exercise playback without adding synthetic plays to listening history or scrobbles. Jellyfin uses the read-only server checks described above. Backup controls include retention and restore verification.
 - A getting-started guide and problem inbox help testers connect clients and report problems with useful context. Administrators can open match or lyrics review directly from a report.
 - Provider checks distinguish failed checks from missing samples and unverified facts. Source pages show recent checks and explain temporary routing skips. Source labels distinguish Allstarr items from the service actually delivering their audio, and missing covers use provider artwork.
 - Search and browsing keep distinct provider tracks separate and preserve original media-server details.

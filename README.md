@@ -4,15 +4,13 @@
 [![Docker Image](https://img.shields.io/badge/docker-ghcr.io%2Fsopat712%2Fallstarr-blue)](https://github.com/SoPat712/allstarr/pkgs/container/allstarr)
 [![License](https://img.shields.io/badge/license-GPL--3.0-green)](LICENSE)
 
-**Your music, connected.**
-
 Allstarr is a self-hosted music gateway for Jellyfin and Subsonic/OpenSubsonic clients. It sits in front of an existing media server, preserves normal local-library behavior, and adds provider-neutral search, matching, playback, playlists, lyrics, scrobbling, listening history, and discovery.
 
 > **Beta status:** `3.1.0-beta.1` is intended for testing. In-place upgrades from version 2 are supported by the runtime, but release qualification is still in progress. Save the previous image, configuration and stopped data folders before upgrading. Run one version at a time against any shared media paths.
 
 ## What Allstarr owns
 
-- SQLite stores users, encrypted account references, jobs, matches, playlist state, intelligence data, health, and audit records in a local data folder.
+- SQLite stores users, encrypted account references, jobs, matches, playlist state, listening data and audit records in a local data folder. Current provider health stays in memory.
 - Audio and artwork remain ordinary files in mounted cache, download, kept, and managed-library folders.
 - The encryption key ring remains a separate file that must be backed up with the database.
 - The original backend library is treated as read-only input.
@@ -61,11 +59,11 @@ Use `./tools/develop.sh update` for later source updates. It requires a clean tr
 - **Home** shows current playback, listeners, health, storage, work, and recent activity.
 - **Library** owns provider playlists, match review, cached audio, and kept audio.
 - **Integrations** owns Services, encrypted Accounts, extension packages, health, and provider Routing.
-- **Intelligence** owns personal discovery, new releases, taste controls, listening stats, and history imports.
+- **For you** owns personal mixes, new releases, taste controls, Recap and history imports.
 - **Activity** explains completed and failed work with correlation details.
 - **Settings** owns operator behavior, cache policy, maintenance, backup, and recovery. Routing, playback quality and matching policy live in Integrations.
 
-Intelligence is available to signed-in listeners. Its optional AudioMuse connection uses an existing analyzed Jellyfin library and stays disabled until an administrator configures it.
+For you is available to signed-in listeners. AudioMuse is shelved: its code remains in the build, but Sounds is hidden from the normal dashboard. See [AudioMuse status](docs/operations/audiomuse.md).
 
 ## Capabilities
 
@@ -103,6 +101,7 @@ verification when the upstream session reaches its lifetime cap. See the
 | Install and configure | [Configuration](docs/operations/configuration.md) |
 | Back up, restore, or move | [Storage runbook](docs/operations/storage.md) |
 | Check a client | [Client compatibility](docs/operations/client-compatibility.md) |
+| Build a client | [Client API](docs/api/README.md), [v2](docs/api/v2.md), [v1](docs/api/v1.md) |
 | Understand the system | [Architecture overview](docs/architecture/overview.md) |
 | Build an extension | [Extension SDK](docs/extensions/sdk-v1.md) |
 | Contribute code | [Contributing](CONTRIBUTING.md) |

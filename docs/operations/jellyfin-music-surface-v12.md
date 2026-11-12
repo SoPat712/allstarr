@@ -2,15 +2,15 @@
 
 Allstarr implements a deliberately music-only Jellyfin boundary. This contract is
 audited against `apis/specifications/jellyfin/openapi-12.0.0.json`; an operation
-that is not classified here is denied by default on the public Jellyfin port.
+outside the executable allowlist is denied by default on the public Jellyfin port.
 
 ## Request flow
 
 1. Classify the method, route, and any requested item types.
 2. For opaque item routes, resolve the item with Allstarr's internal Jellyfin
    credential and require `Audio`, `MusicAlbum`, `MusicArtist`, `Playlist`, or
-   `MusicGenre`. `DELETE /Items/{id}` has the narrower requirement that the
-   resolved native item is a `Playlist`.
+   `MusicGenre`. Native item updates and deletion require a verified `Playlist`;
+   these checks use the caller's credential when present.
 3. Verify the caller's Jellyfin session in `JellyfinAuthFilter` (except Jellyfin's
    public bootstrap and public music-artwork routes). Verification uses
    `Users/Me`; the 10.11 API-key fallback may verify an explicit user only for
@@ -36,7 +36,7 @@ Allstarr upgrades the client connection.
 | Playlists | playlist read/write, item ordering, membership, sharing, instant mix, native deletion | Injected playlists are intercepted. Hybrid links resolve a target through the viewer’s backend read and edit permissions; pure virtual/provider-only links are read-only. Service-token writes to existing targets first verify that the viewer can edit the playlist. |
 | Playback | `PlaybackInfo`, `Audio/.../stream`, universal audio, item file/download, bitrate test | Local audio is proxied. External playback info and stream URLs are synthesized by Allstarr. |
 | User listening state | favorite, played, and item user-data routes | Permitted only after the referenced item is verified as music. |
-| Client lifecycle | authentication, quick connect, capabilities, playback start/progress/stop/ping, logout, profile image, display preferences | Minimal authenticated client-control surface; remote-control/session enumeration is excluded. |
+| Client lifecycle | authentication, quick connect, capabilities, playback start/progress/stop/ping, logout, profile image, display preferences | Authenticated session enumeration and remote-control commands are relayed too; Jellyfin enforces its session permissions. |
 
 Jellyfin's anonymous bootstrap contract is preserved for public server info,
 public users and user images, GET/POST ping, UTC time, Quick Connect
@@ -55,12 +55,12 @@ songs belong in the library's contents and do not replace its root folders.
 
 - Video, movies, shows, episodes, trailers, people, live TV, channels, and
   music videos.
-- SyncPlay and remote-control commands for other sessions.
+- SyncPlay.
 - Plugin, scheduled-task, startup, branding, notification, library-structure,
   system configuration/log/restart/shutdown, user creation/policy, and other
   administrative routes.
-- Item deletion other than a backend-verified native playlist, metadata
-  refresh, and item/image mutation through the public proxy.
+- Item updates or deletion other than backend-verified native playlists,
+  metadata refresh, and image mutation through the public proxy.
 - Lyric upload, deletion, and remote-result installation. Read-only local and
   provider lyric lookup remains supported.
 - Live-stream opening/closing. Allstarr's external audio sources are direct HTTP
@@ -70,8 +70,8 @@ songs belong in the library's contents and do not replace its root folders.
 
 `allstarr.Tests/Fixtures/Protocols/jellyfin-openapi-qualification.json` is the
 machine-readable 12.0 review record. It classifies all 364 operations:
-32 client-control, 45 music-scoped, 36 requiring a verified music item, one
-requiring a verified native playlist, and 250 denied by default. Dashboard
+41 client-control, 45 music-scoped, 36 requiring a verified music item, two
+requiring a verified native playlist, and 240 denied by default. Dashboard
 configuration APIs under `/web/ConfigurationPage(s)` remain denied even though
 static Jellyfin web bootstrap assets are public.
 
@@ -80,7 +80,7 @@ operations in Jellyfin 10.11.11. It records the 25 version-only operations:
 query-form artist instant mix and the old music-genre root, legacy audio HLS and
 playing-item reports are allowed with their documented checks; video HLS,
 network-share, recording, encoding-control, and other non-music operations are
-denied. In total 124 operations are allowed and 264 are denied.
+denied. In total 134 operations are allowed and 254 are denied.
 
 The same contract separately classifies synthesized IDs. Core detail, artwork,
 playback-info, download/file, audio stream, lyrics read, similar/instant-mix,

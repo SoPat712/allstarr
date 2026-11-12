@@ -20,7 +20,7 @@ Compose uses `./data` at `/app/data` unless `ALLSTARR_DATA_PATH` selects another
 
 For a dashboard mounted under a reverse-proxy path or optional OIDC login, see [WebUI proxy and SSO setup](webui-access.md). Neither setting changes music-client authentication on port 5274.
 
-Saved Jellyfin connections require encrypted service access for playlist sync and library scans. If it is missing or unreadable, Home and Settings link to **Settings → Access → Media-server access**. When a legacy `JELLYFIN_API_KEY` is still mounted or present in the process environment, this page and the import review offer **Verify and restore access** separately from a settings import. Confirmation verifies administrator permissions before encryption and restart; the plain key is never a fallback for a saved connection. Rematching preserves existing local matches while the library index or access is unavailable and retries later.
+Saved Jellyfin connections require encrypted service access for playlist sync and library scans. Manage it in **Settings → General → Background library access**. When a legacy `JELLYFIN_API_KEY` is still mounted or present in the process environment, this page and the import review offer **Verify and restore access** separately from a settings import. Confirmation verifies administrator permissions before encryption and restart; the plain key is never a fallback for a saved connection. Rematching preserves existing local matches while the library index or access is unavailable and retries later.
 
 ## Protected files
 
@@ -70,7 +70,7 @@ In a version 2 layout, an explicit backend address/type remains available for na
 
 `Identity:BackendInstanceId` defaults to `primary` and identifies the selected backend instance. Users are created on verified sign-in and are distinct by backend type, instance, and backend principal. Their administrator role is read from the backend. Old multi-user modes and provider account management modes are recognized only as unsupported legacy input; they do not change ownership. Indexing includes all music libraries unless the administrator selects a subset, and each request still checks the listener's backend library permissions.
 
-`ALLSTARR_RELEASE_PROFILE` defaults to `core`. The core profile omits unreleased Intelligence controllers, recommendation providers, imports, background handlers, and direct WebUI access while preserving their database records. `development` explicitly composes those surfaces for continued work. Unknown profile names stop startup instead of silently widening the release.
+`ALLSTARR_RELEASE_PROFILE` defaults to `core`. It includes For you, mixes, new releases, taste, Recap and listening-history imports. The older Intelligence workspace and its recommendation workers require `development`. AudioMuse remains in the build, but its Sounds page is shelved and hidden from the normal dashboard. Unknown profile names stop startup.
 
 ## Background cross-provider links
 

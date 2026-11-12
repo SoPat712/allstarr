@@ -64,11 +64,10 @@ Manual-only sources are searched only after a listener explicitly picks that sou
 
 Extension credentials live in provider accounts under **Integrations > Services**. Account fields declared as secrets are encrypted before persistence. Source health, routing, and capability readiness live there too; they are not duplicate credential stores.
 
-Extensions may expose the intelligence contract. AudioMuse-AI is different: its Allstarr adapter is
-built in and its self-hosted server URL and optional token are configured from Intelligence.
-Allstarr stores the encrypted connection metadata and normalized results; models, workers,
-indexes, and the AudioMuse-AI service remain outside Allstarr.
-External intelligence service implementations remain outside the Allstarr package.
+Extensions may expose the retained intelligence contract. Its older workspace
+requires the development release profile. AudioMuse's built-in integration is
+[shelved and hidden](../operations/audiomuse.md); it is not a normal setup step.
+External models, workers and indexes remain outside Allstarr.
 
 The intelligence capability requires `recommend`; the remaining hooks are optional:
 

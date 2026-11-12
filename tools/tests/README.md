@@ -1,4 +1,53 @@
-# Live qualification tools
+# Test and maintenance tools
+
+Run commands from the repository root. Live checks need an explicitly chosen
+test deployment and temporary credentials. Offline checks use fixtures or local
+fake servers. A blocked live check is not a pass.
+
+## Tool inventory
+
+| Tool | Purpose and caller |
+| --- | --- |
+| `live_jellyfin_smoke.sh` | Direct-server versus proxy comparison; manual live qualification. |
+| `live_jellyfin_audio.py` | Full audio verification, called by the Jellyfin harness only when `TEST_FULL_AUDIO=1`. |
+| `live_jellyfin_websocket_smoke.py` | Manual direct/proxy WebSocket checks; requires Python `websockets`. |
+| `live_subsonic_smoke.py` | Manual Subsonic/OpenSubsonic comparison, with optional playlist writes. |
+| `listener_capacity.py` | Bounded concurrent downloads and seeks; requires `--run` to contact a server. |
+| `live_brainzmash_qualification.py` | Manual read-only catalog qualification with an approved request identity. |
+| `SearchContract/` | Response comparer called by `live_jellyfin_smoke.sh`. |
+| `ScrobbleCrashProbe/` | Process-crash helper referenced by the backend test project. |
+| `backend_test_shards.py` | CI's six regular backend filters and offline `--self-test`. |
+| `timing_report.py` | CI wrapper for elapsed time, deadlines and test-count checks. |
+| `v2_image_upgrade.sh` | CI image/layout qualification using an isolated legacy fixture and fake backend. |
+| `fixtures/jellyfin-smoke.json` | Recorded input for `test_live_jellyfin_smoke.py`. |
+
+Offline Python checks beside the tools are `test_live_jellyfin_smoke.py`,
+`test_live_jellyfin_audio.py`, `test_live_subsonic_smoke.py`,
+`test_listener_capacity.py`, `test_release_channels.py` and
+`test_release_manifest.py`. Run a relevant file directly, for example:
+
+```bash
+nice -n 19 python3 tools/tests/test_live_jellyfin_audio.py
+nice -n 19 python3 tools/tests/test_release_manifest.py
+```
+
+Other maintained helpers under `tools/`:
+
+- `develop.sh` and `docker-compose.source.yml` build and run a source checkout;
+  see [source development](../../docs/operations/deployment-profiles.md#source-development).
+- `create-release-manifest.sh` writes the release manifest to standard output.
+  CI runs it; `test_release_manifest.py` checks it offline.
+- `ci/install-media-tools.sh` installs the pinned media tools on Linux CI runners.
+- `apple-provider/prepare.sh` and its `source-lock.json` verify Apple wrapper
+  inputs. `allstarr.sh` calls the script; see [Apple setup](../../docs/operations/apple-download-provider.md).
+- `render-provider-covers.py` is a manual asset tool. It uses `rsvg-convert` from
+  librsvg to regenerate the 600px and 96px PNG covers beside provider SVGs in
+  `allstarr/wwwroot/images/providers/`. It overwrites those generated covers.
+
+The session-verifier browser fixture is
+`sidecars/session-verifier/tools/smoke_browser.py`. CI bind-mounts it into the
+verifier image and runs it with offline fixtures. It is separate from these live
+music checks.
 
 ## Listener capacity
 
@@ -52,13 +101,13 @@ query text or payloads.
 Supply only an identity explicitly authorized by the BrainzMash operator:
 
 ```bash
-BRAINZMASH_USER_AGENT='DroppedNeedleApp/backend-test' \
+BRAINZMASH_USER_AGENT="$APPROVED_REQUEST_IDENTITY" \
   python3 tools/tests/live_brainzmash_qualification.py
 ```
 
-The temporary identity is not a deployment default. Once BrainzMash admits
-Allstarr, rerun with `Allstarr/<current version> (+https://github.com/SoPat712/allstarr)`
-and remove `MUSICBRAINZ_AUTHORIZED_USER_AGENT_OVERRIDE` from the deployment.
+Use only the identity approved for this installation. The normal application
+identity includes its own version and repository URL; do not borrow another
+application's identity.
 
 ## Jellyfin compatibility qualification
 
@@ -164,9 +213,9 @@ parity checks against matched entries. Unresolved playlist rows must also use
 the neutral injection label while remaining non-playable:
 
 ```bash
-INJECTED_PLAYLIST_ID=ddc3db277be524ad6f54e4b276cc619a \
+INJECTED_PLAYLIST_ID="$TEST_PLAYLIST_ID" \
 INJECTED_PLAYLIST_EXPECTED_COUNT=50 \
-JELLYFIN_USER_ID=1635cd7d23144ba08251ebe22a56119e \
+JELLYFIN_USER_ID="$TEST_USER_ID" \
 SAMPLES=5 bash tools/tests/live_jellyfin_smoke.sh
 ```
 
@@ -176,7 +225,7 @@ that the item advertises a primary image and that direct and proxied image
 bytes are identical:
 
 ```bash
-NATIVE_PLAYLIST_ID=ddc3db277be524ad6f54e4b276cc619a \
+NATIVE_PLAYLIST_ID="$TEST_PLAYLIST_ID" \
 NATIVE_PLAYLIST_EXPECTED_NAME='Provider playlist name' \
 NATIVE_PLAYLIST_REQUIRE_ARTWORK=1 \
 SAMPLES=5 bash tools/tests/live_jellyfin_smoke.sh
@@ -260,7 +309,7 @@ native fallback. It still records direct Jellyfin and actor-visible Allstarr
 counts; for example, a five-track native source beneath a 50-track injected
 projection is reported as `direct=5 allstarr=5 expected=50 actor_bound=0`.
 
-Every run prints a UTC start time and unique user agent. Use those two values
+Every run prints a UTC start time and unique request identity. Use those two values
 to inspect only the matching bounded server-log window; never copy tokens,
 authorization headers, signed media URLs, or raw private payloads into a
 saved report. Unset and revoke temporary credentials after the run.

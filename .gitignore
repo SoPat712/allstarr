@@ -125,6 +125,7 @@ sampleMissingPlaylists/
 /webui/build/
 /webui/playwright-report/
 /webui/test-results/
+/test-results/
 
 # Local design tooling
 /.agents/

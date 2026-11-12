@@ -13,7 +13,7 @@ cd allstarr
 ./tools/develop.sh up
 ```
 
-Deployment overrides in `.env` are optional. While browser backend selection is unfinished, set `BACKEND_TYPE` and `JELLYFIN_URL` or `SUBSONIC_URL` there before starting. The developer script combines the standard Compose file with its source-build overlay. See [deployment](docs/operations/deployment-profiles.md).
+Deployment overrides in `.env` are optional. Choose and verify the backend in the dashboard on first startup. `BACKEND_TYPE` and `JELLYFIN_URL` or `SUBSONIC_URL` are optional startup defaults; a saved connection takes precedence. The developer script combines the standard Compose file with its source-build overlay. See [deployment](docs/operations/deployment-profiles.md).
 
 For a direct application run, set `Storage__DataDirectory` to a disposable local folder. Follow [docs/operations/storage.md](docs/operations/storage.md).
 
@@ -40,7 +40,10 @@ Read [README.md](README.md) for supported behavior, the [documentation map](docs
 | `allstarr/Core/Matching/` | Canonical identity, evidence, and match decisions |
 | `allstarr/Core/Playlists/` | Playlist ingestion, projection, and synchronization |
 | `allstarr/Core/Playback/` | Playback observations and client sessions |
-| `allstarr/Shelved/Intelligence/` | Listening history, recommendations, and AudioMuse integration |
+| `allstarr/Core/ListeningHistory/` | Listening-history imports and retention |
+| `allstarr/Core/AudioMuse/` | Shelved AudioMuse connection and previews |
+| `allstarr/Shelved/Intelligence/` | Development-only recommendation workspace |
+| `allstarr/Core/ClientApi/`, `allstarr/Core/ClientApiV2/` | Client contracts and resource readers |
 | `allstarr/Core/Jobs/` | Durable jobs, schedules, restart recovery, and retries |
 | `allstarr/Core/Storage/` | SQLite model, migrations, and backups |
 | `allstarr/Providers/Extensions/` | Extension package lifecycle and permissions |
@@ -84,7 +87,7 @@ Preserve unrelated work in a dirty tree. Stage exact files only; never use `git 
 
 ## Tests And Fixtures
 
-Every behavior change, bug fix, contract change, and migration rule needs focused coverage. Run the smallest relevant tests while iterating. Database tests create isolated temporary SQLite files and run without an external database or opt-in variable. CI splits the Release matrix into two lanes, and both are required before release:
+Every behavior change, bug fix, contract change, and migration rule needs focused coverage. Run the smallest relevant tests while iterating. Database tests create isolated temporary SQLite files and run without an external database or opt-in variable. CI runs six regular shards and a separate release-critical job. These filters select the two groups:
 
 ```bash
 dotnet test allstarr.sln -c Release --filter "Lane!=ReleaseCritical"
@@ -116,7 +119,7 @@ Migration, backup, restore, and destructive behavior require an isolated disposa
 
 Follow [DESIGN.md](DESIGN.md). Reuse the existing Svelte, Bits UI, Tailwind, Lucide, and shared component system before adding a dependency or page-specific control. Keep the interface dense where comparison matters and explanatory where setup or empty state needs guidance.
 
-Integrations owns Services, Accounts, Extensions, and Routing. Intelligence owns listening history, imports, discovery, automation, and its built-in AudioMuse connection. Settings owns deployment and operator behavior. Do not scatter the same configuration across these areas.
+Integrations owns Services, Accounts, Extensions and Routing. For you owns mixes, releases, taste, Recap and history imports. AudioMuse and the older Intelligence workspace are shelved; retain their existing boundaries. Settings owns deployment and operator behavior.
 
 Run these checks from `webui/`:
 
@@ -147,6 +150,7 @@ Documentation ownership:
 - `docs/operations/`: deployment and recovery procedures.
 - `docs/architecture/`: durable boundaries and code ownership.
 - `docs/extensions/`: public extension contract.
+- `docs/api/`: versioned client API guides.
 - Module README files: specialized code and tools beside their implementation.
 
 Do not commit local design-tool state, generated test reports, private deployment details, or duplicate working documents.

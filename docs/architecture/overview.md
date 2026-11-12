@@ -1,6 +1,6 @@
 # Architecture overview
 
-Allstarr is a music middleware service. It presents a Jellyfin or Subsonic-compatible surface, resolves tracks through a provider-neutral capability core, and keeps operational state in SQLite. It is not a general media-server replacement or a local-library organizer.
+Allstarr is a music middleware service. It presents a Jellyfin or Subsonic-compatible surface, resolves tracks through a provider-neutral capability core, and keeps operational state in SQLite. It uses an existing media server. Library additions write new files only to approved folders; existing backend files remain untouched.
 
 ## Runtime invariants
 
@@ -262,7 +262,7 @@ Activity Queue and History read that same job row and audit ledger with owner-sc
 
 Ordinary queued work has an explicit initiating user, including scheduled work using a Shared account. Two built-in maintenance exceptions have no user, provider account or capability: `storage.verify-files` can verify already owned files, and `storage.backup` can snapshot the household database and key ring. Their exact policies and execution guards cannot authorize provider work. Only `storage.backup` has a household schedule with no listener owner; all other schedules retain their required user ownership. Enqueue and each execution attempt verify that the user is active and the exact saved account remains enabled, owned or Shared, at the saved revision, registered for the requested capability, and bound to a valid credential purpose. Retries never substitute another account. The encrypted secret store rechecks the account and credential again when opening a lease. Listener activity, progress, and event feeds use the recorded user; a shared correlation ID grants no access. Revoked sessions close their live event stream. Each playback report is its own job; finished playback jobs and their ledger history expire with the event-log retention period (see [storage](../operations/storage.md#event-log-and-job-retention)).
 
-Startup opens the SQLite file on local disk, enables WAL, applies the baseline migration, and checks schema compatibility and integrity before marking storage ready. Every connection enables foreign keys, normal synchronization, and a five-second busy timeout. Durable workers wait for readiness. Run one application process per deployment; network filesystems are unsupported.
+Startup opens the SQLite file on local disk, enables WAL, applies pending migrations, and checks schema compatibility and integrity before marking storage ready. Every connection enables foreign keys, normal synchronization, and a five-second busy timeout. Durable workers wait for readiness. Run one application process per deployment; network filesystems are unsupported.
 
 `DurableBackupService` owns manual and daily scheduled snapshots, archive verification, restore staging and retention. Manual and scheduled admission share the durable job system. `backup_artifacts` records the reserved artifact, job lineage, captured policy, storage and filesystem identity, checksums and publication result. Retries reuse the reservation and never claim an unregistered file found after interruption. The portable ZIP format remains independent of this ownership ledger. Archive readers pin files against retention; deletion requires current ownership, identity and content proof. Daily and ISO-week retention select a union of scheduled artifacts, with a separate manual count. Legacy and unclaimed files remain protected. A missing optional archive destination fails its backup work without blocking native proxy startup. See [storage operations](../operations/storage.md) for destination and recovery behavior.
 
@@ -290,6 +290,15 @@ The complete application-cache key inventory is:
 | `playback:signal:dedupe:*` | Short-lived duplicate-signal marker | Five-minute maximum TTL |
 
 Playlist source entries, order, matches, decisions, sync timestamps and sessions never use cache keys. Their read models are rebuilt from SQLite. Provider health is volatile: restarting clears observations and cooldowns; normal activity and explicit tests rebuild account status without background account or media probes.
+
+## Client API
+
+The [client API](../api/README.md) runs on the Jellyfin music listener.
+New clients use v2 resources, a shared track shape, optional views and batched
+GET reads. Reading metadata never opens audio. Explicit playback resolution
+returns a signed, expiring media link. V1 remains available for existing clients
+and operations not yet exposed in v2. Both versions use the same listener,
+account and library authorization owners.
 
 ## WebUI
 

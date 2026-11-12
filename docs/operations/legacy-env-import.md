@@ -4,15 +4,15 @@ Version 3 uses an explicit administrator import to carry safe configuration from
 
 ## Supported workflow
 
-1. Back up and stop the version 2 deployment.
-2. Create a separate version 3 deployment with an empty local data folder; startup creates its database and key ring.
-3. Finish version 3 onboarding and sign in as an administrator.
-4. Open the legacy `.env` migration in Settings and upload or paste the old file.
+1. Stop version 2 and back up its configuration and persistent folders. Follow [the upgrade procedure](deployment-profiles.md#upgrade-from-version-2) with the existing Compose file and mounts.
+2. Start version 3. It creates SQLite and the key ring in the persistent data or compatible cache mount.
+3. Sign in as a media-server administrator.
+4. Open **Settings → Setup → Review previous settings** and preview the mounted `.env`, or upload or paste a copy.
 5. Review the preview, conflicts, obsolete keys, deployment-only values, accounts, backend identity, and playlists.
 6. Confirm and apply the preview before it expires.
 7. Review each connection result. Successful imported accounts are enabled; reconnect or retest failed accounts in Integrations before enabling them.
 8. Review imported playlist links and schedules. Existing target IDs and schedules are preserved; source order replaces the old first/last rule. Resolve any missing account or target through the playlist workflow.
-9. Run readiness checks and create and download a verified backup in Settings → Maintenance before cutting clients over.
+9. Check readiness and playback, then create and download a verified backup in **Settings → Backups**.
 
 Version 2 and version 3 must never write the same cache, download, kept, or managed-library root at the same time.
 
@@ -33,7 +33,7 @@ The parser classifies recognized input rather than copying arbitrary keys.
 
 The exact recognized aliases and dispositions are owned by `allstarr/Core/Configuration/LegacyEnvParser.cs`. Validation and durable application are owned by `LegacyEnvMigrationService.cs`. Tests in `allstarr.Tests/Configuration/LegacyEnvParserTests.cs` and `allstarr.Tests/Configuration/LegacyEnvMigrationServiceTests.cs` are the executable contract.
 
-Legacy Redis/Valkey, SQLite, mapping-file, cache-file, AIO, and Compose-overlay values are recognized only so the preview can explain that they are obsolete. Their data is not imported as runtime state.
+Legacy storage-engine selectors, Redis/Valkey, mapping-file, cache-file, AIO and Compose-overlay settings are reported rather than imported. SQLite is the current durable store; the import does not convert an older database or cache into authoritative state.
 
 ## Safety
 
@@ -52,7 +52,7 @@ Legacy Redis/Valkey, SQLite, mapping-file, cache-file, AIO, and Compose-overlay 
 - It does not copy media or provider-session volumes.
 - It does not convert old mapping JSON or cache keys into authoritative matches.
 - It does not retain the old `local tracks last` behavior. The preview explains that source order now applies.
-- It does not grant every user access to an imported shared source.
+- Imported Shared accounts follow the normal household capability policy. They do not grant backend library access or access to private playlists.
 - It does not preserve a rollback database inside the new runtime. Keep the stopped version 2 deployment separately until verification is complete.
 
 SquidWTF is retired. No replacement source or account is selected automatically; choose a source in Integrations. The old Apple AIO URL is left behind and links to optional Apple setup. Retired Spotify cache settings, obsolete concurrency flags, and Valkey configuration are reported rather than copied into active settings. Credential verification runs before opening the import writer transaction, and the administrator and current account/settings state are rechecked before persistence.

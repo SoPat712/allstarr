@@ -49,13 +49,13 @@ For rollback to an earlier image, restore the matching pre-upgrade folder backup
 
 ## Database readiness and recovery
 
-Startup enables WAL, applies the checked-in baseline, and runs an integrity check before storage becomes ready. Each connection enforces foreign keys and uses normal synchronization with a five-second busy timeout. Unknown schema versions and damaged database files leave durable operations unavailable while the native proxy remains available. Startup does not replace damaged data or fall back to another database.
+Startup enables WAL, applies pending migrations, and runs an integrity check before storage becomes ready. Each connection enforces foreign keys and uses normal synchronization with a five-second busy timeout. Unknown schema versions and damaged database files leave durable operations unavailable while the native proxy remains available. Startup does not replace damaged data or fall back to another database.
 
 | Setting | Default | Purpose |
 | --- | --- | --- |
 | `Storage__DataDirectory` | `/app/data` | Owned local database and backup directory |
 | `Storage__DatabaseFileName` | `allstarr.db` | File name within the data directory |
-| `Storage__AutoMigrate` | `true` | Apply the baseline before readiness |
+| `Storage__AutoMigrate` | `true` | Apply pending migrations before readiness |
 | `Storage__CommandTimeoutSeconds` | `30` | Command execution timeout |
 | `Storage:BackupEnabled` | `true` | Daily database-and-key-ring backup |
 | `Storage:BackupTimeUtc` | `03:00` | Daily time in UTC, in `HH:mm` format |
@@ -157,13 +157,26 @@ A database that has retained superseded download artifacts cannot be migrated ba
 
 Personal source use modes extend the existing runtime settings allowlist and preserve older settings during upgrade. An in-place downgrade is rejected while personal source modes are saved, so returning to an older version requires the matching pre-upgrade backup and image.
 
-## Library promotion API
+## Adding songs to the backend library
 
-Promotion is available through authenticated admin-port APIs; there is no dashboard promotion flow yet. An administrator first configures `Promotion:AllowedBase` and registers existing writable subdirectories with `PUT /api/admin/library-promotions/roots` (`id`, `name`, `path`). Roots must stay inside that base and cannot traverse symbolic links. `GET` on the same route returns root IDs and names.
+Library additions have a dashboard flow. Approve a writable Jellyfin music
+folder in **Settings → Library → Where and who**, then use **Add to library**
+for an eligible recording. If Jellyfin and Allstarr use different paths, map the
+backend path to its mounted path inside Allstarr. `Promotion__AllowedBase` is an
+optional restriction, not a prerequisite. Approval rejects symbolic links and
+verifies write access. See [library setup](../user-guide.md#adding-to-your-library).
 
-Use `POST /api/admin/library-promotions/preview` with `recordingId`, `artifactId`, `rootId`, `backendLibraryId`, and `requestKey` to review the destination, size, and steps for a complete verified original. `POST /api/admin/library-promotions` starts the durable copy, metadata/cover application, quality screen, owned placement, and backend refresh request. The original source and existing backend library files remain unchanged. Reusing the same request key with the same request returns the existing run.
+The administration API is owned by `LibraryPromotionsController` and
+`PromotionProfilesController`. It discovers folders at
+`GET /api/admin/library-promotions/folders`.
+Save approved roots at `PUT /api/admin/library-promotions/roots`, preview at
+`POST /api/admin/library-promotions/preview`, and start at
+`POST /api/admin/library-promotions`. Roots retain backend and local paths. Current
+requests can acquire missing audio; a pre-existing artifact is not required.
 
-Inspect `GET /api/admin/library-promotions/{id}`. A suspicious or inconclusive quality result pauses at **Needs review**; the owner or an administrator can give an explicit `reason` to `POST /{id}/approve`. `POST /{id}/cancel` requests cancellation. Library access and source ownership are checked again during work; an approval does not bypass those checks. Preserve the approved media root alongside database backups.
+Library permissions and approval policy apply to each request and again during
+work. Quality checks can pause a run for review. Existing backend files remain
+untouched. Back up approved library roots separately from database archives.
 
 ## Imported original media
 
