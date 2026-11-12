@@ -161,6 +161,10 @@ public sealed partial class MigrationWizardFlowTests : IAsyncLifetime
     [Fact]
     public async Task PagedCollectionRestartsAtSavedCursorAndReconcilesEveryState()
     {
+        await using var connection = new Microsoft.Data.Sqlite.SqliteConnection(database.ConnectionString);
+        factory.Options = new DbContextOptionsBuilder<AllstarrDbContext>(database.Options).UseSqlite(connection).Options;
+        await using var open = factory.CreateDbContext();
+        await open.Database.OpenConnectionAsync();
         count = 101;
         failSecondPage = true;
         var run = await Selected("liked-songs");
@@ -486,7 +490,8 @@ public sealed partial class MigrationWizardFlowTests : IAsyncLifetime
     public async Task DisposeAsync() => await database.DisposeAsync();
     private sealed class Factory(DbContextOptions<AllstarrDbContext> options) : IDbContextFactory<AllstarrDbContext>
     {
-        public AllstarrDbContext CreateDbContext() => new(options);
+        public DbContextOptions<AllstarrDbContext> Options { get; set; } = options;
+        public AllstarrDbContext CreateDbContext() => new(Options);
         public Task<AllstarrDbContext> CreateDbContextAsync(CancellationToken cancellationToken = default) => Task.FromResult(CreateDbContext());
     }
 }

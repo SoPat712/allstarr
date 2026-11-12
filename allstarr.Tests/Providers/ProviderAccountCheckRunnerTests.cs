@@ -571,6 +571,9 @@ public sealed class ProviderAccountCheckRunnerTests
             new allstarr.Core.Providers.Lyrics.PaxsenixRequestPacer(time, TimeSpan.Zero), time,
             new AppleMusicKitMetadataCapabilityAdapter(apple));
         var manager = Manager(config, handler, time, configureServices: services => services.AddSingleton(apple).AddSingleton(adapter));
+        using var samples = new ProviderDiagnosticSamples(time);
+        typeof(ProviderStatusManager).GetField("_diagnosticSamples",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.SetValue(manager, samples);
         var history = new ProviderCheckHistory(factory, time);
         var staleKey = ProviderRuntimeStatusKey.CreateAccountFree("paxsenix", "streaming");
         await history.RecordAsync(new(staleKey, null, new ProviderRuntimeStatus
@@ -591,6 +594,9 @@ public sealed class ProviderAccountCheckRunnerTests
         {
             await time.WaitForTimersAsync(TimeSpan.FromSeconds(8));
             time.Advance(TimeSpan.FromSeconds(8));
+            await time.WaitForTimersAsync(TimeSpan.FromSeconds(8));
+            Assert.False(pending.IsCompleted);
+            time.Advance(ProviderDiagnosticSamples.Timeout - TimeSpan.FromSeconds(8));
         }
         Assert.Equal(outcome != "busy", await pending.WaitAsync(TimeSpan.FromSeconds(30)));
         var status = Assert.Single(manager.GetAllAccountFreeStatuses(), item => item.Provider == "paxsenix");

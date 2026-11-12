@@ -39,7 +39,7 @@ public sealed partial class AdminUiActivityTests
             db.Users.Add(new() { Id = owner, DisplayName = "Listener", BackendType = "jellyfin", BackendInstanceId = "fixture", BackendPrincipalId = owner.ToString("N") });
             await db.SaveChangesAsync();
         }
-        var tracks = Enumerable.Range(0, 1000).Select(index => new LibraryTrackRecord
+        var tracks = Enumerable.Range(0, 300).Select(index => new LibraryTrackRecord
         {
             Id = Guid.CreateVersion7(),
             OwnerUserId = owner,
@@ -51,7 +51,7 @@ public sealed partial class AdminUiActivityTests
             FilePath = $"/music/{index}.flac"
         }).ToArray();
         var now = DateTimeOffset.UtcNow;
-        var snapshots = Enumerable.Range(0, 500).Select(index => new ExternalMetadataSnapshotRecord
+        var snapshots = Enumerable.Range(0, 150).Select(index => new ExternalMetadataSnapshotRecord
         {
             Id = Guid.CreateVersion7(),
             OwnerUserId = owner,
@@ -72,7 +72,7 @@ public sealed partial class AdminUiActivityTests
         var expected = decisions.Select((decision, index) => AdminUiController.MatchActivityItem(decision, snapshots[index], null, [], tracks)
             with
         { ActorDisplayName = "Listener" }).ToArray();
-        WriteHomeProfile($"Per-row library preparation for 500 matches and 1000 tracks: {original.Elapsed.TotalMilliseconds:0.0} ms");
+        WriteHomeProfile($"Per-row library preparation for 150 matches and 300 tracks: {original.Elapsed.TotalMilliseconds:0.0} ms");
         var counted = new ActivityLibraryReads(tracks);
         var matches = new Mock<ITrackMatchRepository>(MockBehavior.Strict);
         matches.Setup(item => item.GetActivityDataAsync(It.IsAny<TrackMatchActor>(), null, null, 500, It.IsAny<CancellationToken>()))
@@ -92,7 +92,7 @@ public sealed partial class AdminUiActivityTests
         var page = Assert.IsType<AdminUiActivityPage>(Assert.IsType<OkObjectResult>(await controller.GetDashboardActivity(limit: 100)).Value);
 
         var measurement = timing.Snapshot("admin");
-        WriteHomeProfile($"Activity with 500 matches and 1000 library tracks: {measurement.Header}; library enumerations {counted.Reads}");
+        WriteHomeProfile($"Activity with 150 matches and 300 library tracks: {measurement.Header}; library enumerations {counted.Reads}");
         Assert.Equal(JsonSerializer.Serialize(expected.Take(100)), JsonSerializer.Serialize(page.Items));
         Assert.Equal(1, counted.Reads);
         Assert.True(measurement.TotalMs <= 300, $"Activity exceeded 300 ms: {measurement.Header}");

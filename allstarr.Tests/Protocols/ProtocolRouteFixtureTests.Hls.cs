@@ -21,9 +21,9 @@ public sealed partial class ProtocolRouteFixtureTests
     [MediaToolsFact]
     public async Task HlsStreamsLargerOriginalsIntoTheBoundedDeliveredSession()
     {
-        var bytes = ProviderStreamOpenerTests.SeekWave(200, sampleRate: 96000);
+        var bytes = ProviderStreamOpenerTests.SeekWave(100, sampleRate: 192000);
         Assert.True(bytes.Length > 32 * 1024 * 1024);
-        var gateway = HlsGateway(bytes, new("audio/wav", "wav", "pcm_s16le", 1536000, 96000, 16, 1));
+        var gateway = HlsGateway(bytes, new("audio/wav", "wav", "pcm_s16le", 3072000, 192000, 16, 1));
         using var sessions = new ProviderHlsSessions(gateway.Object, TimeProvider.System);
         var context = new ProtocolExecutionContext(ProtocolKind.Jellyfin, "backend", "principal", null, "large-hls", DateTimeOffset.UtcNow.AddMinutes(3), default);
         var delivery = ProviderAudioDeliveryRequests.Jellyfin(new QueryCollection(new Dictionary<string, Microsoft.Extensions.Primitives.StringValues>
@@ -32,7 +32,7 @@ public sealed partial class ProtocolRouteFixtureTests
         var session = await sessions.CreateAsync(context, "ext-deezer-song-42", "deezer", "42", delivery);
 
         Assert.InRange(session.Bytes.Length, 1, 32 * 1024 * 1024);
-        Assert.InRange(session.Duration, 199.5, 200.5);
+        Assert.InRange(session.Duration, 99.5, 100.5);
         Assert.Equal("aac", session.Media!.Codec);
         Assert.Equal(128000, session.Media.Bitrate);
         Assert.Same(session, sessions.Find(session.Id));

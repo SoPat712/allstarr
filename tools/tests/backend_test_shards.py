@@ -6,44 +6,64 @@ from __future__ import annotations
 import argparse
 
 
-# Run 41303998651 TRX duration sums: 238 / 246 / 247 / 263 / 245 / 246 seconds.
-# Split the large protocol class by method prefix; keep other classes together.
+# Run 43248829915 TRX seconds, updated with focused before/after measurements.
+# Each entry records estimated test-body seconds. Balance the two xUnit collection
+# workers, combining the remaining protocol and mix methods on the fifth shard.
+# Estimated seconds by shard: 158.7 / 162.0 / 162.7 / 162.5 / 183.8 / 152.3 (before host setup).
 # Earlier groups take precedence. The final shard includes every remaining test.
 SHARD_GROUPS = (
     (
-        "allstarr.Tests.ProtocolRouteFixtureTests.Jellyfin",
-        "allstarr.Tests.ExtensionCapabilityAdapterTests.",
-        "allstarr.Tests.LegacyEnvMigrationServiceTests.",
-        "allstarr.Tests.TasteServiceTests.",
-        "allstarr.Tests.StartupConfigurationTests.",
-        "allstarr.Tests.FavoriteLinkTests.",
+        "allstarr.Tests.ProtocolRouteFixtureTests.ClientApi_",  # 158.7 s
+        "allstarr.Tests.TasteServiceTests.",  # 12.1 s
+        "allstarr.Tests.HealthSmokeServiceTests.",  # 11.1 s
+        "allstarr.Tests.DurableBackupServiceTests.",  # 11.0 s
+        "allstarr.Tests.LibraryIndexServiceTests.",  # 10.2 s
+        "allstarr.Tests.TrackMatchRefreshTests.",  # 10.2 s
+        "allstarr.Tests.ProviderStatusManagerTests.",  # 10.0 s
+        "allstarr.Tests.PersonalMixServiceTests.Large_library_",  # 7.1 s
     ),
     (
-        "allstarr.Tests.ProtocolRouteFixtureTests.Subsonic",
-        "allstarr.Tests.PlaylistOrchestrationIntegrationTests.",
-        "allstarr.Tests.ProviderStatusManagerTests.",
-        "allstarr.Tests.FavoriteActionPipelineTests.",
-        "allstarr.Tests.MixCoverRendererTests.",
-        "allstarr.Tests.DurableBackupServiceTests.",
-        "allstarr.Tests.TrackMatchRefreshTests.",
-        "allstarr.Tests.ExtensionProgressivePlaybackTests.",
+        "allstarr.Tests.ProtocolRouteFixtureTests.Jellyfin",  # 118.7 s
+        "allstarr.Tests.ListeningHistoryResolutionTests.",  # 31.2 s
+        "allstarr.Tests.ExtensionControlPlaneServiceTests.",  # 28.9 s
+        "allstarr.Tests.PlaybackSignalPipelineTests.",  # 26.8 s
+        "allstarr.Tests.NewReleasesTests.",  # 24.7 s
+        "allstarr.Tests.PersonalMixServiceTests.ServiceFeeds_",  # 22.1 s
+        "allstarr.Tests.ProviderAudioVerifierAppleProgressiveTests.",  # 19.5 s
+        "allstarr.Tests.AdminUiActivityTests.",  # 15.9 s
+        "allstarr.Tests.FavoriteActionPipelineTests.",  # 14.9 s
+        "allstarr.Tests.PersonalMixServiceTests.Built_in_",  # 10.8 s
+        "allstarr.Tests.ProtocolRouteFixtureTests.PassThrough",  # 9.0 s
     ),
     (
-        "allstarr.Tests.ProtocolRouteFixtureTests.",
+        "allstarr.Tests.TrackIdentityServiceTests.",  # 71.2 s
+        "allstarr.Tests.MigrationWizardFlowTests.",  # 57.0 s
+        "allstarr.Tests.ProtocolRouteFixtureTests.FavoriteRoundTrip",  # 46.7 s
+        "allstarr.Tests.ProtocolProviderStreamingGatewayTests.",  # 37.9 s
+        "allstarr.Tests.LegacyEnvMigrationServiceTests.",  # 23.7 s
+        "allstarr.Tests.PersonalMixAudioTests.",  # 22.6 s
+        "allstarr.Tests.PersonalMixServiceTests.Custom_",  # 11.1 s
+        "allstarr.Tests.TrackRematchAllIntegrationTests.",  # 16.0 s
+        "allstarr.Tests.ProtocolRouteFixtureTests.OfflineDownload",  # 13.5 s
+        "allstarr.Tests.PersonalMixServiceTests.Generation_",  # 8.1 s
+        "allstarr.Tests.ProtocolRouteFixtureTests.LyricsClients",  # 6.9 s
     ),
     (
-        "allstarr.Tests.PersonalMixServiceTests.",
+        "allstarr.Tests.RecordingKeptFilesTests.",  # 63.6 s
+        "allstarr.Tests.ProtocolRouteFixtureTests.Subsonic",  # 58.6 s
+        "allstarr.Tests.PlaylistOrchestrationIntegrationTests.",  # 44.0 s
+        "allstarr.Tests.LibraryPromotionTests.",  # 39.5 s
+        "allstarr.Tests.ProtocolRouteFixtureTests.ClientApiV2",  # 26.9 s
+        "allstarr.Tests.ExtensionCapabilityAdapterTests.",  # 23.1 s
+        "allstarr.Tests.ProtocolRouteFixtureTests.UserData",  # 18.7 s
+        "allstarr.Tests.ProtocolRouteFixtureTests.OriginalDownload",  # 16.4 s
+        "allstarr.Tests.DurableStorageTests.",  # 13.4 s
+        "allstarr.Tests.FavoriteLinkTests.",  # 11.3 s
+        "allstarr.Tests.ProtocolRouteFixtureTests.SearchNativeWindow",  # 7.6 s
     ),
     (
-        "allstarr.Tests.RecordingKeptFilesTests.",
-        "allstarr.Tests.MigrationWizardFlowTests.",
-        "allstarr.Tests.TrackIdentityServiceTests.",
-        "allstarr.Tests.PlaybackSignalPipelineTests.",
-        "allstarr.Tests.ProviderAccountCheckRunnerTests.",
-        "allstarr.Tests.ListeningHistoryResolutionTests.",
-        "allstarr.Tests.ProtocolProviderStreamingGatewayTests.",
-        "allstarr.Tests.ExtensionControlPlaneServiceTests.",
-        "allstarr.Tests.TrackRematchAllIntegrationTests.",
+        "allstarr.Tests.ProtocolRouteFixtureTests.",  # 163.5 s
+        "allstarr.Tests.PersonalMixServiceTests.",  # 183.8 s
     ),
 )
 SHARD_COUNT = len(SHARD_GROUPS) + 1

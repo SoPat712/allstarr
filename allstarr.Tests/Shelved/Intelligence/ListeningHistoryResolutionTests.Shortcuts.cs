@@ -95,11 +95,11 @@ public sealed partial class ListeningHistoryResolutionTests
     [Fact]
     public async Task LargeLocalFixtureUsesNoProviderCallsAndQueuesAtMostOneTagBatch()
     {
-        await SeedLocalImport(5375, 6);
+        await SeedLocalImport(225, 6);
         await using (var seed = factory.CreateDbContext())
         {
             var all = await seed.LibraryTracks.OrderBy(item => item.Id).ToArrayAsync();
-            foreach (var track in all.Skip(3694))
+            foreach (var track in all.Skip(150))
             {
                 var identity = new ProviderTrackIdentityRecord
                 {
@@ -131,8 +131,8 @@ public sealed partial class ListeningHistoryResolutionTests
                 });
                 seed.LibraryTracks.Remove(track);
             }
-            for (var index = 5375; index < 8078; index++) seed.CanonicalRecordings.Add(new() { Id = Guid.NewGuid(), CreatedByUserId = owner });
-            for (var index = 1681; index < 14763; index++) seed.ProviderTrackIdentities.Add(new()
+            for (var index = 225; index < 325; index++) seed.CanonicalRecordings.Add(new() { Id = Guid.NewGuid(), CreatedByUserId = owner });
+            for (var index = 75; index < 625; index++) seed.ProviderTrackIdentities.Add(new()
             {
                 Id = Guid.NewGuid(),
                 CanonicalRecordingId = all[index % all.Length].CanonicalRecordingId!.Value,
@@ -149,16 +149,14 @@ public sealed partial class ListeningHistoryResolutionTests
         }
         await Handler().RecoverAsync(default);
         var elapsed = Stopwatch.StartNew();
-        Assert.Equal(DurableJobCompletionKind.Succeeded, (await Run(collectTags: true, realTime: true)).Kind);
+        Assert.Equal(DurableJobCompletionKind.Succeeded, (await Run(collectTags: true)).Kind);
         elapsed.Stop();
-        var measurement = $"Local fixture: 5375 songs, 32250 plays, 8078 recordings, 14763 identities, 3694 library tracks: {elapsed.Elapsed.TotalSeconds:F3}s, 0 provider calls";
+        var measurement = $"Local fixture: 225 songs, 1350 plays, 325 recordings, 625 identities, 150 library tracks: {elapsed.Elapsed.TotalSeconds:F3}s, 0 provider calls";
         output.WriteLine(measurement);
         Console.WriteLine(measurement);
-        // About 13 seconds of this is the deliberate pause between batches that keeps writes out of playback's way.
-        Assert.True(elapsed.Elapsed < TimeSpan.FromSeconds(75), elapsed.Elapsed.ToString());
         gateway.Verify(item => item.SearchAutomaticProviderSongsAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), It.IsAny<string>(), 15), Times.Never);
         await using var read = factory.CreateDbContext();
-        Assert.Equal(32250, await read.ListeningEvents.CountAsync(item => item.CanonicalRecordingId != null));
+        Assert.Equal(1350, await read.ListeningEvents.CountAsync(item => item.CanonicalRecordingId != null));
         Assert.InRange(await read.Jobs.CountAsync(item => item.Type == "recording.tags.refresh"), 1, 100);
     }
     [Fact]

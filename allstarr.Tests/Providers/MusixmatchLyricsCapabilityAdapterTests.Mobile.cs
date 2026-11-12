@@ -13,7 +13,7 @@ public sealed partial class MusixmatchLyricsCapabilityAdapterTests
     [Fact]
     public async Task RequestTimeoutWithLiveCallerReturnsTransientFailure()
     {
-        using var http = new HttpClient(new SlowLookupHandler());
+        using var http = new HttpClient(new SlowLookupHandler()) { Timeout = TimeSpan.FromMilliseconds(100) };
         var adapter = new MusixmatchLyricsCapabilityAdapter(http, new FixtureSecretAccessor(), new TestMemoryApplicationCache());
         var result = await adapter.FetchLyricsAsync(Context(deadline: DateTimeOffset.UtcNow.AddMinutes(1)), LyricsRequest());
         Assert.Equal(ProviderErrorKind.TransientFailure, result.Error?.Kind);

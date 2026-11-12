@@ -562,12 +562,18 @@ public sealed partial class ProviderStatusManagerTests
         var manager = CreateManager(new Dictionary<string, string?>(),
             httpClientFactory: new HandlerHttpClientFactory(new PaxsenixProbeHandler(hang)), services: services);
 
+        using var samples = new ProviderDiagnosticSamples(clock);
+        typeof(ProviderStatusManager).GetField("_diagnosticSamples",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.SetValue(manager, samples);
         var started = System.Diagnostics.Stopwatch.StartNew();
         var pending = manager.TestAccountFreeProviderCapabilityAsync("paxsenix", "lyrics");
         if (hang)
         {
             await clock.WaitForTimersAsync(TimeSpan.FromSeconds(8));
             clock.Advance(TimeSpan.FromSeconds(8));
+            await clock.WaitForTimersAsync(TimeSpan.FromSeconds(8));
+            Assert.False(pending.IsCompleted);
+            clock.Advance(ProviderDiagnosticSamples.Timeout - TimeSpan.FromSeconds(8));
         }
         var status = await pending;
         Assert.Equal(hang ? ProviderHealthState.Unknown : ProviderHealthState.Degraded, status.Health);

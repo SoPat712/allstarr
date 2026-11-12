@@ -168,7 +168,7 @@ public sealed class LastFmSimilarTracksTests
     {
         var accounts = new FixtureAccounts();
         using var handler = new FixtureHandler(failure);
-        using var client = new HttpClient(handler);
+        using var client = new HttpClient(handler) { Timeout = TimeSpan.FromMilliseconds(100) };
         var clients = new Mock<IHttpClientFactory>();
         clients.Setup(item => item.CreateClient(nameof(LastFmSimilarTracks))).Returns(client);
         var service = new LastFmSimilarTracks(clients.Object, accounts, NullLogger<LastFmSimilarTracks>.Instance);

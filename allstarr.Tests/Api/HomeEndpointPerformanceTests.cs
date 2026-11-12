@@ -49,7 +49,8 @@ public sealed class HomeEndpointPerformanceTests(ITestOutputHelper output) : IAs
         await using var db = factory.CreateDbContext();
         db.Users.Add(new() { Id = owner, Enabled = true, IsAdmin = true, BackendType = "jellyfin", BackendInstanceId = "fixture", BackendPrincipalId = "listener" });
         await db.SaveChangesAsync();
-        var recordings = Enumerable.Range(0, 6000).Select(_ => Guid.NewGuid()).ToArray();
+        // Keep every stored mix full and two review versions per song.
+        var recordings = Enumerable.Range(0, 520).Select(_ => Guid.NewGuid()).ToArray();
         for (var index = 0; index < recordings.Length; index++)
         {
             db.CanonicalRecordings.Add(new() { Id = recordings[index], CreatedByUserId = owner });
@@ -98,7 +99,7 @@ public sealed class HomeEndpointPerformanceTests(ITestOutputHelper output) : IAs
             PayloadSha256 = Hash("mixes"),
             RetrievedAt = clock.UtcNow
         });
-        for (var index = 0; index < 1500; index++) db.LibraryTracks.Add(new()
+        for (var index = 0; index < 520; index++) db.LibraryTracks.Add(new()
         {
             Id = Guid.NewGuid(),
             OwnerUserId = owner,
@@ -113,7 +114,7 @@ public sealed class HomeEndpointPerformanceTests(ITestOutputHelper output) : IAs
             DurationMilliseconds = 180000,
             Revision = 1
         });
-        for (var index = 0; index < 6000; index++) db.ListeningEvents.Add(new()
+        for (var index = 0; index < 520; index++) db.ListeningEvents.Add(new()
         {
             Id = Guid.NewGuid(),
             OwnerUserId = owner,
@@ -128,7 +129,7 @@ public sealed class HomeEndpointPerformanceTests(ITestOutputHelper output) : IAs
             ListenedAt = clock.UtcNow.AddMinutes(-index),
             UpdatedAt = clock.UtcNow
         });
-        for (var index = 0; index < 24000; index++)
+        for (var index = 0; index < 1040; index++)
         {
             var id = Guid.NewGuid();
             db.ExternalMetadataSnapshots.Add(new()
@@ -140,11 +141,11 @@ public sealed class HomeEndpointPerformanceTests(ITestOutputHelper output) : IAs
                 BackendPrincipalId = "listener",
                 ProviderId = "deezer",
                 ResourceKind = "track",
-                ExternalIdHash = Hash((index % 6000).ToString()),
-                SnapshotVersion = index / 6000 + 1,
-                PayloadJson = JsonSerializer.Serialize(new { Title = $"Song {index % 6000}", Artist = $"Artist {index % 40}", DurationSeconds = 180 }),
+                ExternalIdHash = Hash((index % 520).ToString()),
+                SnapshotVersion = index / 520 + 1,
+                PayloadJson = JsonSerializer.Serialize(new { Title = $"Song {index % 520}", Artist = $"Artist {index % 40}", DurationSeconds = 180 }),
                 PayloadSha256 = Hash(index.ToString()),
-                RetrievedAt = clock.UtcNow.AddSeconds(index - 24000)
+                RetrievedAt = clock.UtcNow.AddSeconds(index - 1040)
             });
             db.TrackMatches.Add(new()
             {
@@ -153,7 +154,7 @@ public sealed class HomeEndpointPerformanceTests(ITestOutputHelper output) : IAs
                 ExternalSnapshotId = id,
                 State = TrackMatchState.Unresolved,
                 DecisionVersion = 1,
-                SourceSnapshotVersion = index / 6000 + 1,
+                SourceSnapshotVersion = index / 520 + 1,
                 Revision = 1,
                 DecidedAt = clock.UtcNow
             });

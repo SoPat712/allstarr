@@ -206,7 +206,7 @@ public sealed class AdminSignInRateLimitingTests
         await using var fixture = await RateLimitFixture.StartAsync(
             perAddressLimit: 1,
             globalLimit: 10,
-            window: TimeSpan.FromSeconds(5));
+            window: TimeSpan.FromSeconds(1));
 
         using var first = await fixture.PostAsync(
             "/allstarr/api/admin/auth/login",

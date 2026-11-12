@@ -350,8 +350,8 @@ public sealed partial class StatsArtTests(ITestOutputHelper output)
         var gateway = Gateway();
         var searches = 0;
         gateway.Setup(item => item.SearchAsync(It.IsAny<ProtocolExecutionContext>(), "Artist Song", 8, 0, 0, "deezer"))
-            .Returns(async () => { Interlocked.Increment(ref searches); await Task.Delay(800); return Found(); });
-        using var handler = new Covers(delay: 3000);
+            .Returns(async () => { Interlocked.Increment(ref searches); await Task.Yield(); return Found(); });
+        using var handler = new Covers();
         var user = User();
         RecapArtworkReader Reader(TestMemoryApplicationCache cache) => new(gateway.Object,
             new MediaAssetResolver(cache, NullLogger<MediaAssetResolver>.Instance), new Clients(handler));
@@ -378,7 +378,7 @@ public sealed partial class StatsArtTests(ITestOutputHelper output)
             Assert.True(after.FromCache);
             Assert.Equal(previousSearches, searches);
             Assert.Equal(previousDownloads, handler.Count);
-            var measurement = $"Cold request: {cold:F2} ms, 1 provider search + 1 download; prepared request: {warm:F2} ms, 0 searches + 0 downloads; fake search 800 ms, fake download 3000 ms.";
+            var measurement = $"Cold request: {cold:F2} ms, 1 provider search + 1 download; prepared request: {warm:F2} ms, 0 searches + 0 downloads; same source bytes and exact call counts.";
             output.WriteLine(measurement);
             Console.WriteLine(measurement);
         }

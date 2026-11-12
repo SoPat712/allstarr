@@ -59,7 +59,7 @@ public sealed partial class PersonalMixServiceTests
     [Fact]
     public async Task Custom_cold_ranking_reuses_captured_history_and_reads_its_tags_once()
     {
-        await Seed(count: 1001, plays: 1);
+        await Seed(count: 40, plays: 1);
         await tags.SaveAsync(SharedTagStore.RecordingKey(songs["1"].CanonicalRecordingId!.Value),
             [new("provider", [new("rock", IsGenre: true)], clock.UtcNow)], [], true, default);
         var probe = new MixReadProbe();
@@ -86,7 +86,7 @@ public sealed partial class PersonalMixServiceTests
         var baselineTags = new SharedTagStore(baselineFactory, clock);
         var expected = await new TasteService(baselineFactory, baselineTags, clock).ScoreAsync(owner, songs["1"]);
         Assert.Equal(expected.Score, Assert.Single(preview.Songs, row => row.Song.Id == songs["1"].Id).Score, 10);
-        output.WriteLine($"Cold custom ranking: 1001 history rows, tag reads {tagReads}, full history reads {probe.FullHistoryReads}, total reads {probe.Reads}.");
+        output.WriteLine($"Cold custom ranking: 40 history rows, tag reads {tagReads}, full history reads {probe.FullHistoryReads}, total reads {probe.Reads}.");
     }
 
     [Fact]

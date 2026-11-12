@@ -65,7 +65,8 @@ public sealed class ListenBrainzSimilarTracksTests
     public async Task OptionalFailureReturnsNoSuggestions(string mode)
     {
         using var handler = new Handler(mode);
-        Assert.Empty(await Create(handler).FindAsync(MusicObservationsTests.Context(), "seed", 10, default));
+        Assert.Empty(await Create(handler, TimeSpan.FromMilliseconds(100))
+            .FindAsync(MusicObservationsTests.Context(), "seed", 10, default));
         Assert.Equal(1, handler.Calls);
     }
 
@@ -79,10 +80,11 @@ public sealed class ListenBrainzSimilarTracksTests
             Create(handler).FindAsync(MusicObservationsTests.Context(), "seed", 10, cancellation.Token));
     }
 
-    internal static ListenBrainzSimilarTracks Create(Handler handler)
+    internal static ListenBrainzSimilarTracks Create(Handler handler, TimeSpan? timeout = null)
     {
         var clients = new Mock<IHttpClientFactory>();
-        clients.Setup(item => item.CreateClient(nameof(ListenBrainzSimilarTracks))).Returns(() => new HttpClient(handler, false));
+        clients.Setup(item => item.CreateClient(nameof(ListenBrainzSimilarTracks))).Returns(() =>
+            new HttpClient(handler, false) { Timeout = timeout ?? TimeSpan.FromSeconds(100) });
         return new(clients.Object, Identities(Mbid), new TestMemoryApplicationCache(), NullLogger<ListenBrainzSimilarTracks>.Instance);
     }
 

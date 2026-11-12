@@ -234,7 +234,7 @@ public sealed partial class ProtocolRouteFixtureTests
             if (path == "/Users/Me" && request.Headers.Accept.Count > 0) Interlocked.Increment(ref Verifications);
             if (path is "/Items/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" or "/Items/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
                 Interlocked.Increment(ref MetadataReads);
-            await Task.Delay(Delay(path), cancellationToken);
+            await Task.Delay(TimeSpan.FromMilliseconds(Delay(path) / 100d), cancellationToken);
             if (path.StartsWith("/Sessions/Playing", StringComparison.Ordinal))
             {
                 Interlocked.Increment(ref PlaybackReports);

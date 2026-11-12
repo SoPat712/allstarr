@@ -57,10 +57,27 @@ public sealed class JellyfinAuthStartupTests(ITestOutputHelper output)
     [Fact]
     public async Task StartupWriterLongerThanCommandTimeoutDoesNotBlockExistingListenerVerification()
     {
-        await using var database = await SqliteTestDatabase.CreateAsync();
+        await using var database = await SqliteTestDatabase.CreateAsync(useTemplate: false);
+        await using (var schema = new AllstarrDbContext(database.Options))
+        {
+            await schema.Database.OpenConnectionAsync();
+            await schema.Database.ExecuteSqlRawAsync("PRAGMA journal_mode=WAL;");
+            await schema.Database.EnsureCreatedAsync();
+        }
+        const int commandTimeoutSeconds = 1;
+        var connection = new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder(database.ConnectionString)
+        { DefaultTimeout = commandTimeoutSeconds };
+        var options = new DbContextOptionsBuilder<AllstarrDbContext>(database.Options)
+            .UseSqlite(connection.ToString(), sqlite => sqlite.CommandTimeout(commandTimeoutSeconds)).Options;
         var factory = new Mock<IDbContextFactory<AllstarrDbContext>>();
         factory.Setup(item => item.CreateDbContextAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(() => new AllstarrDbContext(database.Options));
+            .Returns(async () =>
+            {
+                var db = new AllstarrDbContext(options);
+                await db.Database.OpenConnectionAsync();
+                await db.Database.ExecuteSqlRawAsync("PRAGMA busy_timeout=100;");
+                return db;
+            });
         var state = new DurableStorageState(database.StorageOptions);
         state.Set(DurableStorageReadiness.Ready);
         using var shutdown = new CancellationTokenSource();
@@ -70,13 +87,15 @@ public sealed class JellyfinAuthStartupTests(ITestOutputHelper output)
         var original = (await resolver.ResolveAsync(new("jellyfin", "listener", "Listener")))!;
         var backend = new Backend();
         var filter = CreateFilter(backend, resolver);
-        await using var writer = new AllstarrDbContext(database.Options);
+        await using var writer = new AllstarrDbContext(options);
         await using var transaction = await writer.Database.BeginTransactionAsync();
         await writer.Database.ExecuteSqlRawAsync("UPDATE users SET DisplayName = DisplayName;");
         var held = Stopwatch.StartNew();
         var before = Task.Run(async () =>
         {
-            await using var db = new AllstarrDbContext(database.Options);
+            await using var db = new AllstarrDbContext(options);
+            await db.Database.OpenConnectionAsync();
+            await db.Database.ExecuteSqlRawAsync("PRAGMA busy_timeout=100;");
             (await db.Users.SingleAsync()).LastSeenAt = DateTimeOffset.UtcNow;
             var elapsed = Stopwatch.StartNew();
             var error = await Assert.ThrowsAsync<DbUpdateException>(() => db.SaveChangesAsync());
@@ -85,6 +104,10 @@ public sealed class JellyfinAuthStartupTests(ITestOutputHelper output)
         });
         try
         {
+            var baseline = await before;
+            var minimumHold = TimeSpan.FromSeconds(commandTimeoutSeconds) + TimeSpan.FromMilliseconds(100);
+            if (held.Elapsed < minimumHold) await Task.Delay(minimumHold - held.Elapsed);
+            Assert.True(held.Elapsed > TimeSpan.FromSeconds(commandTimeoutSeconds));
             var after = Stopwatch.StartNew();
             for (var index = 0; index < 3; index++)
             {
@@ -103,10 +126,7 @@ public sealed class JellyfinAuthStartupTests(ITestOutputHelper output)
                 Assert.False(principal.IsAdministrator);
             }
             after.Stop();
-            Assert.False(before.IsCompleted);
             Assert.Equal(3, backend.Calls);
-            var baseline = await before;
-            if (held.Elapsed < TimeSpan.FromSeconds(31)) await Task.Delay(TimeSpan.FromSeconds(31) - held.Elapsed);
             output.WriteLine("Before: blocked identity save failed after {0:F0} ms. After: three verified requests {1:F0} ms total; upstream calls {2}.",
                 baseline.TotalMilliseconds, after.Elapsed.TotalMilliseconds, backend.Calls);
         }
@@ -118,7 +138,7 @@ public sealed class JellyfinAuthStartupTests(ITestOutputHelper output)
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         while (true)
         {
-            await using var db = new AllstarrDbContext(database.Options);
+            await using var db = new AllstarrDbContext(options);
             if ((await db.Users.SingleAsync(deadline.Token)).DisplayName == "Renamed") break;
             await Task.Delay(20, deadline.Token);
         }

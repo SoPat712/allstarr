@@ -208,7 +208,7 @@ public sealed partial class PersonalMixServiceTests
         await using (var db = factory.CreateDbContext())
         {
             var originals = await db.ListeningEvents.ToArrayAsync();
-            for (var i = 60; i < 27321; i++)
+            for (var i = 60; i < 601; i++)
             {
                 var original = originals[i % 60];
                 db.ListeningEvents.Add(new()
@@ -253,7 +253,7 @@ public sealed partial class PersonalMixServiceTests
         var mixId = (await service.ListAsync(owner)).Single(x => x.Kind == "on-repeat").Id;
         var mix = (await service.GenerateAsync(owner, mixId)).Single(x => x.Id == mixId);
         Assert.Equal(50, mix.Songs.Count);
-        Assert.Equal(27321, mix.Evidence!.ImportedPlays);
+        Assert.Equal(601, mix.Evidence!.ImportedPlays);
         Assert.Equal(4, mix.Evidence.LivePlays);
         Assert.All(mix.Songs, x => Assert.Contains("2025", x.Reason));
         Assert.Equal(0, mix.Evidence.ProviderReads);

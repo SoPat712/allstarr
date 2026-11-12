@@ -909,7 +909,14 @@ public sealed partial class MusixmatchLyricsCapabilityAdapterTests
         EnsureCacheSettings();
         var handler = new FixtureHttpHandler { Payload = TimedMacroPayload };
         var cache = new TestMemoryApplicationCache();
-        var adapter = CreateAdapter(handler, new FixtureSecretAccessor(), cache);
+        using var http = new HttpClient(handler);
+        var requests = (System.Runtime.CompilerServices.ConditionalWeakTable<HttpClient,
+            System.Collections.Concurrent.ConcurrentDictionary<string, LyricsRequestCoordinator>>)
+            typeof(MusixmatchLyricsCapabilityAdapter).GetField("Requests",
+                System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic)!.GetValue(null)!;
+        var credentialKey = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes("desktop-user-token")));
+        requests.GetOrCreateValue(http)[credentialKey] = new(TimeProvider.System, TimeSpan.Zero);
+        var adapter = new MusixmatchLyricsCapabilityAdapter(http, new FixtureSecretAccessor(), cache);
 
         await adapter.FetchLyricsAsync(
             Context(AccountA, revision: 1, secretReferenceId: SecretA),

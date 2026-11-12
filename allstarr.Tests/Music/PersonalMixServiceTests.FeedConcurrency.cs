@@ -82,7 +82,6 @@ public sealed partial class PersonalMixServiceTests
                 try
                 {
                     await release.Task.WaitAsync(context.CancellationToken);
-                    await Task.Delay(TimeSpan.FromSeconds(2), context.CancellationToken);
                     return ConcurrentFeedPage(request);
                 }
                 finally { Interlocked.Decrement(ref active); }
@@ -93,7 +92,7 @@ public sealed partial class PersonalMixServiceTests
         var all = Task.WhenAll(preparations);
         try
         {
-            await Task.WhenAny(entered.Task, Task.Delay(CompletionDeadline));
+            await entered.Task.WaitAsync(CompletionDeadline);
             timer.Start();
             release.TrySetResult();
             await all.WaitAsync(TimeSpan.FromSeconds(90));
@@ -110,7 +109,7 @@ public sealed partial class PersonalMixServiceTests
             release.TrySetResult();
             try { await all; } catch (OperationCanceledException) { }
             timer.Stop();
-            output.WriteLine($"32 listener feeds, provider delay 2000 ms: {timer.Elapsed.TotalMilliseconds:F1} ms, calls={calls.Values.Sum()}, maximum={maximum}");
+            output.WriteLine($"32 listener feeds after releasing provider gate: {timer.Elapsed.TotalMilliseconds:F1} ms, calls={calls.Values.Sum()}, maximum={maximum}");
         }
     }
 

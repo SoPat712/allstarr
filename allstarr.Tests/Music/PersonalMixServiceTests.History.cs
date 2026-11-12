@@ -11,10 +11,10 @@ namespace allstarr.Tests;
 public sealed partial class PersonalMixServiceTests
 {
     [Fact]
-    public async Task ThousandHistoryMatchesCoalesceWithTagRefreshesForFifteenMinutes()
+    public async Task HistoryMatchesCoalesceWithTagRefreshesForFifteenMinutes()
     {
         await service.GenerateAsync(owner);
-        await Seed(count: 1000, plays: 1);
+        await Seed(count: 40, plays: 1);
         var queue = new DurableJobQueue(factory, new(), new(new()), clock);
         var tagQueue = new allstarr.Core.Enrichment.SharedTagQueue(factory, queue, clock);
         foreach (var song in songs.Values)

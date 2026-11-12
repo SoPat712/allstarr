@@ -84,7 +84,6 @@ public sealed partial class ProtocolRouteFixtureTests
                         ? 20 + 7 * payload.RootElement.GetProperty("Items").GetArrayLength() : 20;
                 }
                 scheduled += delay;
-                await Task.Delay(delay);
             }
             return reply;
         }
@@ -130,7 +129,7 @@ public sealed partial class ProtocolRouteFixtureTests
         {
             Assert.Equal(totalEnabled || countDespiteDisabled ? 11430 : 3670, previousScheduled);
             Assert.Equal(470, scheduled);
-            _lyricsSearchOutput.WriteLine($"Native search replay: before {previousWatch.Elapsed.TotalMilliseconds:F1} ms / {previousCalls} calls / {previousRows.Count} media rows; after {currentWatch.Elapsed.TotalMilliseconds:F1} ms / 3 calls / 40 media rows (includes 150 ms verification). Native delay: {previousScheduled - 150} -> 320 ms; same-page direct delay 300 ms.");
+            _lyricsSearchOutput.WriteLine($"Native search replay: before {previousWatch.Elapsed.TotalMilliseconds:F1} ms / {previousCalls} calls / {previousRows.Count} media rows; after {currentWatch.Elapsed.TotalMilliseconds:F1} ms / 3 calls / 40 media rows (modeled verification 150 ms). Modeled native delay: {previousScheduled - 150} -> 320 ms; same-page direct delay 300 ms.");
         }
         var expected = new JsonObject
         {

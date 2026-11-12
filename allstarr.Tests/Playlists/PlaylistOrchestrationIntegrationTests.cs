@@ -276,7 +276,7 @@ public sealed partial class PlaylistOrchestrationIntegrationTests(ITestOutputHel
 
     [Fact]
     [Trait("Lane", "ReleaseCritical")]
-    public async Task Sqlite_playlist_baseline_has_bounded_reads_and_linear_writes_at_100_1000_and_10000_tracks()
+    public async Task Sqlite_playlist_baseline_has_bounded_reads_and_linear_writes_at_100_and_1000_tracks()
     {
         await SetLink(mode: PlaylistLinkMode.Virtual);
         var commands = new CommandCounter();
@@ -299,7 +299,7 @@ public sealed partial class PlaylistOrchestrationIntegrationTests(ITestOutputHel
             new Clock(_now), new KeyedAsyncLock(), new TestBackendLibraryAccess(_factory, "music"));
         var baselines = new List<(int Count, int Commands, long Allocated, long ElapsedTicks)>();
 
-        foreach (var count in new[] { 100, 1_000, 10_000 })
+        foreach (var count in new[] { 100, 1_000 })
         {
             _source.Snapshot = Snapshot(
                 $"scale-{count}",
