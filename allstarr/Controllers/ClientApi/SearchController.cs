@@ -20,7 +20,7 @@ namespace allstarr.Controllers.ClientApi;
 public sealed class SearchController(IProtocolProviderGateway providers, MusicSearchService music,
     JellyfinProxyService proxy, JellyfinResponseBuilder builder, JellyfinItemResponseFilter itemFilter,
     IApplicationCache cache, TimeProvider clock, LibraryProviderResolver libraryProvider, IProviderRegistry registry,
-    LibrarySpellings? spellings = null) : ClientApiControllerBase
+    ILibrarySpellings? spellings = null) : ClientApiControllerBase
 {
     [HttpGet]
     [EndpointName("streamSearch")]
@@ -347,7 +347,7 @@ public sealed class SearchController(IProtocolProviderGateway providers, MusicSe
         };
 
     private sealed class NativeSearch(JellyfinProxyService proxy, IHeaderDictionary headers, ProtocolExecutionContext context,
-        LibrarySpellings? spellings = null) : INativeMusicSearch<Dictionary<string, object?>>
+        ILibrarySpellings? spellings = null) : INativeMusicSearch<Dictionary<string, object?>>
     {
         /// <summary>The library's own spelling of the query, when it differs ("cybersex" → "Cyber Sex").</summary>
         public string? Spelled { get; private set; }

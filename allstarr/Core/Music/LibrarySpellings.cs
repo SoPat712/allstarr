@@ -10,7 +10,13 @@ namespace allstarr.Core.Music;
 /// "acdc" finds "AC/DC", "dont" finds "Don't". The media server's own search can't split a joined word, so search asks
 /// it again with the spelling found here.
 /// </summary>
-public sealed class LibrarySpellings(IDbContextFactory<AllstarrDbContext> factory, IBackendLibraryAccessResolver libraryAccess)
+public interface ILibrarySpellings
+{
+    /// <summary>The library's spelling of the query when it differs only by spaces and punctuation, otherwise null.</summary>
+    Task<string?> RespellAsync(ProtocolExecutionContext context, string query, CancellationToken token);
+}
+
+public sealed class LibrarySpellings(IDbContextFactory<AllstarrDbContext> factory, IBackendLibraryAccessResolver libraryAccess) : ILibrarySpellings
 {
     private const int MinimumLength = 3, Scanned = 5000;
 

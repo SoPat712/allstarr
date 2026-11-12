@@ -319,7 +319,14 @@ public partial class JellyfinController
                         ["Ids"] = string.Join(',', ids),
                         ["Limit"] = ids.Count.ToString(CultureInfo.InvariantCulture),
                         ["IncludeItemTypes"] = "Audio"
-                    }, Request.Headers, cancellationToken)),
+                    }, Request.Headers, cancellationToken),
+                // "cybersex" finds "Cyber Sex": the library's own spelling, when it differs, is searched as well.
+                HttpContext.RequestServices.GetService<ILibrarySpellings>() is { } spellings
+                    ? async cancellationToken => await spellings.RespellAsync(context, cleanQuery, cancellationToken) is { } spelled
+                        ? await GetLocalSearchResultForCurrentRequest(spelled, includeItemTypes,
+                            artistSearch ? int.MaxValue : integratedFetchLimit, recursive, userId, cancellationToken)
+                        : (null, 200)
+                    : null),
             HttpContext.RequestAborted);
 
         await ArtistArtworkCache.PrepareSearchAsync(_cache, context,
@@ -459,17 +466,29 @@ public partial class JellyfinController
         Func<CancellationToken, Task<(JsonDocument? Body, int StatusCode)>> search,
         Func<string, CancellationToken, Task<(JsonDocument? Body, int StatusCode)>> getItem,
         Action<JsonElement>? capture = null,
-        Func<IReadOnlyList<string>, CancellationToken, Task<(JsonDocument? Body, int StatusCode)>>? batch = null)
+        Func<IReadOnlyList<string>, CancellationToken, Task<(JsonDocument? Body, int StatusCode)>>? batch = null,
+        Func<CancellationToken, Task<(JsonDocument? Body, int StatusCode)>>? respelled = null)
         : INativeMusicSearch<Dictionary<string, object?>>
     {
         public async Task<IReadOnlyList<NativeMusicItem<Dictionary<string, object?>>>> SearchAsync(
             CancellationToken cancellationToken)
         {
-            var (document, _) = await search(cancellationToken);
-            using (document)
+            var found = Read(await search(cancellationToken));
+            if (respelled == null) return found;
+            // The media server can't split a joined word, so it is asked again with the library's own spelling.
+            (JsonDocument? Body, int StatusCode) again;
+            try { again = await respelled(cancellationToken); }
+            catch (Exception error) when (error is not OperationCanceledException) { return found; }
+            var known = found.Select(item => item.Id).ToHashSet(StringComparer.Ordinal);
+            return found.Concat(Read(again).Where(item => known.Add(item.Id))).ToList();
+        }
+
+        private List<NativeMusicItem<Dictionary<string, object?>>> Read((JsonDocument? Body, int StatusCode) response)
+        {
+            using (response.Body)
             {
-                if (document == null || !document.RootElement.TryGetProperty("Items", out var items)) return [];
-                capture?.Invoke(document.RootElement);
+                if (response.Body == null || !response.Body.RootElement.TryGetProperty("Items", out var items)) return [];
+                capture?.Invoke(response.Body.RootElement);
                 return items.EnumerateArray()
                     .Where(item => item.TryGetProperty("Type", out _))
                     .Select(item => ToNativeSearchItem(item.Deserialize<Dictionary<string, object?>>() ?? []))
