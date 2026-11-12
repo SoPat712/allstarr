@@ -130,6 +130,8 @@
         if (disposed) return;
         cards = cards.map(card => card.id === selected.id ? { ...card, inApps: true } : card);
       }
+      // The card already shows its new state; the refresh below must not label it "Removing…".
+      busy = "";
       await pending;
       if (!disposed) await load();
       return true;
@@ -144,6 +146,7 @@
       await mixes.remove(selected.id);
       if (disposed) return;
       cards = cards.map(card => card.id === selected.id ? { ...card, inApps: false } : card);
+      busy = "";
       toast.success(`${mixName(selected.name)} is no longer in your apps`, { label: "Undo", run: () => void add({ ...selected, inApps: false }) });
       await pending;
       if (!disposed) await load();
