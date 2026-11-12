@@ -75,10 +75,9 @@ public sealed class ItemLyricsReader(
             };
         }).Where(source => source.Rich != null || source.Candidate.State == "pending").ToArray();
         var known = sources.Where(source => source.Rich != null).ToArray();
-        // Every listed version gets a rank: match confidence (which already favours word over line over plain), then timing.
+        // Every listed version uses the shared score, line count, then source order.
         var ranked = known.OrderByDescending(source => source.Score?.Score ?? -1)
-            .ThenByDescending(source => LyricsQuality.Rank(source.Rich!.Format))
-            .ThenByDescending(source => source.Candidate.IsDefaultVersion).ThenBy(source => source.Order)
+            .ThenByDescending(source => source.Score?.LineCount ?? 0).ThenBy(source => source.Order)
             .Select((source, index) => new { source.Candidate.SourceId, Rank = index + 1 })
             .ToDictionary(source => source.SourceId, source => source.Rank, StringComparer.Ordinal);
         var defaults = known.Where(source => source.Candidate.IsDefaultVersion).ToArray();

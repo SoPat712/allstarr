@@ -35,6 +35,26 @@ public class LrclibServiceTests
     }
 
     [Fact]
+    public async Task SearchTriesArtistTitleReadingAndRejectsInstrumentalAndWrongNumbers()
+    {
+        _handler.Protected().Setup<Task<HttpResponseMessage>>("SendAsync", ItExpr.IsAny<HttpRequestMessage>(),
+            ItExpr.IsAny<CancellationToken>()).Returns((HttpRequestMessage request, CancellationToken _) =>
+                Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(request.RequestUri!.Query.Contains("track_name=Part%202&", StringComparison.Ordinal)
+                        ? """
+                            [{"id":1,"trackName":"Part 3","artistName":"Artist","duration":180,"plainLyrics":"wrong"},
+                            {"id":2,"trackName":"Part 2","artistName":"Artist","albumName":"Karaoke","duration":180,"plainLyrics":"wrong"},
+                            {"id":3,"trackName":"Part 2","artistName":"Artist","duration":180,"plainLyrics":"selected"}]
+                            """
+                        : "[]")
+                }));
+        var result = await CreateService().GetLyricsAsync("Artist - Part 2", "Unknown", "Album", 180);
+        Assert.Equal("selected", result?.PlainLyrics);
+        Assert.Single(result!.Versions!);
+    }
+
+    [Fact]
     public async Task GetLyricsAsync_WithMissingTrack_DoesNotCallProvider()
     {
         var service = CreateService();

@@ -113,7 +113,15 @@ public sealed class LyricsPlusCapabilityAdapter(
                     ? TimeSpan.FromSeconds(snapshot.Solver!.Options.TimeoutSeconds) : (TimeSpan?)null;
                 attempt.CancelAfter((solveTimeout ?? TimeSpan.Zero) + TimeSpan.FromSeconds(3));
                 ProviderOutcome<ProviderLyricsResult> result;
-                try { result = await ReadAsync(baseUri, request, snapshot.Solver, attempt.Token); }
+                try
+                {
+                    result = Unavailable();
+                    foreach (var query in LyricsCandidateMatcher.Queries(request))
+                    {
+                        result = await ReadAsync(baseUri, query, request, snapshot.Solver, attempt.Token);
+                        if (!result.IsSuccess || result.RequireValue().Availability != ProviderLyricsAvailabilityState.Unavailable) break;
+                    }
+                }
                 catch (OperationCanceledException) when (!token.IsCancellationRequested)
                 { result = Failure(ProviderErrorKind.TransientFailure); }
                 if (!result.IsSuccess) { lastFailure = result; continue; }
@@ -131,7 +139,7 @@ public sealed class LyricsPlusCapabilityAdapter(
     }
 
     private async Task<ProviderOutcome<ProviderLyricsResult>> ReadAsync(
-        Uri baseUri, ProviderLyricsRequest request, ChallengeSolverConfiguration? configuration, CancellationToken token)
+        Uri baseUri, ProviderLyricsRequest request, ProviderLyricsRequest identity, ChallengeSolverConfiguration? configuration, CancellationToken token)
     {
         var query = $"title={Uri.EscapeDataString(request.TrackTitle!)}&artist={Uri.EscapeDataString(string.Join(", ", request.ArtistNames))}" +
             $"&album={Uri.EscapeDataString(request.AlbumTitle ?? "")}" +
@@ -158,7 +166,7 @@ public sealed class LyricsPlusCapabilityAdapter(
             var bytes = await response.Content.ReadAsByteArrayAsync(token);
             if (bytes.Length > MaximumBytes) return ContractFailure();
             using var document = JsonDocument.Parse(bytes, new JsonDocumentOptions { MaxDepth = 16 });
-            return Parse(document.RootElement, request);
+            return Parse(document.RootElement, identity);
         }
         catch (CloudflareChallengeException) { return ProviderOutcome<ProviderLyricsResult>.Failure(ProviderError.BlockedByChallenge()); }
         catch (JsonException) { return ContractFailure(); }
@@ -179,10 +187,10 @@ public sealed class LyricsPlusCapabilityAdapter(
             if (!string.IsNullOrWhiteSpace(request.Isrc) && metadata.TryGetProperty("isrc", out var isrc) &&
                 isrc.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(isrc.GetString()) &&
                 !string.Equals(request.Isrc.Trim(), isrc.GetString()!.Trim(), StringComparison.OrdinalIgnoreCase)) return Unavailable();
-            foreach (var (key, expected) in new[] { ("title", request.TrackTitle!), ("artist", string.Join(", ", request.ArtistNames)) })
-                if (metadata.TryGetProperty(key, out var value) && value.ValueKind == JsonValueKind.String &&
-                    !string.IsNullOrWhiteSpace(value.GetString()) && FuzzyMatcher.CalculateSimilarity(expected, value.GetString()!) < 90)
-                    return Unavailable();
+            string? Text(string key) => metadata.TryGetProperty(key, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+            if ((Text("title") != null || Text("artist") != null || Text("album") != null) &&
+                !LyricsCandidateMatcher.Matches(request.TrackTitle, request.ArtistNames.Take(1).ToArray(), request.AlbumTitle, Text("title") ?? request.TrackTitle,
+                    Text("artist") ?? string.Join(", ", request.ArtistNames), Text("album"))) return Unavailable();
         }
         var format = timed && request.PreferredFormat != ProviderLyricsFormat.PlainText
             ? ProviderLyricsFormat.LineTimed : ProviderLyricsFormat.PlainText;

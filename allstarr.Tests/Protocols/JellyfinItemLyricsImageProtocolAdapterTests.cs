@@ -70,15 +70,15 @@ public sealed class JellyfinItemLyricsImageProtocolAdapterTests
         using var document = JsonDocument.Parse(response.Body);
         var line = Assert.Single(document.RootElement.GetProperty("Lyrics").EnumerateArray());
         var text = line.GetProperty("Text").GetString()!;
-        Assert.Equal("  café 😀 世界  ", text);
+        Assert.Equal(" café 😀 世界 ", text);
         var cues = line.GetProperty("Cues");
         Assert.Equal(3, cues.GetArrayLength());
-        Assert.Equal("  café ", text[cues[0].GetProperty("Position").GetInt32()..cues[0].GetProperty("EndPosition").GetInt32()]);
+        Assert.Equal(" café ", text[cues[0].GetProperty("Position").GetInt32()..cues[0].GetProperty("EndPosition").GetInt32()]);
         Assert.Equal(10_001_234, cues[0].GetProperty("Start").GetInt64());
         Assert.Equal(14_001_234, cues[0].GetProperty("End").GetInt64());
-        Assert.Equal(7, cues[1].GetProperty("Position").GetInt32());
-        Assert.Equal(10, cues[1].GetProperty("EndPosition").GetInt32());
-        Assert.Equal("😀 ", text[7..10]);
+        Assert.Equal(6, cues[1].GetProperty("Position").GetInt32());
+        Assert.Equal(9, cues[1].GetProperty("EndPosition").GetInt32());
+        Assert.Equal("😀 ", text[6..9]);
         Assert.Equal(30_000_000, cues[1].GetProperty("End").GetInt64());
         Assert.Equal(35_000_000, cues[2].GetProperty("End").GetInt64());
     }

@@ -65,7 +65,7 @@ public sealed class AmllLyricsCapabilityAdapter(HttpClient http, IApplicationCac
         var candidates = _index!.Reverse().Where(entry => Exact(entry, request)).ToArray();
         var exact = candidates.Length > 0;
         if (!exact) candidates = _index!.Reverse().Where(entry => request.DurationSeconds is > 0 && CompatibleIsrc(entry, request) &&
-            MatchesIdentity(request, Values(entry, "musicName").FirstOrDefault(), string.Join(", ", Values(entry, "artists")))).ToArray();
+            MatchesIdentity(request, Values(entry, "musicName").FirstOrDefault(), string.Join(", ", Values(entry, "artists")), album: Values(entry, "album").FirstOrDefault())).ToArray();
         foreach (var entry in candidates.Take(2))
         {
             var response = await GetAsync(new(Root + "raw-lyrics/" + entry.File), token, "application/ttml+xml");

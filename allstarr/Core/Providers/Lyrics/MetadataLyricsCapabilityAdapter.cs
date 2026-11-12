@@ -71,25 +71,10 @@ public abstract class MetadataLyricsCapabilityAdapter : PublicLyricsCapabilityAd
 
     protected abstract Task<ProviderOutcome<ProviderLyricsResult>> ReadLyricsAsync(ProviderLyricsRequest request, CancellationToken token);
 
-    protected static bool MatchesIdentity(ProviderLyricsRequest request, string? title, string? artist, double? duration = null)
+    protected static bool MatchesIdentity(ProviderLyricsRequest request, string? title, string? artist, double? duration = null, string? album = null)
     {
-        if (string.IsNullOrWhiteSpace(request.TrackTitle) || request.ArtistNames.Count == 0 ||
-            string.IsNullOrWhiteSpace(title) || string.IsNullOrWhiteSpace(artist)) return false;
-        var expectedArtists = string.Join(", ", request.ArtistNames);
-        if (!FuzzyMatcher.TitleAnnotationsMatch(request.TrackTitle, expectedArtists, title, artist) ||
-            !FuzzyMatcher.SemanticVersionTags(request.TrackTitle).SetEquals(FuzzyMatcher.SemanticVersionTags(title))) return false;
-        var expected = FuzzyMatcher.NormalizeTitleForMatching(request.TrackTitle, expectedArtists, artist);
-        var actual = FuzzyMatcher.NormalizeTitleForMatching(title, artist, expectedArtists);
-        if (Math.Min(expected.Length, actual.Length) < Math.Max(expected.Length, actual.Length) * 0.9 ||
-            FuzzyMatcher.CalculateSimilarity(expected, actual) < 90) return false;
-        var artists = FuzzyMatcher.SplitCredits(artist).ToList();
-        if (artists.Count == 0 || !request.ArtistNames.All(name => artists.Any(value =>
-        {
-            var expectedArtist = FuzzyMatcher.NormalizeForMatching(name);
-            var actualArtist = FuzzyMatcher.NormalizeForMatching(value);
-            return expectedArtist.Length > 0 && Math.Min(expectedArtist.Length, actualArtist.Length) >=
-                Math.Max(expectedArtist.Length, actualArtist.Length) * 0.9 && FuzzyMatcher.CalculateSimilarity(expectedArtist, actualArtist) >= 90;
-        }))) return false;
+        if (!FuzzyMatcher.SemanticVersionTags(request.TrackTitle).SetEquals(FuzzyMatcher.SemanticVersionTags(title)) ||
+            !LyricsCandidateMatcher.Matches(request, title, artist, album)) return false;
         return request.DurationSeconds is not > 0 || duration is null || double.IsFinite(duration.Value) &&
             Math.Abs(request.DurationSeconds.Value - duration.Value) <= 5;
     }

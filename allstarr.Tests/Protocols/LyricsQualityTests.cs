@@ -7,6 +7,64 @@ namespace allstarr.Tests;
 
 public sealed class LyricsQualityTests
 {
+    [Fact]
+    public void MaskedWordsLoseInProportionToAffectedLines()
+    {
+        var song = new Song();
+        var clean = LyricsQuality.Evaluate(new LyricsInfo { PlainLyrics = "fuck\nshit" }, song)!;
+        var half = LyricsQuality.Evaluate(new LyricsInfo { PlainLyrics = "f**k\nshit" }, song)!;
+        var all = LyricsQuality.Evaluate(new LyricsInfo { PlainLyrics = "f**k\ns***" }, song)!;
+        Assert.Equal(0.1, clean.Score - half.Score, 6);
+        Assert.Equal(0.2, clean.Score - all.Score, 6);
+        Assert.Contains("censored_words", half.Reasons);
+        Assert.DoesNotContain("censored_words", LyricsQuality.Evaluate(new LyricsInfo { PlainLyrics = "* Hello *" }, song)!.Reasons);
+    }
+
+    [Theory]
+    [InlineData("Instrumental")]
+    [InlineData("(Instrumental)")]
+    [InlineData("♪♫…")]
+    [InlineData("[Chorus]\n[Verse 2]")]
+    public void InstrumentalBodiesAlwaysLoseToRealPlainLyrics(string text)
+    {
+        var song = new Song { Duration = 120 };
+        var empty = LyricsQuality.Evaluate(new LyricsInfo { SyncedLyrics = "[01:50]<01:50>" + text.Replace("\n", "\n[01:51]<01:51>") }, song)!;
+        var real = LyricsQuality.Evaluate(new LyricsInfo { PlainLyrics = "f**k" }, song)!;
+        Assert.True(empty.Score < real.Score);
+        Assert.Contains("instrumental", empty.Reasons);
+    }
+
+    [Fact]
+    public void DroppedMarkersCannotSupplyWordTimingOrDurationCoverage()
+    {
+        var score = LyricsQuality.Evaluate(new LyricsInfo
+        {
+            SyncedLyrics = "[00:01]Real words\n[01:50]<01:50>[Verse <01:51>2]"
+        }, new Song { Duration = 120 })!;
+        Assert.Contains("synced_lines", score.Reasons);
+        Assert.Contains("duration_mismatch", score.Reasons);
+    }
+
+    [Fact]
+    public void InstrumentalFlagWithoutTextHasAnInstrumentalReason()
+    {
+        var score = LyricsQuality.Evaluate(new LyricsInfo { Instrumental = true }, new Song())!;
+        Assert.Equal(0, score.Score);
+        Assert.Contains("instrumental", score.Reasons);
+        Assert.Contains("instrumental", LyricsQuality.Evaluate(new LyricsInfo { SyncedLyrics = "(Instrumental)" }, new Song())!.Reasons);
+    }
+
+    [Fact]
+    public void EqualScoresPreferMoreNonEmptyLines()
+    {
+        var shortCopy = LyricsQuality.Evaluate(new LyricsInfo { PlainLyrics = "Hello" }, new Song())!;
+        var longCopy = LyricsQuality.Evaluate(new LyricsInfo { PlainLyrics = "[Verse 2]\nHello\n\nWorld" }, new Song())!;
+        Assert.Equal(shortCopy.Score, longCopy.Score);
+        Assert.Equal(2, longCopy.LineCount);
+        Assert.True(LyricsQuality.Better(longCopy, shortCopy));
+        Assert.Contains("non_empty_lines", longCopy.Reasons);
+    }
+
     [Theory]
     [InlineData(null, "Words", "plain_text", 0.3)]
     [InlineData("[01:50]Words", null, "synced_lines", 0.7)]
@@ -76,10 +134,10 @@ public sealed class LyricsQualityTests
     }
 
     [Fact]
-    public void UnavailableAndEmptyBodiesHaveNoScore()
+    public void UnavailableBodiesHaveNoScoreAndEmptyBodiesAreInstrumental()
     {
         Assert.Null(LyricsQuality.Evaluate(null, new Song()));
         Assert.Null(LyricsQuality.Evaluate(new LyricsInfo(), new Song()));
-        Assert.Null(LyricsQuality.Evaluate(new LyricsInfo { SyncedLyrics = "[00:01]" }, new Song()));
+        Assert.Contains("instrumental", LyricsQuality.Evaluate(new LyricsInfo { SyncedLyrics = "[00:01]" }, new Song())!.Reasons);
     }
 }

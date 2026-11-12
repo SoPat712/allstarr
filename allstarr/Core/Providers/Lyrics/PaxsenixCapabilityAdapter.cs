@@ -256,19 +256,11 @@ public sealed class PaxsenixCapabilityAdapter : PublicLyricsCapabilityAdapter
         var title = item.Title;
         var artists = item.Artists.SelectMany(artist => FuzzyMatcher.SplitCredits(artist.Name)).ToList();
         if (artists.Count == 0) return -1;
-        var expectedArtists = string.Join(", ", request.ArtistNames);
         var actualArtists = string.Join(", ", artists);
-        if (!FuzzyMatcher.TitleAnnotationsMatch(request.TrackTitle!, expectedArtists, title, actualArtists) ||
-            !FuzzyMatcher.SemanticVersionTags(request.TrackTitle).SetEquals(FuzzyMatcher.SemanticVersionTags(title))) return -1;
-        var titleScore = FuzzyMatcher.CalculateSimilarity(request.TrackTitle!, title);
-        var expectedTitle = FuzzyMatcher.NormalizeTitleForMatching(request.TrackTitle!, expectedArtists);
-        var actualTitle = FuzzyMatcher.NormalizeTitleForMatching(title, actualArtists);
-        if (Math.Min(expectedTitle.Length, actualTitle.Length) < Math.Max(expectedTitle.Length, actualTitle.Length) * 0.9) return -1;
-        var artistScore = FuzzyMatcher.CalculateArtistMatchScore(request.ArtistNames.ToList(), artists[0], artists.Skip(1).ToList());
-        // A request often names only the main artist while the catalog also credits featured artists.
-        if (artistScore < 90 && request.ArtistNames.All(expected => artists.Any(actual => FuzzyMatcher.CalculateSimilarity(expected, actual) >= 90)))
-            artistScore = FuzzyMatcher.CalculateSimilarity(request.ArtistNames[0], artists[0]);
-        if (titleScore < 90 || artistScore < 90) return -1;
+        if (!FuzzyMatcher.SemanticVersionTags(request.TrackTitle).SetEquals(FuzzyMatcher.SemanticVersionTags(title)) ||
+            !LyricsCandidateMatcher.Matches(request, title, actualArtists, item.AlbumTitle)) return -1;
+        var titleScore = 100 * LyricsCandidateMatcher.Similarity(request.TrackTitle!, title);
+        var artistScore = 100 * request.ArtistNames.Select(expected => artists.Max(actual => LyricsCandidateMatcher.Similarity(expected, actual))).Min();
         double durationScore = 0;
         if (request.DurationSeconds is > 0 && item.Duration is { } duration)
         {

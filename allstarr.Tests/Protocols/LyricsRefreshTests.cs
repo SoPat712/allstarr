@@ -53,6 +53,18 @@ public sealed class LyricsRefreshTests : IAsyncLifetime
     }
 
     [Theory]
+    [InlineData("f**k", "fuck")]
+    [InlineData("Instrumental", "Real lyrics")]
+    [InlineData("Hello", "Hello\nWorld")]
+    public async Task BetterPlainTextCanReplaceTheRetainedCopy(string before, string after)
+    {
+        await store.ObserveAsync(Context, Song, new() { Source = "old", PlainLyrics = before }, 120_000);
+        var state = (await store.DueAsync(null, null, 25, default)).Single();
+        Assert.True(await store.CompleteAsync(state, new() { Source = "new", PlainLyrics = after }, "daily", default));
+        Assert.Equal("new", (await store.CurrentAsync(owner, recording, default))!.Lyrics!.Source);
+    }
+
+    [Theory]
     [InlineData("plain", "line", 120, true)]
     [InlineData("line", "word", 120, true)]
     [InlineData("word", "line", 120, false)]

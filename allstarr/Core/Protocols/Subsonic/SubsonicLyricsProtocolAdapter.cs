@@ -52,6 +52,7 @@ public static partial class SubsonicStructuredLyricsMapper
     public static SubsonicStructuredLyrics? Map(Song song, LyricsInfo? lyrics)
     {
         ArgumentNullException.ThrowIfNull(song);
+        if (lyrics != null) lyrics = LyricsCleanup.Clean(lyrics);
         if (!string.IsNullOrWhiteSpace(lyrics?.SyncedLyrics))
         {
             var lines = ParseSynced(lyrics.SyncedLyrics);
@@ -144,7 +145,7 @@ public sealed class SubsonicLyricsProtocolAdapter
                     return BackendLyrics.ParseSubsonic(response.Body,
                         response.ContentType?.Contains("json", StringComparison.OrdinalIgnoreCase) ?? format == "json");
                 }));
-            if ((selected == null || selected.Source == "backend") && backendLyrics != null)
+            if ((selected == null || selected.Source == "backend" && !LyricsCleanup.NeedsCleanup(selected)) && backendLyrics != null)
                 return new SubsonicRelayResult(backendLyrics.Body,
                     backendLyrics.ContentType ?? $"application/{format}", (int)backendLyrics.StatusCode);
             return _responseBuilder.CreateLyricsBySongIdResponse(format, SubsonicStructuredLyricsMapper.Map(song, selected));

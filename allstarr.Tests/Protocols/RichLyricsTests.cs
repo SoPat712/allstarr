@@ -13,6 +13,77 @@ namespace allstarr.Tests;
 public sealed class RichLyricsTests
 {
     [Fact]
+    public void CleanupPreservesNativeWordsAndNormalizesMixedWords()
+    {
+        var rich = RichLyricsMapper.Map(new LyricsInfo
+        {
+            PlainLyrics = "Привет мир\nНello   wοrld\n  It’s ‘our`\u200b\u200c\u200d\u2060\ufeff song  "
+        })!;
+        Assert.Equal(new[] { "Привет мир", "Hello world", " It's 'our' song " }, rich.Lines.Select(line => line.Text));
+    }
+
+    [Fact]
+    public void CleanupDropsMarkersAndEdgeMusicWithoutMovingWordsOrLines()
+    {
+        var lyrics = new LyricsInfo
+        {
+            SyncedLyrics = "[00:00]♫ …\n[00:01][Verse 2]\n[00:02]Нello world\n[00:03](Hook)\n[00:04]♪♫…\n[00:05][Bridge: Artist]\n[00:06]Last\n[00:07]♪",
+            TimedLines = [new("♫ …", TimeSpan.Zero), new("[Verse 2]", TimeSpan.FromSeconds(1)),
+                new("Нello   world", TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(1),
+                    [new("Н", TimeSpan.FromSeconds(2)), new("ello  ", TimeSpan.FromMilliseconds(2200)),
+                     new(" world", TimeSpan.FromMilliseconds(2500))]),
+                new("(Hook)", TimeSpan.FromSeconds(3)), new("♪♫…", TimeSpan.FromSeconds(4)),
+                new("[Bridge: Artist]", TimeSpan.FromSeconds(5)), new("Last", TimeSpan.FromSeconds(6)),
+                new("♪", TimeSpan.FromSeconds(7))]
+        };
+        var rich = RichLyricsMapper.Map(lyrics)!;
+        Assert.Equal(new[] { "Hello world", "♪", "Last" }, rich.Lines.Select(line => line.Text));
+        Assert.Equal(new long?[] { 2000, 4000, 6000 }, rich.Lines.Select(line => line.StartMs));
+        Assert.Equal(new[] { "H", "ello ", "world" }, rich.Lines[0].Words.Select(word => word.Text));
+        Assert.Equal(new long[] { 2000, 2200, 2500 }, rich.Lines[0].Words.Select(word => word.StartMs));
+        Assert.Equal(3000, rich.Lines[0].EndMs);
+        using var jellyfin = JsonDocument.Parse(new JellyfinLyricsProtocolAdapter().Shape(lyrics).Body);
+        Assert.Equal(new[] { "Hello world", "♪", "Last" }, jellyfin.RootElement.GetProperty("Lyrics")
+            .EnumerateArray().Select(line => line.GetProperty("Text").GetString()));
+        Assert.Equal(new[] { 2000L, 4000L, 6000L }, SubsonicStructuredLyricsMapper.Map(new Song(), lyrics)!.Lines
+            .Select(line => line.StartMilliseconds));
+        Assert.Equal("Нello   world", lyrics.TimedLines[2].Text);
+    }
+
+    [Fact]
+    public void SegmentGapsKeepNativeWordsSeparateFromLatinWords()
+    {
+        var rich = RichLyricsMapper.Map(new LyricsInfo
+        {
+            SyncedLyrics = "[00:01]Привет Hello",
+            TimedLines = [new("Привет Hello", TimeSpan.FromSeconds(1), segments:
+                [new("Привет", TimeSpan.FromSeconds(1)), new("Hello", TimeSpan.FromSeconds(2))])]
+        })!;
+        Assert.Equal(new[] { "Привет", "Hello" }, rich.Lines[0].Words.Select(word => word.Text));
+    }
+
+    [Fact]
+    public void ConsecutiveMusicLinesCollapseAndKeepTheFirstTimestamp()
+    {
+        var rich = RichLyricsMapper.Map(new LyricsInfo
+        {
+            SyncedLyrics = "[00:00]♪\n[00:01]First\n[00:02]♫…\n[00:03]♪♪\n[00:04]Last\n[00:05]…"
+        })!;
+        Assert.Equal(new[] { "First", "♪", "Last" }, rich.Lines.Select(line => line.Text));
+        Assert.Equal(new long?[] { 1000, 2000, 4000 }, rich.Lines.Select(line => line.StartMs));
+    }
+
+    [Fact]
+    public void CleanupOfEnhancedLrcKeepsCuePositionsAfterRemovingInvisibleCharacters()
+    {
+        var lyrics = new LyricsInfo { SyncedLyrics = "[00:01][Chorus]\n[00:02]<00:02>Нe\u200bllo  <00:03>world\n[00:04](yeah)" };
+        var rich = RichLyricsMapper.Map(lyrics)!;
+        Assert.Equal(new[] { "Hello world", "(yeah)" }, rich.Lines.Select(line => line.Text));
+        Assert.Equal(new RichLyricsWord(2000, 3000, "Hello "), rich.Lines[0].Words[0]);
+        Assert.Equal(3000, rich.Lines[0].Words[1].StartMs);
+    }
+
+    [Fact]
     public void BackgroundWordsOverlapWithoutEnteringTheLeadLine()
     {
         var rich = RichLyricsMapper.Map(new LyricsInfo

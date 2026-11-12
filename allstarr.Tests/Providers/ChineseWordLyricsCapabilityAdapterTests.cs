@@ -8,6 +8,23 @@ namespace allstarr.Tests;
 public sealed class ChineseWordLyricsCapabilityAdapterTests
 {
     [Fact]
+    public async Task NeteaseRejectsWrongTitleNumbersAndInstrumentalAlbums()
+    {
+        var handler = new Handler((_, index) => Response(index == 1 ? """
+            {"code":200,"result":{"songs":[
+            {"id":11,"name":"Part 3","artists":[{"name":"Artist"}],"duration":180000},
+            {"id":12,"name":"Part 2","artists":[{"name":"Artist"}],"duration":180000,"album":{"name":"Instrumental"}},
+            {"id":13,"name":"Part 2","artists":[{"name":"Artist"}],"duration":180000}
+            ]}}
+            """ : """{"code":200,"yrc":{"lyric":"[1000,500](1000,500,0)Short"}}"""));
+        var request = new ProviderLyricsRequest(Guid.NewGuid(), new("neteaselyrics", ProviderResourceKind.Track, "recording"),
+            trackTitle: "Part 2", artistNames: ["Artist"], durationSeconds: 180);
+        Assert.Equal(ProviderLyricsAvailabilityState.Available,
+            (await Adapter("neteaselyrics", handler).FetchLyricsAsync(Context("neteaselyrics"), request)).RequireValue().Availability);
+        Assert.Contains("id=13&", handler.Requests[1].Query);
+    }
+
+    [Fact]
     public async Task NeteaseSkipsConflictingCandidatesBeforeFetchingNativeWords()
     {
         var handler = new Handler((_, index) => Response(index == 1 ? """

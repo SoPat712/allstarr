@@ -1,7 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using System.Text.RegularExpressions;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Music;
 using allstarr.Core.Providers.Spotify;
@@ -260,13 +259,23 @@ public sealed class MusixmatchLyricsCapabilityAdapter : IProviderLyricsCapabilit
         var credentialKey = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(credential.UserToken)));
         var coordinator = scopes.GetOrAdd(credentialKey, _ => new(TimeProvider.System, TimeSpan.FromSeconds(1)));
         var key = cacheScope + JsonSerializer.Serialize(new { request.Isrc, request.TrackTitle, request.ArtistNames, request.AlbumTitle, request.DurationSeconds, request.PreferredFormat });
-        return coordinator.RunAsync(key, ct => ReadLookupAsync(http, credential, request, ct, logger, new LookupDiagnostics()), token, refresh: request.IsHealthProbe);
+        return coordinator.RunAsync(key, async ct =>
+        {
+            var result = Unavailable();
+            foreach (var query in LyricsCandidateMatcher.Queries(request))
+            {
+                result = await ReadLookupAsync(http, credential, query, request, ct, logger, new LookupDiagnostics());
+                if (!result.IsSuccess || result.RequireValue().Availability != ProviderLyricsAvailabilityState.Unavailable) break;
+            }
+            return result;
+        }, token, refresh: request.IsHealthProbe);
     }
 
     private static async Task<ProviderOutcome<ProviderLyricsResult>> ReadLookupAsync(
         HttpClient http,
         MusixmatchCredential credential,
         ProviderLyricsRequest request,
+        ProviderLyricsRequest identity,
         CancellationToken cancellationToken,
         ILogger logger,
         LookupDiagnostics diagnostics)
@@ -304,7 +313,7 @@ public sealed class MusixmatchLyricsCapabilityAdapter : IProviderLyricsCapabilit
             if (body == null)
                 return Failure<ProviderLyricsResult>(
                     ProviderError.CompatibilityContractChanged());
-            return ParseMacro(body, request, diagnostics);
+            return ParseMacro(body, identity, diagnostics);
         }
         catch (OperationCanceledException)
         {
@@ -990,40 +999,11 @@ public sealed class MusixmatchLyricsCapabilityAdapter : IProviderLyricsCapabilit
         TrackMetadata actual,
         LookupDiagnostics diagnostics)
     {
-        var title = NormalizeMatcherTitle(request.TrackTitle ?? string.Empty);
-        var actualTitle = NormalizeMatcherTitle(actual.Title);
-        diagnostics.TitleScore = FuzzyMatcher.CalculateSimilarity(title, actualTitle);
-        diagnostics.ArtistScore = request.ArtistNames
-            .Select(artist => ArtistSimilarity(artist, actual.Artist)).DefaultIfEmpty(0).Max();
-        if (string.IsNullOrWhiteSpace(actual.Artist) || string.IsNullOrWhiteSpace(actualTitle))
-            return false;
-        if (!string.IsNullOrWhiteSpace(request.TrackTitle) &&
-            (diagnostics.TitleScore < 90 ||
-             Math.Min(title.Length, actualTitle.Length) < Math.Max(title.Length, actualTitle.Length) * 0.9))
-            return false;
-        return request.ArtistNames.Count == 0 || ArtistSimilarity(request.ArtistNames[0], actual.Artist) >= 90;
-    }
-
-    private static string NormalizeMatcherTitle(string title)
-    {
-        var stripped = FuzzyMatcher.StripDecorators(title);
-        stripped = Regex.Replace(stripped, @"[\(\[]([^\)\]]+)[\)\]]",
-            match => FuzzyMatcher.SemanticVersionTags(match.Groups[1].Value).Count > 0 ? " " : match.Value);
-        stripped = Regex.Replace(stripped, @"\s+[-–—]\s+(.+)$",
-            match => FuzzyMatcher.SemanticVersionTags(match.Groups[1].Value).Count > 0 ? " " : match.Value);
-        return FuzzyMatcher.NormalizeForMatching(stripped);
-    }
-
-    private static int ArtistSimilarity(string requested, string actual)
-    {
-        var primary = FuzzyMatcher.NormalizeForMatching(FuzzyMatcher.SplitCredits(requested).FirstOrDefault() ?? string.Empty);
-        if (primary.Length == 0) return 0;
-        var tokens = primary.Split(' ', StringSplitOptions.RemoveEmptyEntries).ToHashSet(StringComparer.Ordinal);
-        var actualTokens = FuzzyMatcher.NormalizeForMatching(actual).Split(' ', StringSplitOptions.RemoveEmptyEntries).ToHashSet(StringComparer.Ordinal);
-        var coverage = tokens.Count == 0 ? 0 : 100 * tokens.Count(actualTokens.Contains) / tokens.Count;
-        var bestCredit = FuzzyMatcher.SplitCredits(actual)
-            .Select(credit => FuzzyMatcher.CalculateSimilarity(primary, credit)).DefaultIfEmpty(0).Max();
-        return Math.Max(coverage, bestCredit);
+        diagnostics.TitleScore = (int)(100 * LyricsCandidateMatcher.Similarity(request.TrackTitle ?? "", actual.Title));
+        diagnostics.ArtistScore = (int)(100 * request.ArtistNames
+            .Select(artist => LyricsCandidateMatcher.Similarity(artist, actual.Artist)).DefaultIfEmpty(0).Max());
+        return LyricsCandidateMatcher.Matches(request.TrackTitle, request.ArtistNames.Take(1).ToArray(), request.AlbumTitle,
+            actual.Title, actual.Artist, actual.Album);
     }
 
     private static bool TryGetObject(

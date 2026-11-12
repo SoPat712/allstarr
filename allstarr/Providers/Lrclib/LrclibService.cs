@@ -72,75 +72,79 @@ public class LrclibService
 
         try
         {
-            var searchArtistName = string.Join(" ", artistNames);
-
-            var searchUrl = $"{BaseUrl}/search?" +
-                           $"track_name={Uri.EscapeDataString(trackName)}&" +
-                           $"artist_name={Uri.EscapeDataString(searchArtistName)}";
-
-            _logger.LogDebug("Searching LRCLIB: {Url} (expecting {ArtistCount} artists)", searchUrl, artistNames.Length);
-
-            using var searchResponse = await _httpClient.GetAsync(searchUrl, token);
-
-            if (searchResponse.IsSuccessStatusCode)
+            foreach (var query in LyricsCandidateMatcher.Readings(trackName, artistNames))
             {
-                var searchJson = await searchResponse.Content.ReadAsStringAsync(token);
-                var searchResults = JsonSerializer.Deserialize<List<LrclibResponse>>(searchJson, JsonOptions);
+                var searchArtistName = string.Join(" ", query.Artists);
 
-                if (searchResults != null && searchResults.Count > 0)
+                var searchUrl = $"{BaseUrl}/search?" +
+                               $"track_name={Uri.EscapeDataString(query.Title)}&" +
+                               $"artist_name={Uri.EscapeDataString(searchArtistName)}";
+
+                _logger.LogDebug("Searching LRCLIB: {Url} (expecting {ArtistCount} artists)", searchUrl, artistNames.Length);
+
+                using var searchResponse = await _httpClient.GetAsync(searchUrl, token);
+
+                if (searchResponse.IsSuccessStatusCode)
                 {
-                    LrclibResponse? bestMatch = null;
-                    double bestScore = 0;
-                    var scoredResults = new List<(LrclibResponse Response, double Score)>();
+                    var searchJson = await searchResponse.Content.ReadAsStringAsync(token);
+                    var searchResults = JsonSerializer.Deserialize<List<LrclibResponse>>(searchJson, JsonOptions);
 
-                    foreach (var result in searchResults)
+                    if (searchResults != null && searchResults.Count > 0)
                     {
-                        var trackScore = FuzzyMatcher.CalculateSimilarity(trackName, result.TrackName ?? "");
+                        LrclibResponse? bestMatch = null;
+                        double bestScore = 0;
+                        var scoredResults = new List<(LrclibResponse Response, double Score)>();
 
-                        var resultArtistCount = CountArtists(result.ArtistName ?? "");
-                        var expectedArtistCount = artistNames.Length;
-                        var artistScore = CalculateArtistSimilarity(artistNames, result.ArtistName ?? "");
-                        var artistCountBonus = resultArtistCount == expectedArtistCount ? 50.0 : 0.0;
-                        var durationDiff = result.Duration.HasValue ? Math.Abs(result.Duration.Value - durationSeconds) : 999;
-                        var durationScore = durationDiff <= 5 ? 100.0 : Math.Max(0, 100 - (durationDiff * 2));
-                        var syncedBonus = !string.IsNullOrEmpty(result.SyncedLyrics) ? 15.0 : 0.0;
-                        var totalScore = (trackScore * 0.3) + (artistScore * 0.3) + (durationScore * 0.15) + artistCountBonus + syncedBonus;
-                        scoredResults.Add((result, totalScore));
-
-                        _logger.LogDebug("Candidate: {Track} by {Artist} ({ArtistCount} artists) - Score: {Score:F1} (track:{TrackScore:F1}, artist:{ArtistScore:F1}, duration:{DurationScore:F1}, countBonus:{CountBonus:F1}, synced:{Synced})",
-                            result.TrackName, result.ArtistName, resultArtistCount, totalScore, trackScore, artistScore, durationScore, artistCountBonus, !string.IsNullOrEmpty(result.SyncedLyrics));
-
-                        if (totalScore > bestScore)
+                        foreach (var result in searchResults)
                         {
-                            bestScore = totalScore;
-                            bestMatch = result;
+                            if (!LyricsCandidateMatcher.Matches(trackName, artistNames, albumName, result.TrackName, result.ArtistName, result.AlbumName)) continue;
+                            var trackScore = FuzzyMatcher.CalculateSimilarity(trackName, result.TrackName ?? "");
+
+                            var resultArtistCount = CountArtists(result.ArtistName ?? "");
+                            var expectedArtistCount = artistNames.Length;
+                            var artistScore = CalculateArtistSimilarity(artistNames, result.ArtistName ?? "");
+                            var artistCountBonus = resultArtistCount == expectedArtistCount ? 50.0 : 0.0;
+                            var durationDiff = result.Duration.HasValue ? Math.Abs(result.Duration.Value - durationSeconds) : 999;
+                            var durationScore = durationDiff <= 5 ? 100.0 : Math.Max(0, 100 - (durationDiff * 2));
+                            var syncedBonus = !string.IsNullOrEmpty(result.SyncedLyrics) ? 15.0 : 0.0;
+                            var totalScore = (trackScore * 0.3) + (artistScore * 0.3) + (durationScore * 0.15) + artistCountBonus + syncedBonus;
+                            scoredResults.Add((result, totalScore));
+
+                            _logger.LogDebug("Candidate: {Track} by {Artist} ({ArtistCount} artists) - Score: {Score:F1} (track:{TrackScore:F1}, artist:{ArtistScore:F1}, duration:{DurationScore:F1}, countBonus:{CountBonus:F1}, synced:{Synced})",
+                                result.TrackName, result.ArtistName, resultArtistCount, totalScore, trackScore, artistScore, durationScore, artistCountBonus, !string.IsNullOrEmpty(result.SyncedLyrics));
+
+                            if (totalScore > bestScore)
+                            {
+                                bestScore = totalScore;
+                                bestMatch = result;
+                            }
+                        }
+
+                        if (bestMatch != null && bestScore >= 60)
+                        {
+                            _logger.LogInformation("Found lyrics via search for {Artist} - {Track} (ID: {Id}, score: {Score:F1}, synced: {HasSynced})",
+                                artistName, trackName, bestMatch.Id, bestScore, !string.IsNullOrEmpty(bestMatch.SyncedLyrics));
+
+                            var result = ToLyricsInfo(bestMatch, trackName, artistName, albumName, durationSeconds);
+                            result.Versions = scoredResults
+                                .Where(candidate => candidate.Score >= 60)
+                                .OrderByDescending(candidate => candidate.Score)
+                                .Select(candidate => ToLyricsInfo(candidate.Response, trackName, artistName, albumName, durationSeconds))
+                                .DistinctBy(version => LyricsVersions.SourceId("lrclib", version.Metadata))
+                                .Take(5)
+                                .ToArray();
+
+                            await LyricsAwait.CompleteAsync(CacheLyricsAsync(cacheKey, result), completion, token);
+                            return result;
+                        }
+                        else
+                        {
+                            _logger.LogDebug("Best match score too low ({Score:F1}), trying exact match", bestScore);
                         }
                     }
-
-                    if (bestMatch != null && bestScore >= 60)
-                    {
-                        _logger.LogInformation("Found lyrics via search for {Artist} - {Track} (ID: {Id}, score: {Score:F1}, synced: {HasSynced})",
-                            artistName, trackName, bestMatch.Id, bestScore, !string.IsNullOrEmpty(bestMatch.SyncedLyrics));
-
-                        var result = ToLyricsInfo(bestMatch, trackName, artistName, albumName, durationSeconds);
-                        result.Versions = scoredResults
-                            .Where(candidate => candidate.Score >= 60)
-                            .OrderByDescending(candidate => candidate.Score)
-                            .Select(candidate => ToLyricsInfo(candidate.Response, trackName, artistName, albumName, durationSeconds))
-                            .DistinctBy(version => LyricsVersions.SourceId("lrclib", version.Metadata))
-                            .Take(5)
-                            .ToArray();
-
-                        await LyricsAwait.CompleteAsync(CacheLyricsAsync(cacheKey, result), completion, token);
-                        return result;
-                    }
-                    else
-                    {
-                        _logger.LogDebug("Best match score too low ({Score:F1}), trying exact match", bestScore);
-                    }
                 }
-            }
 
+            }
             token.ThrowIfCancellationRequested();
             var exactUrl = $"{BaseUrl}/get?" +
                           $"track_name={Uri.EscapeDataString(trackName)}&" +
@@ -163,7 +167,7 @@ public class LrclibService
             var json = await exactResponse.Content.ReadAsStringAsync(token);
             var lyrics = JsonSerializer.Deserialize<LrclibResponse>(json, JsonOptions);
 
-            if (lyrics == null)
+            if (lyrics == null || !LyricsCandidateMatcher.Matches(trackName, artistNames, albumName, lyrics.TrackName ?? trackName, lyrics.ArtistName ?? artistName, lyrics.AlbumName))
             {
                 return null;
             }
@@ -254,7 +258,7 @@ public class LrclibService
             var json = await response.Content.ReadAsStringAsync();
             var lyrics = JsonSerializer.Deserialize<LrclibResponse>(json, JsonOptions);
 
-            if (lyrics == null)
+            if (lyrics == null || !LyricsCandidateMatcher.Matches(trackName, [artistName], albumName, lyrics.TrackName ?? trackName, lyrics.ArtistName ?? artistName, lyrics.AlbumName))
             {
                 return null;
             }

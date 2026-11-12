@@ -55,7 +55,7 @@ public sealed class LyricsRefreshSidecars(IDbContextFactory<AllstarrDbContext> f
         if (!File.Exists(path) || new FileInfo(path).LinkTarget != null) return false;
         var previous = await File.ReadAllBytesAsync(path, token);
         var old = await KeptLyricsReader.ReadStoredSidecarAsync(song, audioPath, token);
-        if (score.Score <= (LyricsQuality.Evaluate(old, song, measuredDurationMs)?.Score ?? -1)) return false;
+        if (!LyricsQuality.Better(score, LyricsQuality.Evaluate(old, song, measuredDurationMs))) return false;
         var content = Content(candidate, measuredDurationMs);
         if (string.IsNullOrWhiteSpace(content)) return false;
         var backup = path + ".previous-" + Convert.ToHexStringLower(SHA256.HashData(previous))[..16];

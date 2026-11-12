@@ -102,6 +102,7 @@ public sealed class JellyfinLyricsProtocolAdapter : IJellyfinLyricsProtocolAdapt
     public JellyfinProtocolResponse Shape(LyricsInfo lyrics)
     {
         ArgumentNullException.ThrowIfNull(lyrics);
+        lyrics = LyricsCleanup.Clean(lyrics);
 
         var timed = LyricsTiming.ReadLines(lyrics);
         var structured = timed != null && (LyricsTiming.IsTimedText(lyrics.SyncedLyrics) ||

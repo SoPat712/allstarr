@@ -8,6 +8,7 @@ public static class RichLyricsMapper
     public static RichLyrics? Map(LyricsInfo? lyrics)
     {
         if (lyrics == null) return null;
+        lyrics = LyricsCleanup.Clean(lyrics);
         var sourceId = lyrics.Source ?? "unknown";
         var source = new RichLyricsSource(sourceId, SourceName(sourceId));
         if (string.IsNullOrWhiteSpace(lyrics.SyncedLyrics))

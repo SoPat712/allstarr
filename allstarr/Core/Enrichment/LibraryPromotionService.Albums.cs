@@ -639,7 +639,8 @@ public sealed partial class LibraryPromotionService
     internal static string? SelectPromotionLyrics(IReadOnlyList<ProtocolLyricsCandidate> candidates, allstarr.Models.Domain.Song song, long measuredDurationMilliseconds)
     {
         var ranked = candidates.Select(item => (Candidate: item, Score: LyricsQuality.Evaluate(item.Lyrics, song, measuredDurationMilliseconds)))
-            .Where(item => item.Candidate.AutomaticEligible && item.Score != null).OrderByDescending(item => item.Score!.Score).FirstOrDefault();
+            .Where(item => item.Candidate.AutomaticEligible && item.Score != null).OrderByDescending(item => item.Score!.Score)
+            .ThenByDescending(item => item.Score!.LineCount).FirstOrDefault();
         if (ranked.Score?.Reasons.Contains("duration_fits") != true) return null;
         return ranked.Candidate.Lyrics is { } selected ? LyricsTiming.SidecarContent(selected, measuredDurationMilliseconds) : null;
     }

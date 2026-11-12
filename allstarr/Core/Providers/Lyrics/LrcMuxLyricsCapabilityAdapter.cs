@@ -24,7 +24,7 @@ public sealed class LrcMuxLyricsCapabilityAdapter(HttpClient http, IApplicationC
         var title = Text(track, "title");
         var artist = Text(track, "artist");
         var duration = track.TryGetProperty("duration", out var seconds) && seconds.ValueKind == JsonValueKind.Number && seconds.TryGetDouble(out var number) ? number : (double?)null;
-        if (request.DurationSeconds is > 0 && duration == null || !MatchesIdentity(request, title, artist, duration)) return Unavailable();
+        if (request.DurationSeconds is > 0 && duration == null || !MatchesIdentity(request, title, artist, duration, Text(track, "album"))) return Unavailable();
         var isrc = Text(track, "isrc");
         if (request.DurationSeconds is not > 0 && (string.IsNullOrWhiteSpace(request.Isrc) ||
             string.IsNullOrWhiteSpace(isrc) || !string.Equals(request.Isrc, isrc, StringComparison.OrdinalIgnoreCase))) return Unavailable();

@@ -63,7 +63,7 @@ public sealed class LyricsRefreshService(LyricsRefreshStore store, IDbContextFac
                 var order = policy.ApplyAutomaticProviderAvailability(ProviderCapabilityKind.Lyrics,
                     providers.GetProviderOrder(ProviderCapabilityKind.Lyrics)).Where(source => source is not ("backend" or "kept") &&
                     (request.SourceId == null || source == request.SourceId) &&
-                    LyricsQuality.Maximum(source, song, snapshot.DurationMs) > state.Score).ToArray();
+                    LyricsQuality.Maximum(source, song, snapshot.DurationMs) >= state.Score).ToArray();
                 if (order.Length == 0)
                 {
                     checkedSongs++;
@@ -88,8 +88,9 @@ public sealed class LyricsRefreshService(LyricsRefreshStore store, IDbContextFac
                         var candidates = await lyrics.FindAllAsync(context, song, state.CanonicalRecordingId.ToString("N"),
                             new ProtocolLyricsSources { OnlySourceId = source, ReadOnly = true });
                         var ranked = ProtocolLyricsResolver.Assess(candidates, song, snapshot.DurationMs)
-                            .Where(candidate => candidate.Assessment != null).OrderByDescending(candidate => candidate.Assessment!.Score).FirstOrDefault();
-                        if (ranked?.Assessment?.Score > (best?.Assessment?.Score ?? -1)) best = ranked;
+                            .Where(candidate => candidate.Assessment != null).OrderByDescending(candidate => candidate.Assessment!.Score)
+                            .ThenByDescending(candidate => candidate.Assessment!.LineCount).FirstOrDefault();
+                        if (LyricsQuality.Better(ranked?.Assessment, best?.Assessment)) best = ranked;
                     }
                     catch (Exception error) when (error is not OperationCanceledException)
                     { logger.LogDebug("Better lyrics lookup deferred for {Source} ({ErrorType})", source, error.GetType().Name); }
@@ -99,8 +100,9 @@ public sealed class LyricsRefreshService(LyricsRefreshStore store, IDbContextFac
                     var cached = await lyrics.FindAllAsync(context, song, state.CanonicalRecordingId.ToString("N"),
                         new ProtocolLyricsSources { CacheOnly = true, ReadOnly = true });
                     var ranked = ProtocolLyricsResolver.Assess(cached, song, snapshot.DurationMs)
-                        .Where(candidate => candidate.Assessment != null).OrderByDescending(candidate => candidate.Assessment!.Score).FirstOrDefault();
-                    if (ranked?.Assessment?.Score > (best?.Assessment?.Score ?? -1)) best = ranked;
+                        .Where(candidate => candidate.Assessment != null).OrderByDescending(candidate => candidate.Assessment!.Score)
+                        .ThenByDescending(candidate => candidate.Assessment!.LineCount).FirstOrDefault();
+                    if (LyricsQuality.Better(ranked?.Assessment, best?.Assessment)) best = ranked;
                 }
                 checkedSongs++;
                 if (best?.Lyrics != null) best.Lyrics.Source = best.SourceId;

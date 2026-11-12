@@ -38,7 +38,7 @@ public abstract class ChineseWordLyricsCapabilityAdapter : MetadataLyricsCapabil
             var value = parsed.RequireValue();
             if (value.Availability != ProviderLyricsAvailabilityState.Available) continue;
             if (value.Metadata is { } metadata && !MatchesIdentity(request, metadata.Title ?? candidate.Title,
-                    metadata.Artist ?? candidate.Artist, candidate.DurationSeconds)) continue;
+                    metadata.Artist ?? candidate.Artist, candidate.DurationSeconds, metadata.Album ?? candidate.Album)) continue;
             return ProviderOutcome<ProviderLyricsResult>.Success(value with
             {
                 Metadata = new(candidate.Id, candidate.Title, candidate.Artist, candidate.Album,
@@ -56,7 +56,7 @@ public abstract class ChineseWordLyricsCapabilityAdapter : MetadataLyricsCapabil
     protected static bool MatchesCandidate(ProviderLyricsRequest request, LyricCandidate candidate) =>
         candidate.Id.Length > 0 && (candidate.DurationSeconds == null || candidate.DurationSeconds is > 0 and <= 86_400) &&
         (request.DurationSeconds is not > 0 || candidate.DurationSeconds is > 0) &&
-        MatchesIdentity(request, candidate.Title, candidate.Artist, candidate.DurationSeconds) &&
+        MatchesIdentity(request, candidate.Title, candidate.Artist, candidate.DurationSeconds, candidate.Album) &&
         IsrcMatches(request, candidate.Isrc);
 
     protected static bool IsrcMatches(ProviderLyricsRequest request, string? returned) =>

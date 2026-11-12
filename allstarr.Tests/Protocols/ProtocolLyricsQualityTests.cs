@@ -15,6 +15,22 @@ namespace allstarr.Tests;
 public sealed class ProtocolLyricsQualityTests
 {
     [Theory]
+    [InlineData("f**k", "fuck")]
+    [InlineData("Instrumental", "Real lyrics")]
+    [InlineData("Hello", "Hello\nWorld")]
+    public async Task BetterTextWinsBeforeHouseholdSourceOrder(string first, string second)
+    {
+        var context = Context();
+        var providers = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        providers.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Lyrics)).Returns(["backend", "kept"]);
+        var resolver = new ProtocolLyricsResolver(providers.Object, NullLogger<ProtocolLyricsResolver>.Instance);
+        var result = await resolver.FindAsync(context, Song(), "recording", new ProtocolLyricsSources(
+            Backend: _ => Task.FromResult<LyricsInfo?>(new() { PlainLyrics = first }),
+            Kept: _ => Task.FromResult<LyricsInfo?>(new() { PlainLyrics = second })));
+        Assert.Equal("kept", result?.Source);
+    }
+
+    [Theory]
     [InlineData("line", "word", "backend,lyricsplus", "lyricsplus", 1)]
     [InlineData("plain", "line", "backend,lyricsplus", "lyricsplus", 1)]
     [InlineData("word", "word", "backend,lyricsplus", "backend", 0)]

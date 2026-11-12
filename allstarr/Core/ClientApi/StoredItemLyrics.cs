@@ -26,14 +26,14 @@ internal static class StoredItemLyrics
         if (song == null || policy.Preferences.ExplicitFilter == "CleanOnly" && !CleanRecordingPolicy.IsVerifiedClean(song))
             return new(false, null, null);
         var best = new ItemDetailsLyrics(false, null, chosenSource);
-        var bestScore = -1.0;
+        LyricsScore? bestScore = null;
         ItemDetailsLyrics? retainedChoice = null;
         if (chosenSource == null && LyricsQuality.Evaluate(automaticLyrics, song, recordingDurationMs) is { } retainedScore &&
             RichLyricsMapper.Map(automaticLyrics) is { } retained && policy.IsAutomatic(LyricsVersions.ProviderId(retained.Source.Id)))
         {
             best = new(true, retained.Format, retained.Source.Id);
             retainedChoice = best;
-            bestScore = retainedScore.Score;
+            bestScore = retainedScore;
             observe?.Invoke(retained);
             observeInfo?.Invoke(automaticLyrics!);
         }
@@ -60,9 +60,9 @@ internal static class StoredItemLyrics
             }
             foreach (var version in versions)
             {
-                if (LyricsQuality.Evaluate(version, song, recordingDurationMs) is not { } score || score.Score <= bestScore) continue;
-                if (retainedChoice != null && !score.Reasons.Contains("duration_fits")) continue;
-                bestScore = score.Score;
+                if (LyricsQuality.Evaluate(version, song, recordingDurationMs) is not { } score || !LyricsQuality.Better(score, bestScore)) continue;
+                if (retainedChoice != null && !score.Reasons.Contains("duration_fits") && !score.Reasons.Contains("plain_text")) continue;
+                bestScore = score;
                 best = new(true, RichLyricsMapper.Map(version)!.Format, version.Source);
             }
             return false;

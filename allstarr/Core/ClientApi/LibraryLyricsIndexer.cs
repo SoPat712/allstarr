@@ -379,7 +379,8 @@ public sealed class LibraryLyricsIndexer(IDbContextFactory<AllstarrDbContext> fa
             var observedSong = MusicLyrics.ForLookup(song);
             observedSong.CanonicalRecordingId = recording;
             var info = storedInfo.Where(info => info.Source != null && policy.IsAutomatic(LyricsVersions.ProviderId(info.Source)))
-                .OrderByDescending(info => LyricsQuality.Evaluate(info, song, recordingDuration)?.Score ?? -1).FirstOrDefault();
+                .OrderByDescending(info => LyricsQuality.Evaluate(info, song, recordingDuration)?.Score ?? -1)
+                .ThenByDescending(info => LyricsQuality.Evaluate(info, song, recordingDuration)?.LineCount ?? 0).FirstOrDefault();
             if (info != null)
             {
                 var account = selectedAccounts.FirstOrDefault(account => account.ProviderId == LyricsVersions.ProviderId(info.Source!));

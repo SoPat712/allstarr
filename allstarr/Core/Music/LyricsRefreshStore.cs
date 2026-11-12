@@ -66,7 +66,7 @@ public sealed class LyricsRefreshStore(IDbContextFactory<AllstarrDbContext> fact
             if (!obsolete)
             {
                 var candidate = LyricsQuality.Evaluate(lyrics, prior.Song, prior.DurationMs);
-                if (candidate?.Score > existing.Score && candidate.Reasons.Contains("duration_fits") &&
+                if (LyricsQuality.Better(candidate, LyricsQuality.Evaluate(prior.Lyrics, prior.Song, prior.DurationMs)) && (candidate!.Reasons.Contains("duration_fits") || candidate.Reasons.Contains("plain_text")) &&
                     await CompleteAsync(existing, lyrics, "Source answered with better lyrics", context.CancellationToken))
                 {
                     changes?.RecordingChanged(owner, recording);
@@ -191,7 +191,8 @@ public sealed class LyricsRefreshStore(IDbContextFactory<AllstarrDbContext> fact
         }
         var snapshot = Read(row.PayloadJson);
         var score = LyricsQuality.Evaluate(candidate, snapshot.Song, snapshot.DurationMs);
-        var improved = score != null && score.Score > row.Score && score.Reasons.Contains("duration_fits");
+        var improved = score != null && LyricsQuality.Better(score, LyricsQuality.Evaluate(snapshot.Lyrics, snapshot.Song, snapshot.DurationMs)) &&
+            (score.Reasons.Contains("duration_fits") || score.Reasons.Contains("plain_text"));
         if (improved)
         {
             row.PreviousJson = row.PayloadJson;

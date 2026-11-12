@@ -200,6 +200,7 @@ public sealed class RecordingLyricsReview : IRecordingLyricsReview
         token.ThrowIfCancellationRequested();
         var assessed = ProtocolLyricsResolver.Assess(candidates ?? [], song, recording.DurationMilliseconds);
         var ranks = assessed.Where(candidate => candidate.Assessment != null).OrderByDescending(candidate => candidate.Assessment!.Score)
+            .ThenByDescending(candidate => candidate.Assessment!.LineCount)
             .Select((candidate, index) => new { candidate.SourceId, Rank = index + 1 }).ToDictionary(candidate => candidate.SourceId, candidate => candidate.Rank);
         var sources = assessed.Select(candidate => ProjectSource(recording.Id, candidate) with
         {

@@ -240,7 +240,8 @@ public sealed partial class ProtocolLyricsResolver
                 ready.FirstOrDefault(candidate => LyricsVersions.ProviderId(candidate.SourceId) == LyricsVersions.ProviderId(preferred));
             if (pinned != null) return pinned;
         }
-        return ready.Where(candidate => candidate.Assessment != null).OrderByDescending(candidate => candidate.Assessment!.Score).FirstOrDefault();
+        return ready.Where(candidate => candidate.Assessment != null).OrderByDescending(candidate => candidate.Assessment!.Score)
+            .ThenByDescending(candidate => candidate.Assessment!.LineCount).FirstOrDefault();
     }
 
     private static ProtocolLyricsCandidate? BestVersion(string provider, LyricsInfo? lyrics, Song song, long? recordingDurationMs)
@@ -249,7 +250,8 @@ public sealed partial class ProtocolLyricsResolver
         {
             var id = lyrics?.Versions == null ? provider : LyricsVersions.SourceId(provider, version.Metadata);
             return new ProtocolLyricsCandidate(id, version) { Assessment = LyricsQuality.Evaluate(version, song, recordingDurationMs) };
-        }).Where(candidate => candidate.Assessment != null).OrderByDescending(candidate => candidate.Assessment!.Score).FirstOrDefault();
+        }).Where(candidate => candidate.Assessment != null).OrderByDescending(candidate => candidate.Assessment!.Score)
+            .ThenByDescending(candidate => candidate.Assessment!.LineCount).FirstOrDefault();
     }
 
     private static bool IsBestPossible(AutomaticLookup lookup, ProtocolLyricsCandidate best)

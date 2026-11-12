@@ -93,7 +93,8 @@ public sealed partial class ProtocolLyricsResolver(
             sources?.HouseholdOnly != true && sources?.ForPermanentSidecar != true && !protocol.IsReadOnly)
         {
             var best = assessed.Where(candidate => candidate.Assessment != null)
-                .OrderByDescending(candidate => candidate.Assessment!.Score).FirstOrDefault();
+                .OrderByDescending(candidate => candidate.Assessment!.Score)
+                .ThenByDescending(candidate => candidate.Assessment!.LineCount).FirstOrDefault();
             if (best?.Lyrics != null)
             {
                 best.Lyrics.Source = best.SourceId;
@@ -439,7 +440,7 @@ public sealed partial class ProtocolLyricsResolver(
                 var answer = await ReadOneAsync(id);
                 localResults[id] = answer;
                 var candidate = BestVersion(id, answer, song, recordingDurationMs);
-                if (candidate?.Assessment == null || candidate.Assessment.Score <= (bestLocal?.Assessment?.Score ?? -1)) continue;
+                if (!LyricsQuality.Better(candidate?.Assessment, bestLocal?.Assessment)) continue;
                 bestLocal = candidate;
                 bestLocalRank = rank;
             }
@@ -522,7 +523,8 @@ public sealed partial class ProtocolLyricsResolver(
             }
             var candidate = BestVersion(providerId, lyrics, song, recordingDurationMs);
             var score = candidate?.Assessment?.Score ?? -1;
-            if (score > (best?.Assessment?.Score ?? -1) || score >= 0 && score == best?.Assessment?.Score && rank < bestRank)
+            if (LyricsQuality.Better(candidate?.Assessment, best?.Assessment) || score >= 0 && score == best?.Assessment?.Score &&
+                candidate?.Assessment?.LineCount == best?.Assessment?.LineCount && rank < bestRank)
             {
                 best = candidate;
                 bestRank = rank;

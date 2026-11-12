@@ -41,7 +41,7 @@ public sealed partial class GeniusCapabilityAdapter : MetadataLyricsCapabilityAd
         if (root.TryGetProperty("title", out var title) || root.TryGetProperty("artist", out _))
         {
             if (title.ValueKind != JsonValueKind.String || !root.TryGetProperty("artist", out var artist) ||
-                artist.ValueKind != JsonValueKind.String || !MatchesIdentity(request, title.GetString(), artist.GetString())) return Unavailable();
+                artist.ValueKind != JsonValueKind.String || !MatchesIdentity(request, title.GetString(), artist.GetString(), album: root.TryGetProperty("album", out var album) && album.ValueKind == JsonValueKind.String ? album.GetString() : null)) return Unavailable();
         }
         if (!root.TryGetProperty("lyrics", out var lyrics) || lyrics.ValueKind == JsonValueKind.Null) return Unavailable();
         if (lyrics.ValueKind != JsonValueKind.String) return ContractFailure();

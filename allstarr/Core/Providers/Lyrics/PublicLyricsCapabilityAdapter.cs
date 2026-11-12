@@ -68,7 +68,15 @@ public abstract class PublicLyricsCapabilityAdapter(
             if (completion == LyricsCompletionMode.CacheOnly)
                 return Unavailable();
             token.ThrowIfCancellationRequested();
-            var result = await ReadWithCompletionAsync(context, request, completion, token);
+            var result = Unavailable();
+            foreach (var query in LyricsCandidateMatcher.Queries(request))
+            {
+                result = await ReadWithCompletionAsync(context, query, completion, token);
+                if ((query.TrackTitle != request.TrackTitle || !query.ArtistNames.SequenceEqual(request.ArtistNames)) &&
+                    result.IsSuccess && result.RequireValue().Metadata is { Title: { } title, Artist: { } artist } metadata &&
+                    !LyricsCandidateMatcher.Matches(request, title, artist, metadata.Album)) result = Unavailable();
+                if (!result.IsSuccess || result.RequireValue().Availability != ProviderLyricsAvailabilityState.Unavailable) break;
+            }
             token.ThrowIfCancellationRequested();
             if (!result.IsSuccess) return result;
             try

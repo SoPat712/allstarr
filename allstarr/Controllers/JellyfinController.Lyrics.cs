@@ -92,7 +92,7 @@ public partial class JellyfinController
                         return BackendLyrics.ParseJellyfin(body.RootElement);
                     }
                 }));
-            if (lyrics?.Source == "backend" && backendLyrics != null)
+            if (lyrics?.Source == "backend" && backendLyrics != null && !LyricsCleanup.NeedsCleanup(lyrics))
                 return Content(backendLyrics, "application/json", System.Text.Encoding.UTF8);
         }
 
