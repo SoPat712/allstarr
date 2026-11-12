@@ -88,7 +88,8 @@ public sealed class ProblemAlertMonitor(IDbContextFactory<AllstarrDbContext> fac
         var observations = health.Snapshot().Where(item => statuses.IsAlertObservationEnabled(item.Key) &&
             (item.Key.ProviderAccountId is not { } id || accounts.TryGetValue(id, out var account) && account.Revision == item.Value.AccountRevision)).ToArray();
         var currentByKey = observations.ToDictionary(item => item.Key, item => item.Value);
-        var recoveryBlocked = observations.Where(item => ProviderEvidence(Resource(item.Key), null, item.Value)?.Kind == "source-failure")
+        var recoveryBlocked = observations.Where(item => ProviderEvidence(Resource(item.Key), null,
+                item.Value with { ReauthenticationRequired = false })?.Kind == "source-failure")
             .Select(item => Resource(item.Key)).ToHashSet(StringComparer.Ordinal);
         var samples = observations.SelectMany(item => health.AlertSamples(item.Key, item.Value.AccountRevision).Append(item.Value)
                 .DistinctBy(sample => sample.ObservedAt).Select(sample => (Key: item.Key, Sample: sample)))
@@ -101,6 +102,9 @@ public sealed class ProblemAlertMonitor(IDbContextFactory<AllstarrDbContext> fac
             if (ProviderEvidence(resource, owner, sample, currentTime) is { } evidence &&
                 (evidence.Active || statuses.CanProveAccountAuthentication(key)))
                 await alerts.ObserveAsync(evidence, token);
+            if (sample.ReauthenticationRequired && ProviderEvidence(resource, owner,
+                    sample with { ReauthenticationRequired = false }, currentTime) is { Kind: "source-failure" } failure)
+                await alerts.ObserveAsync(failure, token);
             if (sample.Health == ProviderHealthState.Healthy && !ProviderRuntimeStatus.IsNeutralReason(sample.ReasonCode) && !recoveryBlocked.Contains(resource))
                 await alerts.ObserveAsync(new("source-failure", resource, owner, false, "warning", sample.ObservedAt, RecoverAfter: 2), token);
         }
@@ -132,10 +136,12 @@ public sealed class ProblemAlertMonitor(IDbContextFactory<AllstarrDbContext> fac
     public static ProblemAlertEvidence? ProviderEvidence(string resource, Guid? owner, ProviderHealthObservation sample, DateTimeOffset? now = null)
     {
         if (ProviderRuntimeStatus.IsNeutralReason(sample.ReasonCode)) return null;
+        if (sample.ReauthenticationRequired)
+            return new("provider-login", resource, owner, true, "warning", sample.SignInCheckedAt ?? sample.ObservedAt);
         if (sample.Health == ProviderHealthState.Healthy)
             return new("provider-login", resource, owner, false, "warning", sample.ObservedAt);
         if (sample.Health != ProviderHealthState.Degraded) return null;
-        if (sample.ReauthenticationRequired || sample.ReasonCode is "unauthorized" or "account-needs-reauthentication" or "authentication-required" or "apple-download-sign-in-required")
+        if (sample.ReasonCode is "unauthorized" or "account-needs-reauthentication" or "authentication-required" or "apple-download-sign-in-required")
             return new("provider-login", resource, owner, true, "warning", sample.ObservedAt);
         if (sample.ReasonCode is not ("timeout" or "transient-failure" or "permanent-failure" or "probe_failed" or
             "service_unavailable" or "unreachable" or "sidecar_unreachable" or "sidecar_timeout")) return null;

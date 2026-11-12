@@ -246,7 +246,7 @@ public class AdminUiController : ControllerBase
     public async Task<IActionResult> GetProviderSummaries(CancellationToken cancellationToken = default)
     {
         if (!HttpContext.Items.TryGetValue(AdminAuthSessionService.HttpContextSessionItemKey, out var sessionValue) ||
-            sessionValue is not AdminAuthSession { IsAdministrator: true, AllstarrUserId: not null })
+            sessionValue is not AdminAuthSession { IsAdministrator: true, AllstarrUserId: not null } session)
         {
             return StatusCode(StatusCodes.Status403Forbidden, new { error = "Administrator permissions required" });
         }
@@ -305,8 +305,21 @@ public class AdminUiController : ControllerBase
             .OrderBy(item => item.providerId)
             .ToList();
 
-        return Ok(new { providers = summaries });
+        return Ok(new { providers = summaries, signInExpiredAccounts = SignInExpiredAccounts(accounts, session) });
     }
+
+    private object[] SignInExpiredAccounts(IEnumerable<ProviderAccountRecord> accounts, AdminAuthSession session) =>
+        accounts.Where(account => account.Enabled && !ProviderAccountSettings.IsRemoved(account) &&
+                (session.IsAdministrator ? account.Scope == ProviderAccountScope.Shared :
+                    account.Scope == ProviderAccountScope.Personal && account.OwnerUserId == session.AllstarrUserId) &&
+                _providerStatusManager.GetAccountSignInStatus(account.ProviderId, account.Id, account.Revision).SignInExpired)
+            .OrderBy(account => account.ProviderId).ThenBy(account => account.Id)
+            .Select(account => (object)new
+            {
+                providerId = account.ProviderId,
+                accountId = account.Id,
+                accountName = ProviderAccountNames.DisplayName(account, _providerRegistry)
+            }).ToArray();
 
     [HttpGet("home")]
     public async Task<IActionResult> GetHome(CancellationToken cancellationToken = default)
@@ -373,9 +386,13 @@ public class AdminUiController : ControllerBase
         timings.Add(("storage", Stopwatch.GetTimestamp()));
         var storage = services.GetService<DurableStorageState>()?.GetSnapshot();
         timings.Add(("status", Stopwatch.GetTimestamp()));
+        var signInExpiredAccounts = SignInExpiredAccounts(await context.ProviderAccounts.AsNoTracking()
+            .Where(account => session.IsAdministrator ? account.OwnerUserId == null :
+                account.OwnerUserId == session.AllstarrUserId)
+            .ToListAsync(cancellationToken), session);
         var providerHealth = session.IsAdministrator
             ? (await GetProviderSummaries(cancellationToken) as OkObjectResult)?.Value
-            : new { providers = Array.Empty<object>() };
+            : new { providers = Array.Empty<object>(), signInExpiredAccounts };
         timings.Add(("sources", Stopwatch.GetTimestamp()));
         var activity = await ReadHomeActivityAsync(cancellationToken);
         timings.Add(("activity", Stopwatch.GetTimestamp()));
@@ -416,6 +433,7 @@ public class AdminUiController : ControllerBase
                 topArtist
             },
             providerHealth,
+            signInExpiredAccounts,
             activity
         });
     }

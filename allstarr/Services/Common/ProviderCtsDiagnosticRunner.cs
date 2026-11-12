@@ -68,7 +68,8 @@ public sealed class ProviderCtsDiagnosticRunner(
                 await RecordResultAsync(result, actor, correlationId, householdCheck, deadline.Token).WaitAsync(deadline.Token);
                 deadline.Token.ThrowIfCancellationRequested();
             }
-            var measured = statusManager?.RecordStreamingMeasurement(result, progress.Execution?.Account?.Revision);
+            var revision = progress.Execution?.Account?.Revision ?? progress.AccountRevision;
+            var measured = statusManager?.RecordStreamingMeasurement(result, revision);
             var verified = statusManager?.RecordDownloadVerification(result, progress.Execution?.Account?.Revision);
             if (contextFactory != null)
                 foreach (var check in new[] { measured, verified }.OfType<ProviderCheckResult>())
@@ -145,6 +146,7 @@ public sealed class ProviderCtsDiagnosticRunner(
         progress.Stage = "account-resolution";
         var prepared = await new ProviderDiagnosticExecutionFactory(providers, accounts, sessions).CreateAsync(
             actor, providerId, ProviderCapabilityKind.Streaming, providerAccountId, correlationId, expiresAt, cancellationToken);
+        progress.AccountRevision = prepared.AccountRevision;
         if (prepared.Context == null)
             return ProviderCtsDiagnosticResult.Failure(prepared.StatusCode, providerId, providerAccountId,
                 "account-resolution", prepared.ReasonCode!);
@@ -531,6 +533,7 @@ public sealed class ProviderCtsDiagnosticRunner(
         public int SourceFailureCount { get; set; }
         public string Stage { get; set; } = "capability";
         public ProviderExecutionContext? Execution { get; set; }
+        public long? AccountRevision { get; set; }
     }
 
     private static HttpClient CreateSampleClient()

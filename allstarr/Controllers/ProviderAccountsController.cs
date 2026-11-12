@@ -216,7 +216,7 @@ public sealed partial class ProviderAccountsController : ControllerBase
                 "succeeded",
                 new { accountId = persisted.Id, persisted.ProviderId, scope = persisted.Scope.ToString() });
             await context.SaveChangesAsync(cancellationToken);
-            if (persisted.Enabled) RequestCheck(persisted.ProviderId);
+            RequestCheck(persisted);
             return CreatedAtAction(
                 nameof(List),
                 AccountResponse(
@@ -338,7 +338,7 @@ public sealed partial class ProviderAccountsController : ControllerBase
         await context.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         await InvalidateAccountCacheAsync(account.Id);
-        RequestCheck(account.ProviderId);
+        RequestCheck(account);
         return Ok(new
         {
             accountId = account.Id,
@@ -405,9 +405,9 @@ public sealed partial class ProviderAccountsController : ControllerBase
     }
 
     // Account changes are checked straight away instead of waiting for the next scheduled sweep.
-    private void RequestCheck(string providerId)
+    private void RequestCheck(ProviderAccountRecord account)
     {
-        HttpContext?.RequestServices?.GetService<allstarr.Services.Common.IProviderCheckRequests>()?.Request(providerId);
+        HttpContext?.RequestServices?.GetService<allstarr.Services.Common.IProviderCheckRequests>()?.Request(account.ProviderId, account.Id);
         HttpContext?.RequestServices?.GetService<allstarr.Core.Settings.RuntimeSettingsChangeSignal>()?.Publish();
     }
 
@@ -463,7 +463,7 @@ public sealed partial class ProviderAccountsController : ControllerBase
             "succeeded", new { accountId = account.Id, account.ProviderId });
         await context.SaveChangesAsync(cancellationToken);
         await InvalidateAccountCacheAsync(account.Id);
-        if (account.Enabled) RequestCheck(account.ProviderId);
+        RequestCheck(account);
         return Ok(AccountResponse(account, null, canChangeAudience: CanChangeAudience(account, session)));
     }
 
@@ -527,7 +527,7 @@ public sealed partial class ProviderAccountsController : ControllerBase
         await context.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         await InvalidateAccountCacheAsync(account.Id);
-        RequestCheck(account.ProviderId);
+        RequestCheck(account);
         return Ok(AccountResponse(account, null, owner?.DisplayName,
             canChangeAudience: CanChangeAudience(account, session)));
     }

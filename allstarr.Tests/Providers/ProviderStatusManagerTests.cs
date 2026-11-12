@@ -425,10 +425,10 @@ public sealed partial class ProviderStatusManagerTests
     public async Task QobuzProbe_UsesTheExactSelectedAccount(string capability)
     {
         var calls = 0;
-        var testsFavorites = capability is "streaming" or "download";
         using var handler = new AppleProviderTestFactory.Handler(request =>
         {
             calls++;
+            var testsFavorites = capability != "metadata" || calls == 1;
             Assert.Equal("www.qobuz.com", request.RequestUri!.Host);
             Assert.Equal(testsFavorites ? "/api.json/0.2/favorite/getUserFavorites" : "/api.json/0.2/track/search",
                 request.RequestUri.AbsolutePath);
@@ -447,7 +447,7 @@ public sealed partial class ProviderStatusManagerTests
         Assert.True(manager.CanTestCapability("qobuz", capability));
         Assert.Equal(capability == "download" ? ProviderHealthState.Unknown : ProviderHealthState.Healthy, status.Health);
         Assert.NotNull(status.TestedAt);
-        Assert.Equal(1, calls);
+        Assert.Equal(capability == "metadata" ? 2 : 1, calls);
     }
 
     [Theory]
@@ -1156,7 +1156,7 @@ public sealed partial class ProviderStatusManagerTests
             new Dictionary<string, string> { ["sessioncookie"] = "expired-cookie" });
 
         Assert.Equal(ProviderHealthState.Degraded, result.Health);
-        Assert.Equal("provider_unauthorized", result.ReasonCode);
+        Assert.Equal("account-needs-reauthentication", result.ReasonCode);
         Assert.DoesNotContain("expired-cookie", result.ReasonCode, StringComparison.Ordinal);
     }
 
@@ -1207,8 +1207,8 @@ public sealed partial class ProviderStatusManagerTests
         Assert.Equal(ProviderHealthState.Degraded, tested.Health);
         Assert.Equal(ProviderConfigurationState.Configured, current.Configuration);
         Assert.Equal(ProviderHealthState.Degraded, current.Health);
-        Assert.Equal("unauthorized", tested.ReasonCode);
-        Assert.Equal("unauthorized", current.ReasonCode);
+        Assert.Equal("account-needs-reauthentication", tested.ReasonCode);
+        Assert.Equal("account-needs-reauthentication", current.ReasonCode);
         Assert.True(current.CircuitOpen);
     }
 

@@ -7,12 +7,15 @@ using allstarr.Core.Providers.Spotify;
 using allstarr.Core.Secrets;
 using allstarr.Core.Storage;
 using allstarr.Models.Settings;
+using allstarr.Services.Common;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.DependencyInjection;
+using Moq;
 
 namespace allstarr.Tests;
 
@@ -24,11 +27,15 @@ public sealed partial class ProviderAccountsControllerTests
     public async Task CredentialPublication_RollsBackSecretAndAccountTogether(bool signIn)
     {
         var account = await AtomicAccountAsync();
+        var checks = new Mock<IProviderCheckRequests>();
+        await using var services = new ServiceCollection().AddSingleton(checks.Object).BuildServiceProvider();
         var failing = new TestDbContextFactory(new DbContextOptionsBuilder<AllstarrDbContext>(_database.Options)
             .AddInterceptors(new FailAccountWrite()).Options);
         if (signIn)
         {
-            var response = Assert.IsType<ObjectResult>(await AuthenticationController(failing).AuthenticateLastFm(new()
+            var controller = AuthenticationController(failing);
+            controller.HttpContext.RequestServices = services;
+            var response = Assert.IsType<ObjectResult>(await controller.AuthenticateLastFm(new()
             { AccountId = account.Id, Username = "fixture-user", Password = "fixture-password" }));
             Assert.Equal(500, response.StatusCode);
         }
@@ -36,6 +43,7 @@ public sealed partial class ProviderAccountsControllerTests
         {
             var controller = new ProviderAccountsController(failing, _secretStore, _cache, new ProviderAccountOptions())
             { ControllerContext = Controller(Session(_userId)).ControllerContext };
+            controller.HttpContext.RequestServices = services;
             using var replacement = JsonDocument.Parse("{\"sessionKey\":\"new-fixture-session\"}");
             await Assert.ThrowsAsync<DbUpdateException>(() => controller.ReplaceSecret(account.Id, new() { Secret = replacement.RootElement }));
         }
@@ -46,13 +54,18 @@ public sealed partial class ProviderAccountsControllerTests
         using var lease = await _secretStore.OpenAsync(account.SecretReferenceId!.Value,
             new SecretAccessContext(_userId, $"provider-account:lastfm:{account.Id:N}"));
         Assert.Contains("old-fixture-session", lease.ReadUtf8());
+        checks.VerifyNoOtherCalls();
     }
 
     [Fact]
     public async Task LastFmSignIn_PublishesSessionRevisionAndAuditTogether()
     {
         var account = await AtomicAccountAsync();
-        var response = await AuthenticationController(_factory).AuthenticateLastFm(new()
+        var checks = new Mock<IProviderCheckRequests>();
+        await using var services = new ServiceCollection().AddSingleton(checks.Object).BuildServiceProvider();
+        var controller = AuthenticationController(_factory);
+        controller.HttpContext.RequestServices = services;
+        var response = await controller.AuthenticateLastFm(new()
         { AccountId = account.Id, Username = "fixture-user", Password = "fixture-password" });
         Assert.IsType<OkObjectResult>(response);
         await using var db = await _factory.CreateDbContextAsync();
@@ -64,12 +77,15 @@ public sealed partial class ProviderAccountsControllerTests
         var value = lease.ReadUtf8();
         Assert.Contains("new-fixture-session", value);
         Assert.DoesNotContain("fixture-password", value);
+        checks.Verify(item => item.Request("lastfm", account.Id), Times.Once);
     }
 
     [Fact]
     public async Task LastFmSignIn_DoesNotAttachAResponseToAnAccountChangedDuringAuthentication()
     {
         var account = await AtomicAccountAsync();
+        var checks = new Mock<IProviderCheckRequests>();
+        await using var services = new ServiceCollection().AddSingleton(checks.Object).BuildServiceProvider();
         var controller = AuthenticationController(_factory, async () =>
         {
             await using var db = await _factory.CreateDbContextAsync();
@@ -78,12 +94,14 @@ public sealed partial class ProviderAccountsControllerTests
             changed.Revision++;
             await db.SaveChangesAsync();
         });
+        controller.HttpContext.RequestServices = services;
         Assert.IsType<ConflictObjectResult>(await controller.AuthenticateLastFm(new()
         { AccountId = account.Id, Username = "fixture-user", Password = "fixture-password" }));
         await using var verify = await _factory.CreateDbContextAsync();
         Assert.Equal(2, (await verify.ProviderAccounts.SingleAsync()).Revision);
         Assert.Equal(1, (await verify.SecretReferences.SingleAsync()).ActiveVersion);
         Assert.Single(await verify.SecretVersions.ToArrayAsync());
+        checks.VerifyNoOtherCalls();
     }
 
     private async Task<ProviderAccountRecord> AtomicAccountAsync()

@@ -488,6 +488,90 @@ public sealed class ProblemAlertTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task MonitorOpensAndResolvesARejectedScrobblingSignIn()
+    {
+        await Channel(_owner);
+        var account = Guid.NewGuid();
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.ProviderAccounts.Add(new() { Id = account, ProviderId = "lastfm", OwnerUserId = _owner, Enabled = true, Revision = 1 });
+            await db.SaveChangesAsync();
+        }
+        var health = new ProviderRuntimeHealth(clock: _clock.Object);
+        var statuses = new ProviderStatusManager(new ConfigurationManager(), Mock.Of<IHttpClientFactory>(),
+            NullLogger<ProviderStatusManager>.Instance, Options.Create(new SpotifyApiSettings()), Options.Create(new AppleDownloadSettings()),
+            Options.Create(new DeezerSettings()), Options.Create(new QobuzSettings()), health: health);
+        var key = ProviderRuntimeStatusKey.CreateManaged("lastfm", "scrobbling", account);
+        var status = new ProviderRuntimeStatus
+        {
+            Provider = key.Provider,
+            Capability = key.Capability,
+            IsSupported = true,
+            IsEnabled = true,
+            Configuration = ProviderConfigurationState.Configured,
+            Health = ProviderHealthState.Degraded,
+            TestedAt = _now,
+            ReasonCode = "account-needs-reauthentication"
+        };
+        var disks = new Mock<IProblemDiskSampler>();
+        disks.Setup(item => item.Sample()).Returns(Array.Empty<ProblemDiskSample>());
+        var monitor = new ProblemAlertMonitor(_factory, _service, health, statuses, disks.Object, _clock.Object,
+            NullLogger<ProblemAlertMonitor>.Instance);
+        status = statuses.RestoreCheckResult(key, 1, status);
+        await monitor.SampleAsync(default);
+        await using var verify = await _factory.CreateDbContextAsync();
+        var incident = await verify.ProblemIncidents.AsNoTracking().SingleAsync();
+        Assert.Equal("provider-login", incident.Kind);
+        Assert.Equal(account.ToString("N"), incident.Resource);
+        Assert.Equal(_owner, incident.OwnerUserId);
+        Assert.Equal("open", incident.State);
+        _now = _now.AddMinutes(1);
+        statuses.RestoreCheckResult(key, 1, status with { Health = ProviderHealthState.Healthy, TestedAt = _now, ReasonCode = null });
+        await monitor.SampleAsync(default);
+        Assert.Equal("resolved", (await verify.ProblemIncidents.AsNoTracking().SingleAsync()).State);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task MonitorKeepsAccountRecoveryAfterAnotherCapabilityHasANetworkFailure(bool routingSampleExpires)
+    {
+        await Channel(_owner);
+        var account = Guid.NewGuid();
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.ProviderAccounts.Add(new() { Id = account, ProviderId = "deezer", OwnerUserId = _owner, Enabled = true, Revision = 1 });
+            await db.SaveChangesAsync();
+        }
+        var health = new ProviderRuntimeHealth(clock: _clock.Object);
+        var statuses = new ProviderStatusManager(new ConfigurationManager(), Mock.Of<IHttpClientFactory>(),
+            NullLogger<ProviderStatusManager>.Instance, Options.Create(new SpotifyApiSettings()), Options.Create(new AppleDownloadSettings()),
+            Options.Create(new DeezerSettings()), Options.Create(new QobuzSettings()), health: health);
+        var streaming = ProviderRuntimeStatusKey.CreateManaged("deezer", "streaming", account);
+        health.Record(streaming, 1, false, null, "account-needs-reauthentication");
+        if (routingSampleExpires)
+        {
+            _now = _now.AddMinutes(6);
+            health.Record(streaming, 1, false, null, "timeout");
+        }
+        var disks = new Mock<IProblemDiskSampler>();
+        disks.Setup(item => item.Sample()).Returns(Array.Empty<ProblemDiskSample>());
+        var monitor = new ProblemAlertMonitor(_factory, _service, health, statuses, disks.Object, _clock.Object,
+            NullLogger<ProblemAlertMonitor>.Instance);
+        await monitor.SampleAsync(default);
+        await using var verify = await _factory.CreateDbContextAsync();
+        Assert.Equal("open", (await verify.ProblemIncidents.AsNoTracking().SingleAsync(item => item.Kind == "provider-login")).State);
+        _now = _now.AddSeconds(1);
+        health.Record(ProviderRuntimeStatusKey.CreateManaged("deezer", "download", account), 1, true, 10, null);
+        await monitor.SampleAsync(default);
+        _now = _now.AddSeconds(1);
+        health.Record(streaming, 1, false, null, "timeout");
+        await monitor.SampleAsync(default);
+        Assert.False(statuses.GetAccountSignInStatus("deezer", account, 1).SignInExpired);
+        Assert.Equal("resolved", (await verify.ProblemIncidents.AsNoTracking().SingleAsync(item => item.Kind == "provider-login")).State);
+    }
+
+    [Fact]
     public async Task MonitorReadsExistingEvidenceWithoutProviderRequestsAndGroupsDiskRoots()
     {
         await Channel(_owner);

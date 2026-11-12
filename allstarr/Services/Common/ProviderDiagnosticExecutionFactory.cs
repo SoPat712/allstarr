@@ -32,7 +32,8 @@ public sealed class ProviderDiagnosticExecutionFactory(
         catch (UnauthorizedAccessException) { return new(null, 403, "account_forbidden"); }
         if (descriptor.UsesSignedSession && (resolved == null || sessions == null ||
             !await sessions.IsSignedInAsync(providerId, resolved.Account.AccountId, token).WaitAsync(token)))
-            return new(null, 409, "sign_in_needed");
+            return new(null, 409, accountId.HasValue && resolved?.Account.AccountId == accountId ? "account-needs-reauthentication" : "sign_in_needed")
+            { AccountRevision = resolved?.Account.Revision };
         if (selected.AccountRequirement == ProviderAccountRequirement.Required && resolved == null ||
             accountId.HasValue && resolved?.Account.AccountId != accountId)
             return new(null, 404, "account_unavailable");
@@ -49,4 +50,7 @@ public sealed class ProviderDiagnosticExecutionFactory(
     }
 }
 
-public sealed record ProviderDiagnosticExecution(ProviderExecutionContext? Context, int StatusCode, string? ReasonCode);
+public sealed record ProviderDiagnosticExecution(ProviderExecutionContext? Context, int StatusCode, string? ReasonCode)
+{
+    public long? AccountRevision { get; init; }
+}

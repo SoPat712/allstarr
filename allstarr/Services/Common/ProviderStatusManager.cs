@@ -293,7 +293,7 @@ public class ProviderStatusManager
         var baseline = ApplyManagedAccountConfiguration(
             BuildBaselineStatus(key),
             accountSecrets);
-        return GetStatusCore(key, baseline, accountRevision);
+        return WithSignInStatus(key, accountRevision, GetStatusCore(key, baseline, accountRevision));
     }
 
     /// <summary>
@@ -334,18 +334,40 @@ public class ProviderStatusManager
 
     public bool ResumeAutomaticUse(ProviderRuntimeStatusKey key, long? revision) => _health.Resume(key, revision);
 
-    public void RestoreCheckResult(ProviderRuntimeStatusKey key, long? revision, ProviderRuntimeStatus status, bool recordMediaEvidence = true)
+    public ProviderRuntimeStatus RestoreCheckResult(ProviderRuntimeStatusKey key, long? revision, ProviderRuntimeStatus status, bool recordMediaEvidence = true)
     {
-        if (!IsCapabilitySupported(key.Provider, key.Capability)) return;
+        if (!IsCapabilitySupported(key.Provider, key.Capability)) return status;
         if (ProviderRuntimeStatus.IsNeutralReason(status.ReasonCode))
             status = status with { Health = ProviderHealthState.Unknown, CircuitOpen = false };
+        if (status.Health == ProviderHealthState.Healthy && status.SignInExpired)
+            status = status with { SignInExpired = false, SignInCheckedAt = status.TestedAt };
         _recordedChecks.AddOrUpdate(key, (revision, status), (_, previous) =>
             previous.Revision > revision || previous.Status.TestedAt > status.TestedAt ? previous : (revision, status));
-        if (recordMediaEvidence) _health.RestoreMediaCheck(key, revision, status);
+        if (recordMediaEvidence || key.Capability is not (ProviderCapabilities.Streaming or ProviderCapabilities.Download))
+            _health.RestoreCheck(key, revision, status);
+        return WithSignInStatus(key, revision, status);
     }
 
     public bool CanProveAccountAuthentication(ProviderRuntimeStatusKey key) =>
-        IsCapabilitySupported(key.Provider, key.Capability) && !CanRunWithoutAccount(key.Provider, key.Capability);
+        IsCapabilitySupported(key.Provider, key.Capability) && (!CanRunWithoutAccount(key.Provider, key.Capability) ||
+            key.ProviderAccountId.HasValue && (key.Provider == "apple-musickit" && key.Capability == ProviderCapabilities.Playlist ||
+                ProviderRegistry?.TryGet(key.Provider, out var descriptor) == true && descriptor!.UsesSignedSession));
+
+    public (bool SignInExpired, DateTimeOffset? SignInCheckedAt) GetAccountSignInStatus(string provider, Guid accountId, long revision)
+    {
+        var latest = _health.Snapshot().Where(item => item.Key.Provider == Normalize(provider) &&
+                item.Key.ProviderAccountId == accountId && item.Value.AccountRevision == revision &&
+                CanProveAccountAuthentication(item.Key) && item.Value.SignInCheckedAt.HasValue)
+            .OrderByDescending(item => item.Value.SignInCheckedAt).ThenByDescending(item => item.Value.ReauthenticationRequired)
+            .Select(item => item.Value).FirstOrDefault();
+        return (latest?.ReauthenticationRequired ?? false, latest?.SignInCheckedAt);
+    }
+
+    private ProviderRuntimeStatus WithSignInStatus(ProviderRuntimeStatusKey key, long? revision, ProviderRuntimeStatus status)
+    {
+        var observation = CanProveAccountAuthentication(key) ? _health.GetForDisplay(key, revision) : null;
+        return status with { SignInExpired = observation?.ReauthenticationRequired ?? false, SignInCheckedAt = observation?.SignInCheckedAt };
+    }
 
     public bool IsAlertObservationEnabled(ProviderRuntimeStatusKey key) =>
         IsCapabilitySupported(key.Provider, key.Capability) && BuildBaselineStatus(key).IsEnabled;
@@ -383,7 +405,8 @@ public class ProviderStatusManager
         var key = measurement.ProviderAccountId is { } accountId
             ? ProviderRuntimeStatusKey.CreateManaged(measurement.ProviderId, ProviderCapabilities.Streaming, accountId)
             : ProviderRuntimeStatusKey.CreateAccountFree(measurement.ProviderId, ProviderCapabilities.Streaming);
-        var measured = !ProviderRuntimeStatus.IsNeutralReason(measurement.ReasonCode) &&
+        var measured = measurement.ReasonCode == "account-needs-reauthentication" ||
+            !ProviderRuntimeStatus.IsNeutralReason(measurement.ReasonCode) &&
             measurement.Stage is not ("capability" or "account-resolution" or "concurrency");
         if (measured) _health.Record(key, revision, measurement.Succeeded, (long?)measurement.ClickToStreamMilliseconds, measurement.ReasonCode);
         var result = BuildBaselineStatus(key) with
@@ -393,7 +416,7 @@ public class ProviderStatusManager
             LatencyMilliseconds = (long?)measurement.ClickToStreamMilliseconds,
             ReasonCode = measurement.ReasonCode
         };
-        RestoreCheckResult(key, revision, result, recordMediaEvidence: false);
+        result = RestoreCheckResult(key, revision, result, recordMediaEvidence: false);
         return new(key, revision, result, measurement.SeekRung);
     }
 
@@ -608,7 +631,7 @@ public class ProviderStatusManager
                 key.Capability,
                 result.Health,
                 result.ReasonCode ?? "none");
-            return result;
+            return WithSignInStatus(key, accountRevision, result);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -633,7 +656,7 @@ public class ProviderStatusManager
                 key.Provider,
                 key.Capability,
                 ex.GetType().Name);
-            return result;
+            return WithSignInStatus(key, accountRevision, result);
         }
     }
 
@@ -735,9 +758,9 @@ public class ProviderStatusManager
                     ? (ProviderConfigurationState.Configured, null)
                     : (ProviderConfigurationState.NeedsConfiguration, "missing_sidecar_url"),
 
-            ("deezer", ProviderCapabilities.Metadata or ProviderCapabilities.Playlist) =>
+            ("deezer", ProviderCapabilities.Metadata) =>
                 (ProviderConfigurationState.NotRequired, null),
-            ("deezer", ProviderCapabilities.Streaming or ProviderCapabilities.Download) =>
+            ("deezer", ProviderCapabilities.Playlist or ProviderCapabilities.Streaming or ProviderCapabilities.Download) =>
                 IsConfiguredValue(_deezerSettings.Arl)
                     ? (ProviderConfigurationState.Configured, null)
                     : (ProviderConfigurationState.NeedsConfiguration, "missing_deezer_arl"),
@@ -805,7 +828,7 @@ public class ProviderStatusManager
                 (baseline.Capability is ProviderCapabilities.Metadata or ProviderCapabilities.Playlist || IsConfiguredValue(_appleMusicSettings.BaseUrl)),
             ("spotify", ProviderCapabilities.Playlist or ProviderCapabilities.Lyrics) =>
                 IsConfiguredValue(SecretValue(secrets, "sessioncookie", "spdc", "cookie")),
-            ("deezer", ProviderCapabilities.Streaming or ProviderCapabilities.Download) =>
+            ("deezer", ProviderCapabilities.Playlist or ProviderCapabilities.Streaming or ProviderCapabilities.Download) =>
                 IsConfiguredValue(SecretValue(secrets, "arl")),
             ("qobuz", ProviderCapabilities.Metadata or ProviderCapabilities.Playlist or ProviderCapabilities.Streaming or ProviderCapabilities.Download) =>
                 IsConfiguredValue(SecretValue(secrets, "userauthtoken", "token")) &&
@@ -964,7 +987,12 @@ public class ProviderStatusManager
         if (TryGetExtensionCapability(provider, capability, out var extensionCapability))
         {
             if (!extensionCapability!.HasUsableImplementation) return new(false, "probe_not_available");
-            return await ProbeDiagnosticAsync(provider, extensionCapability.Capability, providerAccountId, cancellationToken);
+            if (ProviderRegistry!.GetRequired(provider).UsesSignedSession &&
+                (_services?.GetService<IProviderCheckSessions>() is not { } sessions ||
+                 !await sessions.IsSignedInAsync(provider, providerAccountId, cancellationToken)))
+                return new(false, "account-needs-reauthentication");
+            var result = await ProbeDiagnosticAsync(provider, extensionCapability.Capability, providerAccountId, cancellationToken);
+            return result.ReasonCode == "sign_in_needed" ? result with { ReasonCode = "account-needs-reauthentication" } : result;
         }
         return (provider, capability) switch
         {
@@ -976,20 +1004,20 @@ public class ProviderStatusManager
                 SecretValue(accountSecrets, "sessioncookie", "spdc", "cookie") ?? _spotifySettings.SessionCookie, cancellationToken),
             ("apple-musickit", ProviderCapabilities.Metadata or ProviderCapabilities.Playlist) => await TestAppleMusicAsync(capability, accountSecrets, cancellationToken),
             ("apple-musickit", ProviderCapabilities.Streaming or ProviderCapabilities.Download or ProviderCapabilities.Lyrics) => await AsOutcome(TestAppleDownloadAsync(capability, cancellationToken)),
-            ("deezer", ProviderCapabilities.Metadata or ProviderCapabilities.Playlist) => await TestDeezerMetadataAsync(cancellationToken),
-            ("deezer", ProviderCapabilities.Streaming or ProviderCapabilities.Download) => await TestDeezerAccountAsync(
+            ("deezer", ProviderCapabilities.Metadata) => await TestDeezerMetadataAsync(cancellationToken),
+            ("deezer", ProviderCapabilities.Playlist or ProviderCapabilities.Streaming or ProviderCapabilities.Download) => await TestDeezerAccountAsync(
                 SecretValue(accountSecrets, "arl") ?? _deezerSettings.Arl,
                 cancellationToken),
-            ("qobuz", ProviderCapabilities.Metadata or ProviderCapabilities.Playlist) => await TestQobuzMetadataAsync(
-                SecretValue(accountSecrets, "userauthtoken", "token"), cancellationToken),
-            ("qobuz", ProviderCapabilities.Streaming or ProviderCapabilities.Download) => await AsOutcome(TestQobuzAccountAsync(
+            ("qobuz", ProviderCapabilities.Metadata) => await TestQobuzMetadataAsync(
+                SecretValue(accountSecrets, "userauthtoken", "token"), SecretValue(accountSecrets, "userid"), cancellationToken),
+            ("qobuz", ProviderCapabilities.Playlist or ProviderCapabilities.Streaming or ProviderCapabilities.Download) => await TestQobuzAccountAsync(
                 SecretValue(accountSecrets, "userauthtoken", "token") ?? _qobuzSettings.UserAuthToken,
                 SecretValue(accountSecrets, "userid") ?? _qobuzSettings.UserId,
-                cancellationToken)),
+                cancellationToken),
             ("lrclib", ProviderCapabilities.Lyrics) => await TestLrclibAsync(cancellationToken),
             ("lrcred" or "amll" or "neteaselyrics" or "qqlyrics" or "kugoulyrics" or "lrcmux" or "unison" or "paxsenix" or "genius" or "lyricsplus" or "musixmatch", ProviderCapabilities.Lyrics) => await TestMetadataLyricsAsync(provider, accountSecrets, cancellationToken),
-            ("lastfm", ProviderCapabilities.Scrobbling) => await AsOutcome(TestLastFmAsync(accountSecrets, cancellationToken)),
-            ("listenbrainz" or "multi-scrobbler" or "koito", ProviderCapabilities.Scrobbling) => await AsOutcome(TestListenBrainzAsync(provider, accountSecrets, cancellationToken)),
+            ("lastfm", ProviderCapabilities.Scrobbling) => await TestLastFmAsync(accountSecrets, cancellationToken),
+            ("listenbrainz" or "multi-scrobbler" or "koito", ProviderCapabilities.Scrobbling) => await TestListenBrainzAsync(provider, accountSecrets, cancellationToken),
             ("audiomuse-ai", ProviderCapabilities.Intelligence) => await TestAudioMuseAsync(accountSecrets, cancellationToken),
             _ => new ProbeOutcome(false, "probe_not_available")
         };
@@ -1091,7 +1119,7 @@ public class ProviderStatusManager
     private IProviderRegistry? ProviderRegistry =>
         _services?.GetService<IProviderRegistry>();
 
-    private async Task<bool> TestLastFmAsync(
+    private async Task<ProbeOutcome> TestLastFmAsync(
         IReadOnlyDictionary<string, string>? secrets,
         CancellationToken cancellationToken)
     {
@@ -1100,7 +1128,7 @@ public class ProviderStatusManager
         var sessionKey = SecretValue(secrets, "sessionkey");
         if (!IsConfiguredValue(apiKey) || !IsConfiguredValue(sharedSecret) || !IsConfiguredValue(sessionKey))
         {
-            return false;
+            return new(false);
         }
 
         var parameters = new SortedDictionary<string, string>(StringComparer.Ordinal)
@@ -1120,7 +1148,11 @@ public class ProviderStatusManager
                 Content = new FormUrlEncodedContent(parameters)
             },
             cancellationToken);
-        return response.IsSuccessStatusCode;
+        if ((int)response.StatusCode >= 500 || response.StatusCode == HttpStatusCode.TooManyRequests) return new(false);
+        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
+        if (document.RootElement.TryGetProperty("error", out var error) && error.TryGetInt32(out var code))
+            return new(false, code is 4 or 9 or 14 ? "account-needs-reauthentication" : "probe_failed");
+        return new(response.IsSuccessStatusCode);
     }
 
     private static bool HasListeningEndpoint(string provider, IReadOnlyDictionary<string, string>? secrets)
@@ -1129,7 +1161,7 @@ public class ProviderStatusManager
         catch (InvalidOperationException) { return false; }
     }
 
-    private async Task<bool> TestListenBrainzAsync(
+    private async Task<ProbeOutcome> TestListenBrainzAsync(
         string provider,
         IReadOnlyDictionary<string, string>? secrets,
         CancellationToken cancellationToken)
@@ -1137,7 +1169,7 @@ public class ProviderStatusManager
         var token = SecretValue(secrets, "token", "usertoken");
         if (!IsConfiguredValue(token))
         {
-            return false;
+            return new(false);
         }
 
         var baseUri = ListenBrainzServiceEndpoint.FromSecret(secrets, provider);
@@ -1146,13 +1178,17 @@ public class ProviderStatusManager
             ListenBrainzServiceEndpoint.Route(baseUri, "validate-token"));
         request.Headers.Authorization = new("Token", token);
         using var response = await SendWithProbeTimeoutAsync(client, request, cancellationToken);
+        if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
+            return new(false, "account-needs-reauthentication");
         if (!response.IsSuccessStatusCode)
         {
-            return false;
+            return new(false);
         }
 
         using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
-        return document.RootElement.TryGetProperty("valid", out var valid) && valid.ValueKind == JsonValueKind.True;
+        return document.RootElement.TryGetProperty("valid", out var valid)
+            ? new(valid.ValueKind == JsonValueKind.True, valid.ValueKind == JsonValueKind.False ? "account-needs-reauthentication" : null)
+            : new(false);
     }
 
     private async Task<ProbeOutcome> TestMetadataLyricsAsync(string provider,
@@ -1342,7 +1378,7 @@ public class ProviderStatusManager
         }
         using var client = _httpClientFactory.CreateClient(allstarr.Core.Providers.Spotify.SpotifyPlaylistCapabilityAdapter.HttpClientName);
         var result = await allstarr.Core.Providers.Spotify.SpotifyWebTokenExchange.ExchangeAsync(client, sessionCookie, cancellationToken);
-        return new ProbeOutcome(result.Success, result.ReasonCode);
+        return new ProbeOutcome(result.Success, SpotifySignInReason(result.ReasonCode));
     }
 
     private async Task<ProbeOutcome> TestSpotifyLyricsAsync(string? cookie, CancellationToken cancellationToken)
@@ -1354,7 +1390,7 @@ public class ProviderStatusManager
         using var client = _httpClientFactory.CreateClient(allstarr.Core.Providers.Spotify.SpotifyPlaylistCapabilityAdapter.HttpClientName);
         var token = await allstarr.Core.Providers.Spotify.SpotifyWebTokenExchange.ExchangeAsync(
             client, cookie, timeout.Token, _spotifySettings);
-        if (!token.Success) return new(false, token.ReasonCode);
+        if (!token.Success) return new(false, SpotifySignInReason(token.ReasonCode));
         var result = await _diagnosticSamples.CheckAsync("spotify:lyrics", ProviderDiagnosticSamples.Recordings("spotify"),
             async (sample, ct) =>
             {
@@ -1367,6 +1403,9 @@ public class ProviderStatusManager
             }, ct => DiscoverSpotifyLyricsSamplesAsync(client, token.AccessToken!, ct), cancellationToken);
         return new(result.Success, result.ReasonCode, IsNeutral: result.SampleUnavailable);
     }
+
+    private static string? SpotifySignInReason(string? reason) =>
+        reason is "provider_unauthorized" or "expired_session" or "anonymous_session" ? "account-needs-reauthentication" : reason;
 
     private async IAsyncEnumerable<ProviderDiagnosticSample> DiscoverSpotifyLyricsSamplesAsync(HttpClient client, string accessToken,
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken token)
@@ -1459,7 +1498,7 @@ public class ProviderStatusManager
             try
             {
                 var result = await TestDeezerAccountOnceAsync(arl, cancellationToken);
-                if (result.Success || result.ReasonCode == "unauthorized" || attempt > 0) return result;
+                if (result.Success || result.ReasonCode == "account-needs-reauthentication" || attempt > 0) return result;
             }
             catch (HttpRequestException) when (attempt == 0 && !cancellationToken.IsCancellationRequested) { }
             catch (OperationCanceledException) when (attempt == 0 && !cancellationToken.IsCancellationRequested) { }
@@ -1481,7 +1520,7 @@ public class ProviderStatusManager
         using var response = await SendWithProbeTimeoutAsync(client, request, cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
-            return new(false, response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden ? "unauthorized" : "probe_failed");
+            return new(false, response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden ? "account-needs-reauthentication" : "probe_failed");
         }
 
         var json = await response.Content.ReadAsStringAsync(cancellationToken);
@@ -1490,19 +1529,22 @@ public class ProviderStatusManager
             results.TryGetProperty("USER", out var user) &&
             user.TryGetProperty("USER_ID", out var userId))
         {
-            return new(userId.ValueKind switch
+            var id = userId.ValueKind switch
             {
-                JsonValueKind.Number => userId.TryGetInt64(out var numericId) && numericId > 0,
-                JsonValueKind.String => long.TryParse(userId.GetString(), out var stringId) && stringId > 0,
-                _ => false
-            });
+                JsonValueKind.Number when userId.TryGetInt64(out var numericId) => (long?)numericId,
+                JsonValueKind.String when long.TryParse(userId.GetString(), out var stringId) => stringId,
+                _ => null
+            };
+            return new(id > 0, id == 0 ? "account-needs-reauthentication" : null);
         }
 
         return new(false);
     }
 
-    private async Task<ProbeOutcome> TestQobuzMetadataAsync(string? userAuthToken, CancellationToken cancellationToken)
+    private async Task<ProbeOutcome> TestQobuzMetadataAsync(string? userAuthToken, string? userId, CancellationToken cancellationToken)
     {
+        var authentication = await TestQobuzAccountAsync(userAuthToken, userId, cancellationToken);
+        if (!authentication.Success) return authentication;
         const string appId = "798273057";
         using var client = _httpClientFactory.CreateClient("QobuzApi");
         var result = await _diagnosticSamples.CheckAsync("qobuz:metadata", ProviderDiagnosticSamples.Recordings("qobuz"),
@@ -1514,6 +1556,8 @@ public class ProviderStatusManager
                 request.Headers.Add("X-User-Auth-Token", userAuthToken);
                 request.Headers.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:83.0) Gecko/20100101 Firefox/83.0");
                 using var response = await SendWithProbeTimeoutAsync(client, request, token);
+                if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
+                    return new ProviderSampleCheck(false, "account-needs-reauthentication");
                 var check = HttpSampleCheck(response);
                 if (!check.Success) return check;
                 using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(token));
@@ -1524,7 +1568,7 @@ public class ProviderStatusManager
         return new(result.Success, result.ReasonCode, IsNeutral: result.SampleUnavailable);
     }
 
-    private async Task<bool> TestQobuzAccountAsync(
+    private async Task<ProbeOutcome> TestQobuzAccountAsync(
         string? userAuthToken,
         string? userId,
         CancellationToken cancellationToken)
@@ -1539,7 +1583,19 @@ public class ProviderStatusManager
         request.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:83.0) Gecko/20100101 Firefox/83.0");
 
         using var response = await SendWithProbeTimeoutAsync(client, request, cancellationToken);
-        return response.IsSuccessStatusCode;
+        if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
+            return new(false, "account-needs-reauthentication");
+        if ((int)response.StatusCode >= 500 || response.StatusCode == HttpStatusCode.TooManyRequests) return new(false);
+        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
+        if (document.RootElement.TryGetProperty("status", out var status) && status.GetString() == "error")
+        {
+            var message = document.RootElement.TryGetProperty("message", out var value) && value.ValueKind == JsonValueKind.String
+                ? value.GetString()!.Replace("_", " ", StringComparison.Ordinal) : "";
+            return new(false, message.Contains("token", StringComparison.OrdinalIgnoreCase) &&
+                (message.Contains("invalid", StringComparison.OrdinalIgnoreCase) || message.Contains("expired", StringComparison.OrdinalIgnoreCase))
+                ? "account-needs-reauthentication" : "probe_failed");
+        }
+        return new(response.IsSuccessStatusCode);
     }
 
     private static string? SecretValue(

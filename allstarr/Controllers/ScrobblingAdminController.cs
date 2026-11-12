@@ -574,6 +574,7 @@ public sealed class ScrobblingAdminController : ControllerBase
             });
             await db.SaveChangesAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);
+            HttpContext?.RequestServices?.GetService<IProviderCheckRequests>()?.Request(account.ProviderId, account.Id);
         }
         finally { CryptographicOperations.ZeroMemory(payload); }
     }

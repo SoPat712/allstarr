@@ -6,26 +6,26 @@ namespace allstarr.Services.Common;
 public interface IProviderCheckRunner
 {
     Task RestoreAsync(CancellationToken token);
-    Task<bool> SweepAsync(CancellationToken token, string? providerId = null);
+    Task<bool> SweepAsync(CancellationToken token, string? providerId = null, Guid? accountId = null);
 }
 
 public interface IProviderCheckRequests
 {
-    void Request(string providerId);
+    void Request(string providerId, Guid? accountId = null);
 }
 
 // Signing in or changing an account asks for that source to be checked now instead of at the next sweep.
 public sealed class ProviderCheckRequests : IProviderCheckRequests
 {
-    private readonly Channel<string> requests = Channel.CreateBounded<string>(
+    private readonly Channel<(string ProviderId, Guid? AccountId)> requests = Channel.CreateBounded<(string, Guid?)>(
         new BoundedChannelOptions(64) { FullMode = BoundedChannelFullMode.DropOldest, SingleReader = true });
 
-    public void Request(string providerId)
+    public void Request(string providerId, Guid? accountId = null)
     {
-        if (!string.IsNullOrWhiteSpace(providerId)) requests.Writer.TryWrite(providerId.Trim().ToLowerInvariant());
+        if (!string.IsNullOrWhiteSpace(providerId)) requests.Writer.TryWrite((providerId.Trim().ToLowerInvariant(), accountId));
     }
 
-    internal IAsyncEnumerable<string> ReadAllAsync(CancellationToken token) => requests.Reader.ReadAllAsync(token);
+    internal IAsyncEnumerable<(string ProviderId, Guid? AccountId)> ReadAllAsync(CancellationToken token) => requests.Reader.ReadAllAsync(token);
 }
 
 public sealed class ProviderCheckService(
@@ -53,9 +53,9 @@ public sealed class ProviderCheckService(
     {
         try
         {
-            await foreach (var providerId in requests.ReadAllAsync(stoppingToken))
+            await foreach (var (providerId, accountId) in requests.ReadAllAsync(stoppingToken))
             {
-                try { await runner.SweepAsync(stoppingToken, providerId); }
+                try { await runner.SweepAsync(stoppingToken, providerId, accountId); }
                 catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { throw; }
                 catch (Exception) { logger.LogWarning("Requested provider check for {Provider} could not complete", providerId); }
             }

@@ -95,6 +95,7 @@ public sealed class ProviderConnectionController(ILogger<ProviderConnectionContr
         }
         foreach (var account in accounts)
         {
+            var signIn = statusManager.GetAccountSignInStatus(account.ProviderId, account.Id, account.Revision);
             IReadOnlyDictionary<string, string> accountSecrets =
                 new Dictionary<string, string>(StringComparer.Ordinal);
             if (account.SecretReferenceId.HasValue)
@@ -140,6 +141,8 @@ public sealed class ProviderConnectionController(ILogger<ProviderConnectionContr
                     ready = account.Enabled && status.IsReady,
                     canAttempt = account.Enabled && status.CanAttempt,
                     testedAt = status.TestedAt,
+                    signInExpired = signIn.SignInExpired,
+                    signInCheckedAt = signIn.SignInCheckedAt,
                     reasonCode = account.Enabled ? status.ReasonCode : "account_disabled",
                     verificationMeasurementId = status.VerificationMeasurementId,
                     verificationMethod = status.VerificationMethod,
@@ -433,6 +436,8 @@ public sealed class ProviderConnectionController(ILogger<ProviderConnectionContr
                 account.Id,
                 accountSecrets,
                 HttpContext.RequestAborted, account.Revision);
+            await RecordAccountChecksAsync(account, statusManager.GetAllManagedStatuses(
+                normalizedProvider, account.Id, accountSecrets, account.Revision));
             connectionTimer.Stop();
             var connectionLatencyMs = connectionTimer.ElapsedMilliseconds;
             var failedCapabilities = statusManager.GetAllManagedStatuses(
@@ -491,6 +496,7 @@ public sealed class ProviderConnectionController(ILogger<ProviderConnectionContr
             account.Id,
             accountSecrets,
             HttpContext.RequestAborted, account.Revision);
+        await RecordAccountChecksAsync(account, [tested]);
         capabilityTimer.Stop();
         var capabilityLatencyMs = capabilityTimer.ElapsedMilliseconds;
         return Ok(new
@@ -509,6 +515,18 @@ public sealed class ProviderConnectionController(ILogger<ProviderConnectionContr
     }
 
     private sealed record FailedCapability(string Capability, string? ReasonCode);
+
+    private async Task RecordAccountChecksAsync(ProviderAccountRecord account, IEnumerable<ProviderRuntimeStatus> statuses)
+    {
+        if (HttpContext.RequestServices.GetService<ProviderCheckHistory>() is not { } history) return;
+        var manager = HttpContext.RequestServices.GetRequiredService<ProviderStatusManager>();
+        foreach (var status in statuses.Where(item => item.TestedAt.HasValue))
+        {
+            var key = ProviderRuntimeStatusKey.CreateManaged(account.ProviderId, status.Capability, account.Id);
+            var recorded = manager.RestoreCheckResult(key, account.Revision, status);
+            await history.RecordAsync(new(key, account.Revision, recorded), HttpContext.TraceIdentifier, HttpContext.RequestAborted);
+        }
+    }
 
     private async Task<ProviderCtsDiagnosticResult?> MeasureMediaAsync(ProviderAccountRecord? account, string? providerId = null)
     {

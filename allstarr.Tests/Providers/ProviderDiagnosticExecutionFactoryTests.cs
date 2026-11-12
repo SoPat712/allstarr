@@ -72,7 +72,7 @@ public sealed class ProviderDiagnosticExecutionFactoryTests
 
         var result = await Create(factory, selected, token: cancellation.Token);
 
-        AssertFailure(result, 409, "sign_in_needed");
+        AssertFailure(result, 409, "account-needs-reauthentication");
         sessions.VerifyAll();
     }
 

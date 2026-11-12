@@ -57,6 +57,7 @@ public sealed record ProviderHealthObservation(
 {
     public DateTimeOffset? PausedAt { get; init; }
     public bool ReauthenticationRequired { get; init; }
+    public DateTimeOffset? SignInCheckedAt { get; init; }
     internal DateTimeOffset? FailureWindowStartedAt { get; init; }
     internal LyricsConfigurationId? LyricsConfiguration { get; init; }
     internal ProviderHealthState? HealthBeforeProbe { get; init; }
@@ -235,22 +236,23 @@ public sealed class ProviderRuntimeHealth : IProviderOutcomeObserver, ILyricsOut
         string? reason, bool authenticationFailure = false, TimeSpan? retryAfter = null, bool recordAttempt = false) =>
         RecordCore(key, revision, success, latency, reason, authenticationFailure, retryAfter, passive: false, recordAttempt: recordAttempt);
 
-    internal void RestoreMediaCheck(ProviderRuntimeStatusKey key, long? revision, ProviderRuntimeStatus status)
+    internal void RestoreCheck(ProviderRuntimeStatusKey key, long? revision, ProviderRuntimeStatus status)
     {
-        if (key.Capability is not (ProviderCapabilities.Streaming or ProviderCapabilities.Download) ||
-            !status.HasCheckResult || status.TestedAt is not { } at) return;
+        if (!status.HasCheckResult || status.TestedAt is not { } at) return;
         lock (_sync)
         {
             if (_observations.TryGetValue(key, out var current) &&
                 (current.AccountRevision > revision || current.AccountRevision == revision &&
                     (current.ObservedAt >= at || !current.IsRecordedCheck && status.Health == ProviderHealthState.Healthy && IsCircuitOpen(current)))) return;
             RecordCore(key, revision, status.Health == ProviderHealthState.Healthy, status.LatencyMilliseconds,
-                status.ReasonCode, false, null, passive: false, observedAt: at);
+                status.ReasonCode, false, null, passive: false, observedAt: at,
+                signInCheckedAt: status.SignInCheckedAt, signInExpired: status.SignInExpired);
         }
     }
 
     private void RecordCore(ProviderRuntimeStatusKey key, long? revision, bool success, long? latency,
-        string? reason, bool authenticationFailure, TimeSpan? retryAfter, bool passive, LyricsConfigurationId? configuration = null, bool recordAttempt = false, bool loginExpired = false, DateTimeOffset? observedAt = null)
+        string? reason, bool authenticationFailure, TimeSpan? retryAfter, bool passive, LyricsConfigurationId? configuration = null, bool recordAttempt = false, bool loginExpired = false, DateTimeOffset? observedAt = null,
+        DateTimeOffset? signInCheckedAt = null, bool signInExpired = false)
     {
         if (reason == LocalCapacityException.Code) return;
         lock (_sync)
@@ -269,6 +271,8 @@ public sealed class ProviderRuntimeHealth : IProviderOutcomeObserver, ILyricsOut
                 var failures = success ? 0 : withinWindow
                     ? Math.Min(previous!.ConsecutiveFailures + 1, _options.FailureThreshold) : 1;
                 var media = key.Capability is ProviderCapabilities.Streaming or ProviderCapabilities.Download;
+                loginExpired |= reason is "unauthorized" or "account-needs-reauthentication" or "authentication-required" or
+                    "sign_in_needed" or "apple-download-sign-in-required";
                 authenticationFailure |= media && reason is ("unauthorized" or "account-needs-reauthentication" or
                     "account-needs-configuration" or "authentication-required" or "sign_in_needed");
                 var opens = !success && (authenticationFailure || retryAfter.HasValue || failures >= _options.FailureThreshold);
@@ -283,7 +287,9 @@ public sealed class ProviderRuntimeHealth : IProviderOutcomeObserver, ILyricsOut
                 {
                     IsRecordedCheck = observedAt.HasValue,
                     TryHealth = recordAttempt ? success ? ProviderHealthState.Healthy : ProviderHealthState.Degraded : null,
-                    ReauthenticationRequired = loginExpired || reason is "unauthorized" or "account-needs-reauthentication" or "authentication-required",
+                    ReauthenticationRequired = signInCheckedAt.HasValue ? signInExpired :
+                        !success && (loginExpired || comparable && previous!.ReauthenticationRequired),
+                    SignInCheckedAt = signInCheckedAt ?? (success || loginExpired ? now : comparable ? previous!.SignInCheckedAt : null),
                     LyricsConfiguration = configuration,
                     FailureWindowStartedAt = success ? null : withinWindow ? previous!.FailureWindowStartedAt : now,
                     PausedAt = opens ? comparable && IsCircuitOpen(previous!) ? previous!.PausedAt ?? now : now : null
@@ -401,6 +407,8 @@ public sealed class ProviderRuntimeHealth : IProviderOutcomeObserver, ILyricsOut
                 previous != null && previous.AccountRevision == revision ? previous.RetryAfter : null)
             {
                 PausedAt = previous != null && previous.AccountRevision == revision ? previous.PausedAt : null,
+                ReauthenticationRequired = previous != null && previous.AccountRevision == revision && previous.ReauthenticationRequired,
+                SignInCheckedAt = previous != null && previous.AccountRevision == revision ? previous.SignInCheckedAt : null,
                 FailureWindowStartedAt = previous != null && previous.AccountRevision == revision ? previous.FailureWindowStartedAt : null,
                 HealthBeforeProbe = previous != null && previous.AccountRevision == revision
                     ? previous.HealthBeforeProbe ?? previous.Health : ProviderHealthState.Unknown
@@ -465,7 +473,7 @@ public sealed class ProviderRuntimeHealth : IProviderOutcomeObserver, ILyricsOut
         "authentication-required" or "access-denied" or "not-found" or "metadata-not-found" or "metadata-invalid" or "playlist-not-found" or
         "playlist-empty" or "playlist-invalid" or "playlist-sample-unavailable" or "probe-limit-exceeded" or
         "blocked-by-challenge" or "lyrics-upstream-busy-or-timed-out" or "unreachable" or "sidecar_not_installed" or "sidecar_unreachable" or "sidecar_timeout" or
-        "sidecar_authentication_required" or "sidecar_version_mismatch" => reason,
+        "sidecar_authentication_required" or "sidecar_version_mismatch" or "sign_in_needed" or "apple-download-sign-in-required" => reason,
         _ => "probe_failed"
     };
 }

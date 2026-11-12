@@ -47,7 +47,7 @@ public sealed class ProviderAccountCheckRunnerTests
         var manual = await manager.TestManagedProviderCapabilityAsync("deezer", "metadata", enabled.Id, new Dictionary<string, string>(), accountRevision: enabled.Revision);
         handler.Paths.Clear();
         await runner.SweepAsync(default);
-        Assert.Equal(3, handler.Paths.Count(path => path == "api.deezer.com/search"));
+        Assert.Equal(2, handler.Paths.Count(path => path == "api.deezer.com/search"));
         Assert.Single(handler.Paths, path => path.StartsWith("lrclib.net/", StringComparison.Ordinal));
         var recorded = await history.ReadLatestAsync(default);
         Assert.DoesNotContain(recorded, result => result.Key.ProviderAccountId == disabled.Id);
@@ -176,7 +176,7 @@ public sealed class ProviderAccountCheckRunnerTests
     }
 
     [Fact]
-    public async Task SignedOutExtension_RecordsSignInNeededWithoutProbingAndOverridesPriorHealth()
+    public async Task SignedOutExtension_ManualAndScheduledChecksRequireSignInWithoutProbing()
     {
         await using var database = await SqliteTestDatabase.CreateAsync();
         var factory = new ProviderCheckServiceTests.Factory(database.Options);
@@ -192,19 +192,75 @@ public sealed class ProviderAccountCheckRunnerTests
             { UsesSignedSession = true }, [implementation.Object])]);
         var time = new ManualTimeProvider();
         var config = Config("");
-        var manager = Manager(config, new Handler(), time, registry);
-        await manager.TestManagedProviderCapabilityAsync(account.ProviderId, "metadata", account.Id, new Dictionary<string, string>(), accountRevision: account.Revision);
-        time.Advance(TimeSpan.FromSeconds(1));
         var sessions = new Mock<IProviderCheckSessions>();
         sessions.Setup(item => item.IsSignedInAsync(account.ProviderId, account.Id, It.IsAny<CancellationToken>())).ReturnsAsync(false);
+        var manager = Manager(config, new Handler(), time, registry, services => services.AddSingleton(sessions.Object));
+        var manual = await manager.TestManagedProviderCapabilityAsync(account.ProviderId, "metadata", account.Id, new Dictionary<string, string>(), accountRevision: account.Revision);
+        Assert.Equal("account-needs-reauthentication", manual.ReasonCode);
+        Assert.True(manager.GetAccountSignInStatus(account.ProviderId, account.Id, account.Revision).SignInExpired);
+        time.Advance(TimeSpan.FromSeconds(1));
         var history = new ProviderCheckHistory(factory, time);
         var runner = new ProviderAccountCheckRunner(factory, manager, history, config, time,
             NullLogger<ProviderAccountCheckRunner>.Instance, registry: registry, sessions: sessions.Object);
         await runner.SweepAsync(default);
         var result = Assert.Single(await history.ReadLatestAsync(default));
-        Assert.Equal("sign_in_needed", result.Status.ReasonCode);
+        Assert.Equal("account-needs-reauthentication", result.Status.ReasonCode);
         Assert.Equal(ProviderHealthState.Degraded, manager.GetManagedStatus(account.ProviderId, "metadata", account.Id, new Dictionary<string, string>(), account.Revision).Health);
+        sessions.Setup(item => item.IsSignedInAsync(account.ProviderId, account.Id, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("Fixture unavailable"));
+        var unreachable = await manager.TestManagedProviderCapabilityAsync(account.ProviderId, "metadata", account.Id,
+            new Dictionary<string, string>(), accountRevision: account.Revision);
+        Assert.Equal("unreachable", unreachable.ReasonCode);
         sessions.VerifyAll();
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SignedOutStreamingTest_RecordsTheRejectedAccountRevisionBeforeMediaSelection(bool accountChanges)
+    {
+        await using var database = await SqliteTestDatabase.CreateAsync();
+        var factory = new ProviderCheckServiceTests.Factory(database.Options);
+        var account = Account("fixture-stream", true);
+        var userId = Guid.NewGuid();
+        await using (var db = factory.CreateDbContext())
+        {
+            db.Users.Add(new() { Id = userId, BackendType = "jellyfin", BackendInstanceId = "fixture", BackendPrincipalId = "admin", IsAdmin = true, Enabled = true });
+            db.ProviderAccounts.Add(account);
+            await db.SaveChangesAsync();
+        }
+        var streaming = new Mock<IProviderStreamingCapability>(MockBehavior.Strict);
+        streaming.SetupGet(item => item.ProviderId).Returns(account.ProviderId);
+        streaming.SetupGet(item => item.Capability).Returns(ProviderCapabilityKind.Streaming);
+        var registry = new ProviderRegistry([new(new ProviderDescriptor(account.ProviderId, "Fixture", "Fixture", ProviderOrigin.Extension,
+            "1", "1", [new(ProviderCapabilityKind.Streaming, ProviderCapabilitySupportState.Supported, ProviderAccountRequirement.Required,
+                "1", ["getStreamLease"], [ProviderAccountScope.Shared])], new(), entryPoint: "index.js") { UsesSignedSession = true }, [streaming.Object])]);
+        var accounts = new Mock<IProviderRouteAccountResolver>();
+        accounts.Setup(item => item.ResolveAsync(It.IsAny<ProviderRouteAccountRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ProviderRouteAccountResolution(new(account.Id, account.ProviderId, ProviderAccountScope.Shared, account.Revision), account.Revision));
+        var sessions = new Mock<IProviderCheckSessions>();
+        sessions.Setup(item => item.IsSignedInAsync(account.ProviderId, account.Id, It.IsAny<CancellationToken>())).Returns(async () =>
+        {
+            if (accountChanges)
+            {
+                await using var db = factory.CreateDbContext();
+                (await db.ProviderAccounts.SingleAsync()).Revision++;
+                await db.SaveChangesAsync();
+            }
+            return false;
+        });
+        var time = new ManualTimeProvider(DateTimeOffset.UtcNow);
+        var manager = Manager(Config(""), new Handler(), time, registry);
+        var media = new ProviderCtsDiagnosticRunner(registry, accounts.Object, null!, Mock.Of<IProviderOutcomeObserver>(),
+            factory, timeProvider: time, sessions: sessions.Object, statusManager: manager);
+        var actor = new ProviderActorContext(ProviderActorKind.Administrator, userId, new("jellyfin", "fixture", "admin"));
+        var result = await media.MeasureAsync(actor, account.ProviderId, account.Id, ProviderAudioQuality.HighResolution, "fixture");
+        Assert.Equal("account-needs-reauthentication", result.ReasonCode);
+        Assert.True(manager.GetAccountSignInStatus(account.ProviderId, account.Id, account.Revision).SignInExpired);
+        Assert.Null(manager.GetAccountSignInStatus(account.ProviderId, account.Id, account.Revision + 1).SignInCheckedAt);
+        var recorded = Assert.Single(await new ProviderCheckHistory(factory, time).ReadLatestAsync(default));
+        Assert.Equal(account.Revision, recorded.Revision);
+        Assert.Equal(result.ReasonCode, recorded.Status.ReasonCode);
     }
 
     [Fact]

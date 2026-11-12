@@ -15,6 +15,8 @@ public sealed class ProviderCheckHistoryTests
     [InlineData("probe-limit-exceeded", true)]
     [InlineData("probe_not_available", true)]
     [InlineData("timeout", false)]
+    [InlineData("account-needs-reauthentication", false)]
+    [InlineData("sign_in_needed", false)]
     [InlineData("service_unavailable", false)]
     public async Task UncheckedResultsRetainReasonsWithoutRecordingDegradation(string reason, bool neutral)
     {

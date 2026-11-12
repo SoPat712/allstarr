@@ -61,7 +61,7 @@ public sealed class ProviderCheckHistory(IDbContextFactory<AllstarrDbContext> fa
         "sidecar_version_mismatch" or "local-capacity-unavailable" or "not_found" or "NotFound" or
         "http-404" or "http-410" or "circuit_open" or "missing_provider_account_secret" or
         "unsupported_capability" or "provider_disabled" or "provider_account_required" or
-        "account_disabled" or "apple-download-sign-in-required" or
+        "account_disabled" or "sign_in_needed" or "apple-download-sign-in-required" or
         "apple-download-gateway-update-required" => reason,
         _ => "probe_failed"
     };

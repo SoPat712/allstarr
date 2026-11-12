@@ -55,7 +55,7 @@ public sealed class ProviderAccountCheckRunner(
         }
     }
 
-    public async Task<bool> SweepAsync(CancellationToken token, string? providerId = null)
+    public async Task<bool> SweepAsync(CancellationToken token, string? providerId = null, Guid? accountId = null)
     {
         // A requested single-source check waits for a running sweep; a scheduled sweep never overlaps one.
         if (providerId != null) await gate.WaitAsync(token);
@@ -64,14 +64,16 @@ public sealed class ProviderAccountCheckRunner(
         {
             await using var db = await factory.CreateDbContextAsync(token);
             var accounts = await db.ProviderAccounts.AsNoTracking()
-                .Where(row => row.Enabled && (providerId == null || row.ProviderId == providerId))
+                .Where(row => row.Enabled && (providerId == null || row.ProviderId == providerId) &&
+                    (accountId == null || row.Id == accountId))
                 .OrderBy(row => row.ProviderId).ThenBy(row => row.Id).ToArrayAsync(token);
             var targets = accounts.Where(account => !ProviderAccountSettings.IsRemoved(account))
                 .SelectMany(account => status.GetAllManagedStatuses(account.ProviderId, account.Id,
                     new Dictionary<string, string>(), account.Revision)
+                .OrderBy(item => item.Capability == ProviderCapabilities.Streaming)
                 .Select(item => (Status: item, Account: (ProviderAccountRecord?)account)))
                 .Concat(status.GetAllAccountFreeStatuses()
-                    .Where(item => providerId == null || string.Equals(item.Provider, providerId, StringComparison.OrdinalIgnoreCase))
+                    .Where(item => accountId == null && (providerId == null || string.Equals(item.Provider, providerId, StringComparison.OrdinalIgnoreCase)))
                     .Select(item => (Status: item, Account: (ProviderAccountRecord?)null)))
                 .Where(item => item.Status.IsEnabled && status.CanTestCapability(item.Status.Provider, item.Status.Capability)).ToArray();
             var success = true;
@@ -127,8 +129,11 @@ public sealed class ProviderAccountCheckRunner(
                         ReasonCode = exception is OperationCanceledException ? "timeout" : "unreachable"
                     });
                 }
-                status.RestoreCheckResult(key, result.Revision, result.Status,
-                    recordMediaEvidence: !result.CurrentHealth.HasValue);
+                result = result with
+                {
+                    Status = status.RestoreCheckResult(key, result.Revision, result.Status,
+                        recordMediaEvidence: !result.CurrentHealth.HasValue)
+                };
                 result = result with { CurrentHealth = status.GetCurrentCheckHealth(result) };
                 await history.RecordAsync(result, correlation, token, target.Status.Health);
                 if (result.Status.Health == ProviderHealthState.Degraded)
@@ -152,7 +157,7 @@ public sealed class ProviderAccountCheckRunner(
             {
                 Health = ProviderHealthState.Degraded,
                 TestedAt = time.GetUtcNow(),
-                ReasonCode = "sign_in_needed"
+                ReasonCode = "account-needs-reauthentication"
             });
         var values = await ReadSecretsAsync(account, token);
         if (account != null)

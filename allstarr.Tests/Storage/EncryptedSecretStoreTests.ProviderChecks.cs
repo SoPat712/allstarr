@@ -13,6 +13,60 @@ namespace allstarr.Tests;
 public sealed partial class EncryptedSecretStoreTests
 {
     [Fact]
+    public async Task ProviderChecks_RestoreExpiredScrobblingSignInAndClearItAfterSuccess()
+    {
+        var store = CreateStore();
+        var accountId = Guid.NewGuid();
+        var secret = await store.StoreAsync(_userId, $"provider-account:listenbrainz:{accountId:N}",
+            Encoding.UTF8.GetBytes("{\"token\":\"fixture-token\"}"));
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.ProviderAccounts.Add(new()
+            {
+                Id = accountId,
+                ProviderId = "listenbrainz",
+                OwnerUserId = _userId,
+                Enabled = true,
+                Revision = 1,
+                SecretReferenceId = secret.Id
+            });
+            await db.SaveChangesAsync();
+        }
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        { ["ProviderChecks:PauseMilliseconds"] = "0" }).Build();
+        var time = new ManualTimeProvider(DateTimeOffset.UtcNow);
+        var history = new ProviderCheckHistory(_factory, time);
+        using var handler = new ProviderCheckCredentialHandler { Valid = false };
+        ProviderStatusManager Manager() => new(configuration, new ProviderCheckHttpFactory(handler),
+            NullLogger<ProviderStatusManager>.Instance, Options.Create(new SpotifyApiSettings()),
+            Options.Create(new AppleDownloadSettings()), Options.Create(new DeezerSettings()), Options.Create(new QobuzSettings()));
+        ProviderAccountCheckRunner Runner(ProviderStatusManager status) => new(_factory, status, history,
+            configuration, time, NullLogger<ProviderAccountCheckRunner>.Instance, store);
+        var manager = Manager();
+        Assert.False(await Runner(manager).SweepAsync(default, "listenbrainz", accountId));
+        var expired = manager.GetAccountSignInStatus("listenbrainz", accountId, 1);
+        Assert.True(expired.SignInExpired);
+        Assert.NotNull(expired.SignInCheckedAt);
+        Assert.Equal("account-needs-reauthentication", Assert.Single(await history.ReadLatestAsync(default)).Status.ReasonCode);
+
+        handler.Unreachable = true;
+        time.Advance(TimeSpan.FromSeconds(1));
+        await Runner(manager).SweepAsync(default, "listenbrainz", accountId);
+        manager = Manager();
+        await Runner(manager).RestoreAsync(default);
+        Assert.Equal(expired, manager.GetAccountSignInStatus("listenbrainz", accountId, 1));
+        Assert.Null(manager.GetAccountSignInStatus("listenbrainz", accountId, 2).SignInCheckedAt);
+
+        handler.Unreachable = false;
+        handler.Valid = true;
+        time.Advance(TimeSpan.FromSeconds(1));
+        Assert.True(await Runner(manager).SweepAsync(default, "listenbrainz", accountId));
+        var recovered = manager.GetAccountSignInStatus("listenbrainz", accountId, 1);
+        Assert.False(recovered.SignInExpired);
+        Assert.True(recovered.SignInCheckedAt > expired.SignInCheckedAt);
+    }
+
+    [Fact]
     public async Task ProviderChecks_UseEachAccountsOwnDecryptedCredentials()
     {
         var store = CreateStore();
@@ -132,11 +186,14 @@ public sealed partial class EncryptedSecretStoreTests
     private sealed class ProviderCheckCredentialHandler : HttpMessageHandler
     {
         public List<string> Tokens = [];
+        public bool Valid = true;
+        public bool Unreachable;
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             Assert.Equal("api.listenbrainz.org", request.RequestUri!.Host);
             Tokens.Add(request.Headers.Authorization!.Parameter!);
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{\"valid\":true}") });
+            if (Unreachable) throw new HttpRequestException("Fixture unavailable");
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(Valid ? "{\"valid\":true}" : "{\"valid\":false}") });
         }
     }
 }

@@ -77,6 +77,10 @@ public sealed record ProviderRuntimeStatus
 
     public string? ReasonCode { get; init; }
 
+    public bool SignInExpired { get; init; }
+
+    public DateTimeOffset? SignInCheckedAt { get; init; }
+
     public Guid? VerificationMeasurementId { get; init; }
 
     public string? VerificationMethod { get; init; }

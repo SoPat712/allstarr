@@ -123,6 +123,24 @@ public sealed class ProviderCheckServiceTests
         await service.StopAsync(default);
     }
 
+    [Fact]
+    public async Task RequestedAccountCheck_PreservesTheAccountTarget()
+    {
+        await using var database = await SqliteTestDatabase.CreateAsync();
+        var factory = new Factory(database.Options);
+        var runner = new Runner();
+        var requests = new ProviderCheckRequests();
+        using var service = new ProviderCheckService(runner, requests,
+            new BackgroundTaskActivity(factory, TimeProvider.System, NullLogger<BackgroundTaskActivity>.Instance),
+            new ConfigurationBuilder().Build(), TimeProvider.System, NullLogger<ProviderCheckService>.Instance);
+        await service.StartAsync(default);
+        var accountId = Guid.NewGuid();
+        requests.Request("listenbrainz", accountId);
+        Assert.Equal("listenbrainz", await runner.Requested.Task.WaitAsync(TimeSpan.FromSeconds(10)));
+        Assert.Equal(accountId, runner.AccountId);
+        await service.StopAsync(default);
+    }
+
     private sealed class Runner : IProviderCheckRunner
     {
         public int Runs;
@@ -135,8 +153,10 @@ public sealed class ProviderCheckServiceTests
         public TaskCompletionSource<string> Requested = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public Task RestoreAsync(CancellationToken token) => Task.CompletedTask;
         public List<string?> Providers = [];
-        public async Task<bool> SweepAsync(CancellationToken token, string? providerId = null)
+        public Guid? AccountId;
+        public async Task<bool> SweepAsync(CancellationToken token, string? providerId = null, Guid? accountId = null)
         {
+            AccountId = accountId;
             Providers.Add(providerId);
             if (providerId != null) { Requested.TrySetResult(providerId); return Result; }
             Runs++;

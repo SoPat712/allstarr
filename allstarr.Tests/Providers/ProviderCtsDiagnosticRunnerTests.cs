@@ -977,7 +977,7 @@ public sealed class ProviderCtsDiagnosticRunnerTests
 
         Assert.False(result.Succeeded);
         Assert.Equal(signedIn ? "resolve" : "account-resolution", result.Stage);
-        Assert.Equal(signedIn ? "IncompatibleMedia" : "sign_in_needed", result.ReasonCode);
+        Assert.Equal(signedIn ? "IncompatibleMedia" : "account-needs-reauthentication", result.ReasonCode);
         streaming.Verify(item => item.GetStreamLeaseAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderStreamLeaseRequest>()),
             Times.Exactly(signedIn ? 1 : 0));
         sessions.VerifyAll();
