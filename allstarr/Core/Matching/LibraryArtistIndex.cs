@@ -41,7 +41,7 @@ public sealed class LibraryArtistIndex(IDbContextFactory<AllstarrDbContext> fact
         try
         {
             await using var db = await factory.CreateDbContextAsync(token);
-            var songs = await ComputedAsync(db, owner, access, name, token);
+            var songs = (await ComputedAsync(db, owner, access, name, token)).Where(link => Usable(link.ArtistId)).ToArray();
             var fixes = (await FixesAsync(db, owner, access.Context, [name], token)).GetValueOrDefault(name) ?? [];
             return (songs, fixes);
         }
@@ -75,6 +75,9 @@ public sealed class LibraryArtistIndex(IDbContextFactory<AllstarrDbContext> fact
         }
         finally { Gate.Release(); }
     }
+
+    // A "credit:" id is a placeholder for a song credit with no real artist behind it; it can't be opened or matched.
+    private static bool Usable(string artistId) => !artistId.StartsWith("credit:", StringComparison.Ordinal);
 
     private static bool ValidName(string name) => !string.IsNullOrWhiteSpace(name) && name.Length <= 300 && !name.Any(char.IsControl);
 
@@ -175,7 +178,7 @@ public sealed class LibraryArtistIndex(IDbContextFactory<AllstarrDbContext> fact
             .OrderBy(item => item.Id).ToArray();
         var fingerprint = CanonicalCatalogKeys.Hash(JsonSerializer.Serialize(new
         {
-            Rule = 2,
+            Rule = 3,
             Tracks = tracks.Select(item => new { item.Id, item.CanonicalRecordingId, item.Artist, item.AlbumArtist, item.Revision }),
             Links = links.Select(item => new
             {
@@ -252,7 +255,7 @@ public sealed class LibraryArtistIndex(IDbContextFactory<AllstarrDbContext> fact
         foreach (var (name, key) in keys)
         {
             if (!saved.TryGetValue(key, out var payload)) continue;
-            try { result[name] = JsonSerializer.Deserialize<LibraryArtistLink[]>(payload) ?? []; }
+            try { result[name] = (JsonSerializer.Deserialize<LibraryArtistLink[]>(payload) ?? []).Where(link => Usable(link.ArtistId)).ToArray(); }
             catch (JsonException) { }
         }
         foreach (var (name, fixes) in await FixesAsync(db, owner, access.Context, valid, token))
@@ -332,7 +335,7 @@ public sealed class LibraryArtistIndex(IDbContextFactory<AllstarrDbContext> fact
         var sameName = named.Length > 0 || song.Artists.Count == 1 &&
             FuzzyMatcher.NormalizeForMatching(song.Artists[0]) == FuzzyMatcher.NormalizeForMatching(name);
         return (ids.Select(id => LocalLibraryService.ParseExternalResource(id.StartsWith("ext-", StringComparison.Ordinal) ? id : $"ext-{provider}-artist-{id}"))
-            .Where(id => id.isExternal && id.type == "artist" && NormalizeProvider(id.provider!) == NormalizeProvider(provider))
+            .Where(id => id.isExternal && id.type == "artist" && NormalizeProvider(id.provider!) == NormalizeProvider(provider) && Usable(id.externalId!))
             .Select(id => id.externalId!).Distinct(StringComparer.Ordinal).ToArray(), sameName);
     }
 

@@ -19,7 +19,8 @@ namespace allstarr.Controllers.ClientApi;
 [Route("allstarr/v1/search")]
 public sealed class SearchController(IProtocolProviderGateway providers, MusicSearchService music,
     JellyfinProxyService proxy, JellyfinResponseBuilder builder, JellyfinItemResponseFilter itemFilter,
-    IApplicationCache cache, TimeProvider clock, LibraryProviderResolver libraryProvider, IProviderRegistry registry) : ClientApiControllerBase
+    IApplicationCache cache, TimeProvider clock, LibraryProviderResolver libraryProvider, IProviderRegistry registry,
+    LibrarySpellings? spellings = null) : ClientApiControllerBase
 {
     [HttpGet]
     [EndpointName("streamSearch")]
@@ -67,7 +68,7 @@ public sealed class SearchController(IProtocolProviderGateway providers, MusicSe
         var headers = Request.Headers;
         // Every item names where it came from, so apps can label a library artist and a same-named service artist apart.
         var library = await libraryProvider.ResolveAsync(HttpContext, Execution);
-        var native = new NativeSearch(proxy, headers, Execution);
+        var native = new NativeSearch(proxy, headers, Execution, spellings);
         var nativeTask = Task.Run(() => native.ReadAsync(query, limit, requested, token, includePlaylists: ranked), token);
         var sentIds = new HashSet<string>(StringComparer.Ordinal);
         var sentSongs = new List<Song>();
@@ -108,7 +109,7 @@ public sealed class SearchController(IProtocolProviderGateway providers, MusicSe
                     if (owned.Count > 0)
                     {
                         var links = await savedLinks!;
-                        var libraryRows = BuildLibraryRows(query, owned, requested, limit, library, links);
+                        var libraryRows = BuildLibraryRows(query, owned, requested, limit, library, links, native.Spelled);
                         if (libraryRows.Count > 0)
                             await snapshots.AddLibraryAsync(libraryRows, token, MusicSearchService.LinkedKeys(links));
                     }
@@ -258,16 +259,19 @@ public sealed class SearchController(IProtocolProviderGateway providers, MusicSe
     private List<RankedSearchRow> BuildLibraryRows(string query,
         IReadOnlyList<NativeMusicItem<Dictionary<string, object?>>> owned,
         HashSet<string> requested, int limit, ItemDetailsProvider source,
-        IReadOnlyDictionary<string, IReadOnlyList<LibraryArtistLink>> links)
+        IReadOnlyDictionary<string, IReadOnlyList<LibraryArtistLink>> links, string? spelled = null)
     {
+        // Items found through the library's own spelling of the query are scored against that spelling too.
+        double Best(Func<string, double> score) => spelled == null ? score(query) : Math.Max(score(query), score(spelled));
         var rows = new List<RankedSearchRow>();
         if (requested.Contains("Audio"))
         {
             var songs = owned.Where(item => item.Kind == MusicItemKind.Song &&
                 Execution.Policy?.Includes(item.ExplicitContentLyrics) != false);
-            foreach (var song in songs.OrderByDescending(s => SearchRelevanceRanker.ScoreSong(query, s.Name, s.ArtistText, s.AlbumText, s.AlbumArtistText, s.DurationSeconds, provenRecording: true, hasKnownDurationVersion: s.DurationSeconds is > 0)).Take(limit))
+            double SongScore(NativeMusicItem<Dictionary<string, object?>> s) => Best(q => SearchRelevanceRanker.ScoreSong(q, s.Name, s.ArtistText, s.AlbumText, s.AlbumArtistText, s.DurationSeconds, provenRecording: true, hasKnownDurationVersion: s.DurationSeconds is > 0));
+            foreach (var song in songs.OrderByDescending(SongScore).Take(limit))
             {
-                var score = SearchRelevanceRanker.ScoreSong(query, song.Name, song.ArtistText, song.AlbumText, song.AlbumArtistText, song.DurationSeconds, provenRecording: true, hasKnownDurationVersion: song.DurationSeconds is > 0);
+                var score = SongScore(song);
                 var itemNode = JsonSerializer.SerializeToNode(song.Payload)!.AsObject();
                 itemNode["score"] = score;
                 itemNode["source"] = source.Id;
@@ -279,9 +283,10 @@ public sealed class SearchController(IProtocolProviderGateway providers, MusicSe
         {
             var albums = owned.Where(item => item.Kind == MusicItemKind.Album &&
                 (Execution.Policy?.Preferences.ExplicitFilter != "CleanOnly" || Execution.Policy.Includes(item.ExplicitContentLyrics)));
-            foreach (var album in albums.OrderByDescending(a => a.AlbumMetadata != null ? SearchRelevanceRanker.ScoreAlbum(query, a.AlbumMetadata) : SearchRelevanceRanker.Score(query, a.Name, a.ArtistText)).Take(limit))
+            double AlbumScore(NativeMusicItem<Dictionary<string, object?>> a) => Best(q => a.AlbumMetadata != null ? SearchRelevanceRanker.ScoreAlbum(q, a.AlbumMetadata) : SearchRelevanceRanker.Score(q, a.Name, a.ArtistText));
+            foreach (var album in albums.OrderByDescending(AlbumScore).Take(limit))
             {
-                var score = album.AlbumMetadata != null ? SearchRelevanceRanker.ScoreAlbum(query, album.AlbumMetadata) : SearchRelevanceRanker.Score(query, album.Name, album.ArtistText);
+                var score = AlbumScore(album);
                 var itemNode = JsonSerializer.SerializeToNode(album.Payload)!.AsObject();
                 itemNode["score"] = score;
                 itemNode["source"] = source.Id;
@@ -292,9 +297,9 @@ public sealed class SearchController(IProtocolProviderGateway providers, MusicSe
         if (requested.Contains("MusicArtist"))
         {
             var artists = owned.Where(item => item.Kind == MusicItemKind.Artist);
-            foreach (var artist in artists.OrderByDescending(a => SearchRelevanceRanker.Score(query, a.Name, a.ArtistText)).Take(limit))
+            foreach (var artist in artists.OrderByDescending(a => Best(q => SearchRelevanceRanker.Score(q, a.Name, a.ArtistText))).Take(limit))
             {
-                var score = SearchRelevanceRanker.Score(query, artist.Name, artist.ArtistText);
+                var score = Best(q => SearchRelevanceRanker.Score(q, artist.Name, artist.ArtistText));
                 var itemNode = JsonSerializer.SerializeToNode(artist.Payload)!.AsObject();
                 itemNode["score"] = score;
                 itemNode["source"] = source.Id;
@@ -318,9 +323,9 @@ public sealed class SearchController(IProtocolProviderGateway providers, MusicSe
         if (requested.Contains("Playlist"))
         {
             var playlists = owned.Where(item => item.Kind == MusicItemKind.Playlist);
-            foreach (var playlist in playlists.OrderByDescending(p => SearchRelevanceRanker.Score(query, p.Name, p.ArtistText)).Take(limit))
+            foreach (var playlist in playlists.OrderByDescending(p => Best(q => SearchRelevanceRanker.Score(q, p.Name, p.ArtistText))).Take(limit))
             {
-                var score = SearchRelevanceRanker.Score(query, playlist.Name, playlist.ArtistText);
+                var score = Best(q => SearchRelevanceRanker.Score(q, playlist.Name, playlist.ArtistText));
                 var itemNode = JsonSerializer.SerializeToNode(playlist.Payload)!.AsObject();
                 itemNode["score"] = score;
                 itemNode["source"] = source.Id;
@@ -341,11 +346,27 @@ public sealed class SearchController(IProtocolProviderGateway providers, MusicSe
             AlbumArtistText = item.AlbumArtistText
         };
 
-    private sealed class NativeSearch(JellyfinProxyService proxy, IHeaderDictionary headers, ProtocolExecutionContext context)
-        : INativeMusicSearch<Dictionary<string, object?>>
+    private sealed class NativeSearch(JellyfinProxyService proxy, IHeaderDictionary headers, ProtocolExecutionContext context,
+        LibrarySpellings? spellings = null) : INativeMusicSearch<Dictionary<string, object?>>
     {
+        /// <summary>The library's own spelling of the query, when it differs ("cybersex" → "Cyber Sex").</summary>
+        public string? Spelled { get; private set; }
+
         public async Task<IReadOnlyList<NativeMusicItem<Dictionary<string, object?>>>> ReadAsync(string query, int limit,
             HashSet<string> types, CancellationToken token, bool includePlaylists = false)
+        {
+            var respelled = spellings?.RespellAsync(context, query, token) ?? Task.FromResult<string?>(null);
+            var found = await QueryAsync(query, limit, types, token, includePlaylists);
+            // The media server can't split a joined word, so it is asked again with the library's own spelling.
+            try { Spelled = await respelled; }
+            catch (Exception error) when (error is not OperationCanceledException) { Spelled = null; }
+            if (Spelled == null) return found;
+            return found.Concat(await QueryAsync(Spelled, limit, types, token, includePlaylists))
+                .DistinctBy(item => item.Id, StringComparer.Ordinal).ToArray();
+        }
+
+        private async Task<IReadOnlyList<NativeMusicItem<Dictionary<string, object?>>>> QueryAsync(string query, int limit,
+            HashSet<string> types, CancellationToken token, bool includePlaylists)
         {
             if (!includePlaylists && types.SetEquals(["Playlist"])) return [];
             try

@@ -651,6 +651,7 @@ builder.Services.AddSingleton<allstarr.Core.Music.MusicMixService>();
 builder.Services.AddSingleton<allstarr.Core.Music.MusicCatalogMerge>();
 builder.Services.AddSingleton<allstarr.Core.Music.StreamingArtistCatalog>();
 builder.Services.AddSingleton<allstarr.Core.Music.EmptyServiceArtists>();
+builder.Services.AddSingleton<allstarr.Core.Music.LibrarySpellings>();
 
 
 if (backendType == BackendType.Jellyfin)

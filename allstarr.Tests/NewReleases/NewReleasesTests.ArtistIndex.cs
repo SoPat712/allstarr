@@ -97,6 +97,39 @@ public sealed partial class NewReleasesTests
     }
 
     [Fact]
+    public async Task LibrarySpellings_find_the_library_spelling_of_a_search_typed_without_spaces_or_punctuation()
+    {
+        await ArtistSongAsync("Cyber Sex", null, "Doja Cat");
+        await ArtistSongAsync("Thunderstruck", null, "AC/DC");
+        await ArtistSongAsync("Don't Start Now", null, "Dua Lipa");
+        var access = new Mock<IBackendLibraryAccessResolver>();
+        access.Setup(value => value.ResolveUserAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((Guid owner, CancellationToken _) => new BackendLibraryAccessContext(new(ProtocolKind.Subsonic, "main", owner.ToString(),
+                new AllstarrPrincipal(owner, "subsonic", "main", owner.ToString(), "Listener", false), "spellings", _clock.UtcNow.AddMinutes(10), default),
+                new(true, ["music"])));
+        var spellings = new allstarr.Core.Music.LibrarySpellings(_factory, access.Object);
+        var context = new ProtocolExecutionContext(ProtocolKind.Subsonic, "main", _first.ToString(),
+            new AllstarrPrincipal(_first, "subsonic", "main", _first.ToString(), "Listener", false), "spellings", _clock.UtcNow.AddMinutes(1), default);
+
+        Assert.Equal("Cyber Sex", await spellings.RespellAsync(context, "cybersex", default));
+        Assert.Equal("AC/DC", await spellings.RespellAsync(context, "acdc", default));
+        // A prefix asks for only the part typed, so "dont" asks the media server for "Don't".
+        Assert.Equal("Don't", await spellings.RespellAsync(context, "dont", default));
+        Assert.Null(await spellings.RespellAsync(context, "cyber sex", default));
+        Assert.Null(await spellings.RespellAsync(context, "zz", default));
+        Assert.Null(await spellings.RespellAsync(context, "nothing like it", default));
+    }
+
+    [Fact]
+    public async Task LibraryIndex_artist_ignores_placeholder_credit_ids_that_name_no_real_artist()
+    {
+        var song = await ArtistSongAsync("Only", null);
+        await ArtistIdentityAsync(song, "credit:n.QXJ0aXN0", "apple-musickit");
+
+        Assert.Empty(await ArtistIndex().ReadAsync(_first, "Artist"));
+    }
+
+    [Fact]
     public async Task LibraryIndex_artist_conflicting_track_identities_leave_the_service_unlinked()
     {
         var first = await ArtistSongAsync("First", "winner");
