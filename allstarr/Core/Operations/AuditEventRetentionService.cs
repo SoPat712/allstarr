@@ -3,6 +3,7 @@ using allstarr.Core.Favorites;
 using allstarr.Core.ManagedFiles;
 using allstarr.Core.Matching;
 using allstarr.Core.Playback;
+using allstarr.Core.Playlists;
 using allstarr.Core.Storage;
 using Microsoft.EntityFrameworkCore;
 
@@ -130,6 +131,8 @@ public sealed class AuditEventRetentionService(
                     "Pruned {Count} unreferenced finished routine jobs.",
                     deletedJobs);
             }
+            await using (var scope = scopeFactory.CreateAsyncScope())
+                await PlaylistSnapshotRetention.PruneSourcesAsync(scope.ServiceProvider.GetRequiredService<AllstarrDbContext>(), null, cancellationToken);
             if (taskActivity != null) await taskActivity.CompletedAsync("event-retention", true, cancellationToken);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)

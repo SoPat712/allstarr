@@ -92,7 +92,7 @@ async function fixture(page: Page, options: { needs?: boolean; administrator?: b
       const pageSize = Number(url.searchParams.get("pageSize") ?? 50);
       const pageRows = rows.slice((pageNo - 1) * pageSize, pageNo * pageSize);
       body = { matches: pageRows.map(item => ({ ...item, allowedAuthorityScopes: administrator ? ["personal", "household"] : ["personal"] })),
-        stats: { total: songs.length, matched: 2, accepted: 2, automatic: 2, manualMatches: 0, manualRejections: 0, suggested: needs ? 1 : 0, ambiguous: needs ? 1 : 0, review: needs ? 2 : 0, unresolved: needs ? 1 : 0, rejected: 0, attention: needs ? 2 : 0 },
+        stats: { total: songs.length, playlistCount: 2, matched: 2, accepted: 2, automatic: 2, manualMatches: 0, manualRejections: 0, suggested: needs ? 1 : 0, ambiguous: needs ? 1 : 0, review: needs ? 2 : 0, unresolved: needs ? 1 : 0, rejected: 0, attention: needs ? 2 : 0 },
         pagination: { page: pageNo, pageSize, total: rows.length, totalPages: Math.max(1, Math.ceil(rows.length / pageSize)) } };
     }
     if (url.pathname.endsWith("/current")) body = { target: songs.find(item => url.pathname.includes(`/${item.externalSnapshotId}/`))?.target ?? null };

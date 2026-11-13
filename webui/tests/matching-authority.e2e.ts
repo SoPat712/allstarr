@@ -108,7 +108,7 @@ async function mockMatching(page: Page, options: AuthorityOptions) {
     if (url.pathname === "/api/admin/track-matches") return json(route, {
       matches: [{ ...matchFixture(options.administrator), ...options.match }],
       stats: {
-        total: 1, matched: 1, accepted: 1, unresolved: 0, suggested: 0, review: 1,
+        total: 1, playlistCount: 1, matched: 1, accepted: 1, unresolved: 0, suggested: 0, review: 1,
         ambiguous: 1, rejected: 0, attention: 1, manualMatches: 1, manualRejections: 0,
       },
       pagination: { page: 1, pageSize: 50, total: 1, totalPages: 1 },
@@ -139,7 +139,7 @@ test("match review hides unlabeled and internal rows while keeping saved manual 
       { ...source, externalSnapshotId: "internal-source", providerId: "allstarr", title: "Internal recording" },
       { ...source, externalSnapshotId: "missing-provider", providerId: "", title: "Missing provider" },
     ],
-    stats: { total: 4, matched: 3, accepted: 3, unresolved: 1, suggested: 0, review: 0,
+    stats: { total: 4, playlistCount: 1, matched: 3, accepted: 3, unresolved: 1, suggested: 0, review: 0,
       ambiguous: 0, rejected: 0, attention: 1, manualMatches: 3, manualRejections: 0 },
     pagination: { page: 1, pageSize: 50, total: 4, totalPages: 1 },
   }));

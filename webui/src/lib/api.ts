@@ -1129,6 +1129,7 @@ export type MatchReviewResponse = {
   matches: MatchReviewItem[];
   stats: {
     total: number;
+    playlistCount: number;
     matched: number;
     accepted: number;
     unresolved: number;

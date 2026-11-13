@@ -72,7 +72,7 @@ public sealed class TrackMatchesCurrentTargetTests : IAsyncLifetime
         };
         review = new([source], [], [authority], [], []);
         repository.Setup(item => item.GetReviewDataAsync(new TrackMatchActor(owner, false), null, null, source.Id, 5000,
-                It.IsAny<CancellationToken>())).ReturnsAsync(() => review);
+                It.IsAny<CancellationToken>(), null)).ReturnsAsync(() => review);
         gateway.Setup(item => item.GetPlayableProviderOrderAsync(It.IsAny<ProviderActorContext>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(["deezer"]);
     }

@@ -331,7 +331,7 @@ public sealed class TrackMatchesController(
         if (summaryKey != null && await applicationCache!.GetStringAsync(summaryKey) is { } cached)
             return Ok(JsonSerializer.Deserialize<JsonElement>(cached));
         var started = Stopwatch.GetTimestamp();
-        var (allRows, loaded, prepared, playlistSearch) = await ReviewRowsAsync(session, execution, backendLibraryId, search,
+        var (allRows, loaded, prepared, playlistSearch, playlistCount) = await ReviewRowsAsync(session, execution, backendLibraryId, search,
             externalSnapshotId, cancellationToken);
         var filteredRows = allRows.Where(row => InState(row, state, playlistSearch));
         var titles = StringComparer.InvariantCulture;
@@ -368,6 +368,7 @@ public sealed class TrackMatchesController(
             stats = new
             {
                 total = allRows.Length,
+                playlistCount,
                 matched = allRows.Count(item => item.State is TrackMatchState.Accepted or TrackMatchState.Pinned),
                 accepted = allRows.Count(item => item.State is TrackMatchState.Accepted or TrackMatchState.Pinned),
                 unresolved = allRows.Count(item => item.State == TrackMatchState.Unresolved),
@@ -409,16 +410,16 @@ public sealed class TrackMatchesController(
         {
             return StatusCode(403, new { error = "The linked backend identity is unavailable" });
         }
-        var (rows, _, _, playlistSearch) = await ReviewRowsAsync(session!, execution, backendLibraryId, search, null, cancellationToken);
+        var (rows, _, _, playlistSearch, _) = await ReviewRowsAsync(session!, execution, backendLibraryId, search, null, cancellationToken);
         return Ok(new { matches = rows.Where(row => InState(row, state, playlistSearch)).Select(row => row.Selection()).ToArray() });
     }
 
-    private async Task<(MatchRow[] Rows, long Loaded, long Prepared, bool PlaylistSearch)> ReviewRowsAsync(AdminAuthSession session,
+    private async Task<(MatchRow[] Rows, long Loaded, long Prepared, bool PlaylistSearch, int PlaylistCount)> ReviewRowsAsync(AdminAuthSession session,
         ProtocolExecutionContext execution, string? backendLibraryId, string? search, Guid? externalSnapshotId,
         CancellationToken cancellationToken)
     {
         var userId = session.AllstarrUserId!.Value;
-        var playlists = await new SongPlaylistMembershipReader(contextFactory).ReadNamesAsync(userId, cancellationToken);
+        var (playlists, playlistCount) = await new SongPlaylistMembershipReader(contextFactory).ReadNamesAsync(userId, cancellationToken);
         var term = search?.Trim() ?? "";
         // A playlist-name query is applied to the grouped song, so an older snapshot is never pulled in as the row.
         var playlistSearch = IsPlaylistQuery(term, playlists);
@@ -427,7 +428,8 @@ public sealed class TrackMatchesController(
             backendLibraryId,
             playlistSearch ? null : search,
             externalSnapshotId,
-            cancellationToken: cancellationToken);
+            cancellationToken: cancellationToken,
+            playlistSongKeys: playlists.Keys.ToArray());
         var loaded = Stopwatch.GetTimestamp();
         var decisions = review.LatestDecisions.ToDictionary(item => item.ExternalSnapshotId);
         var overrides = ManualTrackOverrides.Index(review.Snapshots, review.ActiveOverrides, userId);
@@ -490,7 +492,7 @@ public sealed class TrackMatchesController(
             .ToArray();
         if (playlistSearch)
             allRows = allRows.Where(row => MatchesSongSearch(row, term)).ToArray();
-        return (allRows, loaded, prepared, playlistSearch);
+        return (allRows, loaded, prepared, playlistSearch, playlistCount);
     }
 
     private async Task<string> SummaryCacheKeyAsync(AdminAuthSession session, CancellationToken token)
@@ -506,6 +508,9 @@ public sealed class TrackMatchesController(
                 (SELECT COUNT(*) || ':' || COALESCE(SUM("Revision"), 0) FROM library_tracks) || ':' ||
                 (SELECT COUNT(*) || ':' || COALESCE(SUM("Revision"), 0) FROM provider_track_identities) || ':' ||
                 (SELECT COUNT(*) || ':' || COALESCE(SUM("Revision"), 0) FROM provider_accounts) || ':' ||
+                (SELECT COUNT(*) || ':' || COALESCE(SUM("Revision"), 0) || ':' || COALESCE(SUM("Enabled"), 0) FROM playlist_links) || ':' ||
+                (SELECT COUNT(*) || ':' || COALESCE(SUM("SnapshotVersion"), 0) || ':' || COUNT("PublishedAt") FROM playlist_source_snapshots) || ':' ||
+                (SELECT COUNT(*) FROM playlist_source_entries) || ':' ||
                 (SELECT COUNT(*) || ':' || COALESCE(SUM("Revision"), 0) FROM runtime_settings) AS "Value"
             """).SingleAsync(token);
         var scope = $"{db.Database.GetConnectionString()}:{session.AllstarrUserId}:{session.IsAdministrator}:{session.BackendType}:{session.BackendInstanceId}:{session.UserId}:{revision}";

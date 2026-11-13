@@ -70,7 +70,7 @@ async function mockPlays(page: Page, options: { administrator?: boolean; library
     if (path === `/api/admin/play-traces/${libraryId}`) return reply(libraryPlay);
     if (path.endsWith("/diagnostics")) return route.fulfill({ contentType: "text/plain", body: "Playback diagnostics" });
     if (path === "/api/admin/track-matches/selection") return reply({ matches: [{ ...match, manualAuthorities: options.automatic ? [] : match.manualAuthorities }] });
-    if (path === "/api/admin/track-matches") return reply({ matches: [{ ...match, playlistNames: [], manualAuthorities: options.automatic ? [] : match.manualAuthorities.map(authority => ({ ...authority, revision: changed ? 5 : authority.revision })) }], stats: { total: 1, matched: 1, accepted: 1, unresolved: 0, suggested: 0, review: 0, rejected: 0, attention: 0 }, pagination: { page: 1, pageSize: 50, total: 1, totalPages: 1 } });
+    if (path === "/api/admin/track-matches") return reply({ matches: [{ ...match, playlistNames: [], manualAuthorities: options.automatic ? [] : match.manualAuthorities.map(authority => ({ ...authority, revision: changed ? 5 : authority.revision })) }], stats: { total: 1, playlistCount: 1, matched: 1, accepted: 1, unresolved: 0, suggested: 0, review: 0, rejected: 0, attention: 0 }, pagination: { page: 1, pageSize: 50, total: 1, totalPages: 1 } });
     if (path.startsWith("/api/admin/track-matches/targets/")) return reply({ tracks: [], providers: ["applemusic"] });
     if (path === "/api/admin/updates/stream") return route.fulfill({ contentType: "text/event-stream", body: ": fixture\n\n" });
     return reply({});

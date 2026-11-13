@@ -34,7 +34,7 @@ public sealed class TrackMatchListPresentationTests
         var first = byPlaylist.GetProperty("matches").EnumerateArray().First();
         Assert.Equal(["Road mix"], first.GetProperty("playlistNames").EnumerateArray().Select(item => item.GetString()!).ToArray());
         var playlistSearch = Json(await controller.List(search: "road mix", pageSize: 10));
-        Assert.Single(playlistSearch.GetProperty("matches").EnumerateArray());
+        Assert.Equal(3, playlistSearch.GetProperty("matches").GetArrayLength());
         var selection = Json(await controller.Selection(state: "needs"));
         Assert.Equal(3, selection.GetProperty("matches").GetArrayLength());
         Assert.Contains(fixture.SuggestedId,
@@ -149,6 +149,16 @@ public sealed class TrackMatchListPresentationTests
         var earlier = Fixture.Snapshot(fixture, "track", "earlier", "{\"Title\":\"Earlier title\",\"Artist\":\"Earlier artist\"}", fixture.Now.AddHours(-2));
         var undecided = Fixture.Snapshot(fixture, "track", "undecided", "{\"Title\":\"Undecided title\",\"Artist\":\"Undecided artist\"}", fixture.Now.AddMinutes(5));
         db.ExternalMetadataSnapshots.AddRange(earlier, undecided);
+        var playlist = await db.PlaylistSourceSnapshots.SingleAsync();
+        foreach (var (song, position) in new[] { (earlier, 3), (undecided, 4) })
+            db.PlaylistSourceEntries.Add(new()
+            {
+                Id = Guid.CreateVersion7(),
+                PlaylistSourceSnapshotId = playlist.Id,
+                ExternalMetadataSnapshotId = song.Id,
+                SourcePosition = position,
+                SourceEntryIdHash = Hash("entry:" + position)
+            });
         var earlierRecording = Recording(fixture.Owner, "Earlier title", fixture.Now);
         db.CanonicalRecordings.Add(earlierRecording);
         db.TrackMatches.Add(new()
@@ -251,6 +261,15 @@ public sealed class TrackMatchListPresentationTests
                 SourcePosition = 0,
                 SourceEntryIdHash = Hash("retained-entry")
             });
+            foreach (var (song, position) in new[] { (suggested, 1), (older, 2) })
+                db.PlaylistSourceEntries.Add(new()
+                {
+                    Id = Guid.CreateVersion7(),
+                    PlaylistSourceSnapshotId = playlistSnapshot,
+                    ExternalMetadataSnapshotId = song.Id,
+                    SourcePosition = position,
+                    SourceEntryIdHash = Hash("entry:" + position)
+                });
             await db.SaveChangesAsync();
             return fixture;
         }
@@ -280,7 +299,7 @@ public sealed class TrackMatchListPresentationTests
                 DecidedAt = Now
             });
             AddPlaylist("night-drive", "Night drive", Now.AddHours(-3), older.Id, skipped.Id);
-            AddPlaylist("dawn-mix", "Dawn mix", Now.AddHours(-1), newer.Id);
+            AddPlaylist("dawn-mix", "Dawn mix", Now.AddHours(-1), newer.Id, quiet.Id, called.Id, album.Id, provider.Id);
             await db.SaveChangesAsync();
             return new(older.Id, newer.Id, quiet.Id, called.Id, album.Id, provider.Id, skipped.Id);
 

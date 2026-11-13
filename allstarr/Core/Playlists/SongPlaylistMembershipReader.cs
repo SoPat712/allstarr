@@ -229,7 +229,7 @@ public sealed class SongPlaylistMembershipReader(IDbContextFactory<AllstarrDbCon
         $"{providerId.ToLowerInvariant()}:{externalIdHash}";
 
     // Keyed by provider and external id so a refreshed snapshot keeps playlists recorded on the one it replaced.
-    public async Task<IReadOnlyDictionary<string, string[]>> ReadNamesAsync(Guid ownerUserId,
+    public async Task<(IReadOnlyDictionary<string, string[]> Names, int PlaylistCount)> ReadNamesAsync(Guid ownerUserId,
         CancellationToken cancellationToken = default)
     {
         await using var db = await factory.CreateDbContextAsync(cancellationToken);
@@ -238,16 +238,17 @@ public sealed class SongPlaylistMembershipReader(IDbContextFactory<AllstarrDbCon
             join snapshot in db.PlaylistSourceSnapshots.AsNoTracking() on link.Id equals snapshot.PlaylistLinkId
             join entry in db.PlaylistSourceEntries.AsNoTracking() on snapshot.Id equals entry.PlaylistSourceSnapshotId
             join song in db.ExternalMetadataSnapshots.AsNoTracking() on entry.ExternalMetadataSnapshotId equals song.Id
-            where link.OwnerUserId == ownerUserId && snapshot.OwnerUserId == ownerUserId && song.OwnerUserId == ownerUserId &&
-                song.ResourceKind == "track" && snapshot.PublishedAt.HasValue &&
+            where link.Enabled && link.OwnerUserId == ownerUserId && snapshot.OwnerUserId == ownerUserId && song.OwnerUserId == ownerUserId &&
+                song.ResourceKind == "track" && song.ProviderId != "allstarr" && snapshot.PublishedAt.HasValue &&
                 !db.PlaylistSourceSnapshots.Any(newer => newer.PlaylistLinkId == link.Id &&
                     newer.OwnerUserId == ownerUserId && newer.PublishedAt.HasValue && newer.SnapshotVersion > snapshot.SnapshotVersion)
             select new { link.Id, link.CreatedAt, link.SourceProviderId, snapshot.Name, song.ProviderId, song.ExternalIdHash })
             .ToArrayAsync(cancellationToken);
-        return rows.OrderBy(row => row.CreatedAt).ThenBy(row => row.Id)
+        var names = rows.OrderBy(row => row.CreatedAt).ThenBy(row => row.Id)
             .GroupBy(row => SongKey(row.ProviderId, row.ExternalIdHash), StringComparer.Ordinal)
             .ToDictionary(group => group.Key, group => group
                 .Select(row => PlaylistVirtualizationService.DisplayName(row.SourceProviderId, row.Name))
                 .Distinct(StringComparer.Ordinal).ToArray(), StringComparer.Ordinal);
+        return (names, rows.Select(row => row.Id).Distinct().Count());
     }
 }

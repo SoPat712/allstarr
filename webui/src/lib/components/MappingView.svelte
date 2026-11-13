@@ -9,7 +9,6 @@
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
   import {
     home,
-    playlistLinks,
     matchReview,
     type ManualMatchAuthority,
     type MatchAuthorityScope,
@@ -79,7 +78,6 @@
   let acceptRequest = $state(0);
   let lyricsRequest = $state(0);
   let shortcutsOpen = $state(false);
-  let playlistCount = $state<number | null>(null);
   let libraryOptions = $state<{ value: string; label: string }[]>([]);
   let searchInput = $state("");
   let search = $state("");
@@ -190,10 +188,8 @@
       const schema = await home.schema();
       providers = schema.providers;
       backend = schema.activeBackend || backend;
-      playlistCount = (await playlistLinks.list()).playlistLinks?.length ?? null;
       providerError = "";
     } catch (cause) {
-      playlistCount = null;
       providerError = cause instanceof Error ? cause.message : "Provider presentation is unavailable.";
     }
   }
@@ -628,7 +624,7 @@
       <header class="mapping-heading">
         <div class="match-title"><h2>Matches</h2>{#if administrator}<MatchKindSwitch active="songs" />{/if}<Button class="match-title-action" variant="outline" size="sm" disabled={Boolean(action) || refreshing} onclick={() => rematchAllOpen = true}>Rematch all</Button></div>
         <PageStatus items={[
-          { label: `${countLabel(data.stats.total, "song")}${playlistCount == null ? "" : ` from ${countLabel(playlistCount, "playlist")}`}`, emphasis: true },
+          { label: `${countLabel(data.stats.total, "song")} from ${countLabel(data.stats.playlistCount, "playlist")}`, emphasis: true },
           { label: `${counts.needs.toLocaleString()} ${counts.needs === 1 ? "needs" : "need"} a look`, tone: "warn" },
           ...(threshold == null ? [] : [{ label: `Matches above ${percent(threshold)} are accepted on their own` }]),
         ]} />

@@ -461,7 +461,7 @@ test("report review keeps saved-match links and hides unavailable lyric actions"
       artist: captured.song.artist, album: captured.song.album, state: "accepted", decisionSource: "track_match_decision",
       confidence: .95, threshold: .88, providerIdentities: [], candidates: [], reasons: [], warnings: [],
       target: { providerId: "qobuz", externalId: "saved-target", title: "Saved recording", artist: captured.song.artist } }],
-    stats: { total: 1, matched: 1, accepted: 1, automatic: 1, suggested: 0, review: 0, unresolved: 0, rejected: 0, attention: 0 },
+    stats: { total: 1, playlistCount: 1, matched: 1, accepted: 1, automatic: 1, suggested: 0, review: 0, unresolved: 0, rejected: 0, attention: 0 },
     pagination: { page: 1, pageSize: 50, total: 1, totalPages: 1 },
   }));
   await page.getByRole("link", { name: "Review match", exact: true }).click();

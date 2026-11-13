@@ -758,6 +758,15 @@ public sealed partial class PlaylistOrchestrationService : IPlaylistOrchestratio
             await db.SaveChangesAsync(cancellationToken);
         }
         await transaction.CommitAsync(cancellationToken);
+        try
+        {
+            await using var cleanup = await _factory.CreateDbContextAsync(cancellationToken);
+            await PlaylistSnapshotRetention.PruneSourcesAsync(cleanup, link.Id, cancellationToken);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            _logger?.LogWarning(exception, "Playlist snapshot cleanup failed; retention will retry.");
+        }
         return rematchJobId;
     }
 

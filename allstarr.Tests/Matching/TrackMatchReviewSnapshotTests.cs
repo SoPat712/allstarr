@@ -21,6 +21,127 @@ namespace allstarr.Tests;
 
 public sealed class TrackMatchReviewSnapshotTests
 {
+    [Theory]
+    [InlineData("spotify")]
+    [InlineData("listenbrainz")]
+    [InlineData("lastfm")]
+    [InlineData("allstarr")]
+    public async Task ReviewAndSelectionOnlyIncludeCurrentSongsInApps(string provider)
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await using var db = fixture.Factory.CreateDbContext();
+        var link = await db.PlaylistLinks.SingleAsync();
+        link.SourceProviderId = provider;
+        var orphan = fixture.Snapshot("track", "unadded", """{"Title":"Unadded feed song","Artist":"Someone"}""");
+        var accepted = fixture.Snapshot("track", "rotated", """{"Title":"Rotated song","Artist":"Someone"}""");
+        var refreshed = fixture.Snapshot("track", "source", """{"Title":"Refreshed title","Artist":"Retained artist"}""", version: 2);
+        db.ExternalMetadataSnapshots.AddRange(orphan, accepted, refreshed);
+        var recordingId = Guid.CreateVersion7();
+        db.CanonicalRecordings.Add(new()
+        {
+            Id = recordingId,
+            CreatedByUserId = fixture.Owner,
+            Title = "Rotated song",
+            PublicId = CanonicalRecordingRecord.DefaultPublicId(recordingId),
+            Revision = 1
+        });
+        db.TrackMatches.Add(new()
+        {
+            Id = Guid.CreateVersion7(),
+            OwnerUserId = fixture.Owner,
+            ExternalSnapshotId = accepted.Id,
+            CanonicalRecordingId = recordingId,
+            State = TrackMatchState.Accepted,
+            DecisionVersion = 1,
+            SourceSnapshotVersion = 1,
+            Revision = 1
+        });
+        db.PlaylistSourceEntries.Add(new()
+        {
+            Id = Guid.CreateVersion7(),
+            PlaylistSourceSnapshotId = await db.PlaylistSourceSnapshots.Select(item => item.Id).SingleAsync(),
+            ExternalMetadataSnapshotId = accepted.Id,
+            SourcePosition = 99,
+            SourceEntryIdHash = Hash("rotated-entry")
+        });
+        db.ManualTrackOverrides.Add(new()
+        {
+            Id = Guid.CreateVersion7(),
+            OwnerUserId = fixture.Owner,
+            ExternalSnapshotId = orphan.Id,
+            SourceProviderId = orphan.ProviderId,
+            SourceExternalIdHash = orphan.ExternalIdHash,
+            Decision = ManualOverrideDecision.Reject,
+            DecisionVersion = 1,
+            Revision = 1
+        });
+        var current = new PlaylistSourceSnapshotRecord
+        {
+            Id = Guid.CreateVersion7(),
+            OwnerUserId = fixture.Owner,
+            PlaylistLinkId = link.Id,
+            SnapshotVersion = 2,
+            PublishedAt = DateTimeOffset.UtcNow,
+            Name = "Added feed or mix",
+            PayloadSha256 = Hash("current")
+        };
+        db.PlaylistSourceSnapshots.Add(current);
+        db.PlaylistSourceEntries.Add(new()
+        {
+            Id = Guid.CreateVersion7(),
+            PlaylistSourceSnapshotId = current.Id,
+            ExternalMetadataSnapshotId = refreshed.Id,
+            SourcePosition = 0,
+            SourceEntryIdHash = Hash("current-entry")
+        });
+        await db.SaveChangesAsync();
+        var controller = fixture.Controller();
+        var listed = Json(await controller.List(pageSize: 1));
+        Assert.Equal(1, listed.GetProperty("stats").GetProperty("total").GetInt32());
+        Assert.Equal(1, listed.GetProperty("stats").GetProperty("playlistCount").GetInt32());
+        Assert.Equal(1, listed.GetProperty("stats").GetProperty("manualMatches").GetInt32());
+        Assert.Equal(0, listed.GetProperty("stats").GetProperty("unresolved").GetInt32());
+        Assert.Equal(0, listed.GetProperty("stats").GetProperty("manualRejections").GetInt32());
+        Assert.Equal(1, listed.GetProperty("pagination").GetProperty("total").GetInt32());
+        Assert.Equal(refreshed.Id, Assert.Single(listed.GetProperty("matches").EnumerateArray()).GetProperty("externalSnapshotId").GetGuid());
+        Assert.Empty(Json(await controller.List(page: 2, pageSize: 1)).GetProperty("matches").EnumerateArray());
+        Assert.Single(Json(await controller.Selection()).GetProperty("matches").EnumerateArray());
+        var scoped = await fixture.Service.GetReviewDataAsync(new(fixture.Owner, false), scanLimit: 1,
+            playlistSongKeys: [SongPlaylistMembershipReader.SongKey("spotify", Hash("source"))]);
+        Assert.Equal(refreshed.Id, Assert.Single(scoped.Snapshots).Id);
+        foreach (var state in new[] { "", "needs", "attention", "matched", "history", "automatic", "manual_matches", "manual_rejections", "accepted", "pinned", "rejected", "unresolved", "suggested", "ambiguous" })
+        {
+            Assert.All(Json(await controller.List(state: state)).GetProperty("matches").EnumerateArray(),
+                row => Assert.Equal(refreshed.Id, row.GetProperty("externalSnapshotId").GetGuid()));
+            Assert.All(Json(await controller.Selection(state: state)).GetProperty("matches").EnumerateArray(),
+                row => Assert.Equal(refreshed.Id, row.GetProperty("externalSnapshotId").GetGuid()));
+        }
+        Assert.Empty(Json(await controller.List(search: "Unadded")).GetProperty("matches").EnumerateArray());
+        Assert.Empty(Json(await controller.List(externalSnapshotId: orphan.Id)).GetProperty("matches").EnumerateArray());
+        Assert.Single(await db.ManualTrackOverrides.Where(item => item.ExternalSnapshotId == fixture.TrackId).ToArrayAsync());
+    }
+
+    [Fact]
+    public async Task SummaryCacheRechecksPlaylistMembershipAndEnabledLinks()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var controller = fixture.Controller(new TestMemoryApplicationCache());
+        Assert.Equal(2, Json(await controller.List(pageSize: 1)).GetProperty("stats").GetProperty("total").GetInt32());
+        await using var db = fixture.Factory.CreateDbContext();
+        var link = await db.PlaylistLinks.SingleAsync();
+        link.Enabled = false;
+        link.Revision++;
+        await db.SaveChangesAsync();
+        Assert.Equal(0, Json(await controller.List(pageSize: 1)).GetProperty("stats").GetProperty("total").GetInt32());
+        Assert.Empty(Json(await controller.Selection()).GetProperty("matches").EnumerateArray());
+        link.Enabled = true;
+        link.Revision++;
+        await db.SaveChangesAsync();
+        Assert.Equal(2, Json(await controller.List(pageSize: 1)).GetProperty("stats").GetProperty("total").GetInt32());
+        await db.PlaylistSourceEntries.ExecuteDeleteAsync();
+        Assert.Equal(0, Json(await controller.List(pageSize: 1)).GetProperty("stats").GetProperty("total").GetInt32());
+    }
+
     [Fact]
     public async Task SummaryCacheKeepsResponseShapeAndRechecksDecisionsAuthoritiesAndAccess()
     {
@@ -298,6 +419,38 @@ public sealed class TrackMatchReviewSnapshotTests
                 Revision = 1,
                 CreatedAt = Now
             });
+            var link = Guid.CreateVersion7();
+            var playlist = Guid.CreateVersion7();
+            db.PlaylistLinks.Add(new()
+            {
+                Id = link,
+                OwnerUserId = fixture.Owner,
+                SourceProviderId = "spotify",
+                SourcePlaylistId = "added",
+                SourcePlaylistIdHash = Hash("added"),
+                TargetProtocol = "jellyfin",
+                TargetBackendInstanceId = "fixture"
+            });
+            db.PlaylistSourceSnapshots.Add(new()
+            {
+                Id = playlist,
+                OwnerUserId = fixture.Owner,
+                PlaylistLinkId = link,
+                SnapshotVersion = 1,
+                PublishedAt = Now,
+                Name = "Added playlist",
+                PayloadSha256 = Hash("added")
+            });
+            var songs = db.ExternalMetadataSnapshots.Local.Where(item => item.ResourceKind == "track" && item.ProviderId == "spotify").ToArray();
+            for (var index = 0; index < songs.Length; index++)
+                db.PlaylistSourceEntries.Add(new()
+                {
+                    Id = Guid.CreateVersion7(),
+                    PlaylistSourceSnapshotId = playlist,
+                    ExternalMetadataSnapshotId = songs[index].Id,
+                    SourcePosition = index,
+                    SourceEntryIdHash = Hash("entry:" + index)
+                });
             await db.SaveChangesAsync();
             fixture.Service = new(fixture.Factory, new TrackMatchDecisionEngine(), new ProviderAccountResolver(fixture.Factory),
                 new SystemPlatformClock(), new TestBackendLibraryAccess(fixture.Factory, "music"));

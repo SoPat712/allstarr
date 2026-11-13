@@ -96,7 +96,7 @@ export async function panelFixture(page: Page) {
       const rows = url.searchParams.has("externalSnapshotId")
         ? matches.filter(item => item.externalSnapshotId === url.searchParams.get("externalSnapshotId"))
         : !state || state === "needs" || state === "attention" ? matches.filter(item => item.state === "ambiguous") : matches.filter(item => item.state === state);
-      return reply({ matches: rows, stats: { total: 2, matched: 1, accepted: 1, automatic: 1, manualMatches: 0, manualRejections: 0, suggested: 0, ambiguous: 1, review: 1, unresolved: 0, rejected: 0, attention: 1 }, pagination: { page: 1, pageSize: 50, total: rows.length, totalPages: 1 } });
+      return reply({ matches: rows, stats: { total: 2, playlistCount: 1, matched: 1, accepted: 1, automatic: 1, manualMatches: 0, manualRejections: 0, suggested: 0, ambiguous: 1, review: 1, unresolved: 0, rejected: 0, attention: 1 }, pagination: { page: 1, pageSize: 50, total: rows.length, totalPages: 1 } });
     }
     if (path.includes("/track-matches/targets/")) return reply({ tracks: [], providers: [] });
     if (path === "/api/admin/jobs") return reply({ jobs: [job], progress: [], hasMore: false });

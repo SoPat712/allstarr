@@ -144,13 +144,15 @@ public sealed partial class TrackMatchCommandService
         string? search = null,
         Guid? externalSnapshotId = null,
         int scanLimit = 5000,
-        CancellationToken cancellationToken = default) =>
-        GetReviewDataCoreAsync(actor, backendLibraryId, search, externalSnapshotId, scanLimit, cancellationToken, false);
+        CancellationToken cancellationToken = default,
+        string[]? playlistSongKeys = null) =>
+        GetReviewDataCoreAsync(actor, backendLibraryId, search, externalSnapshotId, scanLimit, cancellationToken, false,
+            playlistSongKeys: playlistSongKeys);
 
     private async Task<TrackMatchReviewData> GetReviewDataCoreAsync(
         TrackMatchActor actor, string? backendLibraryId, string? search, Guid? externalSnapshotId,
         int scanLimit, CancellationToken cancellationToken, bool includeSourceHistory, TrackMatchLibraryMemo? libraryMemo = null,
-        Guid[]? sourceIds = null, Dictionary<Guid, TrackMatchReviewData>? batches = null)
+        Guid[]? sourceIds = null, Dictionary<Guid, TrackMatchReviewData>? batches = null, string[]? playlistSongKeys = null)
     {
         var timings = new List<(string Step, long At)> { ("start", Stopwatch.GetTimestamp()) };
         await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
@@ -163,6 +165,9 @@ public sealed partial class TrackMatchCommandService
             snapshotsQuery = snapshotsQuery.Where(item => item.OwnerUserId == actor.UserId &&
                 (item.ProviderAccountId == null || visibleAccountIds!.Contains(item.ProviderAccountId.Value) &&
                     db.ProviderAccounts.Any(account => account.Id == item.ProviderAccountId && account.ProviderId == item.ProviderId)));
+        if (playlistSongKeys != null)
+            snapshotsQuery = snapshotsQuery.Where(item => item.OwnerUserId == actor.UserId &&
+                EF.Parameter(playlistSongKeys).Contains(item.ProviderId.ToLower() + ":" + item.ExternalIdHash));
         var sources = sourceIds == null ? [] : await db.ExternalMetadataSnapshots.AsNoTracking()
             .Where(item => sourceIds.Contains(item.Id) && item.OwnerUserId == actor.UserId && item.ResourceKind == "track")
             .ToArrayAsync(cancellationToken);

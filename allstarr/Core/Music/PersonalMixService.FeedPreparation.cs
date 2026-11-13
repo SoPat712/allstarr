@@ -84,7 +84,7 @@ public sealed partial class PersonalMixService
             });
             await db.SaveChangesAsync(token);
             if (coverImages != null) WarmCovers(owner, [prepared]);
-            await rows.Where(item => item.SnapshotVersion <= version - KeptDocuments).ExecuteDeleteAsync(token);
+            await PlaylistSnapshotRetention.PruneDocumentsAsync(rows.Where(item => item.SnapshotVersion <= version - KeptDocuments), token);
             clientEvents?.Publish(owner, ClientEvent.Mix(card.Id));
         }
         if (request.Offset + 3 < cards.Length)

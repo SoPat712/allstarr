@@ -155,7 +155,8 @@ public interface ITrackMatchRepository
         string? search = null,
         Guid? externalSnapshotId = null,
         int scanLimit = 5000,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default,
+        string[]? playlistSongKeys = null);
 
     Task<IReadOnlyList<LibraryTrackRecord>> SearchLocalTracksAsync(
         TrackMatchActor actor,

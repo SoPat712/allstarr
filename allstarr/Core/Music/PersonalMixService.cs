@@ -215,8 +215,8 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
         }
         // Only the newest is ever read, and each one holds every mix.
         var oldest = (previous?.SnapshotVersion ?? 0) + 1 - KeptDocuments;
-        await db.ExternalMetadataSnapshots.Where(item => item.OwnerUserId == user.Id && item.ProviderId == "allstarr" && item.ResourceKind == kind &&
-            item.ExternalIdHash == Scope(user) && item.SnapshotVersion <= oldest).ExecuteDeleteAsync(token);
+        await PlaylistSnapshotRetention.PruneDocumentsAsync(db.ExternalMetadataSnapshots.Where(item => item.OwnerUserId == user.Id && item.ProviderId == "allstarr" && item.ResourceKind == kind &&
+            item.ExternalIdHash == Scope(user) && item.SnapshotVersion <= oldest), token);
     }
 
     private async Task<(UserRecord User, PersonalMixDocument Document, int Version)> SnapshotAsync(

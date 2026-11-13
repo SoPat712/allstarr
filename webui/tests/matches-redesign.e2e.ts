@@ -30,7 +30,7 @@ async function fixture(page: Page, options: { needs?: boolean; administrator?: b
     if (url.pathname.endsWith("/ui/schema")) body = { activeBackend: "Local library", providers: [
       { id: "spotify", name: "Spotify", categories: ["metadata"] }, { id: "qobuz", name: "Qobuz", categories: ["streaming"] }, { id: "apple-download", name: "Apple Music", categories: ["streaming"] },
     ] };
-    if (url.pathname === "/api/admin/playlist-links") body = { playlistLinks: [{ id: "first", name: "First playlist" }, { id: "second", name: "Second playlist" }] };
+    if (url.pathname === "/api/admin/playlist-links") body = { playlistLinks: [{ id: "first", name: "First playlist" }, { id: "second", name: "Second playlist" }, { id: "paused", name: "Paused playlist", enabled: false }] };
     if (url.pathname.endsWith("/resolve")) { writes.push(route.request().postDataJSON()); body = { success: true }; }
     if (url.pathname.endsWith("/rematch")) body = { rematched: true, state: "suggested" };
     if (url.pathname === "/api/admin/track-matches/selection") {
@@ -48,7 +48,7 @@ async function fixture(page: Page, options: { needs?: boolean; administrator?: b
       const pageSize = Number(url.searchParams.get("pageSize") ?? 50);
       const pageRows = rows.slice((page - 1) * pageSize, page * pageSize);
       body = { matches: pageRows.map(item => ({ ...item, allowedAuthorityScopes: administrator ? ["personal", "household"] : ["personal"] })),
-        stats: { total: songs.length, matched: 2, accepted: 2, automatic: 2, manualMatches: 0, manualRejections: 0, suggested: needs ? 1 : 0, ambiguous: needs ? 1 : 0, review: needs ? 2 : 0, unresolved: needs ? 1 : 0, rejected: 0, attention: needs ? 2 : 0 },
+        stats: { total: songs.length, playlistCount: 2, matched: 2, accepted: 2, automatic: 2, manualMatches: 0, manualRejections: 0, suggested: needs ? 1 : 0, ambiguous: needs ? 1 : 0, review: needs ? 2 : 0, unresolved: needs ? 1 : 0, rejected: 0, attention: needs ? 2 : 0 },
         pagination: { page, pageSize, total: rows.length, totalPages: Math.max(1, Math.ceil(rows.length / pageSize)) } };
     }
     if (url.pathname.endsWith("/current")) body = { target: songs.find(item => url.pathname.includes(`/${item.externalSnapshotId}/`))?.target ?? null };
@@ -451,7 +451,7 @@ test("Match status and legend format large counts and put rematch before filters
   await fixture(page);
   await page.route(url => url.pathname === "/api/admin/track-matches", route => route.fulfill({ json: {
     matches: [makeSong("One", "ambiguous", .74)],
-    stats: { total: 4999, matched: 4998, accepted: 4998, automatic: 4991, manualMatches: 7, manualRejections: 0, suggested: 0, ambiguous: 1, review: 1, unresolved: 0, rejected: 0, attention: 1 },
+    stats: { total: 4999, playlistCount: 2, matched: 4998, accepted: 4998, automatic: 4991, manualMatches: 7, manualRejections: 0, suggested: 0, ambiguous: 1, review: 1, unresolved: 0, rejected: 0, attention: 1 },
     pagination: { page: 1, pageSize: 50, total: 1, totalPages: 1 },
   } }));
   await page.goto("/#/library/matches");
@@ -511,7 +511,7 @@ test("A failed provider catalog stays on the Matches banner until Try again", as
   await page.goto("#/library/matches");
   const banner = page.locator(".degraded-banner");
   await expect(banner).toContainText("Provider presentation is unavailable.");
-  await expect(page.getByRole("region", { name: "Page status", exact: true })).not.toContainText("from 2 playlists");
+  await expect(page.getByRole("region", { name: "Page status", exact: true })).toContainText("5 songs from 2 playlists");
   await expect(page.locator('.mapping-row[data-snapshot="One"] .plays-as')).toContainText("Unknown source");
   await banner.getByRole("button", { name: "Try again", exact: true }).click();
   await expect(banner).toHaveCount(0);

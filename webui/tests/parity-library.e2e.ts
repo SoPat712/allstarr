@@ -159,7 +159,7 @@ test("Match review pages from cache and acts on several selected songs", async (
     const requested = new URL(route.request().url()).searchParams.get("page") ?? "1";
     if (requested === "1" && holdFirstPage) await new Promise(() => {});
     await route.fulfill({ json: { matches: pages[requested], pagination: { page: Number(requested), pageSize: 2, total: 3, totalPages: 2 },
-      stats: { total: 3, matched: 0, accepted: 0, unresolved: 0, suggested: 3, review: 3, rejected: 0, attention: 3 } } });
+      stats: { total: 3, playlistCount: 1, matched: 0, accepted: 0, unresolved: 0, suggested: 3, review: 3, rejected: 0, attention: 3 } } });
   });
   await page.route("**/api/admin/track-matches/*/rematch", (route) => {
     rematched.push(new URL(route.request().url()).pathname.split("/")[4]);

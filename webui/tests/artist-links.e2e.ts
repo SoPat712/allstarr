@@ -52,7 +52,7 @@ async function fixture(page: Page, administrator = true) {
       { id: "applemusickit", name: "Apple Music", categories: ["streaming"] }, { id: "deezer", name: "Deezer", categories: ["streaming"] },
       { id: "spotify", name: "Spotify", categories: ["metadata"] }, { id: "qobuz", name: "Qobuz", categories: ["streaming"] }, { id: "soundcloud", name: "SoundCloud", categories: ["streaming"] },
     ] };
-    if (url.pathname === "/api/admin/track-matches") body = { matches: [], stats: { total: 0, matched: 0, accepted: 0, automatic: 0, manualMatches: 0, manualRejections: 0, suggested: 0, ambiguous: 0, review: 0, unresolved: 0, rejected: 0, attention: 0 }, pagination: { page: 1, pageSize: 50, total: 0, totalPages: 1 } };
+    if (url.pathname === "/api/admin/track-matches") body = { matches: [], stats: { total: 0, playlistCount: 0, matched: 0, accepted: 0, automatic: 0, manualMatches: 0, manualRejections: 0, suggested: 0, ambiguous: 0, review: 0, unresolved: 0, rejected: 0, attention: 0 }, pagination: { page: 1, pageSize: 50, total: 0, totalPages: 1 } };
     if (url.pathname === "/api/admin/playlist-links") body = { playlistLinks: [] };
     if (url.pathname.startsWith("/api/admin/artist-links")) {
       if (!administrator) return route.fulfill({ status: 403, json: {} });

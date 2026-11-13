@@ -626,7 +626,7 @@ async function mockApi(page: Page, options: {
             components: { title: 1, priorityWindow: 0.07 },
           }] : [])],
         }],
-        stats: { total: 1, matched: 0, accepted: 0, unresolved: 0, suggested: 1, review: 1, rejected: 0, attention: 1 },
+        stats: { total: 1, playlistCount: 1, matched: 0, accepted: 0, unresolved: 0, suggested: 1, review: 1, rejected: 0, attention: 1 },
         pagination: { page: 1, pageSize: 50, total: 1, totalPages: 1 },
       };
     if (url.pathname === "/api/admin/track-matches/snapshot/resolve" && route.request().method() === "POST")
@@ -1034,7 +1034,7 @@ async function mockRecordingLyrics(page: Page, options: { administrator?: boolea
       candidates: [], providerIdentities: [], reasons: [], warnings: [],
       allowedAuthorityScopes: administrator ? ["personal", "household"] : ["personal"],
     }],
-    stats: { total: 1, matched: 0, accepted: 0, unresolved: 0, suggested: 1, review: 1, rejected: 0, attention: 1 },
+    stats: { total: 1, playlistCount: 1, matched: 0, accepted: 0, unresolved: 0, suggested: 1, review: 1, rejected: 0, attention: 1 },
     pagination: { page: 1, pageSize: 50, total: 1, totalPages: 1 },
   } }));
   await page.route("**/api/admin/ui/schema", route => route.fulfill({ json: {

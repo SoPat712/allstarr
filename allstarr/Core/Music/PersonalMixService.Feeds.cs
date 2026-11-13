@@ -141,7 +141,7 @@ public sealed partial class PersonalMixService
                     saved.RetrievedAt = clock.UtcNow;
                     await db.SaveChangesAsync(token);
                     if (complete && coverImages != null) WarmCovers(user.Id, cards);
-                    await rows.Where(item => item.SnapshotVersion <= version - KeptDocuments).ExecuteDeleteAsync(token);
+                    await PlaylistSnapshotRetention.PruneDocumentsAsync(rows.Where(item => item.SnapshotVersion <= version - KeptDocuments), token);
                 }
                 if (queuePreparation && saved != null && !queued)
                     await QueueServiceFeedPreparationAsync(user.Id, account, 0, saved.RetrievedAt, token);
@@ -268,7 +268,7 @@ public sealed partial class PersonalMixService
                 saved.PayloadSha256 = Hash(json);
                 saved.RetrievedAt = clock.UtcNow;
                 await db.SaveChangesAsync(token);
-                await rows.Where(item => item.SnapshotVersion <= version - KeptDocuments).ExecuteDeleteAsync(token);
+                await PlaylistSnapshotRetention.PruneDocumentsAsync(rows.Where(item => item.SnapshotVersion <= version - KeptDocuments), token);
             }
         }
         finally { requests.Release(); }
