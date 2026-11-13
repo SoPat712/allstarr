@@ -1,6 +1,7 @@
 using System.Text.Json.Nodes;
 using System.Threading.Channels;
 using allstarr.Core.Music;
+using allstarr.Core.ClientApiV2;
 using allstarr.Models.Domain;
 using allstarr.Models.Subsonic;
 using allstarr.Services.Common;
@@ -67,9 +68,13 @@ internal sealed record RankedSearchRow(JsonObject Item, string Section, Song? So
     }
 }
 
+internal sealed record RankedSearchBatch(int Revision, IReadOnlyList<string> Providers, RankedSearchRow? Top,
+    IReadOnlyList<RankedSearchRow> Items, IReadOnlyDictionary<string, RankedSearchRow[]> Sections, IReadOnlyList<string>? Late);
+
 internal sealed partial class RankedSearchSnapshots(string query, int limit, IReadOnlyList<string> requested,
     string? preferred, TimeProvider clock, Func<object, CancellationToken, Task> write,
-    Func<IReadOnlyList<RankedSearchRow>, CancellationToken, Task>? refresh = null)
+    Func<IReadOnlyList<RankedSearchRow>, CancellationToken, Task>? refresh = null,
+    Func<RankedSearchBatch, CancellationToken, Task>? publish = null)
 {
     private sealed record Update(string? Provider, IReadOnlyList<RankedSearchRow> Rows,
         IReadOnlyList<string>? Late, TaskCompletionSource? Accepted = null, IReadOnlySet<string>? Linked = null,
@@ -156,8 +161,8 @@ internal sealed partial class RankedSearchSnapshots(string query, int limit, IRe
                                     ["sourceName"] = listed.Item["sourceName"]?.DeepClone(),
                                     ["id"] = id
                                 }];
-                                listed.Item["source"] = SearchController.CombinedSource;
-                                listed.Item["sourceName"] = SearchController.CombinedSourceName;
+                                listed.Item["source"] = V2SearchStream.CombinedSource;
+                                listed.Item["sourceName"] = V2SearchStream.CombinedSourceName;
                             }
                             also.Add(entry);
                         }
@@ -318,17 +323,23 @@ internal sealed partial class RankedSearchSnapshots(string query, int limit, IRe
         var candidates = nearArtists.Length > 0 ? nearArtists : all;
         var best = candidates.OrderByDescending(row => row.Score).ThenBy(row => row.Native == null).FirstOrDefault();
         top = pinned ?? (top != null && candidates.Contains(top) && (best == null || !ShouldMoveUp(best, top)) ? top : best);
-        var visible = sections.ToDictionary(pair => pair.Key, pair => pair.Value.Take(limit).Select(row => row.Item).ToArray());
-        if (top != null && !visible[top.Section].Contains(top.Item))
-            visible[top.Section] = visible[top.Section].Take(limit - 1).Append(top.Item).ToArray();
+        var visible = sections.ToDictionary(pair => pair.Key, pair => pair.Value.Take(limit).ToArray());
+        if (top != null && !visible[top.Section].Contains(top))
+            visible[top.Section] = visible[top.Section].Take(limit - 1).Append(top).ToArray();
+        ++revision;
+        if (publish != null)
+        {
+            await publish(new(revision, providers.ToArray(), top, mixed.Take(limit).ToArray(), visible, late), token);
+            return;
+        }
         var value = new Dictionary<string, object?>
         {
-            ["revision"] = ++revision,
+            ["revision"] = revision,
             ["done"] = late != null,
             ["providers"] = providers.ToArray(),
             ["top"] = top?.Item,
             ["items"] = mixed.Take(limit).Select(row => row.Item).ToArray(),
-            ["sections"] = visible
+            ["sections"] = visible.ToDictionary(pair => pair.Key, pair => pair.Value.Select(row => row.Item).ToArray())
         };
         if (late != null) value["late"] = late;
         token.ThrowIfCancellationRequested();

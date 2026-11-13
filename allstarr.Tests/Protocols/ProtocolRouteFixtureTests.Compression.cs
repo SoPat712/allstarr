@@ -178,7 +178,6 @@ public sealed partial class ProtocolRouteFixtureTests
     }
 
     [Theory]
-    [InlineData("/allstarr/v1/events")]
     [InlineData("/allstarr/v2/events")]
     public async Task ClientApi_EventCompressionRemainsDisabled(string path)
     {

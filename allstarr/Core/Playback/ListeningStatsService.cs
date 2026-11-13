@@ -18,6 +18,7 @@ public sealed record ListeningStatsCoverage(long UnknownSongIdentityCount, long 
 public sealed record ListeningStatsSong(string Title, string Artist, string? Album, long PlayCount)
 {
     public string? ArtworkUrl { get; init; }
+    [JsonIgnore] public string? ItemId { get; init; }
 }
 public sealed record ListeningStatsArtist(string Artist, long PlayCount)
 {
@@ -230,7 +231,11 @@ public sealed partial class ListeningStatsService(IDbContextFactory<AllstarrDbCo
         var songs = songGroups.Select(group =>
         {
             var song = group.OrderByDescending(item => item.At).ThenBy(item => item.Title, StringComparer.Ordinal).First();
-            return new ListeningStatsSong(song.Title!.Trim(), song.Artist!.Trim(), song.Album?.Trim(), group.LongCount()) { ArtworkUrl = ArtworkByName(song.Artist!.Trim(), title: song.Title!.Trim()) };
+            return new ListeningStatsSong(song.Title!.Trim(), song.Artist!.Trim(), song.Album?.Trim(), group.LongCount())
+            {
+                ArtworkUrl = ArtworkByName(song.Artist!.Trim(), title: song.Title!.Trim()),
+                ItemId = song.CanonicalRecordingId is { } recording ? CanonicalRecordingRecord.DefaultPublicId(recording) : song.TrackReference
+            };
         }).OrderByDescending(item => item.PlayCount).ThenBy(item => item.Artist, StringComparer.Ordinal)
             .ThenBy(item => item.Title, StringComparer.Ordinal).ThenBy(item => item.Album, StringComparer.Ordinal).Take(TopLimit).ToArray();
         var credits = await ArtistCreditsAsync(db, scope, qualified.Where(item => (item.ListenedAt ?? item.StartedAt) < period.To), token, jellyfin, libraryAccess, headers);

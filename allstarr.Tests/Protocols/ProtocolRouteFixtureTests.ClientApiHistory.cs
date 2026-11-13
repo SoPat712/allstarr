@@ -6,7 +6,6 @@ using allstarr.Core.Identity;
 using allstarr.Core.Intelligence;
 using allstarr.Core.Matching;
 using allstarr.Core.Protocols;
-using allstarr.Core.Playback;
 using allstarr.Core.Settings;
 using allstarr.Core.Storage;
 using Microsoft.EntityFrameworkCore;
@@ -21,7 +20,7 @@ public sealed partial class ProtocolRouteFixtureTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task ClientApi_PlayActivityAndImportStatusArePersonalAndReadOnly(bool administrator)
+    public async Task ClientApi_ImportStatusIsPersonalAndReadOnly(bool administrator)
     {
         var access = new Mock<IBackendLibraryAccessResolver>();
         access.Setup(service => service.ResolveAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<CancellationToken>()))
@@ -33,28 +32,14 @@ public sealed partial class ProtocolRouteFixtureTests
         });
         using var client = CreateClientApiClient(factory);
         var (owner, other) = await SeedClientMeAsync(factory, administrator);
-        var ownTrace = Guid.CreateVersion7();
-        var otherTrace = Guid.CreateVersion7();
         var ownImport = Guid.NewGuid();
         var otherImport = Guid.NewGuid();
         await using (var db = await factory.Services.GetRequiredService<IDbContextFactory<AllstarrDbContext>>().CreateDbContextAsync())
         {
-            foreach (var listener in new[] { (Owner: owner, Trace: ownTrace, Import: ownImport, Title: "Own private data"),
-                (Owner: other, Trace: otherTrace, Import: otherImport, Title: "Other private data") })
+            foreach (var listener in new[] { (Owner: owner, Import: ownImport, Title: "Own private data"),
+                (Owner: other, Import: otherImport, Title: "Other private data") })
             {
                 var at = DateTimeOffset.UtcNow.AddMinutes(-1);
-                var trace = new PlayTraceData(listener.Owner, new("Jellyfin", "native", "app", "device", new(listener.Title)), new());
-                db.AuditEvents.Add(new()
-                {
-                    Id = listener.Trace,
-                    ActorUserId = listener.Owner,
-                    Category = PlaybackStartTimingStore.Category,
-                    SubjectType = PlaybackStartTimingStore.Category,
-                    SubjectId = "recent",
-                    CreatedAt = at,
-                    DetailsJson = JsonSerializer.Serialize(new PlaybackStartSample(listener.Trace, at, "completed", null,
-                        listener.Title, null, null, false, 100, 50, 75, [], 0, trace))
-                });
                 db.ListeningHistoryImports.Add(new()
                 {
                     Id = listener.Import,
@@ -97,13 +82,12 @@ public sealed partial class ProtocolRouteFixtureTests
             }
             await db.SaveChangesAsync();
         }
-        foreach (var listener in new[] { (Token: "listener-token", Title: "Own private data", Trace: ownTrace, HiddenTrace: otherTrace,
-            Import: ownImport, HiddenImport: otherImport), (Token: "other-token", Title: "Other private data", Trace: otherTrace,
-            HiddenTrace: ownTrace, Import: otherImport, HiddenImport: ownImport) })
+        foreach (var listener in new[] { (Token: "listener-token", Title: "Own private data"),
+            (Token: "other-token", Title: "Other private data") })
         {
             client.DefaultRequestHeaders.Remove("X-Emby-Token");
             client.DefaultRequestHeaders.Add("X-Emby-Token", listener.Token);
-            foreach (var path in new[] { "plays", "plays/" + listener.Trace, "history/imports", "history/imports/" + listener.Import })
+            foreach (var path in new[] { "history/imports" })
             {
                 using var response = await client.GetAsync("/allstarr/v1/me/" + path);
                 Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -112,14 +96,6 @@ public sealed partial class ProtocolRouteFixtureTests
                 Assert.Contains(listener.Title, body);
                 Assert.DoesNotContain(listener.Title == "Own private data" ? "Other private data" : "Own private data", body);
             }
-            foreach (var path in new[] { "plays/" + listener.HiddenTrace, "plays?before=" + listener.HiddenTrace, "history/imports/" + listener.HiddenImport })
-            {
-                using var response = await client.GetAsync("/allstarr/v1/me/" + path);
-                await AssertClientApiError(response, 404, "not_found");
-            }
-            using var older = await client.GetAsync("/allstarr/v1/me/plays?before=" + listener.Trace);
-            Assert.Equal(HttpStatusCode.OK, older.StatusCode);
-            Assert.Equal("[]", await older.Content.ReadAsStringAsync());
             using var recheck = await client.GetAsync("/allstarr/v1/me/history/imports/recheck");
             Assert.Equal(HttpStatusCode.OK, recheck.StatusCode);
             using var recheckBody = JsonDocument.Parse(await recheck.Content.ReadAsStringAsync());

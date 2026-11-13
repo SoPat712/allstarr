@@ -25,7 +25,9 @@ public sealed partial class ProtocolRouteFixtureTests
     [InlineData(19, false)]
     [InlineData(20, false)]
     [InlineData(20, true)]
-    public async Task ClientApi_MeSoundUsesOnlyTheListenersFinishedSongsAndExistingMinimum(int finished, bool administrator)
+    [InlineData(20, false, true)]
+    [InlineData(20, true, true)]
+    public async Task ClientApi_MeSoundUsesOnlyTheListenersFinishedSongsAndExistingMinimum(int finished, bool administrator, bool v2 = false)
     {
         var access = new Mock<IBackendLibraryAccessResolver>();
         access.Setup(service => service.ResolveAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<CancellationToken>()))
@@ -109,8 +111,9 @@ public sealed partial class ProtocolRouteFixtureTests
         foreach (var listener in new[] { (Token: "listener-token", Tempo: 120), (Token: "other-token", Tempo: 160) })
         {
             client.DefaultRequestHeaders.Remove("X-Emby-Token");
-            client.DefaultRequestHeaders.Add("X-Emby-Token", listener.Token);
-            using var response = await client.GetAsync("/allstarr/v1/me/sound");
+            if (v2) client.DefaultRequestHeaders.Authorization = new("Bearer", listener.Token);
+            else client.DefaultRequestHeaders.Add("X-Emby-Token", listener.Token);
+            using var response = await client.GetAsync(v2 ? "/allstarr/v2/me/sound" : "/allstarr/v1/me/sound");
             var expected = listener.Token == "listener-token" && finished == 19 ? HttpStatusCode.NotFound : HttpStatusCode.OK;
             Assert.True(response.StatusCode == expected,
                 $"Expected {expected}, received {response.StatusCode}: {await response.Content.ReadAsStringAsync()}");
@@ -162,10 +165,7 @@ public sealed partial class ProtocolRouteFixtureTests
     [InlineData("taste")]
     [InlineData("sound")]
     [InlineData("history")]
-    [InlineData("plays")]
-    [InlineData("plays/00000000-0000-0000-0000-000000000001")]
     [InlineData("history/imports")]
-    [InlineData("history/imports/00000000-0000-0000-0000-000000000001")]
     [InlineData("history/imports/recheck")]
     public async Task ClientApi_MeRequiresAListenerAndTheMusicPort(string path)
     {

@@ -50,7 +50,8 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.True(JsonNode.DeepEquals(capabilities["dashboard"], session["dashboard"]));
         foreach (var name in new[] { "tracks", "albums", "batch", "playback", "events", "artistLinks", "lyricsTranslation", "autoplay",
                      "trackFacts", "lyricsSources", "trackMatch", "appearances", "similarAlbums", "playbackStatus", "mixes", "releases",
-                     "libraryAdditions", "artistFollow", "reports", "karaokeModel", "providerIcons" })
+                     "libraryAdditions", "artistFollow", "reports", "karaokeModel", "providerIcons", "history", "historyImports",
+                     "historyRecheck", "stats", "sound", "taste", "preferences", "search", "lyricsSearch" })
             Assert.True(session["features"]![name]!.GetValue<bool>());
         await AssertV2ResourceRead(client, "/allstarr/v2/session", session);
         client.DefaultRequestHeaders.Authorization = new("Bearer", "other-token");

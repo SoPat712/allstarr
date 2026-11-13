@@ -9,7 +9,6 @@ public sealed record ClientStatsArtist(string Name, long PlayCount, string? Artw
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string? Id { get; init; }
 }
 public sealed record ClientStatsAlbum(string Title, string Artist, long PlayCount, string? ArtworkUrl);
-public sealed record ClientPlayTrace(PlayTraceDetail Play, ItemDetailsProvider? Provider, string? ArtworkUrl);
 
 public sealed class ClientListeningStats(ListeningStats stats)
 {

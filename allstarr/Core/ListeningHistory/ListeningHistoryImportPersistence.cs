@@ -460,19 +460,6 @@ public sealed class ListeningHistoryImportService(
         }).ToArray();
     }
 
-    public async Task<ListeningHistoryImportPreviewResult?> ReadAsync(IntelligenceScope scope, Guid importId, CancellationToken token)
-    {
-        await using var db = await factory.CreateDbContextAsync(token);
-        var record = await ScopedImport(db, scope, importId).AsNoTracking().SingleOrDefaultAsync(token);
-        if (record == null) return null;
-        var job = record.JobId == null ? null : await db.Jobs.AsNoTracking().SingleOrDefaultAsync(item => item.Id == record.JobId, token);
-        var preview = JsonSerializer.Deserialize<ListeningHistoryImportPreview>(record.PreviewJson)
-            ?? throw new InvalidDataException("The saved listening-history preview is invalid.");
-        return new(record.Id, record.PreviewRevision, record.DisplayFileName, record.SizeBytes, record.ExpiresAt,
-            record.State, record.JobId, job?.State.ToString().ToLowerInvariant(), job?.LastErrorCode,
-            job?.LastErrorMessage, record.ImportedRows, record.DuplicateRows, record.ResolvedRows, record.UnresolvedRows, preview);
-    }
-
     public Task<ListeningHistoryImportPreviewResult?> ApplyAsync(
         IntelligenceScope scope,
         Guid importId,

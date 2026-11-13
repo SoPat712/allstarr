@@ -12,7 +12,7 @@ public sealed class ClientEventDocumentTransformer : IOpenApiDocumentTransformer
             {
                 if (path.Operations is not { } operations) continue;
                 foreach (var operation in operations.Values)
-                    if (operation.OperationId is "getEvents" or "getV2Events" or "streamSearch" && operation.Responses is { } responses &&
+                    if (operation.OperationId is "getV2Events" or "streamSearch" or "search" && operation.Responses is { } responses &&
                         responses.TryGetValue("200", out var response) && response is OpenApiResponse stream)
                         stream.Content?.Remove("application/json");
             }

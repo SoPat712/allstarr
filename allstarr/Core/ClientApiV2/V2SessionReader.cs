@@ -32,7 +32,16 @@ public sealed class V2SessionReader(IDurableRuntimeSettings settings)
                 ["artistFollow"] = true,
                 ["reports"] = true,
                 ["karaokeModel"] = true,
-                ["providerIcons"] = true
+                ["providerIcons"] = true,
+                ["history"] = true,
+                ["historyImports"] = true,
+                ["historyRecheck"] = true,
+                ["stats"] = true,
+                ["sound"] = true,
+                ["taste"] = true,
+                ["preferences"] = true,
+                ["search"] = true,
+                ["lyricsSearch"] = true
             }, string.IsNullOrEmpty(address) ? null : new(address)));
     }
 }

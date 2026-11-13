@@ -85,7 +85,7 @@ public sealed partial class ProtocolRouteFixtureTests
         }
         var mixes = factory.Services.GetRequiredService<PersonalMixService>();
         var mix = (await mixes.ListAsync(principal.UserId)).Single(item => item.Kind == "on-repeat");
-        using var stream = await OpenClientEventsAsync(client);
+        using var stream = await OpenClientEventsAsync(factory);
         using var foreign = factory.Services.GetRequiredService<ClientEventHub>().Subscribe(other.UserId, null)!;
         var queue = factory.Services.GetRequiredService<DurableJobQueue>();
         var queued = await queue.EnqueueAsync(new DurableJobEnqueueRequest<Guid>(PersonalMixService.JobType,
@@ -143,7 +143,7 @@ public sealed partial class ProtocolRouteFixtureTests
         var other = (await identities.ResolveAsync(new("Jellyfin", "other")))!.UserId;
         var releases = factory.Services.GetRequiredService<NewReleasesService>();
         await releases.FollowAsync(owner, new("deezer", "artist", "Fixture artist"));
-        using var stream = await OpenClientEventsAsync(client);
+        using var stream = await OpenClientEventsAsync(factory);
         using var foreign = factory.Services.GetRequiredService<ClientEventHub>().Subscribe(other, null)!;
 
         Assert.Equal(DurableJobCompletionKind.Succeeded, (await releases.PollAsync(owner, Guid.NewGuid(), default)).Kind);

@@ -849,7 +849,7 @@
         "tags": [
           "Events"
         ],
-        "description": "Streams listener-scoped JSON payloads with increasing id, event and data lines. Replay uses Last-Event-ID (preferred) or lastEventId, retaining at most 1,000 events for 10 minutes. An unknown or expired cursor starts with resync {}; refetch client state, then continue live. Comments ping every 25 seconds. Connections share the v1 limit: 8 per listener, 256 total; excess returns 503. Payloads: track.updated {track: V2Track}, lyrics.updated {trackId, revision} (read views=lyrics), match.updated {trackId, state}, keep.updated {trackId, state, progress}, mix.updated {mixId, playlistId}, releases.updated {count}, libraryAddition.updated {row}, track.renamed {old, new}. Renames reach currently connected v2 listeners. Requires a Bearer token.",
+        "description": "Streams listener-scoped JSON payloads with increasing id, event and data lines. Replay uses Last-Event-ID (preferred) or lastEventId, retaining at most 1,000 events for 10 minutes. An unknown or expired cursor starts with resync {}; refetch client state, then continue live. Comments ping every 25 seconds. Connections are limited to 8 per listener, 256 total; excess returns 503. Payloads: track.updated {track: V2Track}, lyrics.updated {trackId, revision} (read views=lyrics), match.updated {trackId, state}, keep.updated {trackId, state, progress}, mix.updated {mixId, playlistId}, releases.updated {count}, libraryAddition.updated {row}, track.renamed {old, new}. Renames reach currently connected v2 listeners. Requires a Bearer token.",
         "operationId": "getV2Events",
         "parameters": [
           {
@@ -1467,6 +1467,999 @@
                   "$ref": "#/components/schemas/ClientApiError"
                 }
               }
+            }
+          }
+        }
+      }
+    },
+    "/allstarr/v2/me/history": {
+      "get": {
+        "tags": [
+          "Me"
+        ],
+        "description": "Reads this listener\u0027s qualified plays, newest first. Current songs use V2Track; unavailable songs retain their recorded facts with a null track. Can be batched.",
+        "operationId": "getMyHistoryV2",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Plays per page, from 1 to 200; defaults to 50.",
+            "schema": {
+              "maximum": 200,
+              "minimum": 1,
+              "type": "integer",
+              "format": "int32",
+              "default": 50
+            }
+          },
+          {
+            "name": "before",
+            "in": "query",
+            "description": "Opaque next cursor from the previous page.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "If-None-Match",
+            "in": "header",
+            "description": "The stored ETag; a matching representation returns 304 without a body.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "headers": {
+              "ETag": {
+                "description": "Representation validator, also returned by the batch entry.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V2HistoryPage"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Not Modified",
+            "headers": {
+              "ETag": {
+                "description": "Representation validator, also returned by the batch entry.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/allstarr/v2/me/history/imports": {
+      "get": {
+        "tags": [
+          "Me"
+        ],
+        "description": "Reads this listener\u0027s latest 50 import previews, counts and job status without changing them. Can be batched.",
+        "operationId": "getMyHistoryImportsV2",
+        "parameters": [
+          {
+            "name": "If-None-Match",
+            "in": "header",
+            "description": "The stored ETag; a matching representation returns 304 without a body.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "headers": {
+              "ETag": {
+                "description": "Representation validator, also returned by the batch entry.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ListeningHistoryImportPreviewResult"
+                  }
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Not Modified",
+            "headers": {
+              "ETag": {
+                "description": "Representation validator, also returned by the batch entry.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/allstarr/v2/me/history/imports/recheck": {
+      "get": {
+        "tags": [
+          "Me"
+        ],
+        "description": "Checks this listener\u0027s imported matches with the current matcher, without changing them. Examples include matched V2Track values when available. Can be batched.",
+        "operationId": "getMyHistoryRecheckV2",
+        "parameters": [
+          {
+            "name": "If-None-Match",
+            "in": "header",
+            "description": "The stored ETag; a matching representation returns 304 without a body.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "headers": {
+              "ETag": {
+                "description": "Representation validator, also returned by the batch entry.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V2HistoryRecheck"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Not Modified",
+            "headers": {
+              "ETag": {
+                "description": "Representation validator, also returned by the batch entry.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/allstarr/v2/me/stats": {
+      "get": {
+        "tags": [
+          "Me"
+        ],
+        "description": "Reads this listener\u0027s listening counts, timeline and ranked songs, artists and albums with artwork URLs. Can be batched.",
+        "operationId": "getMyStatsV2",
+        "parameters": [
+          {
+            "name": "period",
+            "in": "query",
+            "description": "7d, 30d (default), year or all. Cannot be combined with year.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "year",
+            "in": "query",
+            "description": "A calendar year instead of period.",
+            "schema": {
+              "maximum": 9998,
+              "minimum": 1,
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "timeZoneId",
+            "in": "query",
+            "description": "Time zone for calendar boundaries, such as America/New_York.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "If-None-Match",
+            "in": "header",
+            "description": "The stored ETag; a matching representation returns 304 without a body.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "headers": {
+              "ETag": {
+                "description": "Representation validator, also returned by the batch entry.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V2ListeningStats"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Not Modified",
+            "headers": {
+              "ETag": {
+                "description": "Representation validator, also returned by the batch entry.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/allstarr/v2/me/sound": {
+      "get": {
+        "tags": [
+          "Me"
+        ],
+        "description": "Reads this listener\u0027s sound traits from stored analysis. Returns 404 until enough songs have been analyzed. Can be batched.",
+        "operationId": "getMySoundV2",
+        "parameters": [
+          {
+            "name": "If-None-Match",
+            "in": "header",
+            "description": "The stored ETag; a matching representation returns 304 without a body.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "headers": {
+              "ETag": {
+                "description": "Representation validator, also returned by the batch entry.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SoundProfile"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Not Modified",
+            "headers": {
+              "ETag": {
+                "description": "Representation validator, also returned by the batch entry.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/allstarr/v2/me/taste": {
+      "get": {
+        "tags": [
+          "Me"
+        ],
+        "description": "Reads this listener\u0027s recent and usual tastes, nudges, paused state and imported-history preference. Can be batched.",
+        "operationId": "getMyTasteV2",
+        "parameters": [
+          {
+            "name": "If-None-Match",
+            "in": "header",
+            "description": "The stored ETag; a matching representation returns 304 without a body.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "headers": {
+              "ETag": {
+                "description": "Representation validator, also returned by the batch entry.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V2TasteProfile"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Not Modified",
+            "headers": {
+              "ETag": {
+                "description": "Representation validator, also returned by the batch entry.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/allstarr/v2/me/preferences": {
+      "get": {
+        "tags": [
+          "Me"
+        ],
+        "description": "Reads this listener\u0027s heart button action; defaults to keep. Can be batched.",
+        "operationId": "getPreferencesV2",
+        "parameters": [
+          {
+            "name": "If-None-Match",
+            "in": "header",
+            "description": "The stored ETag; a matching representation returns 304 without a body.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "headers": {
+              "ETag": {
+                "description": "Representation validator, also returned by the batch entry.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V2Preferences"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Not Modified",
+            "headers": {
+              "ETag": {
+                "description": "Representation validator, also returned by the batch entry.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Me"
+        ],
+        "description": "Changes only this listener\u0027s heart button action: heart, keep or addToLibrary.",
+        "operationId": "updatePreferencesV2",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/V2Preferences"
+              }
+            },
+            "text/json": {
+              "schema": {
+                "$ref": "#/components/schemas/V2Preferences"
+              }
+            },
+            "application/*\u002Bjson": {
+              "schema": {
+                "$ref": "#/components/schemas/V2Preferences"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V2Preferences"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/allstarr/v2/me/stats/art": {
+      "get": {
+        "tags": [
+          "Me"
+        ],
+        "description": "Serves the artwork URL embedded in listening stats and history using the listener\u0027s sources. Cannot be batched.",
+        "operationId": "getMyStatsArtworkV2",
+        "parameters": [
+          {
+            "name": "artist",
+            "in": "query",
+            "description": "Artist name from the listening entry.",
+            "required": true,
+            "schema": {
+              "maxLength": 500,
+              "minLength": 0,
+              "type": "string"
+            }
+          },
+          {
+            "name": "title",
+            "in": "query",
+            "description": "Song title for song artwork.",
+            "schema": {
+              "maxLength": 500,
+              "minLength": 0,
+              "type": "string"
+            }
+          },
+          {
+            "name": "album",
+            "in": "query",
+            "description": "Album title for album artwork.",
+            "schema": {
+              "maxLength": 500,
+              "minLength": 0,
+              "type": "string"
+            }
+          },
+          {
+            "name": "libraryArtistId",
+            "in": "query",
+            "description": "Library artist ID for artist artwork, copied from the response URL.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "content": {
+              "image/png": {
+                "schema": {
+                  "type": "string",
+                  "format": "byte"
+                }
+              },
+              "image/jpeg": {
+                "schema": {
+                  "type": "string",
+                  "format": "byte"
+                }
+              },
+              "image/webp": {
+                "schema": {
+                  "type": "string",
+                  "format": "byte"
+                }
+              },
+              "image/gif": {
+                "schema": {
+                  "type": "string",
+                  "format": "byte"
+                }
+              },
+              "image/avif": {
+                "schema": {
+                  "type": "string",
+                  "format": "byte"
+                }
+              },
+              "application/json": {}
+            }
+          },
+          "204": {
+            "description": "No Content",
+            "content": {
+              "application/json": {}
             }
           }
         }
@@ -2565,6 +3558,227 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/V2ReportReceipt"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/allstarr/v2/search": {
+      "get": {
+        "tags": [
+          "Search"
+        ],
+        "description": "Streams complete ranked snapshots as newline-delimited JSON. Each revision replaces the previous snapshot. Songs use the native track shape; albums, artists and playlists are typed resources. Top also appears in its section. The first snapshot waits for the preferred provider and another answer, or 400 ms; later snapshots are at least 250 ms apart. The final snapshot has done=true and late provider ids. Provider work has a 2.75 second budget and final publishing a 3 second budget. Streaming search is excluded from batch.",
+        "operationId": "search",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "description": "Search text, from 1 to 200 characters after trimming.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum mixed results and results per section; defaults to 40.",
+            "schema": {
+              "maximum": 200,
+              "minimum": 1,
+              "type": "integer",
+              "format": "int32",
+              "default": 40
+            }
+          },
+          {
+            "name": "types",
+            "in": "query",
+            "description": "Comma-separated songs, albums, artists and playlists; defaults to all four.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/x-ndjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/V2SearchSnapshot"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/allstarr/v2/search/lyrics": {
+      "get": {
+        "tags": [
+          "Search"
+        ],
+        "description": "Searches stored lyrics visible to this listener, with matching lines and highlight offsets. Every result includes a native track. Supports conditional reads and batch.",
+        "operationId": "searchLyricsV2",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "description": "Lyrics text, from 2 to 200 characters after trimming.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum results, from 1 to 50; defaults to 20.",
+            "schema": {
+              "maximum": 50,
+              "minimum": 1,
+              "type": "integer",
+              "format": "int32",
+              "default": 20
+            }
+          },
+          {
+            "name": "If-None-Match",
+            "in": "header",
+            "description": "The stored ETag; a matching representation returns 304 without a body.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "headers": {
+              "ETag": {
+                "description": "Representation validator, also returned by the batch entry.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V2LyricsSearchResponse"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Not Modified",
+            "headers": {
+              "ETag": {
+                "description": "Representation validator, also returned by the batch entry.",
+                "schema": {
+                  "type": "string"
                 }
               }
             }
@@ -4419,6 +5633,43 @@
         ],
         "type": "string"
       },
+      "ClientTasteLayer": {
+        "required": [
+          "tags",
+          "artists"
+        ],
+        "type": "object",
+        "properties": {
+          "tags": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ClientTasteStrength"
+            }
+          },
+          "artists": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ClientTasteStrength"
+            }
+          }
+        }
+      },
+      "ClientTasteStrength": {
+        "required": [
+          "name",
+          "strength"
+        ],
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "strength": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
       "ItemDetailsProvider": {
         "required": [
           "id",
@@ -4444,6 +5695,355 @@
               "null",
               "string"
             ]
+          }
+        }
+      },
+      "ListeningHistoryImportPreview": {
+        "required": [
+          "format",
+          "fileRows",
+          "musicRows",
+          "completed",
+          "partial",
+          "skipped",
+          "episodes",
+          "nonTrack",
+          "malformed",
+          "duplicateInFile",
+          "duplicateExisting",
+          "newRows",
+          "resolvedNewRows",
+          "unresolvedNewRows",
+          "rowsWithoutProviderIdentity",
+          "sourceUserCount",
+          "estimatedMusicBrainzLookups",
+          "earliest",
+          "latest",
+          "reasonCounts"
+        ],
+        "type": "object",
+        "properties": {
+          "format": {
+            "type": "string"
+          },
+          "fileRows": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "musicRows": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "completed": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "partial": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "skipped": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "episodes": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "nonTrack": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "malformed": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "duplicateInFile": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "duplicateExisting": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "newRows": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "resolvedNewRows": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "unresolvedNewRows": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "rowsWithoutProviderIdentity": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "sourceUserCount": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "estimatedMusicBrainzLookups": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "earliest": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "date-time"
+          },
+          "latest": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "date-time"
+          },
+          "reasonCounts": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          "outsideRetentionRows": {
+            "type": "integer",
+            "format": "int64",
+            "default": 0
+          },
+          "songs": {
+            "type": "integer",
+            "format": "int32",
+            "default": 0
+          }
+        }
+      },
+      "ListeningHistoryImportPreviewResult": {
+        "required": [
+          "importId",
+          "revision",
+          "displayFileName",
+          "sizeBytes",
+          "expiresAt",
+          "state",
+          "jobId",
+          "jobState",
+          "lastErrorCode",
+          "lastErrorMessage",
+          "importedRows",
+          "duplicateRows",
+          "resolvedRows",
+          "unresolvedRows",
+          "preview"
+        ],
+        "type": "object",
+        "properties": {
+          "importId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "revision": {
+            "type": "string"
+          },
+          "displayFileName": {
+            "type": "string"
+          },
+          "sizeBytes": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "state": {
+            "$ref": "#/components/schemas/ListeningHistoryImportState"
+          },
+          "jobId": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "uuid"
+          },
+          "jobState": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "lastErrorCode": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "lastErrorMessage": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "importedRows": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "duplicateRows": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "resolvedRows": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "unresolvedRows": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "preview": {
+            "$ref": "#/components/schemas/ListeningHistoryImportPreview"
+          }
+        }
+      },
+      "ListeningHistoryImportState": {
+        "type": "integer"
+      },
+      "ListeningStatsCoverage": {
+        "required": [
+          "unknownSongIdentityCount",
+          "unknownDurationCount"
+        ],
+        "type": "object",
+        "properties": {
+          "unknownSongIdentityCount": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "unknownDurationCount": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "ListeningStatsGenre": {
+        "required": [
+          "genre",
+          "plays"
+        ],
+        "type": "object",
+        "properties": {
+          "genre": {
+            "type": "string"
+          },
+          "plays": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "ListeningStatsPeriod": {
+        "required": [
+          "from",
+          "to",
+          "timeZoneId"
+        ],
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "date-time"
+          },
+          "to": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "timeZoneId": {
+            "type": "string"
+          }
+        }
+      },
+      "ListeningStatsPoint": {
+        "required": [
+          "key",
+          "plays"
+        ],
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "plays": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "LyricsSearchHighlight": {
+        "required": [
+          "start",
+          "length"
+        ],
+        "type": "object",
+        "properties": {
+          "start": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "length": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "LyricsSearchLine": {
+        "required": [
+          "text",
+          "startMs",
+          "endMs",
+          "before",
+          "after"
+        ],
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string"
+          },
+          "startMs": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int64"
+          },
+          "endMs": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int64"
+          },
+          "before": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "after": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "synced": {
+            "type": "boolean"
           }
         }
       },
@@ -4632,6 +6232,107 @@
           },
           "expectedRevision": {
             "type": "string"
+          }
+        }
+      },
+      "SoundProfile": {
+        "required": [
+          "songs",
+          "skippedSongs",
+          "librarySongs",
+          "traits",
+          "tempo",
+          "libraryTempo",
+          "at"
+        ],
+        "type": "object",
+        "properties": {
+          "songs": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "skippedSongs": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "librarySongs": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "traits": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SoundTrait"
+            }
+          },
+          "tempo": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int32"
+          },
+          "libraryTempo": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int32"
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "SoundTrait": {
+        "required": [
+          "name",
+          "difference",
+          "lean"
+        ],
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "difference": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "lean": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int32"
+          }
+        }
+      },
+      "TasteNudge": {
+        "required": [
+          "kind",
+          "name",
+          "mode",
+          "expiresAt"
+        ],
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string"
+          },
+          "expiresAt": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "date-time"
           }
         }
       },
@@ -5137,6 +6838,209 @@
           }
         }
       },
+      "V2HistoryPage": {
+        "required": [
+          "plays",
+          "next"
+        ],
+        "type": "object",
+        "properties": {
+          "plays": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/V2HistoryPlay"
+            }
+          },
+          "next": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
+      "V2HistoryPlay": {
+        "required": [
+          "track",
+          "title",
+          "artist",
+          "album",
+          "durationMs",
+          "artwork",
+          "playedAt",
+          "isExternal",
+          "provider"
+        ],
+        "type": "object",
+        "properties": {
+          "track": {
+            "type": [
+              "null",
+              "object"
+            ],
+            "anyOf": [
+              {
+                "description": "Current track, or null when the recorded song is unavailable.",
+                "$ref": "#/components/schemas/V2Track"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "artist": {
+            "type": "string"
+          },
+          "album": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "durationMs": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int64"
+          },
+          "artwork": {
+            "type": [
+              "null",
+              "object"
+            ],
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/V2Artwork"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "playedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "isExternal": {
+            "type": "boolean"
+          },
+          "provider": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
+      "V2HistoryRecheck": {
+        "required": [
+          "songs",
+          "unchecked",
+          "doubtful",
+          "doubtfulPlays",
+          "examples"
+        ],
+        "type": "object",
+        "properties": {
+          "songs": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "unchecked": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "doubtful": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "doubtfulPlays": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "examples": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/V2HistoryRecheckSong"
+            }
+          }
+        }
+      },
+      "V2HistoryRecheckSong": {
+        "required": [
+          "track",
+          "recordingId",
+          "title",
+          "artist",
+          "album",
+          "matchedTitle",
+          "matchedArtist",
+          "matchedAlbum",
+          "verdict",
+          "plays"
+        ],
+        "type": "object",
+        "properties": {
+          "track": {
+            "type": [
+              "null",
+              "object"
+            ],
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/V2Track"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "recordingId": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "artist": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "album": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "matchedTitle": {
+            "type": "string"
+          },
+          "matchedArtist": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "matchedAlbum": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "verdict": {
+            "type": "string"
+          },
+          "plays": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
       "V2KaraokeModel": {
         "required": [
           "version",
@@ -5250,6 +7154,140 @@
           }
         }
       },
+      "V2ListeningStats": {
+        "type": "object",
+        "properties": {
+          "period": {
+            "$ref": "#/components/schemas/ListeningStatsPeriod"
+          },
+          "playCount": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "activeDays": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "importedCount": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "observedSince": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "date-time"
+          },
+          "estimatedTimeFromSongLengthsMilliseconds": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "coverage": {
+            "$ref": "#/components/schemas/ListeningStatsCoverage"
+          },
+          "topSongs": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/V2StatsSong"
+            }
+          },
+          "topArtists": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/V2StatsArtist"
+            }
+          },
+          "topAlbums": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/V2StatsAlbum"
+            }
+          },
+          "shortPlayCount": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "firstPlayAt": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "date-time"
+          },
+          "uniqueSongs": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "uniqueArtists": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "timelineUnit": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "timeline": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/ListeningStatsPoint"
+            }
+          },
+          "byHour": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          "biggestDay": {
+            "$ref": "#/components/schemas/ListeningStatsPoint"
+          },
+          "longestStreakDays": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "topGenres": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/ListeningStatsGenre"
+            }
+          },
+          "newArtistCount": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "newArtists": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/V2StatsArtist"
+            }
+          }
+        }
+      },
       "V2LyricsAvailability": {
         "required": [
           "available",
@@ -5272,6 +7310,55 @@
               "null",
               "string"
             ]
+          }
+        }
+      },
+      "V2LyricsSearchHit": {
+        "required": [
+          "track",
+          "line",
+          "highlights",
+          "score",
+          "source"
+        ],
+        "type": "object",
+        "properties": {
+          "track": {
+            "$ref": "#/components/schemas/V2Track"
+          },
+          "line": {
+            "$ref": "#/components/schemas/LyricsSearchLine"
+          },
+          "highlights": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LyricsSearchHighlight"
+            }
+          },
+          "score": {
+            "type": "number",
+            "format": "double"
+          },
+          "source": {
+            "$ref": "#/components/schemas/RichLyricsSource"
+          }
+        }
+      },
+      "V2LyricsSearchResponse": {
+        "required": [
+          "results",
+          "truncated"
+        ],
+        "type": "object",
+        "properties": {
+          "results": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/V2LyricsSearchHit"
+            }
+          },
+          "truncated": {
+            "type": "boolean"
           }
         }
       },
@@ -5764,6 +7851,18 @@
           }
         }
       },
+      "V2Preferences": {
+        "required": [
+          "heartAction"
+        ],
+        "type": "object",
+        "properties": {
+          "heartAction": {
+            "type": "string",
+            "description": "The heart button action: heart, keep or addToLibrary."
+          }
+        }
+      },
       "V2Provider": {
         "required": [
           "id",
@@ -5904,6 +8003,273 @@
           "id": {
             "type": "string",
             "format": "uuid"
+          }
+        }
+      },
+      "V2SearchArtist": {
+        "required": [
+          "id",
+          "name",
+          "isExternal",
+          "artwork",
+          "alsoOn",
+          "namesakes"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "isExternal": {
+            "type": "boolean"
+          },
+          "artwork": {
+            "type": [
+              "null",
+              "object"
+            ],
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/V2Artwork"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "alsoOn": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/V2SearchSource"
+            }
+          },
+          "namesakes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/V2Ref"
+            }
+          }
+        }
+      },
+      "V2SearchHit": {
+        "required": [
+          "id",
+          "kind",
+          "score",
+          "source",
+          "sourceName"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "score": {
+            "type": "number",
+            "format": "double"
+          },
+          "source": {
+            "type": "string"
+          },
+          "sourceName": {
+            "type": "string"
+          },
+          "track": {
+            "type": [
+              "null",
+              "object"
+            ],
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/V2Track"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "album": {
+            "type": [
+              "null",
+              "object"
+            ],
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/V2AlbumSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "artist": {
+            "type": [
+              "null",
+              "object"
+            ],
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/V2SearchArtist"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "playlist": {
+            "type": [
+              "null",
+              "object"
+            ],
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/V2SearchPlaylist"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "description": "One ranked result. Kind selects exactly one of track, album, artist or playlist; id is that resource\u0027s v2 id."
+      },
+      "V2SearchPlaylist": {
+        "required": [
+          "id",
+          "name",
+          "curator",
+          "trackCount",
+          "isExternal",
+          "artwork"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "curator": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "trackCount": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int32"
+          },
+          "isExternal": {
+            "type": "boolean"
+          },
+          "artwork": {
+            "type": [
+              "null",
+              "object"
+            ],
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/V2Artwork"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "V2SearchSnapshot": {
+        "required": [
+          "revision",
+          "done",
+          "providers",
+          "top",
+          "items",
+          "sections",
+          "late"
+        ],
+        "type": "object",
+        "properties": {
+          "revision": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "done": {
+            "type": "boolean"
+          },
+          "providers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "top": {
+            "type": [
+              "null",
+              "object"
+            ],
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/V2SearchHit"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/V2SearchHit"
+            }
+          },
+          "sections": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "array",
+              "items": {
+                "$ref": "#/components/schemas/V2SearchHit"
+              }
+            }
+          },
+          "late": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "description": "A complete ranked search snapshot. Each revision replaces the previous snapshot; late appears only on the final revision."
+      },
+      "V2SearchSource": {
+        "required": [
+          "source",
+          "sourceName",
+          "id"
+        ],
+        "type": "object",
+        "properties": {
+          "source": {
+            "type": "string"
+          },
+          "sourceName": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
           }
         }
       },
@@ -6083,6 +8449,138 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/V2SimilarAlbum"
+            }
+          }
+        }
+      },
+      "V2StatsAlbum": {
+        "required": [
+          "title",
+          "artist",
+          "playCount",
+          "artwork"
+        ],
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "artist": {
+            "type": "string"
+          },
+          "playCount": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "artwork": {
+            "$ref": "#/components/schemas/V2Artwork"
+          }
+        }
+      },
+      "V2StatsArtist": {
+        "required": [
+          "id",
+          "name",
+          "playCount",
+          "artwork"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "playCount": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "artwork": {
+            "$ref": "#/components/schemas/V2Artwork"
+          }
+        }
+      },
+      "V2StatsSong": {
+        "required": [
+          "track",
+          "title",
+          "artist",
+          "album",
+          "playCount",
+          "artwork"
+        ],
+        "type": "object",
+        "properties": {
+          "track": {
+            "type": [
+              "null",
+              "object"
+            ],
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/V2Track"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "artist": {
+            "type": "string"
+          },
+          "album": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "playCount": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "artwork": {
+            "$ref": "#/components/schemas/V2Artwork"
+          }
+        }
+      },
+      "V2TasteProfile": {
+        "required": [
+          "lately",
+          "usually",
+          "latelyWeight",
+          "paused",
+          "useImportedHistory",
+          "nudges"
+        ],
+        "type": "object",
+        "properties": {
+          "lately": {
+            "$ref": "#/components/schemas/ClientTasteLayer"
+          },
+          "usually": {
+            "$ref": "#/components/schemas/ClientTasteLayer"
+          },
+          "latelyWeight": {
+            "type": "number",
+            "format": "double"
+          },
+          "paused": {
+            "type": "boolean"
+          },
+          "useImportedHistory": {
+            "type": "boolean"
+          },
+          "nudges": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TasteNudge"
             }
           }
         }
@@ -6524,6 +9022,9 @@
       "name": "LibraryAdditions"
     },
     {
+      "name": "Me"
+    },
+    {
       "name": "Mixes"
     },
     {
@@ -6540,6 +9041,9 @@
     },
     {
       "name": "Reports"
+    },
+    {
+      "name": "Search"
     },
     {
       "name": "Session"

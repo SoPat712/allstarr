@@ -118,7 +118,7 @@ public sealed partial class ProtocolRouteFixtureTests
     }
 
     [Fact]
-    public async Task ClientApiV2_EventsHeartbeatAndHttpCapsShareV1Slots()
+    public async Task ClientApiV2_EventsHeartbeatAndHttpCaps()
     {
         using var factory = V2EventsFactory(_ => Json(200, """{"Id":"listener"}"""), services =>
         {
@@ -132,7 +132,7 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.True(stream.Response.Headers.CacheControl!.NoStore);
         Assert.Empty(stream.Response.Content.Headers.ContentEncoding);
         Assert.Equal(": ping", await stream.FrameAsync());
-        using var capped = await client.SendAsync(ClientPlaybackRequest("/allstarr/v1/events"));
+        using var capped = await client.GetAsync("/allstarr/v2/events", HttpCompletionOption.ResponseHeadersRead);
         await AssertClientApiError(capped, 503, "unavailable");
     }
 
@@ -170,5 +170,22 @@ public sealed partial class ProtocolRouteFixtureTests
             return (lines[0][4..], document.RootElement.Clone());
         }
         throw new InvalidOperationException("The expected event was not received.");
+    }
+
+    private sealed class ClientEventStream(HttpResponseMessage response, StreamReader reader) : IDisposable
+    {
+        public HttpResponseMessage Response => response;
+        public async Task<string> FrameAsync()
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            var lines = new List<string>();
+            while (await reader.ReadLineAsync(timeout.Token) is { } line)
+            {
+                if (line.Length == 0) return string.Join('\n', lines);
+                lines.Add(line);
+            }
+            throw new EndOfStreamException();
+        }
+        public void Dispose() { response.Dispose(); reader.Dispose(); }
     }
 }

@@ -524,6 +524,9 @@ builder.Services.AddSingleton<V2ServingStreams>();
 builder.Services.AddScoped<LyricsTranslation>();
 builder.Services.AddScoped<V2ArtistLinkEndpoints>();
 builder.Services.AddScoped<V2BatchDispatcher>();
+builder.Services.AddScoped<V2MeEndpoints>();
+builder.Services.AddScoped<V2SearchStream>();
+builder.Services.AddScoped<V2SearchEndpoints>();
 builder.Services.AddScoped<ClientListeningHistory>();
 builder.Services.AddSingleton<ClientLibraryAdditions>();
 builder.Services.AddScoped<ItemLyricsReader>();
@@ -830,8 +833,7 @@ app.UseExceptionHandler();
 app.UseMiddleware<CorrelationMiddleware>();
 app.UseMiddleware<PlaybackStartTimingMiddleware>();
 
-app.UseWhen(context => !context.Request.Path.StartsWithSegments("/allstarr/v1/events", StringComparison.OrdinalIgnoreCase) &&
-    !context.Request.Path.StartsWithSegments("/allstarr/v2/events", StringComparison.OrdinalIgnoreCase),
+app.UseWhen(context => !context.Request.Path.StartsWithSegments("/allstarr/v2/events", StringComparison.OrdinalIgnoreCase),
     branch => branch.UseResponseCompression());
 
 app.UseWebSockets(new WebSocketOptions

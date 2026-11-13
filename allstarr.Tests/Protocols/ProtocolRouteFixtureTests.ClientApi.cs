@@ -319,10 +319,6 @@ public sealed partial class ProtocolRouteFixtureTests
         var operationIds = operations.Select(operation => operation.Value.GetProperty("operationId").GetString()).ToArray();
         Assert.All(operationIds, operationId => Assert.False(string.IsNullOrWhiteSpace(operationId)));
         Assert.Equal(operationIds.Length, operationIds.Distinct(StringComparer.Ordinal).Count());
-        Assert.Equal("getEvents", paths.GetProperty("/allstarr/v1/events").GetProperty("get").GetProperty("operationId").GetString());
-        var stream = paths.GetProperty("/allstarr/v1/events").GetProperty("get").GetProperty("responses").GetProperty("200").GetProperty("content");
-        Assert.Equal(["text/event-stream"], stream.EnumerateObject().Select(item => item.Name).ToArray());
-        Assert.Equal("string", stream.GetProperty("text/event-stream").GetProperty("schema").GetProperty("type").GetString());
         Assert.Equal("getCapabilities", paths.GetProperty("/allstarr/v1/capabilities").GetProperty("get").GetProperty("operationId").GetString());
         Assert.Equal("getItemDetails", paths.GetProperty("/allstarr/v1/items/details").GetProperty("post").GetProperty("operationId").GetString());
         Assert.Equal("getProviderIcon", paths.GetProperty("/allstarr/v1/providers/{providerId}/icon").GetProperty("get").GetProperty("operationId").GetString());

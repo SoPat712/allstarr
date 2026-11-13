@@ -31,7 +31,8 @@ public sealed class V2TrackReader(
 
     /// <summary>Also returns, for each returned track id, the library or service item it was read from.</summary>
     internal async Task<(V2TracksResponse Response, IReadOnlyDictionary<string, string> Sources)> ReadWithSourcesAsync(HttpContext http,
-        ProtocolExecutionContext execution, IReadOnlyList<string> ids, bool includeAlbums)
+        ProtocolExecutionContext execution, IReadOnlyList<string> ids, bool includeAlbums,
+        IReadOnlyDictionary<string, Song>? searchSongs = null)
     {
         var token = execution.CancellationToken;
         var requested = ids.Distinct(StringComparer.Ordinal).ToArray();
@@ -59,8 +60,14 @@ public sealed class V2TrackReader(
         var targetIds = targets.Values.Distinct(StringComparer.Ordinal).ToArray();
 
         // Facts also decide what this listener may see: anything they leave out is reported missing.
-        var (read, songs) = await details.ReadWithSongsAsync(http, execution, targetIds);
+        var (read, detailSongs) = await details.ReadWithSongsAsync(http, execution, targetIds, observedSongs: searchSongs);
         var facts = read.Items.ToDictionary(item => item.Id, StringComparer.Ordinal);
+        // A song the search already read is the fuller copy; it gets the same stored media facts as the rest.
+        var songs = new Dictionary<string, Song>(detailSongs, StringComparer.Ordinal);
+        var observed = searchSongs?.Where(pair => songs.ContainsKey(pair.Key)).ToArray() ?? [];
+        foreach (var (id, song) in observed) songs[id] = song;
+        if (observed.Length > 0 && identities is ITrackMediaFactsStore mediaFacts)
+            await mediaFacts.ApplyStoredMediaFactsAsync(execution.RequireActor(), observed.Select(pair => pair.Value).ToArray(), execution.CancellationToken);
         var library = await ReadLibraryAsync(http, execution, targetIds.Where(id => !IsExternal(id) && facts.ContainsKey(id)).ToArray());
 
         var tracks = new List<V2Track>();

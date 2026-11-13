@@ -20,7 +20,7 @@ public sealed class EventsController(V2EventStream events, ClientEventOptions op
     [EndpointDescription("Streams listener-scoped JSON payloads with increasing id, event and data lines. " +
         "Replay uses Last-Event-ID (preferred) or lastEventId, retaining at most 1,000 events for 10 minutes. " +
         "An unknown or expired cursor starts with resync {}; refetch client state, then continue live. " +
-        "Comments ping every 25 seconds. Connections share the v1 limit: 8 per listener, 256 total; excess returns 503. " +
+        "Comments ping every 25 seconds. Connections are limited to 8 per listener, 256 total; excess returns 503. " +
         "Payloads: track.updated {track: V2Track}, lyrics.updated {trackId, revision} (read views=lyrics), " +
         "match.updated {trackId, state}, keep.updated {trackId, state, progress}, mix.updated {mixId, playlistId}, " +
         "releases.updated {count}, libraryAddition.updated {row}, track.renamed {old, new}. " +

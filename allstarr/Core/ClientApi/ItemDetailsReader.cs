@@ -31,11 +31,13 @@ public sealed class ItemDetailsReader(
     IProtocolProviderGateway? gateway = null, ILibraryIndexService? libraryIndex = null, LyricsRefreshStore? refreshStore = null,
     ILogger<ItemDetailsReader>? logger = null)
 {
-    public async Task<ItemDetailsResponse> ReadAsync(HttpContext http, ProtocolExecutionContext execution, string[] ids) =>
-        (await ReadWithSongsAsync(http, execution, ids, resolveServingProvider: true)).Response;
+    public async Task<ItemDetailsResponse> ReadAsync(HttpContext http, ProtocolExecutionContext execution, string[] ids,
+        IReadOnlyDictionary<string, Song>? observedSongs = null) =>
+        (await ReadWithSongsAsync(http, execution, ids, resolveServingProvider: true, observedSongs)).Response;
 
     internal async Task<(ItemDetailsResponse Response, IReadOnlyDictionary<string, Song> Songs)> ReadWithSongsAsync(
-        HttpContext http, ProtocolExecutionContext execution, string[] ids, bool resolveServingProvider = false)
+        HttpContext http, ProtocolExecutionContext execution, string[] ids, bool resolveServingProvider = false,
+        IReadOnlyDictionary<string, Song>? observedSongs = null)
     {
         using var building = RequestTiming.Current?.Stage("build");
         var started = System.Diagnostics.Stopwatch.GetTimestamp();
@@ -185,6 +187,7 @@ public sealed class ItemDetailsReader(
                     song = await ReadCachedSongAsync(execution.RequireActor(), link.ProviderId, link.ExternalId, accounts, token);
                     if (song != null) break;
                 }
+            song ??= observedSongs?.GetValueOrDefault(source.Id);
             if (song == null || source.Provider != "allstarr" && !policy.IsEnabled(song.ExternalProvider!) || !policy.Includes(song)) continue;
             song.Id = source.Id;
             song.CanonicalRecordingId = recording?.Id ?? decisions.Where(item => item.ExternalSnapshotId == snapshot?.Id)

@@ -10,68 +10,23 @@ using allstarr.Core.Jobs;
 using allstarr.Core.Matching;
 using allstarr.Core.Playlists;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.AspNetCore.Builder;
-using Microsoft.AspNetCore.Hosting;
-using Microsoft.AspNetCore.Http;
-using Microsoft.AspNetCore.Http.Features;
-using System.IO.Pipelines;
 using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace allstarr.Tests;
 
 public sealed partial class ProtocolRouteFixtureTests
 {
     [Fact]
-    public async Task ClientApi_EventsReadyHeartbeatCapsAndDisconnect()
-    {
-        var buffering = new ClientEventBufferingFilter();
-        using var factory = ClientApiFactory(_ => Json(200, """{"Id":"listener"}"""), services =>
-        {
-            services.AddSingleton<IStartupFilter>(buffering);
-            services.RemoveAll<ClientEventOptions>();
-            services.AddSingleton(new ClientEventOptions { HeartbeatInterval = TimeSpan.FromMilliseconds(30), ConnectionsPerUser = 1 });
-        });
-        using var client = CreateClientApiClient(factory);
-        using var stream = await OpenClientEventsAsync(client);
-        Assert.Equal("text/event-stream", stream.Response.Content.Headers.ContentType!.MediaType);
-        Assert.Empty(stream.Response.Content.Headers.ContentEncoding);
-        Assert.True(buffering.Disabled);
-        Assert.True(stream.Response.Headers.CacheControl!.NoStore);
-        Assert.Equal("no", stream.Response.Headers.GetValues("X-Accel-Buffering").Single());
-        Assert.Equal(": ping", await stream.FrameAsync());
-        using var capped = await client.SendAsync(ClientPlaybackRequest("/allstarr/v1/events"));
-        await AssertClientApiError(capped, 503, "unavailable");
-        stream.Dispose();
-        var hub = factory.Services.GetRequiredService<ClientEventHub>();
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        while (hub.ConnectionCount != 0) await Task.Delay(10, timeout.Token);
-        using var replacement = await OpenClientEventsAsync(client);
-        factory.Services.GetRequiredService<Microsoft.Extensions.Hosting.IHostApplicationLifetime>().StopApplication();
-        while (hub.ConnectionCount != 0) await Task.Delay(10, timeout.Token);
-    }
-
-    [Fact]
-    public async Task ClientApi_EventsOffSwitchReturnsNotFoundBeforeAuthentication()
-    {
-        using var factory = ClientApiFactory(_ => throw new InvalidOperationException("Unexpected upstream request"));
-        using var client = CreateClientApiClient(factory, enabled: false);
-        using var response = await client.GetAsync("/allstarr/v1/events");
-        await AssertClientApiError(response, 404, "not_found");
-        Assert.Equal(0, factory.Services.GetRequiredService<ClientEventHub>().ConnectionCount);
-    }
-
-    [Fact]
-    public async Task ClientApi_EventsLyricsPinAndClearPublishCommittedRevision()
+    public async Task ClientEvents_LyricsPinAndClearPublishCommittedRevision()
     {
         var recording = Guid.NewGuid();
         using var factory = ClientLyricsFactory(recording, new() { ["lyricsplus"] = ClientLyricsResult("word") });
         using var client = CreateClientApiClient(factory);
         client.DefaultRequestHeaders.Add("X-Emby-Token", "listener-token");
         var (owner, _) = await SeedClientLyricsAsync(factory, recording);
-        using var stream = await OpenClientEventsAsync(client);
+        using var stream = await OpenClientEventsAsync(factory);
         using var foreign = factory.Services.GetRequiredService<ClientEventHub>().Subscribe(Guid.NewGuid(), "phone")!;
         const string path = "/allstarr/v1/items/ext-deezer-song-lyrics/lyrics";
         var sources = await ReadClientLyricsJsonAsync(client, path + "/sources");
@@ -89,13 +44,13 @@ public sealed partial class ProtocolRouteFixtureTests
     }
 
     [Fact]
-    public async Task ClientApi_EventsMatchSetRejectClearPublishOnlyToOwner()
+    public async Task ClientEvents_MatchSetRejectClearPublishOnlyToOwner()
     {
         using var factory = ClientMatchFactory(false);
         using var client = CreateClientApiClient(factory);
         client.DefaultRequestHeaders.Add("X-Emby-Token", "listener-token");
         var (_, other, _) = await SeedClientMatchAsync(factory);
-        using var stream = await OpenClientEventsAsync(client);
+        using var stream = await OpenClientEventsAsync(factory);
         using var foreign = factory.Services.GetRequiredService<ClientEventHub>().Subscribe(other, "phone")!;
         const string path = "/allstarr/v1/items/ext-deezer-song-match/match";
         var initial = await ReadClientLyricsJsonAsync(client, path);
@@ -117,7 +72,7 @@ public sealed partial class ProtocolRouteFixtureTests
     }
 
     [Fact]
-    public async Task ClientApi_EventsHouseholdAndAutomaticMatchesRespectPersonalChoices()
+    public async Task ClientEvents_HouseholdAndAutomaticMatchesRespectPersonalChoices()
     {
         using var factory = ClientMatchFactory(false);
         using var client = CreateClientApiClient(factory);
@@ -145,7 +100,7 @@ public sealed partial class ProtocolRouteFixtureTests
             await context.SaveChangesAsync();
         }
         var initial = await ReadClientLyricsJsonAsync(client, "/allstarr/v1/items/ext-deezer-song-match/match");
-        using var stream = await OpenClientEventsAsync(client);
+        using var stream = await OpenClientEventsAsync(factory);
         using var foreign = factory.Services.GetRequiredService<ClientEventHub>().Subscribe(other, null)!;
         var household = await commands.ResolveSnapshotAsync(new(owner, true), snapshot,
             new("reject", AuthorityScope: "household", ExpectedAuthority: await HouseholdStamp(),
@@ -202,7 +157,7 @@ public sealed partial class ProtocolRouteFixtureTests
     }
 
     [Fact]
-    public async Task ClientApi_EventsEffectiveLyricsChangesAreObservedThroughBackgroundLookup()
+    public async Task ClientEvents_EffectiveLyricsChangesAreObservedThroughBackgroundLookup()
     {
         var recording = Guid.NewGuid();
         var results = new Dictionary<string, ProviderLyricsResult?> { ["lyricsplus"] = ClientLyricsResult("line") };
@@ -212,7 +167,7 @@ public sealed partial class ProtocolRouteFixtureTests
         await SeedClientLyricsAsync(factory, recording);
         const string path = "/allstarr/v1/items/ext-deezer-song-lyrics/lyrics";
         await ReadClientLyricsJsonAsync(client, path);
-        using var stream = await OpenClientEventsAsync(client);
+        using var stream = await OpenClientEventsAsync(factory);
         results["lyricsplus"] = new(ProviderLyricsAvailabilityState.Available, "fixture", ProviderLyricsFormat.WordTimed,
             "[00:01.00]New words", timedLines:
             [new("New words", TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(8),
@@ -230,13 +185,13 @@ public sealed partial class ProtocolRouteFixtureTests
     }
 
     [Fact]
-    public async Task ClientApi_EventsKeepIntentChangesUseItemDetailsStates()
+    public async Task ClientEvents_KeepIntentChangesUseItemDetailsStates()
     {
         var recording = Guid.NewGuid();
         using var factory = ClientLyricsFactory(recording, new() { ["lyricsplus"] = ClientLyricsResult("word") });
         using var client = CreateClientApiClient(factory);
         await SeedClientLyricsAsync(factory, recording);
-        using var stream = await OpenClientEventsAsync(client);
+        using var stream = await OpenClientEventsAsync(factory);
         var principal = (await factory.Services.GetRequiredService<BackendIdentityResolver>().ResolveAsync(new("Jellyfin", "listener")))!;
         var execution = new ProtocolExecutionContext(ProtocolKind.Jellyfin, "primary", "listener", principal,
             "fixture", DateTimeOffset.UtcNow.AddMinutes(1), default);
@@ -255,15 +210,15 @@ public sealed partial class ProtocolRouteFixtureTests
     }
 
     [Fact]
-    public async Task ClientApi_EventsPlaybackRouteChangesOnlyReachCurrentDevice()
+    public async Task ClientEvents_PlaybackRouteChangesOnlyReachCurrentDevice()
     {
         var gateway = DeliveryGateway("flac", "flac");
         using var factory = ClientPlaybackFactory(gateway);
         using var client = CreateClientApiClient(factory);
         await SetClientPlaybackAsync(factory, "listener", "phone", "ext-deezer-song-42");
-        using var phone = await OpenClientEventsAsync(client);
-        using var tablet = await OpenClientEventsAsync(client, device: "tablet");
-        using var other = await OpenClientEventsAsync(client, user: "other");
+        using var phone = await OpenClientEventsAsync(factory);
+        using var tablet = await OpenClientEventsAsync(factory, device: "tablet");
+        using var other = await OpenClientEventsAsync(factory, user: "other");
         var principal = (await factory.Services.GetRequiredService<BackendIdentityResolver>().ResolveAsync(new("Jellyfin", "listener")))!;
         var execution = new ProtocolExecutionContext(ProtocolKind.Jellyfin, "primary", "listener", principal,
             "fixture", DateTimeOffset.UtcNow.AddMinutes(1), default, new(deviceId: "phone"));
@@ -284,73 +239,36 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.Equal("event: releases.updated\ndata: {\"count\":8}", await tablet.FrameAsync());
     }
 
-    private static async Task<ClientEventStream> OpenClientEventsAsync(HttpClient client, string user = "listener", string? device = "phone")
+    private static async Task<ClientEventProbe> OpenClientEventsAsync(ProtocolFactory factory, string user = "listener", string? device = "phone")
     {
-        using var request = ClientPlaybackRequest("/allstarr/v1/events", user, device);
-        request.Headers.TryAddWithoutValidation("Accept-Encoding", "gzip, br");
-        request.Headers.TryAddWithoutValidation("Last-Event-ID", "previous-session");
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        var result = new ClientEventStream(response, new StreamReader(await response.Content.ReadAsStreamAsync(timeout.Token)));
-        Assert.Equal("event: ready\ndata: {}", await result.FrameAsync());
-        return result;
+        var principal = (await factory.Services.GetRequiredService<BackendIdentityResolver>().ResolveAsync(new("Jellyfin", user)))!;
+        return new(factory.Services.GetRequiredService<ClientEventHub>().Subscribe(principal.UserId, device)!);
     }
 
-    private sealed class ClientEventBufferingFilter : IStartupFilter
+    private sealed class ClientEventProbe(ClientEventSubscription subscription) : IDisposable
     {
-        public bool Disabled { get; private set; }
-        public Action<IApplicationBuilder> Configure(Action<IApplicationBuilder> next) => app =>
+        private async Task<ClientEvent> ReadAsync()
         {
-            app.Use((http, continuePipeline) =>
-            {
-                if (http.Request.Path == "/allstarr/v1/events")
-                {
-                    var original = http.Features.Get<IHttpResponseBodyFeature>()!;
-                    http.Features.Set<IHttpResponseBodyFeature>(new ClientEventBodyFeature(original, () => Disabled = true));
-                }
-                return continuePipeline();
-            });
-            next(app);
-        };
-    }
-
-    private sealed class ClientEventBodyFeature(IHttpResponseBodyFeature inner, Action disabled) : IHttpResponseBodyFeature
-    {
-        public Stream Stream => inner.Stream;
-        public PipeWriter Writer => inner.Writer;
-        public void DisableBuffering() { disabled(); inner.DisableBuffering(); }
-        public Task StartAsync(CancellationToken cancellationToken = default) => inner.StartAsync(cancellationToken);
-        public Task SendFileAsync(string path, long offset, long? count, CancellationToken cancellationToken = default) => inner.SendFileAsync(path, offset, count, cancellationToken);
-        public Task CompleteAsync() => inner.CompleteAsync();
-    }
-
-    private sealed class ClientEventStream(HttpResponseMessage response, StreamReader reader) : IDisposable
-    {
-        public HttpResponseMessage Response => response;
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+            return await subscription.ReadAsync(timeout.Token) ?? throw new EndOfStreamException();
+        }
         public async Task<string> FrameAsync()
         {
-            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-            var lines = new List<string>();
-            while (await reader.ReadLineAsync(timeout.Token) is { } line)
-            {
-                if (line.Length == 0) return string.Join('\n', lines);
-                lines.Add(line);
-            }
-            throw new EndOfStreamException();
+            var value = await ReadAsync();
+            return $"event: {value.Type}\ndata: {value.Json}";
         }
         public async Task<JsonElement> EventAsync(string type, string? itemId = null)
         {
             for (var attempt = 0; attempt < 100; attempt++)
             {
-                var frame = await FrameAsync();
-                if (!frame.StartsWith("event: " + type + "\n", StringComparison.Ordinal)) continue;
-                using var document = JsonDocument.Parse(frame.Split('\n').Single(line => line.StartsWith("data: ", StringComparison.Ordinal))[6..]);
+                var value = await ReadAsync();
+                if (value.Type != type) continue;
+                using var document = JsonDocument.Parse(value.Json);
                 if (itemId != null && document.RootElement.GetProperty("itemId").GetString() != itemId) continue;
                 return document.RootElement.Clone();
             }
             throw new InvalidOperationException("The expected event was not received.");
         }
-        public void Dispose() { response.Dispose(); reader.Dispose(); }
+        public void Dispose() => subscription.Dispose();
     }
 }

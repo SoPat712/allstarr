@@ -61,6 +61,8 @@ public sealed class V2BatchDispatcher(IServiceScopeFactory scopes, ILogger<V2Bat
         var http = SubRequest(parent, scope.ServiceProvider);
         http.Request.Path = Prefix + route;
         http.Request.QueryString = new(queryStart < 0 ? "" : path[queryStart..]);
+        http.Request.Path = Prefix + route;
+        http.Request.QueryString = QueryString.Create(query);
         var tracks = scope.ServiceProvider.GetRequiredService<V2TrackEndpoints>();
         var resources = scope.ServiceProvider.GetRequiredService<V2TrackResources>();
         return segments switch
@@ -99,6 +101,17 @@ public sealed class V2BatchDispatcher(IServiceScopeFactory scopes, ILogger<V2Bat
                 System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var limit) =>
                 await tracks.AutoplayAsync(http, execution, id, Value(query, "cursor"), limit),
             ["tracks", _, "autoplay"] => new(400, null),
+            ["me", "history"] when Allowed(query, ["limit", "before"]) => await scope.ServiceProvider.GetRequiredService<V2MeEndpoints>().ReadAsync(http, execution, "history"),
+            ["me", "history", "imports"] when Allowed(query, []) => await scope.ServiceProvider.GetRequiredService<V2MeEndpoints>().ReadAsync(http, execution, "history/imports"),
+            ["me", "history", "imports", "recheck"] when Allowed(query, []) => await scope.ServiceProvider.GetRequiredService<V2MeEndpoints>().ReadAsync(http, execution, "history/imports/recheck"),
+            ["me", "stats"] when Allowed(query, ["period", "year", "timeZoneId"]) => await scope.ServiceProvider.GetRequiredService<V2MeEndpoints>().ReadAsync(http, execution, "stats"),
+            ["me", var resource] when resource is "sound" or "taste" or "preferences" && Allowed(query, []) =>
+                await scope.ServiceProvider.GetRequiredService<V2MeEndpoints>().ReadAsync(http, execution, resource),
+            ["search", "lyrics"] when Allowed(query, ["q", "limit"]) && int.TryParse(Value(query, "limit") ?? "20",
+                System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var lyricsLimit) =>
+                await scope.ServiceProvider.GetRequiredService<V2SearchEndpoints>().LyricsAsync(http, execution, Value(query, "q"), lyricsLimit),
+            ["me", "history"] or ["me", "history", "imports"] or ["me", "history", "imports", "recheck"] or
+                ["me", "stats" or "sound" or "taste" or "preferences"] or ["search", "lyrics"] => new(400, null),
             ["tracks"] or ["tracks", _] or ["albums", _] => new(400, null),
             _ => new(404, null)
         };
