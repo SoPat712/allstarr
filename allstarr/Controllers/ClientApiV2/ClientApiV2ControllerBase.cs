@@ -33,6 +33,6 @@ public abstract class ClientApiV2ControllerBase : ControllerBase
             if (result.ETag != null) Response.Headers.ETag = result.ETag;
         }
         if (result.Body is ClientApiError error) return new JsonResult(error) { StatusCode = result.Status };
-        return result.Status == 200 && result.Body != null ? Ok(result.Body) : StatusCode(result.Status);
+        return result.Body != null ? StatusCode(result.Status, result.Body) : StatusCode(result.Status);
     }
 }

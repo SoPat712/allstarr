@@ -21,7 +21,7 @@ public sealed class V2TrackViewReader(ItemLyricsReader lyrics, ItemMatchReader m
         if (requested.Contains("lyricsSources"))
             views = views with { LyricsSources = await ReadAsync("lyricsSources", () => lyrics.SourcesAsync(http, execution, source)) };
         if (requested.Contains("match"))
-            views = views with { Match = await ReadAsync("match", () => matches.ReadAsync(http, execution, source)) };
+            views = views with { Match = await ReadAsync("match", async () => V2ProviderUrls.For(await matches.ReadAsync(http, execution, source))) };
         return (views, status);
 
         async Task<T?> ReadAsync<T>(string name, Func<Task<T?>> read) where T : class

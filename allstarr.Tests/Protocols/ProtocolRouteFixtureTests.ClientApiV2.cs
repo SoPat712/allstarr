@@ -48,7 +48,9 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.Equal(["native1"], track.GetProperty("aliases").EnumerateArray().Select(value => value.GetString()!).ToArray());
         Assert.False(track.GetProperty("isExternal").GetBoolean());
         Assert.Equal("native1", track.GetProperty("libraryItemId").GetString());
-        AssertLibraryProvider(track.GetProperty("provider"));
+        Assert.Equal("jellyfin", track.GetProperty("provider").GetProperty("id").GetString());
+        Assert.Equal("/allstarr/v2/providers/jellyfin/icon", track.GetProperty("provider").GetProperty("iconUrl").GetString());
+        Assert.Equal("/allstarr/v2/providers/jellyfin/icon?variant=glyph", track.GetProperty("provider").GetProperty("glyphUrl").GetString());
         Assert.Equal("Library song", track.GetProperty("title").GetString());
         var artist = Assert.Single(track.GetProperty("artists").EnumerateArray());
         Assert.Equal(V2Ids.Artist("artist1"), artist.GetProperty("id").GetString());
@@ -287,7 +289,7 @@ public sealed partial class ProtocolRouteFixtureTests
             if (item.StatusCode == HttpStatusCode.OK)
             {
                 Assert.Equal("ok", status[view]!.GetValue<string>());
-                Assert.True(JsonNode.DeepEquals(JsonNode.Parse(itemBody), json["views"]![view]), $"{view}: {itemBody} vs {json["views"]![view]}");
+                Assert.True(JsonNode.DeepEquals(JsonNode.Parse(itemBody.Replace("/allstarr/v1/providers/", "/allstarr/v2/providers/", StringComparison.Ordinal)), json["views"]![view]), $"{view}: {itemBody} vs {json["views"]![view]}");
             }
             else
             {

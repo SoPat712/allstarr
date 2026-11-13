@@ -447,6 +447,14 @@ builder.Services.AddOpenApi("v2", options =>
     });
     options.AddOperationTransformer((operation, context, cancellationToken) =>
     {
+        if (context.Description.RelativePath is "allstarr/v2/mixes/{id}/cover" or "allstarr/v2/releases/{id}/cover" or
+            "allstarr/v2/models/karaoke/{version}/file" or "allstarr/v2/providers/{id}/icon")
+            if (operation.Responses?.TryGetValue("200", out var image) == true && image.Content != null)
+            {
+                image.Content.Remove("application/json");
+                foreach (var content in image.Content.Values)
+                    content.Schema = new OpenApiSchema { Type = JsonSchemaType.String, Format = "binary" };
+            }
         if (operation.Responses?.ContainsKey("304") != true) return Task.CompletedTask;
         operation.Parameters ??= [];
         operation.Parameters.Add(new OpenApiParameter
@@ -511,6 +519,7 @@ builder.Services.AddScoped<V2TrackEndpoints>();
 builder.Services.AddScoped<V2TrackResources>();
 builder.Services.AddScoped<V2SessionReader>();
 builder.Services.AddScoped<V2AlbumEndpoints>();
+builder.Services.AddScoped<V2LibraryEndpoints>();
 builder.Services.AddSingleton<V2ServingStreams>();
 builder.Services.AddScoped<LyricsTranslation>();
 builder.Services.AddScoped<V2ArtistLinkEndpoints>();

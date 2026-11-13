@@ -25,7 +25,14 @@ public sealed class V2SessionReader(IDurableRuntimeSettings settings)
                 ["trackMatch"] = true,
                 ["appearances"] = true,
                 ["similarAlbums"] = true,
-                ["playbackStatus"] = true
+                ["playbackStatus"] = true,
+                ["mixes"] = true,
+                ["releases"] = true,
+                ["libraryAdditions"] = true,
+                ["artistFollow"] = true,
+                ["reports"] = true,
+                ["karaokeModel"] = true,
+                ["providerIcons"] = true
             }, string.IsNullOrEmpty(address) ? null : new(address)));
     }
 }

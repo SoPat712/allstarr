@@ -35,8 +35,12 @@ public sealed partial class ProtocolRouteFixtureTests
         using var response = await client.PostAsJsonAsync("/allstarr/v1/items/details", new { ids = new[] { "ext-deezer-song-facts" } });
         response.EnsureSuccessStatusCode();
         var original = JsonNode.Parse(await response.Content.ReadAsStringAsync())!["items"]![0]!;
-        foreach (var name in new[] { "isExternal", "canonicalRecordingId", "provider", "explicit", "saved", "keep", "match", "lyrics", "playCount", "lastPlayedAt" })
+        foreach (var name in new[] { "isExternal", "canonicalRecordingId", "explicit", "saved", "keep", "match", "lyrics", "playCount", "lastPlayedAt" })
             Assert.True(JsonNode.DeepEquals(original[name], track[name]), name);
+        // The same provider, with its icons served by the v2 icon route.
+        foreach (var name in new[] { "id", "name" })
+            Assert.True(JsonNode.DeepEquals(original["provider"]![name], track["provider"]![name]), "provider." + name);
+        Assert.StartsWith("/allstarr/v2/providers/", track["provider"]!["iconUrl"]!.GetValue<string>());
         Assert.Equal(original["isrc"]!.GetValue<string>(), track["externalIds"]!["isrc"]!.GetValue<string>());
         foreach (var name in new[] { "codec", "bitDepth", "sampleRate", "bitrate" })
             Assert.True(JsonNode.DeepEquals(original["audio"]![name], track["format"]![name]), name);

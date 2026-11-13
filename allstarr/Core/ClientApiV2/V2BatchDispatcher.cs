@@ -81,6 +81,14 @@ public sealed class V2BatchDispatcher(IServiceScopeFactory scopes, ILogger<V2Bat
             ["playback", "resolve"] => new(404, null),
             ["playback", var id] when Allowed(query, []) => scope.ServiceProvider.GetRequiredService<V2ServingStreams>().Status(execution, id),
             ["playback", _] => new(400, null),
+            ["mixes"] when Allowed(query, ["timeZoneId"]) => await scope.ServiceProvider.GetRequiredService<V2LibraryEndpoints>()
+                .MixesAsync(http, execution, Value(query, "timeZoneId")),
+            ["mixes", var id, "tracks"] when Allowed(query, []) => await scope.ServiceProvider.GetRequiredService<V2LibraryEndpoints>()
+                .MixTracksAsync(http, execution, id),
+            ["releases"] when Allowed(query, []) => await scope.ServiceProvider.GetRequiredService<V2LibraryEndpoints>().ReleasesAsync(http, execution),
+            ["library", "additions"] when Allowed(query, []) => await scope.ServiceProvider.GetRequiredService<V2LibraryEndpoints>().AdditionsAsync(execution),
+            ["models", "karaoke"] when Allowed(query, []) => scope.ServiceProvider.GetRequiredService<V2LibraryEndpoints>().Karaoke(),
+            ["mixes"] or ["mixes", _, "tracks"] or ["releases"] or ["library", "additions"] or ["models", "karaoke"] => new(400, null),
             ["tracks"] when Allowed(query, ListKeys) => await tracks.ListAsync(http, execution, Value(query, "ids"), Value(query, "include"), Value(query, "views")),
             ["albums", var id] when Allowed(query, AlbumKeys) => await scope.ServiceProvider.GetRequiredService<V2AlbumEndpoints>()
                 .GetAsync(http, execution, id, Value(query, "include"), Value(query, "views")),

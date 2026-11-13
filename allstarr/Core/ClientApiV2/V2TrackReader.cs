@@ -107,7 +107,7 @@ public sealed class V2TrackReader(
         string title, IReadOnlyList<V2Ref> artists, IReadOnlyList<V2Ref> albumArtists, V2AlbumRef? album, int? disc, int? track,
         long? durationMs, int? year, V2Artwork? artwork, V2Format? format, double? trackGain, double? albumGain) =>
         new(id, [], item.IsExternal, libraryItemId,
-            item.Provider == null ? null : new(item.Provider.Id, item.Provider.Name, item.Provider.IconUrl, item.Provider.GlyphUrl),
+            item.Provider == null ? null : Provider(item.Provider),
             externalIds, title, artists, albumArtists, Featuring(artists, albumArtists), album, disc, track, durationMs, year,
             item.Explicit, artwork, format,
             Finite(trackGain), Finite(albumGain), item.Saved, item.PlayCount, item.LastPlayedAt,
@@ -115,6 +115,12 @@ public sealed class V2TrackReader(
             item.Match == null ? null : new(item.Match.State, item.Match.Confidence, item.Match.Authority),
             new(item.Lyrics.Available, item.Lyrics.Format, item.Lyrics.Source))
         { CanonicalRecordingId = item.CanonicalRecordingId };
+
+    private static V2Provider Provider(ItemDetailsProvider source)
+    {
+        var provider = V2ProviderUrls.For(source);
+        return new(provider.Id, provider.Name, provider.IconUrl, provider.GlyphUrl);
+    }
 
     private static V2Track FromLibrary(string target, LibraryItem local, ItemDetails item, Dictionary<string, V2AlbumSummary>? albums)
     {
