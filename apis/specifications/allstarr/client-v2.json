@@ -5,6 +5,126 @@
     "version": "2"
   },
   "paths": {
+    "/allstarr/v2/albums/{id}/similar": {
+      "get": {
+        "tags": [
+          "Albums"
+        ],
+        "description": "Reads related artists\u0027 albums using the library copy when available, with v2 album shapes. Can also be read inside a batch.",
+        "operationId": "getAlbumSimilar",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Albums to return, from 1 to 24; defaults to 12.",
+            "schema": {
+              "maximum": 24,
+              "minimum": 1,
+              "type": "integer",
+              "format": "int32",
+              "default": 12
+            }
+          },
+          {
+            "name": "If-None-Match",
+            "in": "header",
+            "description": "The stored ETag; a matching representation returns 304 without a body.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "headers": {
+              "ETag": {
+                "description": "Representation validator, also returned by the batch entry.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V2SimilarAlbumsResponse"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Not Modified",
+            "headers": {
+              "ETag": {
+                "description": "Representation validator, also returned by the batch entry.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/allstarr/v2/albums/{id}": {
       "get": {
         "tags": [
@@ -322,7 +442,7 @@
         "tags": [
           "ArtistLinks"
         ],
-        "description": "Takes back this person\u0027s answer, so matched songs decide again. A listener cannot take back the household\u0027s answer (403); they can mark it as not the same for themselves instead. Ids may be v2 artist ids or the older media server and \u0060ext-\u0060 artist ids.",
+        "description": "Takes back this person\u0027s answer, so matched songs decide again. An administrator can take back a household answer. A listener cannot take back the household\u0027s answer (403); they can mark it as not the same for themselves instead. Ids may be v2 artist ids or the older media server and \u0060ext-\u0060 artist ids.",
         "operationId": "clearArtistLink",
         "parameters": [
           {
@@ -653,6 +773,114 @@
         }
       }
     },
+    "/allstarr/v2/playback/{playbackId}": {
+      "get": {
+        "tags": [
+          "Playback"
+        ],
+        "description": "Reads a playback created by resolve: its actual delivered format and live serving facts, both null until the stream opens and after it closes. Never opens audio, issues a stream link or prepares a source. Another listener\u0027s playback returns 404. Retained in memory for up to twelve hours. Can also be read inside a batch.",
+        "operationId": "getPlaybackStatus",
+        "parameters": [
+          {
+            "name": "playbackId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "If-None-Match",
+            "in": "header",
+            "description": "The stored ETag; a matching representation returns 304 without a body.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "headers": {
+              "ETag": {
+                "description": "Representation validator, also returned by the batch entry.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V2PlaybackStatus"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Not Modified",
+            "headers": {
+              "ETag": {
+                "description": "Representation validator, also returned by the batch entry.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/allstarr/v2/playback/resolve": {
       "post": {
         "tags": [
@@ -825,6 +1053,977 @@
               "text/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/allstarr/v2/session": {
+      "get": {
+        "tags": [
+          "Session"
+        ],
+        "description": "Reads this listener\u0027s identity, server version, available v2 areas and the dashboard link. Can also be read inside a batch.",
+        "operationId": "getSession",
+        "parameters": [
+          {
+            "name": "If-None-Match",
+            "in": "header",
+            "description": "The stored ETag; a matching representation returns 304 without a body.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "headers": {
+              "ETag": {
+                "description": "Representation validator, also returned by the batch entry.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V2SessionResponse"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Not Modified",
+            "headers": {
+              "ETag": {
+                "description": "Representation validator, also returned by the batch entry.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/allstarr/v2/tracks/{id}/lyrics/sources": {
+      "get": {
+        "tags": [
+          "TrackResources"
+        ],
+        "description": "Lists available lyrics versions, the effective choice and revision stamps. Can also be read inside a batch.",
+        "operationId": "getTrackLyricsSources",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "includeLyrics",
+            "in": "query",
+            "description": "Include each version\u0027s full rich lyrics.",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          {
+            "name": "If-None-Match",
+            "in": "header",
+            "description": "The stored ETag; a matching representation returns 304 without a body.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "headers": {
+              "ETag": {
+                "description": "Representation validator, also returned by the batch entry.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientLyricsSources"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Not Modified",
+            "headers": {
+              "ETag": {
+                "description": "Representation validator, also returned by the batch entry.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/allstarr/v2/tracks/{id}/lyrics/source": {
+      "put": {
+        "tags": [
+          "TrackResources"
+        ],
+        "description": "Chooses a lyrics version for this listener. Send the revision from the sources read; stale revisions return 409.",
+        "operationId": "chooseTrackLyricsSource",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetClientLyricsSourceRequest"
+              }
+            },
+            "text/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetClientLyricsSourceRequest"
+              }
+            },
+            "application/*\u002Bjson": {
+              "schema": {
+                "$ref": "#/components/schemas/SetClientLyricsSourceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientLyricsSelection"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "TrackResources"
+        ],
+        "description": "Clears this listener\u0027s lyrics choice, restoring the household choice or automatic selection. Send expectedRevision in the body; stale revisions return 409.",
+        "operationId": "resetTrackLyricsSource",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClearClientLyricsSourceRequest"
+              }
+            },
+            "text/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClearClientLyricsSourceRequest"
+              }
+            },
+            "application/*\u002Bjson": {
+              "schema": {
+                "$ref": "#/components/schemas/ClearClientLyricsSourceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientLyricsSelection"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/allstarr/v2/tracks/{id}/match": {
+      "get": {
+        "tags": [
+          "TrackResources"
+        ],
+        "description": "Reads the effective match, available candidates and revision. Candidate ids are opaque choice handles. Can also be read inside a batch.",
+        "operationId": "getTrackMatch",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "If-None-Match",
+            "in": "header",
+            "description": "The stored ETag; a matching representation returns 304 without a body.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "headers": {
+              "ETag": {
+                "description": "Representation validator, also returned by the batch entry.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientItemMatch"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Not Modified",
+            "headers": {
+              "ETag": {
+                "description": "Representation validator, also returned by the batch entry.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "TrackResources"
+        ],
+        "description": "Pins a match candidate for this listener. Send candidateId and expectedRevision from the match read; stale revisions return 409.",
+        "operationId": "chooseTrackMatch",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetClientMatchRequest"
+              }
+            },
+            "text/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetClientMatchRequest"
+              }
+            },
+            "application/*\u002Bjson": {
+              "schema": {
+                "$ref": "#/components/schemas/SetClientMatchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientItemMatch"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "TrackResources"
+        ],
+        "description": "Clears this listener\u0027s match override, restoring the household or automatic match. Stale revisions return 409.",
+        "operationId": "resetTrackMatch",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "expectedRevision",
+            "in": "query",
+            "description": "Opaque revision from the match read.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientItemMatch"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/allstarr/v2/tracks/{id}/match/reject": {
+      "post": {
+        "tags": [
+          "TrackResources"
+        ],
+        "description": "Rejects the effective match for this listener. Send expectedRevision from the match read; stale revisions return 409.",
+        "operationId": "rejectTrackMatch",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RejectClientMatchRequest"
+              }
+            },
+            "text/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RejectClientMatchRequest"
+              }
+            },
+            "application/*\u002Bjson": {
+              "schema": {
+                "$ref": "#/components/schemas/RejectClientMatchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientItemMatch"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/allstarr/v2/tracks/{id}/appearances": {
+      "get": {
+        "tags": [
+          "TrackResources"
+        ],
+        "description": "Lists this listener\u0027s mixes and synced playlists containing the track, with v2 resource ids. Can also be read inside a batch.",
+        "operationId": "getTrackAppearances",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "If-None-Match",
+            "in": "header",
+            "description": "The stored ETag; a matching representation returns 304 without a body.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "headers": {
+              "ETag": {
+                "description": "Representation validator, also returned by the batch entry.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V2TrackAppearances"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Not Modified",
+            "headers": {
+              "ETag": {
+                "description": "Representation validator, also returned by the batch entry.",
+                "schema": {
+                  "type": "string"
                 }
               }
             }
@@ -1328,6 +2527,17 @@
   },
   "components": {
     "schemas": {
+      "ClearClientLyricsSourceRequest": {
+        "required": [
+          "expectedRevision"
+        ],
+        "type": "object",
+        "properties": {
+          "expectedRevision": {
+            "$ref": "#/components/schemas/ClientLyricsRevision"
+          }
+        }
+      },
       "ClientApiError": {
         "required": [
           "code",
@@ -1437,6 +2647,32 @@
                 "type": "null"
               }
             ]
+          }
+        }
+      },
+      "ClientLyricsSelection": {
+        "required": [
+          "chosen",
+          "revision"
+        ],
+        "type": "object",
+        "properties": {
+          "chosen": {
+            "type": [
+              "null",
+              "object"
+            ],
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ClientLyricsChosen"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "revision": {
+            "$ref": "#/components/schemas/ClientLyricsRevision"
           }
         }
       },
@@ -1726,6 +2962,17 @@
           }
         }
       },
+      "RejectClientMatchRequest": {
+        "required": [
+          "expectedRevision"
+        ],
+        "type": "object",
+        "properties": {
+          "expectedRevision": {
+            "type": "string"
+          }
+        }
+      },
       "RichLyrics": {
         "required": [
           "source",
@@ -1833,6 +3080,36 @@
             "format": "int64"
           },
           "text": {
+            "type": "string"
+          }
+        }
+      },
+      "SetClientLyricsSourceRequest": {
+        "required": [
+          "sourceId",
+          "expectedRevision"
+        ],
+        "type": "object",
+        "properties": {
+          "sourceId": {
+            "type": "string"
+          },
+          "expectedRevision": {
+            "$ref": "#/components/schemas/ClientLyricsRevision"
+          }
+        }
+      },
+      "SetClientMatchRequest": {
+        "required": [
+          "candidateId",
+          "expectedRevision"
+        ],
+        "type": "object",
+        "properties": {
+          "candidateId": {
+            "type": "string"
+          },
+          "expectedRevision": {
             "type": "string"
           }
         }
@@ -1964,6 +3241,48 @@
             "items": {
               "$ref": "#/components/schemas/V2AlbumSummary"
             }
+          }
+        }
+      },
+      "V2Appearance": {
+        "required": [
+          "kind",
+          "id",
+          "title",
+          "subtitle",
+          "coverUrl",
+          "matchedSongCount",
+          "playlistId"
+        ],
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "subtitle": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "coverUrl": {
+            "type": "string"
+          },
+          "matchedSongCount": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "playlistId": {
+            "type": [
+              "null",
+              "string"
+            ]
           }
         }
       },
@@ -2155,6 +3474,17 @@
           }
         }
       },
+      "V2Dashboard": {
+        "required": [
+          "url"
+        ],
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string"
+          }
+        }
+      },
       "V2Format": {
         "required": [
           "container",
@@ -2234,6 +3564,22 @@
               "number"
             ],
             "format": "double"
+          }
+        }
+      },
+      "V2Listener": {
+        "required": [
+          "id",
+          "name"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
           }
         }
       },
@@ -2462,13 +3808,6 @@
             "pattern": "lossless|high|normal|low|original",
             "type": "string"
           },
-          "network": {
-            "pattern": "wifi|cellular",
-            "type": [
-              "null",
-              "string"
-            ]
-          },
           "client": {
             "type": [
               "null",
@@ -2585,6 +3924,47 @@
           }
         }
       },
+      "V2PlaybackStatus": {
+        "required": [
+          "playbackId",
+          "delivered",
+          "serving"
+        ],
+        "type": "object",
+        "properties": {
+          "playbackId": {
+            "type": "string"
+          },
+          "delivered": {
+            "type": [
+              "null",
+              "object"
+            ],
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/V2PlaybackFormat"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "serving": {
+            "type": [
+              "null",
+              "object"
+            ],
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/V2ServingFacts"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
       "V2Provider": {
         "required": [
           "id",
@@ -2671,6 +4051,144 @@
           },
           "source": {
             "type": "string"
+          }
+        }
+      },
+      "V2SessionResponse": {
+        "required": [
+          "listener",
+          "serverVersion",
+          "features",
+          "dashboard"
+        ],
+        "type": "object",
+        "properties": {
+          "listener": {
+            "$ref": "#/components/schemas/V2Listener"
+          },
+          "serverVersion": {
+            "type": "string"
+          },
+          "features": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "boolean"
+            }
+          },
+          "dashboard": {
+            "type": [
+              "null",
+              "object"
+            ],
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/V2Dashboard"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "V2SimilarAlbum": {
+        "required": [
+          "id",
+          "title",
+          "artists",
+          "year",
+          "isExternal",
+          "artwork",
+          "songCount",
+          "source",
+          "provider"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "artists": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/V2Ref"
+            }
+          },
+          "year": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int32"
+          },
+          "isExternal": {
+            "type": "boolean"
+          },
+          "artwork": {
+            "type": [
+              "null",
+              "object"
+            ],
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/V2Artwork"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "songCount": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int32"
+          },
+          "source": {
+            "type": "string"
+          },
+          "provider": {
+            "type": [
+              "null",
+              "object"
+            ],
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/V2Provider"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "V2SimilarAlbumsResponse": {
+        "required": [
+          "albumId",
+          "basedOn",
+          "albums"
+        ],
+        "type": "object",
+        "properties": {
+          "albumId": {
+            "type": "string"
+          },
+          "basedOn": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "albums": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/V2SimilarAlbum"
+            }
           }
         }
       },
@@ -2897,6 +4415,36 @@
           },
           "lyrics": {
             "$ref": "#/components/schemas/V2LyricsAvailability"
+          },
+          "canonicalRecordingId": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "description": "The recording identity, when known, shared by library and service copies."
+          }
+        }
+      },
+      "V2TrackAppearances": {
+        "required": [
+          "trackId",
+          "songCount",
+          "appearances"
+        ],
+        "type": "object",
+        "properties": {
+          "trackId": {
+            "type": "string"
+          },
+          "songCount": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "appearances": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/V2Appearance"
+            }
           }
         }
       },
@@ -3076,6 +4624,12 @@
     },
     {
       "name": "Stream"
+    },
+    {
+      "name": "Session"
+    },
+    {
+      "name": "TrackResources"
     },
     {
       "name": "Tracks"

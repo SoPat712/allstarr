@@ -2,6 +2,7 @@ using allstarr.Core.Caching;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using allstarr.Core.Capabilities;
 using allstarr.Core.ClientApi;
 using allstarr.Core.Favorites;
@@ -366,7 +367,8 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.Equal("aac", item.GetProperty("audio").GetProperty("codec").GetString());
     }
 
-    private static async Task<Guid> SeedClientDetailsAsync(ProtocolFactory factory, string backendUser, string externalId, bool personal)
+    private static async Task<Guid> SeedClientDetailsAsync(ProtocolFactory factory, string backendUser, string externalId, bool personal,
+        allstarr.Models.Domain.Song? metadata = null)
     {
         var principal = await factory.Services.GetRequiredService<BackendIdentityResolver>().ResolveAsync(new BackendIdentityDescriptor("Jellyfin", backendUser));
         var owner = principal!.UserId;
@@ -392,6 +394,14 @@ public sealed partial class ProtocolRouteFixtureTests
                 Revision = 1
             });
         }
+        var payload = """{"Title":"Stored song","Artist":"Stored artist","Isrc":"USABC1200001","ExplicitContentLyrics":1,"Codec":"advertised","BitDepth":32}""";
+        if (metadata != null)
+        {
+            var stored = JsonNode.Parse(payload)!.AsObject();
+            foreach (var field in JsonSerializer.SerializeToNode(metadata)!.AsObject())
+                if (field.Value != null && !stored.ContainsKey(field.Key)) stored[field.Key] = field.Value.DeepClone();
+            payload = stored.ToJsonString();
+        }
         var snapshot = new ExternalMetadataSnapshotRecord
         {
             Id = Guid.NewGuid(),
@@ -403,7 +413,7 @@ public sealed partial class ProtocolRouteFixtureTests
             ResourceKind = "track",
             ExternalIdHash = CanonicalCatalogKeys.Hash(externalId),
             SnapshotVersion = 1,
-            PayloadJson = """{"Title":"Stored song","Artist":"Stored artist","Isrc":"USABC1200001","ExplicitContentLyrics":1,"Codec":"advertised","BitDepth":32}""",
+            PayloadJson = payload,
             RetrievedAt = DateTimeOffset.UtcNow
         };
         db.ExternalMetadataSnapshots.Add(snapshot);

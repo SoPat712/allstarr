@@ -23,7 +23,7 @@ public sealed class V2PlaybackReader(V2TrackReader tracks, ProviderStreamOpener 
 
     public async Task<V2Result> ResolveAsync(HttpContext http, ProtocolExecutionContext execution, V2PlaybackRequest request)
     {
-        if (!ValidTier(request.Tier)) return new(400, null);
+        if (!ValidTier(request.Tier) || !V2Ids.TryDecode(request.TrackId, V2IdKind.Track, out _)) return new(400, null);
         var (read, sources) = await tracks.ReadWithSourcesAsync(http, execution, [request.TrackId], false);
         if (read.Tracks.Count == 0) return new(404, null);
         return new(200, await ResolveTrackAsync(http, execution, read.Tracks[0], sources[read.Tracks[0].Id], request));
@@ -70,6 +70,7 @@ public sealed class V2PlaybackReader(V2TrackReader tracks, ProviderStreamOpener 
         if (lowered != null) reason += $"; quality limited by {lowered}";
         if (request.Purpose == "prefetch" && parsed.isExternal)
             await preparation.PrepareAsync(execution with { PreparationQuality = quality }, item);
+        serving.Remember(execution, playback, expires);
         return new($"{http.Request.Scheme}://{http.Request.Host}{http.Request.PathBase}/allstarr/v2/stream/" + tokens.Protect(ticket, expires), expires, playback, key, Format(source), Format(delivered),
             converted, converted ? null : inspected.Content.Headers.ContentLength,
             !converted && (routed?.Lease.SupportsByteRanges == true || inspected.Headers.AcceptRanges.Contains("bytes")) ? "bytes" : "none",
@@ -168,7 +169,7 @@ public sealed class V2PlaybackReader(V2TrackReader tracks, ProviderStreamOpener 
         tier is "lossless" or "original" && (step == "CdLossless" && (source.SampleRate > 44100 || source.BitDepth > 16) ||
             step == "HiResLossless" && source.SampleRate > 96000);
     private static bool Lossless(string codec) => codec is "flac" or "alac" or "wav" or "aiff" or "ape" or "wavpack" || codec.StartsWith("pcm_", StringComparison.Ordinal);
-    private static V2PlaybackFormat Format(ProviderMediaFormat media) => new(media.Container, media.Codec, media.Bitrate, media.SampleRate, media.BitDepth, Lossless(media.Codec));
+    internal static V2PlaybackFormat Format(ProviderMediaFormat media) => new(media.Container, media.Codec, media.Bitrate, media.SampleRate, media.BitDepth, Lossless(media.Codec));
     private static ProviderMediaFormat Media(V2Format? format) => format?.Codec is not { } codec || format.Container is not { } container
         ? throw new ProviderAudioProfileException("Library audio format is unavailable.")
         : new("application/octet-stream", container, codec, format.Bitrate, format.SampleRate, format.BitDepth, format.Channels);

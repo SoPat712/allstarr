@@ -35,7 +35,8 @@ public sealed record V2ArtistLinkRequest
 /// artist, or tied the wrong one. An administrator's answer covers the whole household and a listener's covers only
 /// them; a listener's own answer wins over the household's for that listener.
 /// </summary>
-public sealed class V2ArtistLinkEndpoints(ILibraryArtistLinks index, JellyfinProxyService jellyfin, IProviderRegistry registry)
+public sealed class V2ArtistLinkEndpoints(ILibraryArtistLinks index, JellyfinProxyService jellyfin, IProviderRegistry registry,
+    IBackendLibraryAccessResolver libraryAccess)
 {
     public async Task<V2Result> ReadAsync(HttpContext http, ProtocolExecutionContext execution, string libraryArtistId)
     {
@@ -50,7 +51,8 @@ public sealed class V2ArtistLinkEndpoints(ILibraryArtistLinks index, JellyfinPro
         if (execution.Actor?.EffectiveUserId is not { } owner) return new(401, null);
         if (!TryServiceArtist(serviceArtistId, out var provider, out var artistId)) return new(400, null);
         if (await LibraryArtistNameAsync(http, execution, libraryArtistId) is not { } name) return new(404, null);
-        if (same == null && execution.Principal?.IsAdministrator != true)
+        var authority = same == null ? await libraryAccess.ResolveUserAsync(owner, http.RequestAborted) : null;
+        if (same == null && !(authority?.Access.Succeeded == true && authority.Context?.Principal?.IsAdministrator == true))
         {
             // A listener undoes only their own answer; the household's stays, and their own "not the same" overrides it for them.
             var (_, fixes) = await index.ReadPartsAsync(owner, name, http.RequestAborted);

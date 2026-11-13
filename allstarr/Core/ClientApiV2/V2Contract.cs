@@ -42,6 +42,9 @@ public sealed record V2Track(
     [property: JsonPropertyName("match")] V2Match? Match,
     [property: JsonPropertyName("lyrics")] V2LyricsAvailability Lyrics)
 {
+    [JsonPropertyName("canonicalRecordingId"), Description("The recording identity, when known, shared by library and service copies.")]
+    public string? CanonicalRecordingId { get; init; }
+
     internal string? SourceVersion { get; init; }
 }
 

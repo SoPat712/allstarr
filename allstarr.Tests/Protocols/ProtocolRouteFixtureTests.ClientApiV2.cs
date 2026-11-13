@@ -38,7 +38,7 @@ public sealed partial class ProtocolRouteFixtureTests
         using var client = CreateClientApiClient(factory);
         fixtures.Use(factory.Services);
         client.DefaultRequestHeaders.Authorization = new("Bearer", "listener-token");
-        using var response = await client.GetAsync("/allstarr/v2/tracks?ids=native1,unknown,trk_s!!&include=album");
+        using var response = await client.GetAsync("/allstarr/v2/tracks?ids=native1,unknown&include=album");
         var body = await response.Content.ReadAsStringAsync();
         Assert.True(response.StatusCode == HttpStatusCode.OK, body);
         Assert.Equal("no-store", response.Headers.CacheControl?.ToString());
@@ -71,7 +71,7 @@ public sealed partial class ProtocolRouteFixtureTests
         var album = json.RootElement.GetProperty("albums").GetProperty(V2Ids.Album("album1"));
         Assert.Equal("Library album", album.GetProperty("title").GetString());
         Assert.Equal(V2ArtworkUrls.For("album1", "albumtag")!.Url, album.GetProperty("artwork").GetProperty("url").GetString());
-        Assert.Equal(["unknown", "trk_s!!"], json.RootElement.GetProperty("missing").EnumerateArray().Select(value => value.GetString()!).ToArray());
+        Assert.Equal(["unknown"], json.RootElement.GetProperty("missing").EnumerateArray().Select(value => value.GetString()!).ToArray());
         Assert.NotEmpty(authorizations);
         Assert.All(authorizations, value => Assert.Equal("MediaBrowser Token=\"listener-token\"", value));
     }
@@ -82,23 +82,24 @@ public sealed partial class ProtocolRouteFixtureTests
         var gateway = new Mock<IProtocolProviderGateway>();
         gateway.Setup(service => service.GetPlayableProviderOrderAsync(It.IsAny<ProviderActorContext>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(["deezer"]);
+        Song StoredSong() => new()
+        {
+            Id = "ext-deezer-song-known",
+            Title = "Stored song",
+            Artist = "Stored artist",
+            Artists = ["Stored artist", "Guest"],
+            ArtistId = "ext-deezer-artist-9",
+            ArtistIds = ["ext-deezer-artist-9", "ext-deezer-artist-10"],
+            Album = "Stored album",
+            AlbumId = "ext-deezer-album-7",
+            Duration = 200,
+            Year = 2019,
+            ExternalProvider = "deezer",
+            ExternalId = "known",
+            ReplayGain = new() { TrackGain = -6.25 }
+        };
         gateway.Setup(service => service.GetStoredSongAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), It.IsAny<string>()))
-            .ReturnsAsync(() => new Song
-            {
-                Id = "ext-deezer-song-known",
-                Title = "Stored song",
-                Artist = "Stored artist",
-                Artists = ["Stored artist", "Guest"],
-                ArtistId = "ext-deezer-artist-9",
-                ArtistIds = ["ext-deezer-artist-9", "ext-deezer-artist-10"],
-                Album = "Stored album",
-                AlbumId = "ext-deezer-album-7",
-                Duration = 200,
-                Year = 2019,
-                ExternalProvider = "deezer",
-                ExternalId = "known",
-                ReplayGain = new() { TrackGain = -6.25 }
-            });
+            .ReturnsAsync(StoredSong);
         using var factory = ClientDetailsFactory(request => request.RequestUri!.AbsolutePath == "/Users/Me"
             ? Json(200, """{"Id":"listener"}""") : throw new InvalidOperationException("Unexpected upstream request"), services =>
             {
@@ -109,7 +110,7 @@ public sealed partial class ProtocolRouteFixtureTests
         using var client = CreateClientApiClient(factory);
         fixtures.Use(factory.Services);
         client.DefaultRequestHeaders.Authorization = new("Bearer", "listener-token");
-        var recording = await SeedClientDetailsAsync(factory, "listener", "known", personal: true);
+        var recording = await SeedV2DetailsAsync(factory, "listener", "known", personal: true, StoredSong());
         var wrapped = V2Ids.TrackSource("ext-deezer-song-known");
         using var response = await client.GetAsync($"/allstarr/v2/tracks?ids=ext-deezer-song-known,{V2Ids.Track(recording)},{wrapped}&include=album");
         var body = await response.Content.ReadAsStringAsync();
@@ -159,6 +160,8 @@ public sealed partial class ProtocolRouteFixtureTests
     [Theory]
     [InlineData("/allstarr/v2/tracks")]
     [InlineData("/allstarr/v2/tracks?ids=")]
+    [InlineData("/allstarr/v2/tracks?ids=trk_s!!")]
+    [InlineData("/allstarr/v2/tracks/trk_s!!")]
     [InlineData("/allstarr/v2/tracks?ids=native1,,native2")]
     [InlineData("/allstarr/v2/tracks?ids=native1&include=albums")]
     [InlineData("/allstarr/v2/tracks?ids=native1&include=album,album")]
@@ -266,7 +269,7 @@ public sealed partial class ProtocolRouteFixtureTests
             });
         using var client = CreateClientApiClient(factory);
         client.DefaultRequestHeaders.Authorization = new("Bearer", "listener-token");
-        var recording = await SeedClientDetailsAsync(factory, "listener", "known", personal: true);
+        var recording = await SeedV2DetailsAsync(factory, "listener", "known", personal: true);
         using var response = await client.GetAsync("/allstarr/v2/tracks/ext-deezer-song-known?views=match,lyrics,lyricsSources");
         var body = await response.Content.ReadAsStringAsync();
         Assert.True(response.StatusCode == HttpStatusCode.OK, body);

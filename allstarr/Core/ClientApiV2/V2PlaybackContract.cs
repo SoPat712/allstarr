@@ -11,9 +11,6 @@ public sealed record V2PlaybackRequest
     [Required, RegularExpression("lossless|high|normal|low|original"), JsonPropertyName("tier")]
     public required string Tier { get; init; }
 
-    [RegularExpression("wifi|cellular"), JsonPropertyName("network")]
-    public string? Network { get; init; }
-
     [JsonPropertyName("client")]
     public V2PlaybackClient? Client { get; init; }
 

@@ -47,7 +47,7 @@ public sealed partial class ProtocolRouteFixtureTests
                 : V2ServiceAudio());
         using var client = CreateClientApiClient(factory);
         client.DefaultRequestHeaders.Authorization = new("Bearer", "listener-token");
-        if (external) await SeedClientDetailsAsync(factory, "listener", "known", personal: true);
+        if (external) await SeedV2DetailsAsync(factory, "listener", "known", personal: true);
         var source = external ? "ext-deezer-song-known" : "native1";
         // Serving facts come with a stream link from resolve; reading the track itself never touches the audio.
         async Task<JsonNode> Resolve(string query = "")
@@ -118,7 +118,7 @@ public sealed partial class ProtocolRouteFixtureTests
         using var client = CreateClientApiClient(factory);
         icons.Use(factory.Services);
         client.DefaultRequestHeaders.Authorization = new("Bearer", "listener-token");
-        if (external) await SeedClientDetailsAsync(factory, "listener", "known", personal: true);
+        if (external) await SeedV2DetailsAsync(factory, "listener", "known", personal: true);
         var path = $"/allstarr/v2/albums/{V2Ids.Album(source)}?include=tracks&views=more-by-artist";
         using var response = await client.GetAsync(path);
         var text = await response.Content.ReadAsStringAsync();
@@ -168,8 +168,8 @@ public sealed partial class ProtocolRouteFixtureTests
         using var client = CreateClientApiClient(factory);
         icons.Use(factory.Services);
         client.DefaultRequestHeaders.Authorization = new("Bearer", "listener-token");
-        var first = await SeedClientDetailsAsync(factory, "listener", "known", personal: true);
-        var second = await SeedClientDetailsAsync(factory, "listener", "next", personal: true);
+        var first = await SeedV2DetailsAsync(factory, "listener", "known", personal: true);
+        var second = await SeedV2DetailsAsync(factory, "listener", "next", personal: true);
         var missing = V2Ids.Track(Guid.NewGuid());
         var path = $"/allstarr/v2/tracks?ids={V2Ids.TrackSource("ext-deezer-song-known")},{missing},{V2Ids.TrackSource("ext-deezer-song-next")}&views=lyrics&include=album";
         using var response = await client.GetAsync(path);

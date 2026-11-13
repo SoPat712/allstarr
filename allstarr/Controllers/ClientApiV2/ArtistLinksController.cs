@@ -25,7 +25,7 @@ public sealed class ArtistLinksController(V2ArtistLinkEndpoints links) : ClientA
 
     [HttpDelete("{serviceArtistId}")]
     [EndpointName("clearArtistLink")]
-    [EndpointDescription("Takes back this person's answer, so matched songs decide again. A listener cannot take back the household's answer (403); " +
+    [EndpointDescription("Takes back this person's answer, so matched songs decide again. An administrator can take back a household answer. A listener cannot take back the household's answer (403); " +
         "they can mark it as not the same for themselves instead." + Ids)]
     [ProducesResponseType<V2ArtistLinksResponse>(200)]
     public async Task<IActionResult> Delete(string libraryArtistId, string serviceArtistId) =>

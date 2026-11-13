@@ -74,7 +74,7 @@ public sealed partial class ProtocolRouteFixtureTests
         });
         using var client = CreateClientApiClient(factory);
         client.DefaultRequestHeaders.Authorization = new("Bearer", "listener-token");
-        await SeedClientDetailsAsync(factory, "listener", "known", personal: true);
+        await SeedV2DetailsAsync(factory, "listener", "known", personal: true);
         var body = await ResolveV2Playback(client, "ext-deezer-song-known", tier, purpose: "prefetch", diagnostics: factory);
         Assert.Equal(codec, body["delivered"]!["codec"]!.GetValue<string>());
         if (bitrate != null) Assert.Equal(bitrate, body["delivered"]!["bitrate"]!.GetValue<int>());
@@ -187,7 +187,7 @@ public sealed partial class ProtocolRouteFixtureTests
     [Theory]
     [InlineData("bogus", "native1", HttpStatusCode.BadRequest)]
     [InlineData("high", "unknown", HttpStatusCode.NotFound)]
-    [InlineData("high", "trk_s!!", HttpStatusCode.NotFound)]
+    [InlineData("high", "trk_s!!", HttpStatusCode.BadRequest)]
     public async Task ClientApiV2_PlaybackRejectsInvalidTiersAndInaccessibleTracks(string tier, string trackId, HttpStatusCode expected)
     {
         using var factory = V2PlaybackFactory();
@@ -214,7 +214,7 @@ public sealed partial class ProtocolRouteFixtureTests
         using var factory = V2PlaybackFactory();
         using var client = CreateClientApiClient(factory);
         client.DefaultRequestHeaders.Authorization = new("Bearer", "listener-token");
-        await SeedClientDetailsAsync(factory, "listener", "known", personal: true);
+        await SeedV2DetailsAsync(factory, "listener", "known", personal: true);
         var body = await ResolveV2Playback(client, "ext-deezer-song-known", "original", diagnostics: factory);
         client.DefaultRequestHeaders.Authorization = null;
         using var request = new HttpRequestMessage(HttpMethod.Get, body["url"]!.GetValue<string>());
@@ -267,7 +267,7 @@ public sealed partial class ProtocolRouteFixtureTests
         });
         using var client = CreateClientApiClient(factory);
         client.DefaultRequestHeaders.Authorization = new("Bearer", "listener-token");
-        await SeedClientDetailsAsync(factory, "listener", "known", personal: true);
+        await SeedV2DetailsAsync(factory, "listener", "known", personal: true);
         var first = await ResolveV2Playback(client, "ext-deezer-song-known", "original", purpose: "prefetch", diagnostics: factory);
         var second = await ResolveV2Playback(client, "ext-deezer-song-known", "original");
         Assert.True(cached);
@@ -288,7 +288,7 @@ public sealed partial class ProtocolRouteFixtureTests
         using var factory = V2PlaybackFactory();
         using var client = CreateClientApiClient(factory);
         client.DefaultRequestHeaders.Authorization = new("Bearer", "listener-token");
-        if (external) await SeedClientDetailsAsync(factory, "listener", "known", personal: true);
+        if (external) await SeedV2DetailsAsync(factory, "listener", "known", personal: true);
         var body = await ResolveV2Playback(client, external ? "ext-deezer-song-known" : "native1", "high");
         client.DefaultRequestHeaders.Authorization = null;
         using var request = new HttpRequestMessage(HttpMethod.Head, body["url"]!.GetValue<string>());

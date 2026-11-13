@@ -1,17 +1,40 @@
 using System.Text.Json;
+using allstarr.Core.ClientApi;
 using allstarr.Core.Protocols;
 using allstarr.Models.Domain;
 using allstarr.Services.Jellyfin;
 using allstarr.Services.Local;
+using Microsoft.AspNetCore.WebUtilities;
 using static allstarr.Core.ClientApiV2.V2TrackReader;
 
 namespace allstarr.Core.ClientApiV2;
 
 /// <summary>Native album reads shared by the standalone route and batch dispatcher.</summary>
-public sealed class V2AlbumEndpoints(V2TrackReader tracks, IProtocolProviderGateway providers, JellyfinProxyService jellyfin)
+public sealed class V2AlbumEndpoints(V2TrackReader tracks, IProtocolProviderGateway providers, JellyfinProxyService jellyfin,
+    SimilarAlbumsReader similar)
 {
     private static readonly IReadOnlySet<string> Includes = new HashSet<string>(StringComparer.Ordinal) { "tracks" };
     private static readonly IReadOnlySet<string> Views = new HashSet<string>(StringComparer.Ordinal) { "more-by-artist" };
+
+    public async Task<V2Result> SimilarAsync(HttpContext http, ProtocolExecutionContext execution, string id, int limit)
+    {
+        if (limit is < 1 or > 24 || !V2Ids.TryDecode(id, V2IdKind.Album, out var decoded)) return new(400, null);
+        return await V2TrackResources.ReadAsync<V2SimilarAlbumsResponse>(async () =>
+        {
+            var result = await similar.ReadAsync(http, execution, decoded.Source!, limit);
+            return new(V2Ids.Album(decoded.Source!), result.BasedOn, result.Albums.Select(album => new V2SimilarAlbum(
+                V2Ids.Album(album.Id), album.Title,
+                [new(album.ArtistId is { } artist && V2Ids.IsValidSource(artist, V2IdKind.Artist) ? V2Ids.Artist(artist) : null, album.Artist)],
+                album.Year, album.IsExternal, SimilarArtwork(album), album.SongCount, album.Source,
+                album.Provider == null ? null : new(album.Provider.Id, album.Provider.Name, album.Provider.IconUrl, album.Provider.GlyphUrl))).ToArray());
+        });
+    }
+
+    private static V2Artwork? SimilarArtwork(ClientSimilarAlbum album)
+    {
+        var queryStart = album.CoverUrl?.IndexOf('?') ?? -1;
+        return V2ArtworkUrls.For(album.Id, queryStart < 0 ? null : QueryHelpers.ParseQuery(album.CoverUrl![queryStart..])["tag"].ToString());
+    }
 
     public async Task<V2Result> GetAsync(HttpContext http, ProtocolExecutionContext execution, string id, string? include, string? views)
     {

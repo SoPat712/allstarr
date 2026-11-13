@@ -31,7 +31,11 @@ public sealed class ItemDetailsReader(
     IProtocolProviderGateway? gateway = null, ILibraryIndexService? libraryIndex = null, LyricsRefreshStore? refreshStore = null,
     ILogger<ItemDetailsReader>? logger = null)
 {
-    public async Task<ItemDetailsResponse> ReadAsync(HttpContext http, ProtocolExecutionContext execution, string[] ids)
+    public async Task<ItemDetailsResponse> ReadAsync(HttpContext http, ProtocolExecutionContext execution, string[] ids) =>
+        (await ReadWithSongsAsync(http, execution, ids, resolveServingProvider: true)).Response;
+
+    internal async Task<(ItemDetailsResponse Response, IReadOnlyDictionary<string, Song> Songs)> ReadWithSongsAsync(
+        HttpContext http, ProtocolExecutionContext execution, string[] ids, bool resolveServingProvider = false)
     {
         using var building = RequestTiming.Current?.Stage("build");
         var started = System.Diagnostics.Stopwatch.GetTimestamp();
@@ -198,7 +202,7 @@ public sealed class ItemDetailsReader(
             await mediaFacts.ApplyStoredMediaFactsAsync(execution.RequireActor(), songs.Values.ToArray(), token);
         // Each song's playback route is planned on its own, so a playlist's songs are planned a few at a time.
         using var routeGate = new SemaphoreSlim(Math.Clamp(Environment.ProcessorCount / 2, 1, 4));
-        var servingProviders = (await Task.WhenAll(external.Where(source => source.Provider == "allstarr" && songs.ContainsKey(source.Id))
+        var servingProviders = (await Task.WhenAll(external.Where(source => resolveServingProvider && source.Provider == "allstarr" && songs.ContainsKey(source.Id))
             .Select(async source =>
             {
                 using (RequestTiming.Current?.Stage("lock")) await routeGate.WaitAsync(token);
@@ -243,7 +247,7 @@ public sealed class ItemDetailsReader(
             (int)TimeSpan.FromTicks(Interlocked.Read(ref matchTicks)).TotalMilliseconds, matchTiming,
             (int)TimeSpan.FromTicks(Interlocked.Read(ref lyricsTicks)).TotalMilliseconds, requested.Length);
         using var serialization = RequestTiming.Current?.Stage("serialize");
-        return new(ids.Where(items.ContainsKey).Select(id => items[id]).ToArray(), ids.Where(id => !items.ContainsKey(id)).ToArray());
+        return (new(ids.Where(items.ContainsKey).Select(id => items[id]).ToArray(), ids.Where(id => !items.ContainsKey(id)).ToArray()), songs);
 
         async Task<ItemDetails?> ReadItemAsync(string id)
         {

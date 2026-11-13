@@ -27,6 +27,7 @@ public sealed class V2TrackEndpoints(V2TrackReader reader, V2TrackViewReader vie
 
     public async Task<V2Result> TranslationAsync(HttpContext http, ProtocolExecutionContext execution, string id, string? to)
     {
+        if (!V2Ids.TryDecode(id, V2IdKind.Track, out _)) return new(400, null);
         if (!(bool)(await settings.GetAsync("Lyrics:Translation:Enabled", execution.CancellationToken)).Value) return new(404, null);
         if (!LyricsTranslation.TryLanguage(to, out var language)) return new(400, null);
         var (result, sources) = await reader.ReadWithSourcesAsync(http, execution, [id], false);
@@ -39,7 +40,7 @@ public sealed class V2TrackEndpoints(V2TrackReader reader, V2TrackViewReader vie
 
     public async Task<V2Result> ListAsync(HttpContext http, ProtocolExecutionContext execution, string? ids, string? include, string? view = null)
     {
-        if (!V2Query.TryIds(ids, out var requested) || !V2Query.TryNames(include, Includes, out var included) ||
+        if (!V2Query.TryIds(ids, out var requested) || requested.Any(id => !V2Ids.TryDecode(id, V2IdKind.Track, out _)) || !V2Query.TryNames(include, Includes, out var included) ||
             !V2Query.TryNames(view, new HashSet<string>(StringComparer.Ordinal) { "lyrics" }, out var requestedViews)) return new(400, null);
         var (result, sources) = await reader.ReadWithSourcesAsync(http, execution, requested, included.Contains("album"));
         if (requestedViews.Count == 0) return new(200, result);
@@ -52,6 +53,7 @@ public sealed class V2TrackEndpoints(V2TrackReader reader, V2TrackViewReader vie
 
     public async Task<V2Result> GetAsync(HttpContext http, ProtocolExecutionContext execution, string id, string? include, string? view)
     {
+        if (!V2Ids.TryDecode(id, V2IdKind.Track, out _)) return new(400, null);
         if (!V2Query.TryNames(include, Includes, out var included) || !V2Query.TryNames(view, V2TrackViewReader.Names, out var requested))
             return new(400, null);
         var deadline = requested.Contains("autoplay") ? PageDeadline(execution) : execution.Deadline;

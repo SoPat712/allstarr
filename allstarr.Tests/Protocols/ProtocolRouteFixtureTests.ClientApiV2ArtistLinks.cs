@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using allstarr.Core.ClientApiV2;
 using allstarr.Core.Matching;
+using allstarr.Core.Protocols;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Moq;
@@ -11,6 +12,37 @@ namespace allstarr.Tests;
 
 public sealed partial class ProtocolRouteFixtureTests
 {
+    [Fact]
+    public async Task ClientApiV2_ArtistLinksAdministratorCanCreateAndDeleteAHouseholdAnswer()
+    {
+        var access = new Mock<IBackendLibraryAccessResolver>();
+        access.Setup(item => item.ResolveUserAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((Guid owner, CancellationToken _) => new BackendLibraryAccessContext(
+                new(ProtocolKind.Jellyfin, "primary", "listener", new(owner, "jellyfin", "primary", "listener", "Listener", true),
+                    "fixture", DateTimeOffset.UtcNow.AddMinutes(1), default), new(true, [])));
+        using var factory = ClientDetailsFactory(request => request.RequestUri!.AbsolutePath switch
+        {
+            "/Users/Me" => Json(200, """{"Id":"listener","Policy":{"IsAdministrator":true}}"""),
+            "/Users/listener/Items/artist1" => Json(200, """{"Id":"artist1","Type":"MusicArtist","Name":"Say Now"}"""),
+            _ => Json(404, "{}")
+        }, services =>
+        {
+            services.RemoveAll<IBackendLibraryAccessResolver>();
+            services.AddSingleton(access.Object);
+        });
+        using var client = CreateClientApiClient(factory);
+        client.DefaultRequestHeaders.Authorization = new("Bearer", "listener-token");
+        const string path = "/allstarr/v2/artists/artist1/links/ext-deezer-artist-1";
+        using var put = await client.PutAsJsonAsync(path, new { same = true });
+        put.EnsureSuccessStatusCode();
+        using var saved = JsonDocument.Parse(await put.Content.ReadAsStringAsync());
+        Assert.Equal("household", Assert.Single(saved.RootElement.GetProperty("links").EnumerateArray()).GetProperty("scope").GetString());
+        using var delete = await client.DeleteAsync(path);
+        delete.EnsureSuccessStatusCode();
+        using var cleared = JsonDocument.Parse(await delete.Content.ReadAsStringAsync());
+        Assert.Empty(cleared.RootElement.GetProperty("links").EnumerateArray());
+    }
+
     [Fact]
     public async Task ClientApiV2_ArtistLinksSaveAListenersAnswerAndSayWhyEachLinkStands()
     {

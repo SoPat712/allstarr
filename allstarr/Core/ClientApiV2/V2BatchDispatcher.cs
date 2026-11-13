@@ -59,9 +59,28 @@ public sealed class V2BatchDispatcher(IServiceScopeFactory scopes, ILogger<V2Bat
 
         await using var scope = scopes.CreateAsyncScope();
         var http = SubRequest(parent, scope.ServiceProvider);
+        http.Request.Path = Prefix + route;
+        http.Request.QueryString = new(queryStart < 0 ? "" : path[queryStart..]);
         var tracks = scope.ServiceProvider.GetRequiredService<V2TrackEndpoints>();
+        var resources = scope.ServiceProvider.GetRequiredService<V2TrackResources>();
         return segments switch
         {
+            ["session"] when Allowed(query, []) => await scope.ServiceProvider.GetRequiredService<V2SessionReader>().ReadAsync(execution),
+            ["session"] => new(400, null),
+            ["tracks", var id, "lyrics", "sources"] when Allowed(query, ["includeLyrics"]) &&
+                bool.TryParse(Value(query, "includeLyrics") ?? "false", out var includeLyrics) =>
+                await resources.LyricsSourcesAsync(http, execution, id, includeLyrics),
+            ["tracks", _, "lyrics", "sources"] => new(400, null),
+            ["tracks", var id, "match"] when Allowed(query, []) => await resources.MatchAsync(http, execution, id),
+            ["tracks", var id, "appearances"] when Allowed(query, []) => await resources.AppearancesAsync(http, execution, id),
+            ["tracks", _, "match"] or ["tracks", _, "appearances"] => new(400, null),
+            ["albums", var id, "similar"] when Allowed(query, ["limit"]) && int.TryParse(Value(query, "limit") ?? "12",
+                System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var similarLimit) =>
+                await scope.ServiceProvider.GetRequiredService<V2AlbumEndpoints>().SimilarAsync(http, execution, id, similarLimit),
+            ["albums", _, "similar"] => new(400, null),
+            ["playback", "resolve"] => new(404, null),
+            ["playback", var id] when Allowed(query, []) => scope.ServiceProvider.GetRequiredService<V2ServingStreams>().Status(execution, id),
+            ["playback", _] => new(400, null),
             ["tracks"] when Allowed(query, ListKeys) => await tracks.ListAsync(http, execution, Value(query, "ids"), Value(query, "include"), Value(query, "views")),
             ["albums", var id] when Allowed(query, AlbumKeys) => await scope.ServiceProvider.GetRequiredService<V2AlbumEndpoints>()
                 .GetAsync(http, execution, id, Value(query, "include"), Value(query, "views")),

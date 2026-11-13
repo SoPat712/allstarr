@@ -508,6 +508,8 @@ builder.Services.AddScoped<V2PlaybackReader>();
 builder.Services.AddSingleton<V2PlaybackTokens>();
 builder.Services.AddScoped<V2TrackViewReader>();
 builder.Services.AddScoped<V2TrackEndpoints>();
+builder.Services.AddScoped<V2TrackResources>();
+builder.Services.AddScoped<V2SessionReader>();
 builder.Services.AddScoped<V2AlbumEndpoints>();
 builder.Services.AddSingleton<V2ServingStreams>();
 builder.Services.AddScoped<LyricsTranslation>();

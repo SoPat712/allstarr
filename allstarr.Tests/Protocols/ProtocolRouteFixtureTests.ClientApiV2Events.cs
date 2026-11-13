@@ -52,7 +52,7 @@ public sealed partial class ProtocolRouteFixtureTests
         using var client = CreateClientApiClient(factory);
         fixtures.Use(factory.Services);
         client.DefaultRequestHeaders.Authorization = new("Bearer", "listener-token");
-        var recording = await SeedClientDetailsAsync(factory, "listener", "known", personal: true);
+        var recording = await SeedV2DetailsAsync(factory, "listener", "known", personal: true);
         var principal = (await factory.Services.GetRequiredService<BackendIdentityResolver>().ResolveAsync(new("Jellyfin", "listener")))!;
         var hub = factory.Services.GetRequiredService<ClientEventHub>();
         using var stream = await OpenV2EventsAsync(client);

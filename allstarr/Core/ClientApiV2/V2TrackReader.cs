@@ -20,7 +20,6 @@ public sealed class V2TrackReader(
     JellyfinProxyService jellyfin,
     ITrackIdentityService identities,
     IProviderRegistry registry,
-    IProtocolProviderGateway gateway,
     ILibraryIndexService libraryIndex)
 {
     private const string LibraryFields = "MediaSources,ProviderIds";
@@ -60,19 +59,9 @@ public sealed class V2TrackReader(
         var targetIds = targets.Values.Distinct(StringComparer.Ordinal).ToArray();
 
         // Facts also decide what this listener may see: anything they leave out is reported missing.
-        var facts = targetIds.Length == 0 ? new Dictionary<string, ItemDetails>(StringComparer.Ordinal)
-            : (await details.ReadAsync(http, execution, targetIds)).Items.ToDictionary(item => item.Id, StringComparer.Ordinal);
+        var (read, songs) = await details.ReadWithSongsAsync(http, execution, targetIds);
+        var facts = read.Items.ToDictionary(item => item.Id, StringComparer.Ordinal);
         var library = await ReadLibraryAsync(http, execution, targetIds.Where(id => !IsExternal(id) && facts.ContainsKey(id)).ToArray());
-        // Stored metadata answers almost every song; only a song never seen before asks its service, a few at a time.
-        using var gate = new SemaphoreSlim(4);
-        var songs = (await Task.WhenAll(targetIds.Where(id => IsExternal(id) && facts.ContainsKey(id)).Select(async id =>
-        {
-            await gate.WaitAsync(token);
-            try { return (Id: id, Song: await ReadSongAsync(execution, id)); }
-            finally { gate.Release(); }
-        }))).Where(item => item.Song != null).ToDictionary(item => item.Id, item => item.Song!, StringComparer.Ordinal);
-        if (identities is ITrackMediaFactsStore mediaFacts)
-            await mediaFacts.ApplyStoredMediaFactsAsync(execution.RequireActor(), songs.Values.ToArray(), token);
 
         var tracks = new List<V2Track>();
         var albums = includeAlbums ? new Dictionary<string, V2AlbumSummary>(StringComparer.Ordinal) : null;
@@ -114,18 +103,6 @@ public sealed class V2TrackReader(
         new[] { requested, source, target, Guid.TryParse(recording, out var parsed) ? CanonicalRecordingRecord.DefaultPublicId(parsed) : null }
             .OfType<string>().Where(alias => alias != id).Distinct(StringComparer.Ordinal).ToArray();
 
-    private async Task<Song?> ReadSongAsync(ProtocolExecutionContext execution, string id)
-    {
-        var parsed = LocalLibraryService.ParseExternalResource(id);
-        try
-        {
-            var song = await gateway.GetStoredSongAsync(execution, parsed.provider!, parsed.externalId!) ??
-                await gateway.GetSongAsync(execution, parsed.provider!, parsed.externalId!);
-            return string.IsNullOrWhiteSpace(song?.Title) ? null : song;
-        }
-        catch (Exception error) when (error is not OperationCanceledException) { return null; }
-    }
-
     private static V2Track Compose(string id, ItemDetails item, string? libraryItemId, IReadOnlyDictionary<string, string> externalIds,
         string title, IReadOnlyList<V2Ref> artists, IReadOnlyList<V2Ref> albumArtists, V2AlbumRef? album, int? disc, int? track,
         long? durationMs, int? year, V2Artwork? artwork, V2Format? format, double? trackGain, double? albumGain) =>
@@ -136,7 +113,8 @@ public sealed class V2TrackReader(
             Finite(trackGain), Finite(albumGain), item.Saved, item.PlayCount, item.LastPlayedAt,
             new(item.Keep.State, item.Keep.Progress),
             item.Match == null ? null : new(item.Match.State, item.Match.Confidence, item.Match.Authority),
-            new(item.Lyrics.Available, item.Lyrics.Format, item.Lyrics.Source));
+            new(item.Lyrics.Available, item.Lyrics.Format, item.Lyrics.Source))
+        { CanonicalRecordingId = item.CanonicalRecordingId };
 
     private static V2Track FromLibrary(string target, LibraryItem local, ItemDetails item, Dictionary<string, V2AlbumSummary>? albums)
     {
