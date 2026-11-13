@@ -34,6 +34,10 @@ internal static class SubsonicLyricsDiscovery
                 if (!ping)
                 {
                     var extensions = root["openSubsonicExtensions"] as JsonArray ?? [];
+                    // External songs support scrobbling, but not the backend's playback report extension.
+                    foreach (var report in extensions.OfType<JsonObject>().Where(item =>
+                                 item["name"]?.GetValue<string>() == "playbackReport").ToArray())
+                        extensions.Remove(report);
                     var lyrics = extensions.OfType<JsonObject>()
                         .Where(item => item["name"]?.GetValue<string>() == "songLyrics").ToArray();
                     if (lyrics.Length == 0)
@@ -68,6 +72,8 @@ internal static class SubsonicLyricsDiscovery
             }
             if (!ping)
             {
+                element.Elements().Where(item => item.Name.LocalName == "openSubsonicExtensions" &&
+                    item.Attribute("name")?.Value == "playbackReport").Remove();
                 var lyrics = element.Elements(element.Name.Namespace + "openSubsonicExtensions")
                     .Where(item => item.Attribute("name")?.Value == "songLyrics").ToArray();
                 var extension = lyrics.FirstOrDefault();

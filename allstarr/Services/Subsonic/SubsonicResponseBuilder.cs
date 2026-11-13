@@ -345,7 +345,8 @@ public partial class SubsonicResponseBuilder(IHttpContextAccessor? httpContexts 
         return new ContentResult { Content = doc.ToString(), ContentType = "application/xml" };
     }
 
-    public IActionResult CreateArtistResponse(string format, Artist artist, List<Album> albums)
+    public IActionResult CreateArtistResponse(string format, Artist artist, List<Album> albums,
+        IReadOnlyDictionary<string, object>? nativeAlbums = null)
     {
         if (format == "json")
         {
@@ -360,7 +361,7 @@ public partial class SubsonicResponseBuilder(IHttpContextAccessor? httpContexts 
                     coverArt = artist.Id,
                     albumCount = albums.Count,
                     artistImageUrl = artist.ImageUrl,
-                    album = albums.Select(a => ConvertAlbumToJson(a)).ToList()
+                    album = albums.Select(a => nativeAlbums?.GetValueOrDefault(a.Id) ?? ConvertAlbumToJson(a)).ToList()
                 }
             });
         }
@@ -375,7 +376,8 @@ public partial class SubsonicResponseBuilder(IHttpContextAccessor? httpContexts 
                     new XAttribute("name", artist.Name),
                     new XAttribute("coverArt", artist.Id),
                     new XAttribute("albumCount", albums.Count),
-                    albums.Select(a => ConvertAlbumToXml(a, ns))
+                    albums.Select(a => nativeAlbums?.GetValueOrDefault(a.Id) is XElement native
+                        ? new XElement(native) : ConvertAlbumToXml(a, ns))
                 )
             )
         );

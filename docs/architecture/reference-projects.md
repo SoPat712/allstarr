@@ -91,9 +91,29 @@ quota responses without exposing credentials. Title-based guesses are excluded.
 The shared catalog and media client retain Allstarr's existing parser, quality,
 artifact ownership, and account authorization boundaries.
 
+Updated on 2026-11-12 in `Providers/Deezer/DeezerDecryptedStream.cs` and
+`Providers/Extensions/ExtensionProgressiveTransfer.Deezer.cs`, adapting
+[309db76c748c1b1d657464a655a20e19b98d487c](https://github.com/V1ck3s/octo-fiesta/tree/309db76c748c1b1d657464a655a20e19b98d487c):
+the stream reuses its cipher and resets CBC state for each encrypted chunk,
+retaining in-place buffering and the selected alternative's decryption ID.
+
 These adaptations are distributed under Allstarr's [GPL-3.0 license](../../LICENSE),
 with their corresponding source in this repository. Optional provider services
 and their media remain separately operated upstream resources.
+
+## Track label normalization notice
+
+The edition-label pattern in `Services/Common/FuzzyMatcher.cs` and regression
+examples in `allstarr.Tests/Matching/TrackEditionMatchingTests.cs` adapt
+`octo-fiesta/Services/Common/TrackMatcher.cs` and
+`octo-fiesta.Tests/TrackMatcherTests.cs` at
+[7aab826f13830dd8c5518c1a895666efd88394af](https://github.com/V1ck3s/octo-fiesta/tree/7aab826f13830dd8c5518c1a895666efd88394af),
+under its [GPL-3.0 license](https://github.com/V1ck3s/octo-fiesta/blob/7aab826f13830dd8c5518c1a895666efd88394af/LICENSE).
+Modified for Allstarr on 2026-11-12: normalize LP/original versions, digital
+remaster spellings and nested edition labels through the existing matcher.
+Recording-version, explicitness, duration and manual-choice protections remain
+authoritative. These adaptations are distributed under Allstarr's
+[GPL-3.0 license](../../LICENSE).
 
 ## SpotiFLAC-Mobile runtime reuse
 

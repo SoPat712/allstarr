@@ -162,7 +162,7 @@ public sealed class TrackMatchPolicy
 
 public sealed class TrackMatchDecisionEngine
 {
-    public const string AlgorithmVersion = "library-primary-v30";
+    public const string AlgorithmVersion = "library-primary-v31";
     private const double ScoreEpsilon = 0.0000001;
 
     private readonly TrackMatchPolicy _policy;

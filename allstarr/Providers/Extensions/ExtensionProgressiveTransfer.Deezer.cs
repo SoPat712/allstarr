@@ -5,6 +5,7 @@ using Acornima;
 using Acornima.Ast;
 using allstarr.Services.Deezer;
 using Microsoft.Extensions.Logging;
+using Org.BouncyCastle.Crypto.Modes;
 
 namespace allstarr.Core.Extensions;
 
@@ -124,6 +125,7 @@ internal sealed partial class ExtensionProgressiveTransfer
     {
         private readonly FileStream output = new(path, FileMode.CreateNew, FileAccess.Write, FileShare.Read);
         private readonly byte[] block = new byte[2048];
+        private readonly CbcBlockCipher cipher = DeezerDecryptedStream.CreateCipher(key);
         private int count;
         private long index;
 
@@ -136,7 +138,7 @@ internal sealed partial class ExtensionProgressiveTransfer
                 count += length;
                 bytes = bytes[length..];
                 if (count != block.Length) continue;
-                if (index % 3 == 0) DeezerDecryptedStream.Decrypt(block, key);
+                if (index % 3 == 0) DeezerDecryptedStream.Decrypt(block, cipher);
                 index++;
                 Write();
             }

@@ -5,6 +5,15 @@ public static partial class FuzzyMatcher
     public static string StripBestVersionPrefix(string title) => title.TrimStart().TrimStart('⭐', '\uFE0F').TrimStart();
 
     private const int StackallocLevenshteinLimit = 128;
+    // Edition labels adapted from V1ck3s/octo-fiesta, revision 7aab826f13830dd8c5518c1a895666efd88394af.
+    // Modified 2026-11-12; see docs/architecture/reference-projects.md#track-label-normalization-notice.
+    private const string EditionLabelPattern = @"(?:(?:\d{4}\s+)?(?:digital(?:ly)?\s+)?re-?master(?:ed)?(?:\s+version)?(?:\s+\d{4})?(?:\s+version)?|(?:album|single|lp|original)\s+version)";
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"(?<prefix>[\(\[]|\s+[-–—]\s+)\s*" + EditionLabelPattern + @"\s*(?=[\(\[])", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
+    private static partial System.Text.RegularExpressions.Regex NestedEditionDecoratorRegex();
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"\s*[\(\[]\s*" + EditionLabelPattern + @"\s*[\)\]]|\s+[-–—]\s+" + EditionLabelPattern + @"\s*$", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
+    private static partial System.Text.RegularExpressions.Regex AdditionalEditionDecoratorRegex();
 
     [System.Text.RegularExpressions.GeneratedRegex(@"(?:\s*[\(\[]\s*|(?<=\S)\s+(?:[-–—]\s*)?)\b(feat\.?|ft\.?|with|featuring)\s+[^\)\]]+[\)\]]?", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
     private static partial System.Text.RegularExpressions.Regex FeatDecoratorRegex();
@@ -188,11 +197,12 @@ public static partial class FuzzyMatcher
             return string.Empty;
         }
 
-        var cleaned = StripBestVersionPrefix(title);
+        var cleaned = NestedEditionDecoratorRegex().Replace(StripBestVersionPrefix(title), "${prefix}");
 
         cleaned = ParenthesizedCreditsRegex().Replace(cleaned, "");
         cleaned = FeatDecoratorRegex().Replace(cleaned, "");
         cleaned = FromAlbumDecoratorRegex().Replace(cleaned, "");
+        cleaned = AdditionalEditionDecoratorRegex().Replace(cleaned, "");
         cleaned = VersionDecoratorRegex().Replace(cleaned, "");
         cleaned = TypeDecoratorRegex().Replace(cleaned, "");
 
@@ -217,13 +227,14 @@ public static partial class FuzzyMatcher
         }
 
         var cleaned = BracketedTitlePartRegex().Replace(
-            SeriesDecoratorRegex().Replace(StripBestVersionPrefix(title), " "),
+            SeriesDecoratorRegex().Replace(NestedEditionDecoratorRegex().Replace(StripBestVersionPrefix(title), "${prefix}"), " "),
             match => IsOwnCredit(match.Groups[1].Value) ? " " : match.Value);
         cleaned = DashTitlePartRegex().Replace(cleaned,
             match => IsOwnCredit(match.Groups[1].Value) ? " " : match.Value);
         cleaned = FeatDecoratorRegex().Replace(cleaned,
             match => IsOwnCredit(match.Value.Trim(' ', '(', ')', '[', ']')) ? " " : match.Value);
         cleaned = FromAlbumDecoratorRegex().Replace(cleaned, "");
+        cleaned = AdditionalEditionDecoratorRegex().Replace(cleaned, "");
         cleaned = VersionDecoratorRegex().Replace(cleaned, "");
         cleaned = TypeDecoratorRegex().Replace(cleaned, "");
         cleaned = EditionDecoratorRegex().Replace(cleaned, "");

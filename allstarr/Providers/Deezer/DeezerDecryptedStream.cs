@@ -6,6 +6,8 @@ using Org.BouncyCastle.Crypto.Parameters;
 
 namespace allstarr.Services.Deezer;
 
+// Cipher reuse adapted from V1ck3s/octo-fiesta, revision 309db76c748c1b1d657464a655a20e19b98d487c.
+// Modified 2026-11-12; see docs/architecture/reference-projects.md#deezer-implementation-notice.
 internal sealed class DeezerDecryptedStream(
     Stream input,
     string trackId,
@@ -15,7 +17,7 @@ internal sealed class DeezerDecryptedStream(
     private const string BlowfishSecret = "g4el58wc0zvf9na1";
     private static readonly byte[] Iv = [0, 1, 2, 3, 4, 5, 6, 7];
     private readonly byte[] buffer = new byte[ChunkSize];
-    private readonly byte[] key = Key(trackId);
+    private readonly CbcBlockCipher cipher = CreateCipher(Key(trackId));
     private int bufferOffset;
     private int bufferCount;
     private int chunkIndex;
@@ -91,7 +93,7 @@ internal sealed class DeezerDecryptedStream(
     private int Ready()
     {
         bufferOffset = 0;
-        if (bufferCount == ChunkSize && chunkIndex % 3 == 0) Decrypt(buffer, key);
+        if (bufferCount == ChunkSize && chunkIndex % 3 == 0) Decrypt(buffer, cipher);
         if (bufferCount > 0) chunkIndex++;
         return bufferCount;
     }
@@ -104,10 +106,16 @@ internal sealed class DeezerDecryptedStream(
             .ToArray();
     }
 
-    internal static void Decrypt(byte[] data, byte[] key)
+    internal static CbcBlockCipher CreateCipher(byte[] key)
     {
         var cipher = new CbcBlockCipher(new BlowfishEngine());
         cipher.Init(false, new ParametersWithIV(new KeyParameter(key), Iv));
+        return cipher;
+    }
+
+    internal static void Decrypt(byte[] data, CbcBlockCipher cipher)
+    {
+        cipher.Reset();
         for (var offset = 0; offset < data.Length; offset += cipher.GetBlockSize())
             cipher.ProcessBlock(data, offset, data, offset);
     }

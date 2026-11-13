@@ -107,13 +107,14 @@ public sealed partial class ProtocolRouteFixtureTests
     public async Task LyricsClients_MergeDiscoveryWithoutPromisingEnhancedProjection(string format)
     {
         using var factory = new ProtocolFactory("Subsonic", _ => LyricsBackendResponse(format,
-            """{"subsonic-response":{"status":"ok","version":"1.16.1","type":"Fixture","serverVersion":"2.3.4","custom":7,"openSubsonicExtensions":[{"name":"songLyrics","versions":[1,2]},{"name":"future","versions":[7],"custom":true},{"name":"songLyrics","versions":[2]}]}}""",
-            """<subsonic-response xmlns="http://subsonic.org/restapi" status="ok" version="1.16.1" type="Fixture" serverVersion="2.3.4" custom="7"><openSubsonicExtensions name="songLyrics"><versions>1</versions><versions>2</versions></openSubsonicExtensions><openSubsonicExtensions name="future" custom="true"><versions>7</versions></openSubsonicExtensions><openSubsonicExtensions name="songLyrics"><versions>2</versions></openSubsonicExtensions></subsonic-response>"""));
+            """{"subsonic-response":{"status":"ok","version":"1.16.1","type":"Fixture","serverVersion":"2.3.4","custom":7,"openSubsonicExtensions":[{"name":"songLyrics","versions":[1,2]},{"name":"playbackReport","versions":[1]},{"name":"future","versions":[7],"custom":true},{"name":"songLyrics","versions":[2]},{"name":"playbackReport","versions":[1,2]}]}}""",
+            """<subsonic-response xmlns="http://subsonic.org/restapi" status="ok" version="1.16.1" type="Fixture" serverVersion="2.3.4" custom="7"><openSubsonicExtensions name="songLyrics"><versions>1</versions><versions>2</versions></openSubsonicExtensions><openSubsonicExtensions name="playbackReport"><versions>1</versions></openSubsonicExtensions><openSubsonicExtensions name="future" custom="true"><versions>7</versions></openSubsonicExtensions><openSubsonicExtensions name="songLyrics"><versions>2</versions></openSubsonicExtensions><openSubsonicExtensions name="playbackReport"><versions>1</versions><versions>2</versions></openSubsonicExtensions></subsonic-response>"""));
         using var client = factory.CreateClient();
         using var request = LyricsClientRequest("getOpenSubsonicExtensions", "Feishin", format, false);
         using var response = await client.SendAsync(request);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var body = await response.Content.ReadAsStringAsync();
+        Assert.DoesNotContain("playbackReport", body, StringComparison.Ordinal);
         if (format == "json")
         {
             using var document = JsonDocument.Parse(body);

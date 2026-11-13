@@ -709,7 +709,12 @@ public partial class SubsonicController : ControllerBase
                 }
             }
 
-            return _responseBuilder.CreateArtistResponse(format, artist, albums);
+            var nativeRows = await ReadOwnedArtistAlbumsAsync(artist.Name, albums, parameters, format);
+            var owned = DescribeNativeAlbums(nativeRows, artist.Name);
+            var merged = MusicAlbumReleases.WithoutServiceRepeats(MusicAlbumReleases.Collapse(owned.Concat(albums)));
+            var nativeAlbums = nativeRows.DistinctBy(row => SubsonicModelMapper.ToNativeItem(row, MusicItemKind.Album).Id)
+                .ToDictionary(row => SubsonicModelMapper.ToNativeItem(row, MusicItemKind.Album).Id, StringComparer.Ordinal);
+            return _responseBuilder.CreateArtistResponse(format, artist, merged, nativeAlbums);
         }
 
         var relayEndpoint = Request.Path.Value?.TrimStart('/') ?? "rest/getArtist";
@@ -845,6 +850,11 @@ public partial class SubsonicController : ControllerBase
                 if (missing.Count == 0) return passthrough;
                 foreach (var item in missing)
                     children.Add(System.Text.Json.Nodes.JsonNode.Parse(System.Text.Json.JsonSerializer.Serialize(item)));
+                if (childElement == "song")
+                    children = new System.Text.Json.Nodes.JsonArray(children
+                        .OrderBy(child => AlbumTrackOrder(child?["discNumber"]?.ToString(), 1))
+                        .ThenBy(child => AlbumTrackOrder(child?["track"]?.ToString()))
+                        .Select(child => child!.DeepClone()).ToArray());
                 parent[childElement] = children;
                 UpdateCounts(parent, childElement, children.Count);
                 return Content(new System.Text.Json.Nodes.JsonObject { ["subsonic-response"] = root.DeepClone() }.ToJsonString(),
@@ -864,6 +874,14 @@ public partial class SubsonicController : ControllerBase
             {
                 element.Name = ns + childElement;
                 parentXml.Add(element);
+            }
+            if (childElement == "song")
+            {
+                var ordered = parentXml.Elements(ns + childElement)
+                    .OrderBy(child => AlbumTrackOrder(child.Attribute("discNumber")?.Value, 1))
+                    .ThenBy(child => AlbumTrackOrder(child.Attribute("track")?.Value)).ToArray();
+                parentXml.Elements(ns + childElement).Remove();
+                parentXml.Add(ordered);
             }
             var total = parentXml.Elements(ns + childElement).Count();
             if (childElement == "album") parentXml.SetAttributeValue("albumCount", total);
@@ -907,6 +925,9 @@ public partial class SubsonicController : ControllerBase
         if (string.IsNullOrWhiteSpace(album.Artist)) album.Artist = artist;
         return album;
     }).ToArray();
+
+    private static int AlbumTrackOrder(string? value, int fallback = 0) =>
+        int.TryParse(value, out var number) && number > 0 ? number : fallback;
 
     // Virtual playlists are read-only projections; native IDs remain transparent relays.
     [HttpGet, HttpPost]

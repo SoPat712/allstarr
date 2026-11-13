@@ -67,7 +67,7 @@ public sealed class TrackMatchRefreshTests(ITestOutputHelper output)
         var decision = await saved.TrackMatches.OrderByDescending(item => item.DecisionVersion).FirstAsync();
         Assert.Equal(TrackMatchState.Accepted, decision.State);
         Assert.Equal(local.Id, decision.LibraryTrackId);
-        Assert.Equal("library-primary-v30", decision.MatcherVersion);
+        Assert.Equal(TrackMatchDecisionEngine.AlgorithmVersion, decision.MatcherVersion);
         if (rematch) Assert.Contains(JsonSerializer.Deserialize<TrackMatchCandidateScore[]>(decision.CandidateResultsJson)!, item => !item.IsLocal);
     }
 
