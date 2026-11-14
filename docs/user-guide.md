@@ -337,3 +337,5 @@ If the container cannot reach the folder, mount it once, for example with `- /pa
 `Promotion__AllowedBase` is optional. When configured, approved folders and mappings must stay below that absolute directory inside the container. Approval rejects path traversal and symbolic links. Allstarr writes songs only inside approved folders.
 
 Kept songs remain playable and downloadable while adding to the library is not set up. Quality and naming settings remain available. Existing kept copies retain their filenames; naming changes apply to new copies.
+
+Under **How added files are named**, choose **Autodetect** to rescan the selected folder and reset edited folder and filename settings to its detected pattern. The pattern is previewed and saved to the profile you are editing. If no consistent pattern is found or detection fails, your settings stay unchanged.

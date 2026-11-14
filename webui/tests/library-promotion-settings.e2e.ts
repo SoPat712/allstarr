@@ -160,6 +160,72 @@ test("Shows no pattern offer when the folder has no clear naming pattern", async
   await expect(page.getByText("Matches how this folder already names its files.")).toHaveCount(0);
 });
 
+for (const [width, theme] of [[390, "light"], [1280, "dark"]] as const) test(`Autodetect resets edited folders and filenames at ${width}px ${theme}`, async ({ page }) => {
+  await appearance(page, width, theme);
+  const state = await fixture(page, true, false, { script: initialScript, matched: 40, sampled: 40, examples: [], reason: null });
+  await expect(page.getByText("Matches how this folder already names its files.", { exact: true })).toBeVisible();
+  const script = await scriptField(page);
+  await script.fill("%missing%/custom/%title%");
+  await expect(script).toHaveAttribute("aria-invalid", "true");
+  const detectedScript = "%artist%/%album%/%title%.%_extension%";
+  state.detected = { script: detectedScript, matched: 40, sampled: 40, examples: [], reason: null };
+  const requests = state.detectRoots.length;
+  const button = page.getByRole("button", { name: "Autodetect", exact: true });
+  await button.focus(); await button.press("Enter");
+  await expect(script).toHaveValue(detectedScript);
+  await expect(script).toHaveAttribute("aria-invalid", "false");
+  await expect(page.getByRole("list", { name: "Naming tokens" }).getByRole("button", { name: "Album, token 3", exact: true })).toBeVisible();
+  await expect(page.getByText("North/Warm light/Blue morning.flac", { exact: true })).toBeVisible();
+  await expect.poll(() => state.personal).toEqual({ ...initialProfile, namingScript: detectedScript });
+  expect(state.detectRoots.slice(requests)).toEqual(["00000000-0000-0000-0000-000000000001"]);
+  expect(state.writes.every(write => write.scope === "me")).toBe(true);
+  await expect(page.getByText("Detected folder and filename pattern applied.", { exact: true })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.getByRole("region", { name: "How added files are named", exact: true }).screenshot({ path: test.info().outputPath(`autodetect-${width}-${theme}.png`) });
+  await page.reload();
+  await expect(await scriptField(page)).toHaveValue(detectedScript);
+});
+
+for (const outcome of ["no-pattern", "unavailable"] as const) test(`Autodetect keeps edits when detection is ${outcome}`, async ({ page }) => {
+  const state = await fixture(page, true, false, { script: initialScript, matched: 40, sampled: 40, examples: [], reason: null });
+  const script = await scriptField(page), custom = "custom/%title%.%_extension%";
+  await script.fill(custom);
+  await expect.poll(() => state.personal.namingScript).toBe(custom);
+  const writes = state.writes.length;
+  state.detected = outcome === "no-pattern" ? { script: null, matched: 0, sampled: 40, examples: [], reason: "no-pattern" } : null;
+  await page.getByRole("button", { name: "Autodetect", exact: true }).click();
+  await expect(page.getByRole("status").filter({ hasText: "Your settings were kept." })).toBeVisible();
+  await expect(script).toHaveValue(custom);
+  expect(state.personal.namingScript).toBe(custom);
+  expect(state.writes).toHaveLength(writes);
+  await expect(page.getByRole("button", { name: "Autodetect", exact: true })).toBeEnabled();
+});
+
+test("Autodetect cannot apply a personal result after switching to the household profile", async ({ page }) => {
+  const state = await fixture(page, true, false, { script: initialScript, matched: 40, sampled: 40, examples: [], reason: null });
+  await expect(page.getByRole("button", { name: "Autodetect", exact: true })).toBeEnabled();
+  let release!: () => void;
+  const pending = new Promise<void>(resolve => { release = resolve; });
+  let started = false;
+  await page.route("**/naming/detect?rootId=*", async route => {
+    started = true; await pending;
+    await route.fulfill({ json: { script: "stale/%title%.%_extension%", matched: 40, sampled: 40, examples: [], reason: null } });
+  });
+  await page.getByRole("button", { name: "Autodetect", exact: true }).click();
+  await expect.poll(() => started).toBe(true);
+  await expect(page.getByRole("button", { name: "Detecting…", exact: true })).toBeDisabled();
+  await page.getByRole("radio", { name: "Household default", exact: true }).click();
+  release();
+  await expect(page.getByRole("button", { name: "Autodetect", exact: true })).toBeEnabled();
+  await expect(await scriptField(page)).toHaveValue(state.household.values.namingScript);
+  state.detected = { script: "%album%/%artist%/%title%.%_extension%", matched: 40, sampled: 40, examples: [], reason: null };
+  await page.getByRole("button", { name: "Autodetect", exact: true }).click();
+  await expect.poll(() => state.household.values.namingScript).toBe(state.detected!.script);
+  expect(state.personal).toEqual(initialProfile);
+  expect(state.writes).toHaveLength(1);
+  expect(state.writes[0].scope).toBe("household");
+});
+
 test("Only admins see household settings and only that profile edits approval roles", async ({ page }) => {
   const state = await fixture(page);
   await expect(page.getByRole("button", { name: "Who adds without approval", exact: true })).toHaveCount(0);

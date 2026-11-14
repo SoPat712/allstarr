@@ -141,13 +141,33 @@
 
   // How the chosen folder already names its files, offered as a one-tap naming script.
   let detected = $state<NamingDetection | null>(null);
+  let detecting = $state(false), detectionMessage = $state("");
+  let detectionRequest: AbortController | undefined;
+  async function detectPattern(rootId: string | null, target: ProfileScope, apply = false) {
+    detectionRequest?.abort();
+    const request = new AbortController();
+    detectionRequest = request;
+    detecting = true; detected = null; detectionMessage = "";
+    try {
+      const result = await promotionProfiles.detectNaming(rootId, request.signal);
+      if (request.signal.aborted || scope !== target || chosenRootId !== rootId) return;
+      detected = result;
+      if (apply) {
+        if (result.script) {
+          update({ namingScript: result.script });
+          detectionMessage = "Detected folder and filename pattern applied.";
+        } else detectionMessage = "No consistent naming pattern was found in this folder. Your settings were kept.";
+      }
+    } catch (cause) {
+      if (!request.signal.aborted && apply) detectionMessage = `Could not detect a naming pattern. Your settings were kept. ${message(cause)}`;
+    } finally {
+      if (!request.signal.aborted) detecting = false;
+    }
+  }
   $effect(() => {
-    if (loading || !profile) return;
-    const rootId = chosenRootId;
-    const abort = new AbortController();
-    promotionProfiles.detectNaming(rootId, abort.signal).then(result => { if (!abort.signal.aborted) detected = result; },
-      () => { if (!abort.signal.aborted) detected = null; });
-    return () => abort.abort();
+    if (loading) return;
+    void detectPattern(chosenRootId, scope);
+    return () => detectionRequest?.abort();
   });
   const detectedExample = $derived(detected?.examples[0]?.path ?? null);
 
@@ -229,8 +249,10 @@
       {#if administrator && scope === "household"}<div class="settings-row"><div><strong>Who adds without approval</strong><small>Everyone else sends a request to an admin</small></div><SelectField label="Who adds without approval" value={household.addWithoutApproval} options={[{ value: "admins-and-trusted-listeners", label: "Admins and trusted listeners" }, { value: "admins", label: "Admins" }]} onchange={value => { if (!household || household.addWithoutApproval === value) return; household = { ...household, addWithoutApproval: value as ApprovalRoles }; dirty.add(scope); scheduleSave(); }} /></div>{/if}
     </section>
     <section class="settings-card" aria-labelledby="naming-heading">
-      <header><h3 id="naming-heading">How added files are named</h3><p>Drag fields to build the name, or edit the naming script directly (Picard syntax).</p></header>
+      <header class="naming-header"><div><h3 id="naming-heading">How added files are named</h3><p>Drag fields to build the name, or edit the naming script directly (Picard syntax). Autodetect resets folders and filenames to the pattern found in this folder.</p></div>
+        <Button variant="outline" size="sm" disabled={detecting} onclick={() => detectPattern(chosenRootId, scope, true)}>{detecting ? "Detecting…" : "Autodetect"}</Button></header>
       <div class="naming-content">
+        {#if detectionMessage}<p class="naming-match" role="status">{detectionMessage}</p>{/if}
         {#if detected?.script && detected.script !== profile.namingScript}
           <div class="naming-detected" role="status"><div><strong>Your library already names files like this</strong>
             {#if detectedExample}<code title={detectedExample}>{detectedExample}</code>{/if}
@@ -301,6 +323,8 @@
   .naming-content { display: grid; gap: var(--space-3); padding: var(--space-1) var(--space-4) var(--space-4); }
   header p { margin: var(--space-2) 0 0; font-size: var(--text-xs); color: var(--color-ink-muted); }
   header:has(p) { display: block; }
+  header.naming-header { display: flex; align-items: start; justify-content: space-between; flex-wrap: wrap; gap: var(--space-3); }
+  .naming-header > div { flex: 1 1 18rem; min-width: 0; }
   .naming-examples { display: grid; gap: var(--space-2); min-width: 0; transition: opacity 160ms var(--ease-standard); }
   .naming-examples.updating { opacity: .55; }
   .naming-example { display: grid; grid-template-columns: 6.5rem minmax(0, 1fr); align-items: baseline; gap: var(--space-3); font-size: var(--text-xs); }
@@ -324,5 +348,6 @@
     .folder-row > span:empty { display: none; }
     .naming-detected { grid-template-columns: minmax(0, 1fr); }
     .naming-detected > :global(button) { justify-self: start; min-height: 44px; }
+    .naming-header > :global(button) { min-height: 44px; }
   }
 </style>
