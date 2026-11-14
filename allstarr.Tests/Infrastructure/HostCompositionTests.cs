@@ -159,6 +159,7 @@ public sealed class HostCompositionTests
             .Where(type => type.AsType() != typeof(JellyfinController) &&
                            type.AsType() != typeof(SubsonicController) &&
                            !typeof(ClientApiControllerBase).IsAssignableFrom(type) &&
+                           !typeof(allstarr.Controllers.ClientApiV2.ClientApiV2ControllerBase).IsAssignableFrom(type) &&
                            type.GetCustomAttribute<ReleaseFeatureAttribute>() == null)
             .Select(type => type.AsType())
             .ToArray();
@@ -166,7 +167,8 @@ public sealed class HostCompositionTests
             Assert.Contains(controllerType, controllerTypes));
 
         var clientApiControllers = typeof(Program).Assembly.DefinedTypes
-            .Where(type => !type.IsAbstract && typeof(ClientApiControllerBase).IsAssignableFrom(type))
+            .Where(type => !type.IsAbstract && (typeof(ClientApiControllerBase).IsAssignableFrom(type) ||
+                typeof(allstarr.Controllers.ClientApiV2.ClientApiV2ControllerBase).IsAssignableFrom(type)))
             .Select(type => type.AsType())
             .ToArray();
         Assert.NotEmpty(clientApiControllers);

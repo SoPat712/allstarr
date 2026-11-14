@@ -944,7 +944,9 @@ class BackendControllerFeatureProvider : Microsoft.AspNetCore.Mvc.Controllers.Co
         {
             return false;
         }
-        if (typeof(ClientApiControllerBase).IsAssignableFrom(typeInfo))
+        // Both client API versions sign listeners in with their Jellyfin token, so they exist only on a Jellyfin backend.
+        if (typeof(ClientApiControllerBase).IsAssignableFrom(typeInfo) ||
+            typeof(allstarr.Controllers.ClientApiV2.ClientApiV2ControllerBase).IsAssignableFrom(typeInfo))
             return _backendType == BackendType.Jellyfin;
 
         // Only protocol catch-alls are conditional; an allowlist would send
