@@ -269,10 +269,19 @@ test("open run polling pauses while hidden and stops when closed", async ({ page
   expect(reads).toBe(closed);
 });
 
-test("only this song starts a single-song run", async ({ page }) => {
+test("the primary action adds only this song using the configured folders", async ({ page }) => {
   const mutations = await mockPromotions(page); await page.goto("/#/library/kept");
   await page.getByRole("button", { name: "Open song details for Backseat Freestyle", exact: true }).click();
-  await page.getByRole("button", { name: "Only this song", exact: true }).click();
+  const panel = page.getByRole("dialog", { name: file.album, exact: true });
+  await expect(panel).toContainText("Adds this song using your folder settings.");
+  await expect(panel).toContainText("If you choose the whole album, 2 songs are already there");
+  await expect(panel).toContainText("03 - Backseat Freestyle.flac");
+  await expect(panel.locator(".promotion-footer button")).toHaveText(["Add album to library", "Only this song"]);
+  await expect(panel.getByRole("button", { name: "Add album to library", exact: true })).toHaveAttribute("data-variant", "text");
+  const songAction = panel.getByRole("button", { name: "Only this song", exact: true });
+  await expect(songAction).toHaveAttribute("data-variant", "default");
+  await songAction.focus();
+  await page.keyboard.press("Enter");
   await expect.poll(() => mutations.length).toBe(1);
   expect(mutations[0].body.unit).toBe("song");
 });

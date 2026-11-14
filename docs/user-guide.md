@@ -64,7 +64,7 @@ Progress moves between fresh music-app reports and shows **Paused** when the app
 - **Playlists** connects provider playlists and controls how each is exposed to the selected backend.
 - **Mappings** reviews unresolved or ambiguous provider tracks and preserves accepted decisions for later syncs and playback.
 - **Cached** shows disposable provider audio that may be evicted by cache policy.
-- **Kept** shows explicitly retained audio and related sidecars. Kept media is not deleted by cache cleanup.
+- **Kept** shows explicitly retained audio and related sidecars. Kept media is not deleted by cache cleanup. When adding a kept song to your library, **Only this song** is the primary action. It uses your configured naming and folder structure, creating the needed folders. Choose **Add album to library** to add the whole album instead.
 
 ### For you
 

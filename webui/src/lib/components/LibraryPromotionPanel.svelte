@@ -97,7 +97,7 @@
       {#if requestReceipt.declineNote}<p class="request-context">{requestReceipt.declineNote}</p>{/if}
     {/if}
     {#if preview && album && (preview.canAddDirectly !== false || administrator && requestReceipt)}
-      <div class="promotion-banner info"><span><b>{requestReceipt ? "Adds the album using the requester’s profile." : "Adds the album to your library."}</b> {preview.alreadyInLibrary} {preview.alreadyInLibrary === 1 ? "song is" : "songs are"} already there; {album.songCount - preview.alreadyInLibrary} will be added from the best copy your download sources can get.</span></div>
+      <div class="promotion-banner info"><span><b>{requestReceipt ? "Adds the album using the requester’s profile." : "Adds this song using your folder settings."}</b> {requestReceipt ? "" : "If you choose the whole album, "}{preview.alreadyInLibrary} {preview.alreadyInLibrary === 1 ? "song is" : "songs are"} already there; {album.songCount - preview.alreadyInLibrary} will be added from the best copy your download sources can get.</span></div>
       {#if preview.bestCopies.length}
         <section><h3 class="sec-label">Best copy</h3><div class="promotion-steps">
           {#each preview.bestCopies as source, index (`${index}:${source.provider}`)}
@@ -157,7 +157,7 @@
         {#if requestReceipt.state === "pending" && administrator}<Button size="sm" class="rounded-full" variant="text" disabled={busy || actionBusy} onclick={() => { actionError = ""; declineOpen = true; }}>Decline…</Button><Button size="sm" class="rounded-full" disabled={busy || actionBusy || loading || !preview || Boolean(error)} onclick={() => requestAction("approve")}>Approve and add</Button>
         {:else if requestReceipt.state === "pending"}<Button size="sm" class="rounded-full" variant="text" disabled={busy || actionBusy} onclick={() => requestAction("cancel")}>Cancel request</Button>{/if}
       {:else if preview?.canAddDirectly === false}<Button size="sm" class="rounded-full" variant="text" disabled={busy} onclick={() => open = false}>Cancel</Button><Button size="sm" class="rounded-full" disabled={busy || loading} onclick={() => onstart?.("album")}>Request album</Button>
-      {:else if preview}<Button size="sm" class="rounded-full" variant="text" disabled={busy || loading} onclick={() => onstart?.("song")}>Only this song</Button><Button size="sm" class="rounded-full" disabled={busy || loading} onclick={() => onstart?.("album")}>Add album to library</Button>
+      {:else if preview}<Button size="sm" class="rounded-full" variant="text" disabled={busy || loading} onclick={() => onstart?.("album")}>Add album to library</Button><Button size="sm" class="rounded-full" disabled={busy || loading} onclick={() => onstart?.("song")}>Only this song</Button>
       {:else if run}{#if !reviewTrack && !albumOpen && canCancelPromotion(run)}<Button size="sm" variant="text" class="promotion-cancel rounded-full" disabled={busy || actionBusy} onclick={() => { actionError = ""; cancelOpen = true; }}>Cancel…</Button>{:else}<span></span>{/if}<Button size="sm" class="rounded-full" variant="outline" onclick={() => { albumOpen = !albumOpen; selectedTrack = null; }}>{albumOpen ? "Back to progress" : "Open the album"}</Button>{/if}
     </div>
   {/snippet}
