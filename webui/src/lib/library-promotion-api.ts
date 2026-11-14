@@ -21,7 +21,7 @@ export type PromotionRun = {
   profileSteps?: PromotionProfileStep[];
 };
 export type PromotionList = { items: PromotionRun[]; nextCursor: string | null; counts: { active: number; needsLook: number; added: number; all: number; addedToday: number } };
-export type PromotionRequest = { recordingId: string; backendLibraryId: string; rootId: string; requestKey: string; unit: "album" | "song" };
+export type PromotionRequest = { recordingId: string; backendLibraryId: string; rootId: string; requestKey: string; unit: "album" | "song"; namingYear?: number };
 export type LibraryRequest = {
   id: string; requesterUserId: string; recordingId: string; releaseIdentity?: string | null;
   title: string; artist: string; year?: number | null; songCount: number; coverReference?: string | null;
@@ -31,6 +31,7 @@ export type LibraryRequest = {
 export type PromotionStart = PromotionRun | { requested: true; request: LibraryRequest };
 export type PromotionPreview = {
   album: { title: string; artist: string; year?: number | null; songCount: number; coverReference?: string | null };
+  requiresDestinationChoice?: boolean; namingYear?: number | null; destinationChoices?: { year: number; relativeFolder: string }[];
   canAddDirectly?: boolean; backendLibraryId?: string; rootId?: string;
   alreadyInLibrary: number; destinationPath: string; bestCopies: PromotionSource[];
   profileSteps: PromotionProfileStep[];

@@ -84,7 +84,9 @@ public sealed partial class LibraryPromotionService
             string.IsNullOrWhiteSpace(song.Codec) || song.SampleRate == null ||
                 PromotionQuality.IsLossless(song.Codec) && song.BitDepth == null ? 1 : 0).ToArray();
         var best = candidates.FirstOrDefault(song => PromotionQuality.Accepts(profile, song.Codec, song.BitDepth, song.SampleRate));
-        var fields = PromotionSongFields.FromSong(opened);
+        var destination = await PromotionDestinationNaming.ResolveAsync(db, context, access, root, profile, opened, request.NamingYear, token);
+        var fields = PromotionSongFields.FromSong(opened, namingYear: request.NamingYear ??
+            (destination.RequiresChoice ? destination.Choices.FirstOrDefault()?.Year : null));
         var pathKnown = false;
         if (best?.BitDepth is { } bits && best.SampleRate is { } rate)
         {
@@ -122,9 +124,12 @@ public sealed partial class LibraryPromotionService
                 "Below your floor · never used for the library");
         }).ToArray();
         var steps = ProfileSteps(profile);
-        return new(pathKnown ? path : "", steps.Where(step => step.Enabled).Select(step => step.Title).ToArray(), 0)
+        return new(pathKnown && !destination.RequiresChoice ? path : "", steps.Where(step => step.Enabled).Select(step => step.Title).ToArray(), 0)
         {
             Album = AlbumSummary(opened, songs.Count),
+            RequiresDestinationChoice = destination.RequiresChoice,
+            DestinationChoices = destination.Choices,
+            NamingYear = request.NamingYear,
             AlreadyInLibrary = already,
             BestCopies = copies,
             ProfileSteps = steps,
@@ -161,7 +166,8 @@ public sealed partial class LibraryPromotionService
                 HydrateTracks(existing);
                 return existing;
             }
-            if (!(await libraryAccess.ResolveAsync(context, token)).Allows(request.BackendLibraryId)) throw new UnauthorizedAccessException();
+            var access = await libraryAccess.ResolveAsync(context, token);
+            if (!access.Allows(request.BackendLibraryId)) throw new UnauthorizedAccessException();
             var profile = (await (profiles ?? new PromotionProfiles(factory)).GetMineAsync(context, token)).Values;
             var root = await roots.RequireAsync(request.RootId == Guid.Empty ? profile.LibraryRootId ?? Guid.Empty : request.RootId, token, backendLibraryId: request.BackendLibraryId);
             if (!profile.NamingConfirmed) throw new PromotionException(PromotionFailure.NamingPatternNotSelected);
@@ -178,7 +184,9 @@ public sealed partial class LibraryPromotionService
                     track.Reason = "This recording or ISRC is already in the backend library.";
                     track.Steps.Add(new("Dedupe", "Skipped", track.Reason));
                 }
-                var rendered = PromotionNaming.RenderForPromotion(profile.NamingScript, PromotionSongFields.FromSong(song));
+                var destination = await PromotionDestinationNaming.ResolveAsync(db, context, access, root, profile, song, request.NamingYear, token);
+                if (destination.RequiresChoice) throw new PromotionException(PromotionFailure.DestinationChoiceRequired);
+                var rendered = PromotionNaming.RenderForPromotion(profile.NamingScript, PromotionSongFields.FromSong(song, namingYear: request.NamingYear));
                 if (rendered.RelativePath == null) throw new ArgumentException("The naming script does not produce a safe path.");
                 PromotionRoots.RejectLinks(PromotionNaming.ContainedPath(root.Path, rendered.RelativePath));
                 tracks.Add(track);
@@ -480,9 +488,11 @@ public sealed partial class LibraryPromotionService
             if (track.ManagedFileId == null)
             {
                 var current = await libraryAccess.ResolveUserAsync(run.OwnerUserId, token);
-                if (!current.Access.Allows(request.BackendLibraryId)) throw new UnauthorizedAccessException();
+                if (current.Context == null || !current.Access.Allows(request.BackendLibraryId)) throw new UnauthorizedAccessException();
                 await VerifyAsync(TrackPath(run.Id, track), track.ContentSha256!, track.Length, token);
-                var relative = PromotionNaming.RenderForPromotion(album.Profile.NamingScript, PromotionSongFields.FromSong(track.Song, track.Extension)).RelativePath
+                var destination = await PromotionDestinationNaming.ResolveAsync(db, current.Context, current.Access, root, album.Profile, track.Song, request.NamingYear, token);
+                if (destination.RequiresChoice) throw new PromotionException(PromotionFailure.DestinationChoiceRequired);
+                var relative = PromotionNaming.RenderForPromotion(album.Profile.NamingScript, PromotionSongFields.FromSong(track.Song, track.Extension, namingYear: request.NamingYear)).RelativePath
                     ?? throw new ArgumentException("The naming script does not produce a safe path.");
                 using var scope = scopes.CreateScope();
                 var placed = await scope.ServiceProvider.GetRequiredService<FilePlacementService>().PlacePromotionAsync(new(

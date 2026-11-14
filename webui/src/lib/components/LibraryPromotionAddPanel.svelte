@@ -22,14 +22,14 @@
   let polling = false;
   let missingSetup = $state(false), namingRequired = $state(false);
   function namingFailure(cause: unknown) {
-    return cause instanceof ApiError && ["naming-pattern-not-selected", "naming-metadata-missing"].includes((cause.details as { reason?: string } | null)?.reason ?? "");
+    return cause instanceof ApiError && ["naming-pattern-not-selected", "naming-metadata-missing", "existing-album-layout-mismatch"].includes((cause.details as { reason?: string } | null)?.reason ?? "");
   }
   const identity = $derived(`${recordingId}:${backendLibraryId}:${rootId}:${setupRequired}`);
-  async function load() {
+  async function load(namingYear?: number) {
     controller?.abort(); pollController?.abort(); const next = new AbortController(); controller = next;
     preview = null; pending = null; loading = true; error = ""; missingSetup = setupRequired; namingRequired = false;
     if (missingSetup) { loading = false; return; }
-    const value: PromotionRequest = { recordingId, backendLibraryId, rootId, requestKey: newReportRequestId(), unit: "album" };
+    const value: PromotionRequest = { recordingId, backendLibraryId, rootId, requestKey: newReportRequestId(), unit: "album", ...(namingYear !== undefined ? { namingYear } : {}) };
     request = value;
     try {
       if (!recordingId) throw new Error("This kept copy has no recording identity yet. Index it before adding it to the library.");
@@ -45,7 +45,7 @@
     finally { if (!next.signal.aborted) loading = false; }
   }
   async function start(unit: "album" | "song") {
-    if (!request || busy || loading) return;
+    if (!request || busy || loading || preview?.requiresDestinationChoice) return;
     busy = true; error = "";
     try {
       const result = preview?.canAddDirectly === false ? await libraryPromotions.createRequest({ ...request, unit }) : await libraryPromotions.start({ ...request, unit });
@@ -80,4 +80,4 @@
   onMount(() => { const timer = setInterval(() => void pollRequest(), 2500); return () => { clearInterval(timer); pollController?.abort(); }; });
 </script>
 
-<LibraryPromotionPanel bind:open {preview} requestReceipt={pending} {providers} {title} {description} {cover} {loading} {error} {busy} {administrator} setupRequired={missingSetup} {namingRequired} {copyActions} onstart={start} oncancelrequest={cancelRequest} {onPrevious} {onNext} {onclose} />
+<LibraryPromotionPanel bind:open {preview} requestReceipt={pending} {providers} {title} {description} {cover} {loading} {error} {busy} {administrator} setupRequired={missingSetup} {namingRequired} {copyActions} onstart={start} onDestinationYear={year => void load(year)} oncancelrequest={cancelRequest} {onPrevious} {onNext} {onclose} />

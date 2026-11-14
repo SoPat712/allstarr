@@ -6,7 +6,7 @@ namespace allstarr.Core.Enrichment;
 public static class PromotionSongFields
 {
     public static Dictionary<string, string?> FromSong(Song song, string? extension = null,
-        IReadOnlyDictionary<string, string>? tags = null)
+        IReadOnlyDictionary<string, string>? tags = null, int? namingYear = null)
     {
         static string? Number(int? value) => value?.ToString(CultureInfo.InvariantCulture);
         var fields = new Dictionary<string, string?>(StringComparer.Ordinal)
@@ -28,6 +28,7 @@ public static class PromotionSongFields
                 ? $"{song.BitDepth.Value.ToString(CultureInfo.InvariantCulture)}-{(song.SampleRate.Value / 1000m).ToString("0.###", CultureInfo.InvariantCulture)}" : null }
                 .Where(value => !string.IsNullOrWhiteSpace(value)))
         };
+        if (namingYear.HasValue) fields["year"] = Number(namingYear);
         foreach (var pair in song.ProviderIds.Concat(tags ?? new Dictionary<string, string>()))
         {
             var name = pair.Key.ToLowerInvariant();

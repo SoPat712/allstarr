@@ -307,3 +307,38 @@ for (const reason of ["naming-pattern-not-selected", "naming-metadata-missing"] 
   await expect(panel.getByRole("link", { name: "Choose naming pattern", exact: true })).toHaveAttribute("href", "#/settings/adding-to-library");
   expect(mutations).toHaveLength(0);
 });
+
+for (const width of [390, 1280]) test(`an existing album year requires an explicit destination at ${width}px`, async ({ page }) => {
+  await page.setViewportSize({ width, height: 960 });
+  await page.emulateMedia({ colorScheme: width === 390 ? "light" : "dark", reducedMotion: "reduce" });
+  const mutations = await mockPromotions(page);
+  const previewYears: (number | undefined)[] = [];
+  await page.route("**/api/admin/library-promotions/preview", route => {
+    const { namingYear } = route.request().postDataJSON();
+    previewYears.push(namingYear);
+    return json(route, {
+      album: { title: file.album, artist: file.artist, year: 2025, songCount: 1 },
+      canAddDirectly: true, backendLibraryId: "music", rootId: "30000000-0000-0000-0000-000000000001",
+      alreadyInLibrary: 0, bestCopies: [], profileSteps: [], namingYear,
+      requiresDestinationChoice: namingYear === undefined,
+      destinationChoices: [2026, 2025].map(year => ({ year, relativeFolder: `${file.artist}/${file.album} (${year})` })),
+      destinationPath: namingYear ? `/music/${file.artist}/${file.album} (${namingYear})/03 - ${file.title}.flac` : "",
+    });
+  });
+  await page.goto("/#/library/kept");
+  await page.getByRole("button", { name: "Open song details for Backseat Freestyle", exact: true }).click();
+  const panel = page.getByRole("dialog", { name: file.album, exact: true });
+  await expect(panel.getByRole("button", { name: "Only this song", exact: true })).toBeDisabled();
+  await expect(panel.getByRole("button", { name: "Add album to library", exact: true })).toBeDisabled();
+  await expect(panel.getByRole("region", { name: "Choose album folder" })).toContainText("2026");
+  expect(mutations).toHaveLength(0);
+  await expectGeometry(page, width);
+  await capture(page, `destination-choice-${width}`);
+  await panel.getByRole("button", { name: "Use 2026", exact: true }).click();
+  await expect(panel.getByRole("button", { name: "Only this song", exact: true })).toBeEnabled();
+  await expect(panel).toContainText(`(${2026})/03 - ${file.title}.flac`);
+  expect(previewYears).toEqual([undefined, 2026]);
+  await panel.getByRole("button", { name: "Only this song", exact: true }).click();
+  await expect.poll(() => mutations.length).toBe(1);
+  expect(mutations[0].body).toMatchObject({ unit: "song", namingYear: 2026 });
+});

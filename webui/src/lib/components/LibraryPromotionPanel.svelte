@@ -15,12 +15,13 @@
   import { canCancelPromotion, promotionRequestStatus, requestLibraryFact, frequency, promotionArtwork, promotionProgress, promotionTimeline, qualityWording, songStatus, sourceLabel, sourceName, sourceQuality } from "$lib/library-promotion-presentation";
 
   let { open = $bindable(false), preview, run, title: fallbackTitle = "Add to library", description: fallbackDescription = "", cover, loading = false, error = "", busy = false,
-    requestReceipt, administrator = false, namingRequired = false, setupRequired = false, onapprove, ondecline, oncancelrequest, onstart, oncancel, onreview, onPrevious, onNext, onclose, providers = [], copyActions }: {
+    requestReceipt, administrator = false, namingRequired = false, setupRequired = false, onapprove, ondecline, oncancelrequest, onstart, onDestinationYear, oncancel, onreview, onPrevious, onNext, onclose, providers = [], copyActions }: {
     open?: boolean; preview?: PromotionPreview | null; run?: PromotionRun | null; title?: string; description?: string; cover?: string | null;
     loading?: boolean; error?: string; busy?: boolean; namingRequired?: boolean; setupRequired?: boolean;
     requestReceipt?: LibraryRequest | null; administrator?: boolean;
     onapprove?: () => Promise<void>; ondecline?: (note?: string) => Promise<void>; oncancelrequest?: () => Promise<void>;
     onstart?: (unit: "album" | "song") => void;
+    onDestinationYear?: (year: number) => void;
     oncancel?: () => Promise<void>;
     onreview?: (recordingId: string, action: "try-next-source" | "add-anyway" | "skip", reason?: string) => Promise<void>;
     onPrevious?: () => void; onNext?: () => void; onclose?: () => void;
@@ -97,6 +98,9 @@
       <p class="request-context">{#if administrator}Requested by {requestReceipt.requester?.displayName || "a listener"} · <time datetime={requestReceipt.createdAt}>{formatLocalDateTime(requestReceipt.createdAt)}</time>{:else}{promotionRequestStatus(requestReceipt.state).text}{/if}</p>
       {#if requestReceipt.declineNote}<p class="request-context">{requestReceipt.declineNote}</p>{/if}
     {/if}
+      {#if preview?.requiresDestinationChoice}<section aria-label="Choose album folder"><h3 class="sec-label">Choose the album folder</h3><p class="request-context">This album already has a folder with a different year. Choose the destination before adding songs. This changes the folder name, not the music tags.</p>
+        {#if onDestinationYear}<div class="promotion-steps">{#each preview.destinationChoices ?? [] as choice (choice.year)}<div class="promotion-step"><div><code class="destination-folder">{choice.relativeFolder}</code></div><Button size="sm" variant="outline" disabled={busy || loading} onclick={() => onDestinationYear?.(choice.year)}>Use {choice.year}</Button></div>{/each}</div>
+        {:else}<p class="request-context">The requester needs to choose a destination in a new request.</p>{/if}</section>{/if}
     {#if preview && album && (preview.canAddDirectly !== false || administrator && requestReceipt)}
       <div class="promotion-banner info"><span><b>{requestReceipt ? "Adds the album using the requester’s profile." : "Adds this song using your folder settings."}</b> {requestReceipt ? "" : "If you choose the whole album, "}{preview.alreadyInLibrary} {preview.alreadyInLibrary === 1 ? "song is" : "songs are"} already there; {album.songCount - preview.alreadyInLibrary} will be added from the best copy your download sources can get.</span></div>
       {#if preview.bestCopies.length}
@@ -155,10 +159,10 @@
   {#snippet footer()}
     <div class="promotion-footer" class:request-footer={simpleRequest}>
       {#if requestReceipt}
-        {#if requestReceipt.state === "pending" && administrator}<Button size="sm" class="rounded-full" variant="text" disabled={busy || actionBusy} onclick={() => { actionError = ""; declineOpen = true; }}>Decline…</Button><Button size="sm" class="rounded-full" disabled={busy || actionBusy || loading || !preview || Boolean(error)} onclick={() => requestAction("approve")}>Approve and add</Button>
+        {#if requestReceipt.state === "pending" && administrator}<Button size="sm" class="rounded-full" variant="text" disabled={busy || actionBusy} onclick={() => { actionError = ""; declineOpen = true; }}>Decline…</Button><Button size="sm" class="rounded-full" disabled={busy || actionBusy || loading || !preview || preview.requiresDestinationChoice || Boolean(error)} onclick={() => requestAction("approve")}>Approve and add</Button>
         {:else if requestReceipt.state === "pending"}<Button size="sm" class="rounded-full" variant="text" disabled={busy || actionBusy} onclick={() => requestAction("cancel")}>Cancel request</Button>{/if}
-      {:else if preview?.canAddDirectly === false}<Button size="sm" class="rounded-full" variant="text" disabled={busy} onclick={() => open = false}>Cancel</Button><Button size="sm" class="rounded-full" disabled={busy || loading} onclick={() => onstart?.("album")}>Request album</Button>
-      {:else if preview}<Button size="sm" class="rounded-full" variant="text" disabled={busy || loading} onclick={() => onstart?.("album")}>Add album to library</Button><Button size="sm" class="rounded-full" disabled={busy || loading} onclick={() => onstart?.("song")}>Only this song</Button>
+      {:else if preview?.canAddDirectly === false}<Button size="sm" class="rounded-full" variant="text" disabled={busy} onclick={() => open = false}>Cancel</Button><Button size="sm" class="rounded-full" disabled={busy || loading || preview.requiresDestinationChoice} onclick={() => onstart?.("album")}>Request album</Button>
+      {:else if preview}<Button size="sm" class="rounded-full" variant="text" disabled={busy || loading || preview.requiresDestinationChoice} onclick={() => onstart?.("album")}>Add album to library</Button><Button size="sm" class="rounded-full" disabled={busy || loading || preview.requiresDestinationChoice} onclick={() => onstart?.("song")}>Only this song</Button>
       {:else if run}{#if !reviewTrack && !albumOpen && canCancelPromotion(run)}<Button size="sm" variant="text" class="promotion-cancel rounded-full" disabled={busy || actionBusy} onclick={() => { actionError = ""; cancelOpen = true; }}>Cancel…</Button>{:else}<span></span>{/if}<Button size="sm" class="rounded-full" variant="outline" onclick={() => { albumOpen = !albumOpen; selectedTrack = null; }}>{albumOpen ? "Back to progress" : "Open the album"}</Button>{/if}
     </div>
   {/snippet}
@@ -192,6 +196,7 @@
   .promotion-step small { display: block; color: var(--color-ink-muted); font-size: .74rem; line-height: 1.5; }
   .muted, .profile-enabled { color: var(--color-ink-muted); font-size: .74rem; white-space: nowrap; }
   .profile-enabled.on { color: var(--success); }
+  .destination-folder { overflow-wrap: anywhere; }
   .promotion-path { border: 1px solid var(--color-edge); border-radius: 10px; padding: 9px 11px; background: var(--color-panel-raised); overflow-wrap: anywhere; font: 500 .78rem/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; }
   .promotion-footer { display: flex; width: 100%; min-width: 0; align-items: center; justify-content: space-between; gap: 8px; }
   .promotion-footer.request-footer { justify-content: flex-end; }

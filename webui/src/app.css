@@ -1,4 +1,4 @@
-@import "tailwindcss";
+@import "tailwindcss" source("./");
 @import "./lib/components/ui/button/touch-target.css";
 
 @font-face {

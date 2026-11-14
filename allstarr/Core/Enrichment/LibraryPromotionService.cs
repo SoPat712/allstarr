@@ -19,11 +19,16 @@ public sealed record PromoteSongRequest(Guid RecordingId, Guid ArtifactId, Guid 
 {
     public string? Unit { get; init; }
     [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public int? NamingYear { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
     public string? RequestedItemId { get; init; }
 }
 public sealed record PromotionPreview(string DestinationPath, string[] Steps, long Size)
 {
     public bool CanAddDirectly { get; init; }
+    public bool RequiresDestinationChoice { get; init; }
+    public int? NamingYear { get; init; }
+    public PromotionDestinationYearChoice[] DestinationChoices { get; init; } = [];
     public PromotionAlbumSummary? Album { get; init; }
     public int AlreadyInLibrary { get; init; }
     public IReadOnlyList<PromotionCopyPreview> BestCopies { get; init; } = [];
@@ -365,7 +370,10 @@ public sealed partial class LibraryPromotionService(IDbContextFactory<AllstarrDb
             {
                 await Begin("Placement");
                 var current = await libraryAccess.ResolveUserAsync(run.OwnerUserId, token);
-                if (!current.Access.Allows(request.BackendLibraryId)) throw new UnauthorizedAccessException("Library access changed before placement.");
+                if (current.Context == null || !current.Access.Allows(request.BackendLibraryId)) throw new UnauthorizedAccessException("Library access changed before placement.");
+                var destination = await PromotionDestinationNaming.ResolveAsync(db, current.Context, current.Access, root,
+                    new PromotionProfile { NamingScript = plan.NamingScript }, NamingSong(plan.Track), request.NamingYear, token);
+                if (destination.RequiresChoice) throw new PromotionException(PromotionFailure.DestinationChoiceRequired);
                 Destination(root.Path, plan);
                 roots.RequireFreeSpace(root.Path, tagged.Length);
                 using var scope = scopes.CreateScope();
@@ -512,21 +520,29 @@ public sealed partial class LibraryPromotionService(IDbContextFactory<AllstarrDb
             { Codec = artifact.Codec, BitDepth = artifact.BitDepth, SampleRate = artifact.SampleRate })["_quality"];
         var profile = await (profiles ?? new PromotionProfiles(factory)).GetMineAsync(context, token);
         if (!profile.Values.NamingConfirmed) throw new PromotionException(PromotionFailure.NamingPatternNotSelected);
+        var destinationRoot = await roots.RequireAsync(request.RootId, token, backendLibraryId: request.BackendLibraryId);
+        var destination = await PromotionDestinationNaming.ResolveAsync(db, context, await libraryAccess.ResolveAsync(context, token),
+            destinationRoot, profile.Values, NamingSong(track), request.NamingYear, token);
+        if (destination.RequiresChoice) throw new PromotionException(PromotionFailure.DestinationChoiceRequired);
+        if (request.NamingYear.HasValue) fields["year"] = request.NamingYear.Value.ToString(System.Globalization.CultureInfo.InvariantCulture);
         return new(metadata, track, source.ProviderId, source.SourceExternalTrackId, artifact.QualityCheckJson)
         { NamingScript = profile.Values.NamingScript, NamingFields = fields };
     }
 
+    private static Song NamingSong(ManagedTrackPathValues track) => new()
+    {
+        Title = track.Title,
+        Artist = track.Artist,
+        Album = track.Album ?? "Unknown",
+        AlbumArtist = track.AlbumArtist,
+        Year = track.Year,
+        Track = track.Track,
+        Container = track.Extension
+    };
+
     private static string RelativePath(PromotionPlan plan)
     {
-        var fields = plan.NamingFields ?? PromotionSongFields.FromSong(new Song
-        {
-            Title = plan.Track.Title,
-            Artist = plan.Track.Artist,
-            Album = plan.Track.Album ?? "Unknown",
-            AlbumArtist = plan.Track.AlbumArtist,
-            Year = plan.Track.Year,
-            Track = plan.Track.Track
-        }, plan.Track.Extension);
+        var fields = plan.NamingFields ?? PromotionSongFields.FromSong(NamingSong(plan.Track));
         var result = PromotionNaming.RenderForPromotion(plan.NamingScript, fields);
         return result.RelativePath ?? throw new ArgumentException("The promotion naming script does not produce a safe relative path.");
     }

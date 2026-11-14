@@ -54,13 +54,22 @@ public sealed partial class LibraryPromotionService
                 await db.SaveChangesAsync(token);
                 return new(await GetAsync(context, previous.Id, token), null);
             }
-            if (!(await libraryAccess.ResolveAsync(context, token)).Allows(request.BackendLibraryId)) throw new UnauthorizedAccessException();
+            var access = await libraryAccess.ResolveAsync(context, token);
+            if (!access.Allows(request.BackendLibraryId)) throw new UnauthorizedAccessException();
             var profile = (await (profiles ?? new PromotionProfiles(factory)).GetMineAsync(context, token)).Values;
-            await roots.RequireAsync(request.RootId == Guid.Empty ? profile.LibraryRootId ?? Guid.Empty : request.RootId,
+            var root = await roots.RequireAsync(request.RootId == Guid.Empty ? profile.LibraryRootId ?? Guid.Empty : request.RootId,
                 token, backendLibraryId: request.BackendLibraryId);
             if (!profile.NamingConfirmed) throw new PromotionException(PromotionFailure.NamingPatternNotSelected);
             var unit = Unit(request, profile);
             var songs = await RequestSongsAsync(db, context, request, unit, token);
+            if (promotionCatalog != null)
+                foreach (var song in songs)
+                {
+                    var destination = await PromotionDestinationNaming.ResolveAsync(db, context, access, root, profile, song, request.NamingYear, token);
+                    if (destination.RequiresChoice) throw new PromotionException(PromotionFailure.DestinationChoiceRequired);
+                    if (PromotionNaming.RenderForPromotion(profile.NamingScript, PromotionSongFields.FromSong(song, namingYear: request.NamingYear)).RelativePath == null)
+                        throw new PromotionException(PromotionFailure.InvalidRequest);
+                }
             var identity = RequestIdentity(context, request, unit, songs);
             var direct = !requestApproval && await CanAddDirectlyAsync(context, token);
             await SynchronizeRequestsAsync(db, user.Id, token);
@@ -270,6 +279,7 @@ public sealed partial class LibraryPromotionService
         var identity = unit == "song" ? request.RecordingId.ToString("N") : ReleaseIdentity(songs[0]) ??
             string.Join(',', songs.Select(song => song.CanonicalRecordingId!.Value).Order().Select(id => id.ToString("N")));
         if (request.RequestedItemId != null) identity = JsonSerializer.Serialize(new { identity, request.RequestedItemId });
+        if (request.NamingYear.HasValue) identity = JsonSerializer.Serialize(new { identity, request.NamingYear });
         return Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(
             JsonSerializer.Serialize(new { context.BackendInstanceId, request.BackendLibraryId, unit, identity }))));
     }
@@ -277,7 +287,7 @@ public sealed partial class LibraryPromotionService
     private static bool Covers(PromotionRequestRecord candidate, PromoteSongRequest request, string unit, IReadOnlyList<Song> songs)
     {
         var start = JsonSerializer.Deserialize<PromoteSongRequest>(candidate.RequestJson)!;
-        if (start.BackendLibraryId != request.BackendLibraryId || candidate.Unit == "song" && unit == "album") return false;
+        if (start.NamingYear != request.NamingYear || start.BackendLibraryId != request.BackendLibraryId || candidate.Unit == "song" && unit == "album") return false;
         return CoversSongs(candidate.Unit, JsonSerializer.Deserialize<List<Song>>(candidate.SongsJson)!, unit, songs);
     }
 
@@ -303,7 +313,7 @@ public sealed partial class LibraryPromotionService
         foreach (var run in active)
         {
             var start = JsonSerializer.Deserialize<PromoteSongRequest>(run.RequestJson)!;
-            if (start.BackendLibraryId != request.BackendLibraryId || start.Unit == "song" && unit == "album") continue;
+            if (start.NamingYear != request.NamingYear || start.BackendLibraryId != request.BackendLibraryId || start.Unit == "song" && unit == "album") continue;
             var album = ReadAlbum(run);
             var knownSongs = album?.Tracks.Select(track => track.Song).ToArray() ?? [new Song { CanonicalRecordingId = start.RecordingId }];
             if (!CoversSongs(start.Unit ?? album?.Profile.DefaultUnit ?? "song", knownSongs, unit, songs)) continue;
