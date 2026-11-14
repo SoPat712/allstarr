@@ -15,6 +15,7 @@ const reporter = playwrightJsonOutput
 export default defineConfig({
   testDir: "./tests",
   testMatch: "**/*.e2e.ts",
+  testIgnore: process.env.UI_AUDIT ? [] : ["**/ui-audit.e2e.ts"],
   fullyParallel: true,
   timeout: 120_000,
   expect: {

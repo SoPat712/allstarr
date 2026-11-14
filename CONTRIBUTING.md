@@ -133,6 +133,8 @@ npm run test:e2e:existing-build
 
 Run browser checks after the production build. Preserve keyboard, responsive, light/dark, reduced-motion, and no-overflow coverage for touched flows.
 
+For a separate, read-only accessibility and consistency audit, run `npm run audit:ui -- --workers=1` after building. It uses the browser fixtures, blocks API writes and external requests, and writes measurements and annotated screenshots to `webui/test-results/ui-audit/`. Review `report.md` for coverage, limitations, and the most widespread findings; `report.json` contains individual measurements. Rare styles and wording differences are review candidates, not automatic failures. This audit is excluded from ordinary browser runs and CI.
+
 ## Provider Extensions
 
 Provider SDK packages live outside the core implementation boundary and must declare their hooks, scope, network access, and secret permissions. Use the packaging and verification workflow documented in [docs/extensions/sdk-v1.md](docs/extensions/sdk-v1.md). Do not add an activation shortcut that bypasses checksum, permission review, or staged activation.
