@@ -50,13 +50,18 @@ public sealed partial class LibraryPromotionTests
         Assert.Equal(1, resolved.DiscNumber);
     }
 
-    [Fact]
-    public async Task PromotionCatalog_UsesCompleteProviderAlbumWhenReleaseIsUnknown()
+    [Theory]
+    [InlineData("deezer", "album", "deezer")]
+    [InlineData("deezer", "ext-deezer-album-album", "deezer")]
+    [InlineData("apple-musickit", "album", "apple-musickit")]
+    [InlineData("apple-musickit", "ext-apple-musickit-album-album", "apple-musickit")]
+    [InlineData("apple-musickit", "ext-apple-download-album-album", "apple-download")]
+    public async Task PromotionCatalog_UsesCompleteProviderAlbumWhenReleaseIsUnknown(string provider, string albumId, string albumProvider)
     {
-        var song = new Song { CanonicalRecordingId = recordingId, Title = "Song", ExternalProvider = "deezer", ExternalId = "track", AlbumId = "album" };
+        var song = new Song { CanonicalRecordingId = recordingId, Title = "Song", ExternalProvider = provider, ExternalId = "track", AlbumId = albumId };
         var identities = CatalogIdentities(song);
         var providers = new Mock<IProtocolProviderGateway>();
-        providers.Setup(item => item.GetAlbumAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "album")).ReturnsAsync(new Album
+        providers.Setup(item => item.GetAlbumAsync(It.IsAny<ProtocolExecutionContext>(), albumProvider, "album")).ReturnsAsync(new Album
         {
             SongCount = 2,
             Songs = [song, new() { CanonicalRecordingId = Guid.NewGuid(), Title = "Second song" }]
@@ -64,6 +69,41 @@ public sealed partial class LibraryPromotionTests
         var musicBrainz = new Mock<IMusicBrainzCatalogClient>(MockBehavior.Strict);
         var catalog = new PromotionCatalog(factory, identities.Object, providers.Object, musicBrainz.Object);
         Assert.Equal(2, (await catalog.ResolveAsync(Context, recordingId, "album", default)).Count);
+        providers.VerifyAll();
+    }
+
+    [Fact]
+    public async Task PromotionCatalog_FreshSongMetadataCanPreviewAndQueueItsAlbum()
+    {
+        var song = new Song
+        {
+            Title = "Song", Artist = "Artist", Album = "Release", Track = 1,
+            ExternalProvider = "apple-musickit", ExternalId = "track", AlbumId = "ext-apple-download-album-release"
+        };
+        var identities = CatalogIdentities(song);
+        identities.Setup(item => item.GetStoredSongsAsync(It.IsAny<ProviderActorContext>(), recordingId.ToString("D"), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<Song>());
+        var providers = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        providers.Setup(item => item.GetSongAsync(It.IsAny<ProtocolExecutionContext>(), "allstarr", recordingId.ToString("D")))
+            .ReturnsAsync(song);
+        providers.Setup(item => item.GetAlbumAsync(It.IsAny<ProtocolExecutionContext>(), "apple-download", "release"))
+            .ReturnsAsync(new Album
+            {
+                SongCount = 2,
+                Songs = [song, new() { CanonicalRecordingId = Guid.NewGuid(), Title = "Second song", Artist = "Artist", Album = "Release", Track = 2 }]
+            });
+        var catalog = new PromotionCatalog(factory, identities.Object, providers.Object, Mock.Of<IMusicBrainzCatalogClient>(MockBehavior.Strict));
+        var promotions = BatchService(catalog, Mock.Of<IPromotionAcquisition>(), identityService: identities.Object);
+        var request = Request() with { ArtifactId = Guid.Empty, Unit = "album" };
+
+        var preview = await promotions.PreviewAsync(Context, request);
+        Assert.Equal("Release", preview.Album!.Title);
+        Assert.Equal(2, preview.Album.SongCount);
+        Assert.Equal(rootId, preview.RootId);
+        var run = await promotions.StartAsync(Context, request);
+        Assert.Equal("Queued", run.Outcome);
+        Assert.Equal(2, run.Tracks.Count);
+        Assert.Contains(run.Tracks, track => track.RecordingId == recordingId && track.Song.Title == "Song");
         providers.VerifyAll();
     }
 

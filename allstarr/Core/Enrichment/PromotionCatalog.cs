@@ -3,6 +3,7 @@ using allstarr.Core.Matching;
 using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
 using allstarr.Models.Domain;
+using allstarr.Services.Local;
 using allstarr.Services.MusicBrainz;
 using Microsoft.EntityFrameworkCore;
 
@@ -46,7 +47,12 @@ public sealed class PromotionCatalog(IDbContextFactory<AllstarrDbContext> factor
         }
         Album? providerAlbum = null;
         if (song.ExternalProvider != null && !string.IsNullOrWhiteSpace(song.AlbumId))
-            providerAlbum = await providers.GetAlbumAsync(context, song.ExternalProvider, song.AlbumId);
+        {
+            var album = LocalLibraryService.ParseExternalResource(song.AlbumId);
+            providerAlbum = album is { isExternal: true, type: "album" }
+                ? await providers.GetAlbumAsync(context, album.provider!, album.externalId!)
+                : await providers.GetAlbumAsync(context, song.ExternalProvider, song.AlbumId);
+        }
         if (Guid.TryParse(releaseId, out var parsed))
         {
             var release = await musicBrainz.LookupReleaseByMbidAsync(parsed.ToString("D"), token)
