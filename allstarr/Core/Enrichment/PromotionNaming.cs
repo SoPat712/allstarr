@@ -113,6 +113,22 @@ public static class PromotionNaming
         }
     }
 
+    public static PromotionNamingResult RenderForPromotion(string script, IReadOnlyDictionary<string, string?> fields)
+    {
+        var pending = new Stack<Node>(Parse(script));
+        while (pending.TryPop(out var node))
+        {
+            if (node is CallNode call)
+                foreach (var argument in call.Arguments)
+                    foreach (var child in argument) pending.Push(child);
+            if (node is not FieldNode field || field.Name is not ("year" or "date" or "originalyear" or "originaldate" or "tracknumber")) continue;
+            var value = fields.GetValueOrDefault(field.Name);
+            if (string.IsNullOrWhiteSpace(value) || value == "0")
+                throw new PromotionException(PromotionFailure.NamingMetadataMissing);
+        }
+        return Render(script, fields);
+    }
+
     /// <summary>Checks lexical containment only; callers separately control filesystem links.</summary>
     public static string ContainedPath(string root, string relativePath)
     {

@@ -39,6 +39,31 @@ public sealed class PromotionNamingTests
     }
 
     [Theory]
+    [InlineData("year", null)]
+    [InlineData("tracknumber", null)]
+    [InlineData("tracknumber", "0")]
+    public void PromotionNaming_RequiresMetadataEvenForOptionalYearSuffix(string field, string? value)
+    {
+        var fields = Fields();
+        fields[field] = value;
+        var error = Assert.Throws<PromotionException>(() => PromotionNaming.RenderForPromotion(DefaultScript, fields));
+        Assert.Equal(PromotionFailure.NamingMetadataMissing, error.Failure);
+        Assert.Equal("naming-metadata-missing", error.Reason);
+    }
+
+    [Fact]
+    public void PromotionNaming_AllowsAnExplicitPatternWithoutMissingFields()
+    {
+        var fields = Fields();
+        fields.Remove("year");
+        fields.Remove("tracknumber");
+        Assert.Equal("Singer/Collection/Song.flac",
+            PromotionNaming.RenderForPromotion("%artist%/%album%/%title%.%_extension%", fields).RelativePath);
+        Assert.Equal("Various Artists/Collection (2024)/1-03 - Song.flac",
+            PromotionNaming.RenderForPromotion(DefaultScript, Fields()).RelativePath);
+    }
+
+    [Theory]
     [InlineData("$if(yes,one,two)", "one")]
     [InlineData("$if(,one,two)", "two")]
     [InlineData("$if(,one)", "_")]

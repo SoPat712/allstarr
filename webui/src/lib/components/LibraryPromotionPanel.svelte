@@ -15,9 +15,9 @@
   import { canCancelPromotion, promotionRequestStatus, requestLibraryFact, frequency, promotionArtwork, promotionProgress, promotionTimeline, qualityWording, songStatus, sourceLabel, sourceName, sourceQuality } from "$lib/library-promotion-presentation";
 
   let { open = $bindable(false), preview, run, title: fallbackTitle = "Add to library", description: fallbackDescription = "", cover, loading = false, error = "", busy = false,
-    requestReceipt, administrator = false, setupRequired = false, onapprove, ondecline, oncancelrequest, onstart, oncancel, onreview, onPrevious, onNext, onclose, providers = [], copyActions }: {
+    requestReceipt, administrator = false, namingRequired = false, setupRequired = false, onapprove, ondecline, oncancelrequest, onstart, oncancel, onreview, onPrevious, onNext, onclose, providers = [], copyActions }: {
     open?: boolean; preview?: PromotionPreview | null; run?: PromotionRun | null; title?: string; description?: string; cover?: string | null;
-    loading?: boolean; error?: string; busy?: boolean; setupRequired?: boolean;
+    loading?: boolean; error?: string; busy?: boolean; namingRequired?: boolean; setupRequired?: boolean;
     requestReceipt?: LibraryRequest | null; administrator?: boolean;
     onapprove?: () => Promise<void>; ondecline?: (note?: string) => Promise<void>; oncancelrequest?: () => Promise<void>;
     onstart?: (unit: "album" | "song") => void;
@@ -91,6 +91,7 @@
     </EmptyState>{/if}
     {#if loading}<RowsSkeleton count={5} />{/if}
     {#if error}<p class="notice-error" role="alert">{error}</p>{/if}
+    {#if namingRequired}<Button variant="outline" href="#/settings/adding-to-library">Choose naming pattern</Button>{/if}
     {#if actionError && !reasonOpen && !cancelOpen && !declineOpen}<p class="notice-error" role="alert">{actionError}</p>{/if}
     {#if requestReceipt}
       <p class="request-context">{#if administrator}Requested by {requestReceipt.requester?.displayName || "a listener"} · <time datetime={requestReceipt.createdAt}>{formatLocalDateTime(requestReceipt.createdAt)}</time>{:else}{promotionRequestStatus(requestReceipt.state).text}{/if}</p>

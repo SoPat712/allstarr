@@ -478,6 +478,7 @@ public sealed partial class LibraryPromotionTests
     {
         await new PromotionProfiles(factory).SaveMineAsync(Context, new()
         {
+            NamingConfirmed = true,
             NamingScript = "%title%.%_extension%",
             FakeLosslessCheck = false,
             ReplayGain = false,
@@ -516,6 +517,7 @@ public sealed partial class LibraryPromotionTests
     {
         await new PromotionProfiles(factory).SaveMineAsync(Context, new()
         {
+            NamingConfirmed = true,
             NamingScript = "%title%-%_quality%.%_extension%",
             AllowLossy = true,
             QualityFloor = new("lossy", 16, 44100),

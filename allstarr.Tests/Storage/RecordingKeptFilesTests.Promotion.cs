@@ -229,6 +229,8 @@ public sealed partial class RecordingKeptFilesTests
         var context = new ProtocolExecutionContext(ProtocolKind.Jellyfin, "fixture", owner.ToString("N"),
             new allstarr.Core.Identity.AllstarrPrincipal(owner, "jellyfin", "fixture", owner.ToString("N"), "Listener", false),
             "promotion", DateTimeOffset.UtcNow.AddMinutes(5), default);
+        await new PromotionProfiles(factory).SaveMineAsync(context, new()
+        { NamingConfirmed = true, NamingScript = "%title%.%_extension%" });
         var run = await promotion.StartAsync(context, new(recordingId, artifact.Id, libraryRoot.Id, "music", "promote"));
         var claim = Assert.IsType<DurableJobClaim>(await queue.ClaimNextAsync("promotion", [LibraryPromotionService.JobType]));
         await queue.CompleteAsync(claim, await promotion.ExecuteAsync(new(claim, services), default));

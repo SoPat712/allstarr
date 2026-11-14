@@ -85,7 +85,7 @@
     if (!profile || !mine || !household) return;
     const current = profile;
     if (Object.entries(patch).every(([key, value]) => JSON.stringify(current[key as keyof PromotionProfile]) === JSON.stringify(value))) return;
-    const next = { ...profile, ...patch };
+    const next = { ...profile, ...patch, ...((patch.namingScript !== undefined || patch.libraryRootId !== undefined) && patch.namingConfirmed === undefined ? { namingConfirmed: false } : {}) };
     if (scope === "me") mine = { ...mine, values: next };
     else household = { ...household, values: next };
     dirty.add(scope);
@@ -154,12 +154,18 @@
       detected = result;
       if (apply) {
         if (result.script) {
-          update({ namingScript: result.script });
+          update({ namingScript: result.script, libraryRootId: rootId, namingConfirmed: true });
           detectionMessage = "Detected folder and filename pattern applied.";
-        } else detectionMessage = "No consistent naming pattern was found in this folder. Your settings were kept.";
+        } else {
+          update({ namingConfirmed: false });
+          detectionMessage = "No consistent naming pattern was found in this folder. Your edited pattern was kept. Choose and confirm a naming pattern before adding songs.";
+        }
       }
     } catch (cause) {
-      if (!request.signal.aborted && apply) detectionMessage = `Could not detect a naming pattern. Your settings were kept. ${message(cause)}`;
+      if (!request.signal.aborted && apply) {
+        update({ namingConfirmed: false });
+        detectionMessage = `Could not detect a naming pattern. Your edited pattern was kept. Choose and confirm a naming pattern before adding songs. ${message(cause)}`;
+      }
     } finally {
       if (!request.signal.aborted) detecting = false;
     }
@@ -257,8 +263,9 @@
           <div class="naming-detected" role="status"><div><strong>Your library already names files like this</strong>
             {#if detectedExample}<code title={detectedExample}>{detectedExample}</code>{/if}
             <small>{detected.matched} of {detected.sampled} songs in this folder follow the same pattern</small></div>
-            <Button variant="outline" size="sm" onclick={() => update({ namingScript: detected!.script! })}>Use this pattern</Button></div>
-        {:else if detected?.script}<p class="naming-match">Matches how this folder already names its files.</p>{/if}
+            <Button variant="outline" size="sm" onclick={() => update({ namingScript: detected!.script!, libraryRootId: chosenRootId, namingConfirmed: true })}>Use this pattern</Button></div>
+        {:else if detected?.script}<p class="naming-match">This pattern matches {detected.matched} of {detected.sampled} sampled songs.</p>{/if}
+        {#if !profile.namingConfirmed}<div class="naming-detected" role="status"><div><strong>Choose a naming pattern before adding songs</strong><small>Review the folders and filenames below, then confirm your choice. Missing song metadata will still block an addition.</small></div><Button variant="outline" size="sm" disabled={previewPending || !!previewError || !validScripts.has(profile.namingScript) || errors.length > 0} onclick={() => update({ libraryRootId: chosenRootId, namingConfirmed: true })}>Use this naming pattern</Button></div>{/if}
         <PromotionNamingBuilder script={profile.namingScript} onchange={namingScript => update({ namingScript })} />
         <div class="naming-examples" class:updating={previewPending && preview} aria-label="Live naming examples" aria-busy={previewPending}>
           {#if previewPending && !preview}<p class="muted">Loading examples…</p>

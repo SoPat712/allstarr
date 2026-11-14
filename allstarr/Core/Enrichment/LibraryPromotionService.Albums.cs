@@ -69,6 +69,7 @@ public sealed partial class LibraryPromotionService
         var library = string.IsNullOrWhiteSpace(request.BackendLibraryId) ? root.BackendLibraryId : request.BackendLibraryId;
         if (library == null || !access.Allows(library)) throw new UnauthorizedAccessException();
         if (root.BackendLibraryId != library) throw new PromotionException(PromotionFailure.LibraryFolderMismatch);
+        if (!profile.NamingConfirmed) throw new PromotionException(PromotionFailure.NamingPatternNotSelected);
         var songs = savedSongs ?? await promotionCatalog!.ResolveAsync(context, request.RecordingId, Unit(request, profile), token);
         if (songs.Count is 0 or > 256) throw new PromotionException(PromotionFailure.InvalidRequest);
         var opened = songs.FirstOrDefault(song => song.CanonicalRecordingId == request.RecordingId)
@@ -101,7 +102,7 @@ public sealed partial class LibraryPromotionService
             fields["_quality"] = quality["_quality"];
             pathKnown = !string.IsNullOrWhiteSpace(format.Container);
         }
-        var rendered = PromotionNaming.Render(profile.NamingScript, fields);
+        var rendered = PromotionNaming.RenderForPromotion(profile.NamingScript, fields);
         if (rendered.RelativePath == null) throw new ArgumentException("The naming script does not produce a safe path.");
         var path = PromotionNaming.ContainedPath(root.Path, rendered.RelativePath);
         PromotionRoots.RejectLinks(path);
@@ -163,6 +164,7 @@ public sealed partial class LibraryPromotionService
             if (!(await libraryAccess.ResolveAsync(context, token)).Allows(request.BackendLibraryId)) throw new UnauthorizedAccessException();
             var profile = (await (profiles ?? new PromotionProfiles(factory)).GetMineAsync(context, token)).Values;
             var root = await roots.RequireAsync(request.RootId == Guid.Empty ? profile.LibraryRootId ?? Guid.Empty : request.RootId, token, backendLibraryId: request.BackendLibraryId);
+            if (!profile.NamingConfirmed) throw new PromotionException(PromotionFailure.NamingPatternNotSelected);
             var songs = savedSongs ?? await promotionCatalog!.ResolveAsync(context, request.RecordingId, Unit(request, profile), token);
             if (songs.Count is 0 or > 256 || songs.Any(song => song.CanonicalRecordingId is null || song.CanonicalRecordingId == Guid.Empty))
                 throw new PromotionException(PromotionFailure.InvalidRequest);
@@ -176,7 +178,7 @@ public sealed partial class LibraryPromotionService
                     track.Reason = "This recording or ISRC is already in the backend library.";
                     track.Steps.Add(new("Dedupe", "Skipped", track.Reason));
                 }
-                var rendered = PromotionNaming.Render(profile.NamingScript, PromotionSongFields.FromSong(song));
+                var rendered = PromotionNaming.RenderForPromotion(profile.NamingScript, PromotionSongFields.FromSong(song));
                 if (rendered.RelativePath == null) throw new ArgumentException("The naming script does not produce a safe path.");
                 PromotionRoots.RejectLinks(PromotionNaming.ContainedPath(root.Path, rendered.RelativePath));
                 tracks.Add(track);
@@ -480,7 +482,7 @@ public sealed partial class LibraryPromotionService
                 var current = await libraryAccess.ResolveUserAsync(run.OwnerUserId, token);
                 if (!current.Access.Allows(request.BackendLibraryId)) throw new UnauthorizedAccessException();
                 await VerifyAsync(TrackPath(run.Id, track), track.ContentSha256!, track.Length, token);
-                var relative = PromotionNaming.Render(album.Profile.NamingScript, PromotionSongFields.FromSong(track.Song, track.Extension)).RelativePath
+                var relative = PromotionNaming.RenderForPromotion(album.Profile.NamingScript, PromotionSongFields.FromSong(track.Song, track.Extension)).RelativePath
                     ?? throw new ArgumentException("The naming script does not produce a safe path.");
                 using var scope = scopes.CreateScope();
                 var placed = await scope.ServiceProvider.GetRequiredService<FilePlacementService>().PlacePromotionAsync(new(

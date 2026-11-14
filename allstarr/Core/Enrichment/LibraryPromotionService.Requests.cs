@@ -58,6 +58,7 @@ public sealed partial class LibraryPromotionService
             var profile = (await (profiles ?? new PromotionProfiles(factory)).GetMineAsync(context, token)).Values;
             await roots.RequireAsync(request.RootId == Guid.Empty ? profile.LibraryRootId ?? Guid.Empty : request.RootId,
                 token, backendLibraryId: request.BackendLibraryId);
+            if (!profile.NamingConfirmed) throw new PromotionException(PromotionFailure.NamingPatternNotSelected);
             var unit = Unit(request, profile);
             var songs = await RequestSongsAsync(db, context, request, unit, token);
             var identity = RequestIdentity(context, request, unit, songs);

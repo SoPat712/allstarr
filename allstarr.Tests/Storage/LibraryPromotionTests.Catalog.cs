@@ -82,7 +82,13 @@ public sealed partial class LibraryPromotionTests
             Title = "Song",
             Artist = "Artist",
             Album = "Release",
-            Track = 1,
+            Codec = "flac",
+            Container = "flac",
+            BitDepth = 16,
+            SampleRate = 44100,
+            Track = 3,
+            Year = 2026,
+            ReleaseDate = "2026-01-02",
             ExternalProvider = "apple-musickit",
             ExternalId = "track",
             AlbumId = "ext-apple-download-album-release"
@@ -107,21 +113,138 @@ public sealed partial class LibraryPromotionTests
             .ReturnsAsync(new Album
             {
                 SongCount = 2,
-                Songs = [song, new() { CanonicalRecordingId = Guid.NewGuid(), Title = "Second song", Artist = "Artist", Album = "Release", Track = 2 }]
+                Year = 2026,
+                ReleaseDate = "2026-01-02",
+                Songs = [song, new() { CanonicalRecordingId = Guid.NewGuid(), Title = "Second song", Artist = "Artist", Album = "Release", Track = 4, Year = 2026, ReleaseDate = "2026-01-02" }]
             });
         var catalog = new PromotionCatalog(factory, identities.Object, providers.Object, Mock.Of<IMusicBrainzCatalogClient>(MockBehavior.Strict));
         var promotions = BatchService(catalog, Mock.Of<IPromotionAcquisition>(), identityService: identities.Object);
+        await new PromotionProfiles(factory).SaveMineAsync(Context, new()
+        {
+            LibraryRootId = rootId,
+            NamingConfirmed = true,
+            NamingScript = PromotionProfile.DefaultNamingScript
+        });
         var request = Request() with { ArtifactId = Guid.Empty, Unit = "album" };
 
         var preview = await promotions.PreviewAsync(Context, request);
         Assert.Equal("Release", preview.Album!.Title);
         Assert.Equal(2, preview.Album.SongCount);
+        Assert.Contains("2026", preview.DestinationPath);
         Assert.Equal(rootId, preview.RootId);
         var run = await promotions.StartAsync(Context, request);
         Assert.Equal("Queued", run.Outcome);
         Assert.Equal(2, run.Tracks.Count);
         Assert.Contains(run.Tracks, track => track.RecordingId == recordingId && track.Song.Title == "Song");
         providers.VerifyAll();
+    }
+
+    [Fact]
+    public async Task PromotionCatalog_RefreshesIncompleteSourceAndAgreesForSingleAndAlbum()
+    {
+        const string isrc = "US-AAA-26-00003";
+        var cached = new Song
+        {
+            Title = "I Like Ur Look",
+            Artist = "Kim Petras",
+            Codec = "flac",
+            Container = "flac",
+            BitDepth = 16,
+            SampleRate = 44100,
+            Album = "Detour",
+            Isrc = isrc,
+            ExternalProvider = "apple-musickit",
+            ExternalId = "track",
+            AlbumId = "ext-apple-download-album-detour"
+        };
+        var current = new Song
+        {
+            Title = "I Like Ur Look",
+            Artist = "Kim Petras",
+            Codec = "flac",
+            Container = "flac",
+            BitDepth = 16,
+            SampleRate = 44100,
+            Album = "Detour",
+            Track = 3,
+            Year = 2026,
+            ReleaseDate = "2026-01-02",
+            Isrc = isrc,
+            ExternalProvider = "apple-download",
+            ExternalId = "track",
+            AlbumId = "ext-apple-download-album-detour"
+        };
+        var identities = CatalogIdentities(cached);
+        var providers = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        providers.Setup(item => item.GetExactSongAsync(It.IsAny<ProtocolExecutionContext>(), "apple-musickit", "track"))
+            .ReturnsAsync(current);
+        providers.Setup(item => item.GetAlbumAsync(It.IsAny<ProtocolExecutionContext>(), "apple-download", "detour"))
+            .ReturnsAsync(new Album
+            {
+                Id = "ext-apple-download-album-detour",
+                ExternalProvider = "apple-download",
+                ExternalId = "detour",
+                Title = "Detour",
+                Artist = "Kim Petras",
+                Year = 2026,
+                ReleaseDate = "2026-01-02",
+                SongCount = 2,
+                Songs =
+                [
+                    new Song { CanonicalRecordingId = Guid.NewGuid(), ExternalProvider = "apple-download", ExternalId = "other", Track = 1 },
+                    new Song { ExternalProvider = "apple-download", ExternalId = "track", Isrc = isrc, Track = 3 }
+                ]
+            });
+        var catalog = new PromotionCatalog(factory, identities.Object, providers.Object, Mock.Of<IMusicBrainzCatalogClient>(MockBehavior.Strict));
+
+        var album = await catalog.ResolveAsync(Context, recordingId, "album", default);
+        var single = await catalog.ResolveAsync(Context, recordingId, "song", default);
+        var albumSong = Assert.Single(album, item => item.CanonicalRecordingId == recordingId);
+        var singleSong = Assert.Single(single);
+
+        Assert.Equal("Detour", albumSong.Album);
+        Assert.Equal(2026, albumSong.Year);
+        Assert.Equal(3, albumSong.Track);
+        Assert.Equal(albumSong.Album, singleSong.Album);
+        Assert.Equal(albumSong.Year, singleSong.Year);
+        Assert.Equal(albumSong.Track, singleSong.Track);
+        providers.Verify(item => item.GetExactSongAsync(It.IsAny<ProtocolExecutionContext>(), "apple-musickit", "track"), Times.Exactly(2));
+        await new PromotionProfiles(factory).SaveMineAsync(Context, new() { NamingConfirmed = true });
+        var promotions = BatchService(catalog, Mock.Of<IPromotionAcquisition>(), identityService: identities.Object);
+        foreach (var unit in new[] { "song", "album" })
+        {
+            var preview = await promotions.PreviewAsync(Context, Request() with { Unit = unit, ArtifactId = Guid.Empty });
+            Assert.EndsWith("Kim Petras/Detour (2026)/03 - I Like Ur Look.flac", preview.DestinationPath.Replace('\\', '/'));
+        }
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task PromotionCatalog_RequiresAUniqueReleaseTrack(bool duplicateIdentity)
+    {
+        var source = new Song
+        {
+            Title = "Song",
+            AlbumId = "album",
+            Year = 2026,
+            Track = 3,
+            ExternalProvider = "deezer",
+            ExternalId = "track",
+            Isrc = "USAAA2600003"
+        };
+        var tracks = new[]
+        {
+            new Song { ExternalProvider = "deezer", ExternalId = duplicateIdentity ? "track" : "first", Isrc = source.Isrc },
+            new Song { ExternalProvider = "deezer", ExternalId = duplicateIdentity ? "track" : "second", Isrc = source.Isrc }
+        };
+        var providers = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        providers.Setup(item => item.GetAlbumAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "album"))
+            .ReturnsAsync(new Album { Songs = tracks.ToList(), SongCount = 2, Year = 2026 });
+        var catalog = new PromotionCatalog(factory, CatalogIdentities(source).Object, providers.Object, Mock.Of<IMusicBrainzCatalogClient>(MockBehavior.Strict));
+        var failure = await Assert.ThrowsAsync<PromotionException>(() => catalog.ResolveAsync(Context, recordingId, "song", default));
+        Assert.Equal(PromotionFailure.ReleaseMetadataUnavailable, failure.Failure);
+        Assert.All(tracks, track => Assert.Null(track.CanonicalRecordingId));
     }
 
     private Mock<ITrackIdentityService> CatalogIdentities(Song song, string? mbid = null)

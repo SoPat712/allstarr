@@ -294,3 +294,16 @@ test("starts an album when the browser has no randomUUID function", async ({ pag
   await expect(page).toHaveURL(new RegExp(`to-library\\?run=${runId}`));
   expect(mutations[0].body.requestKey).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
 });
+
+for (const reason of ["naming-pattern-not-selected", "naming-metadata-missing"] as const) test(`unsafe naming ${reason} requires a choice and cannot start`, async ({ page }) => {
+  const mutations = await mockPromotions(page);
+  await page.route("**/api/admin/library-promotions/preview", route => json(route, { reason, error: "Choose a naming pattern with complete metadata before adding this song." }, 409));
+  await page.goto("/#/library/kept");
+  await page.getByRole("button", { name: "Open song details for Backseat Freestyle", exact: true }).click();
+  const panel = page.getByRole("dialog", { name: file.album, exact: true });
+  await expect(panel.getByRole("alert")).toContainText("Choose a naming pattern");
+  await expect(panel.getByRole("button", { name: "Only this song", exact: true })).toHaveCount(0);
+  await expect(panel.getByRole("button", { name: "Add album to library", exact: true })).toHaveCount(0);
+  await expect(panel.getByRole("link", { name: "Choose naming pattern", exact: true })).toHaveAttribute("href", "#/settings/adding-to-library");
+  expect(mutations).toHaveLength(0);
+});

@@ -145,7 +145,7 @@ public sealed partial class LibraryPromotionTests
     [Fact]
     public async Task ClientApi_AdditionsReadTheSavedUnitOfEarlierPromotions()
     {
-        await new PromotionProfiles(factory).SaveMineAsync(Context, new() { DefaultUnit = "song" });
+        await new PromotionProfiles(factory).SaveMineAsync(Context, new() { NamingConfirmed = true, DefaultUnit = "song" });
         var batch = RequestService();
         await batch.StartAsync(Context, Request());
         Assert.Equal("song", Assert.Single(await ClientAdditions(batch).ListAsync(Context)).Unit);

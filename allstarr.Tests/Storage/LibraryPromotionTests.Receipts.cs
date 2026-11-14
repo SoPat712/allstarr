@@ -199,7 +199,7 @@ public sealed partial class LibraryPromotionTests
         var fileId = Guid.NewGuid();
         var keptRoot = Path.Combine(directory, "kept");
         libraryAccess.Permissions[owner] = new(true, selectedAccessible ? ["a-library", "music"] : ["a-library"]);
-        await new PromotionProfiles(factory).SaveMineAsync(Context, new() { LibraryRootId = rootId });
+        await new PromotionProfiles(factory).SaveMineAsync(Context, new() { NamingConfirmed = true, LibraryRootId = rootId });
         await using (var db = factory.CreateDbContext())
         {
             var job = await db.Jobs.FirstAsync();
@@ -248,7 +248,7 @@ public sealed partial class LibraryPromotionTests
     public async Task PromotionAlbum_PlacesReadySiblingAndKeepsEachHandoverSeparate()
     {
         await new PromotionProfiles(factory).SaveMineAsync(Context, new()
-        { NamingScript = "%title%.%_extension%", ReplayGain = false, CoverMode = "none", LyricsMode = "off" });
+        { NamingConfirmed = true, NamingScript = "%title%.%_extension%", ReplayGain = false, CoverMode = "none", LyricsMode = "off" });
         var siblingId = Guid.NewGuid();
         var catalog = new Mock<IPromotionCatalog>();
         catalog.Setup(item => item.ResolveAsync(It.IsAny<ProtocolExecutionContext>(), recordingId, "album", It.IsAny<CancellationToken>()))
@@ -299,7 +299,7 @@ public sealed partial class LibraryPromotionTests
     public async Task PromotionPreview_UsesOpenedSongAndSavedProfileWithRealSourceFormats()
     {
         await new PromotionProfiles(factory).SaveMineAsync(Context, new()
-        { NamingScript = "%title%.%_extension%", MusicBrainzTags = false, CoverMode = "none", LyricsMode = "off", ReplayGain = false, FakeLosslessCheck = false });
+        { NamingConfirmed = true, NamingScript = "%title%.%_extension%", MusicBrainzTags = false, CoverMode = "none", LyricsMode = "off", ReplayGain = false, FakeLosslessCheck = false });
         var first = new Song { CanonicalRecordingId = Guid.NewGuid(), Title = "First", Album = "Release", Artist = "Artist" };
         var opened = new Song { CanonicalRecordingId = recordingId, Title = "Opened", Album = "Release", Artist = "Artist", Year = 2024, Container = "mp3", Codec = "mp3" };
         var catalog = new Mock<IPromotionCatalog>();

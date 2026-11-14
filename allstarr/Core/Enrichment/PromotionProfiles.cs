@@ -12,6 +12,7 @@ public sealed record PromotionProfile
 {
     public const string DefaultNamingScript = "$if2(%albumartist%,%artist%)/%album%$if(%year%, \\(%year%\\))/$if($gt(%totaldiscs%,1),%discnumber%-)$num(%tracknumber%,2) - %title%.%_extension%";
     public string NamingScript { get; init; } = DefaultNamingScript;
+    public bool NamingConfirmed { get; init; }
     public Guid? LibraryRootId { get; init; }
     public PromotionQualityFloor QualityFloor { get; init; } = new();
     public PromotionQualityCeiling HiResCeiling { get; init; } = new();

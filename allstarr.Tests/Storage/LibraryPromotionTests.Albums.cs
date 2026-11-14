@@ -333,6 +333,7 @@ public sealed partial class LibraryPromotionTests
     {
         await new PromotionProfiles(factory).SaveMineAsync(Context, new()
         {
+            NamingConfirmed = true,
             NamingScript = "%title%.%_extension%",
             FakeLosslessCheck = false,
             ReplayGain = false,
@@ -365,6 +366,7 @@ public sealed partial class LibraryPromotionTests
     {
         await new PromotionProfiles(factory).SaveMineAsync(Context, new()
         {
+            NamingConfirmed = true,
             NamingScript = "%title%.%_extension%",
             FakeLosslessCheck = false,
             ReplayGain = false,
@@ -430,7 +432,7 @@ public sealed partial class LibraryPromotionTests
     public async Task PromotionQuality_ReviewCanTryAnotherSourceWithoutCarryingApproval()
     {
         await new PromotionProfiles(factory).SaveMineAsync(Context, new()
-        { NamingScript = "%title%.%_extension%", ReplayGain = false, LyricsMode = "off", CoverMode = "none" });
+        { NamingConfirmed = true, NamingScript = "%title%.%_extension%", ReplayGain = false, LyricsMode = "off", CoverMode = "none" });
         var catalog = new Mock<IPromotionCatalog>();
         catalog.Setup(item => item.ResolveAsync(It.IsAny<ProtocolExecutionContext>(), recordingId, "song", It.IsAny<CancellationToken>()))
             .ReturnsAsync(new[] { new Song { CanonicalRecordingId = recordingId, Title = "Song" } });
@@ -488,6 +490,7 @@ public sealed partial class LibraryPromotionTests
 
     private Task SaveBatchProfileAsync() => new PromotionProfiles(factory).SaveMineAsync(Context, new()
     {
+        NamingConfirmed = true,
         NamingScript = "%title%.%_extension%",
         FakeLosslessCheck = false,
         ReplayGain = false,

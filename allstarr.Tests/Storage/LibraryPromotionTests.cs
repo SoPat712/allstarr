@@ -71,6 +71,12 @@ public sealed partial class LibraryPromotionTests : IAsyncLifetime
             CreatedAt = DateTimeOffset.UtcNow,
             UpdatedAt = DateTimeOffset.UtcNow
         });
+        db.PromotionProfiles.Add(new()
+        {
+            Key = "household",
+            PayloadJson = JsonSerializer.Serialize(new HouseholdPromotionProfile(new()
+            { NamingConfirmed = true, NamingScript = "%artist%/%album%/%title%.%_extension%" }))
+        });
         db.CanonicalRecordings.Add(new() { Id = recordingId, CreatedByUserId = owner, PublicId = "song", Title = "Song" });
         await db.SaveChangesAsync();
         var sourceJob = (await queue.EnqueueAsync(new DurableJobEnqueueRequest<object>("recording.keep", "source", new { }, owner))).JobId;
@@ -137,11 +143,11 @@ public sealed partial class LibraryPromotionTests : IAsyncLifetime
     public async Task ProfileNaming_IsUsedForPreviewAndFrozenForPlacement()
     {
         var profiles = new PromotionProfiles(factory);
-        await profiles.SaveMineAsync(Context, new() { NamingScript = "Custom/\u2460-%title%.%_extension%" });
+        await profiles.SaveMineAsync(Context, new() { NamingConfirmed = true, NamingScript = "Custom/\u2460-%title%.%_extension%" });
         var preview = await service.PreviewAsync(Context, Request());
         Assert.EndsWith("Custom/\u2460-Song.flac", preview.DestinationPath.Replace('\\', '/'));
         var run = await service.StartAsync(Context, Request());
-        await profiles.SaveMineAsync(Context, new() { NamingScript = "Changed/%title%.%_extension%" });
+        await profiles.SaveMineAsync(Context, new() { NamingConfirmed = true, NamingScript = "Changed/%title%.%_extension%" });
         await ExecuteAsync();
         var placed = await service.GetAsync(Context, run.Id);
         Assert.Equal("Placed", placed.Outcome);
@@ -158,7 +164,7 @@ public sealed partial class LibraryPromotionTests : IAsyncLifetime
             await db.SaveChangesAsync();
         }
         await new PromotionProfiles(factory).SaveHouseholdAsync(Context,
-            new(new() { NamingScript = "Household/%title%.%_extension%" }));
+            new(new() { NamingConfirmed = true, NamingScript = "Household/%title%.%_extension%" }));
         Assert.EndsWith("Household/Song.flac", (await service.PreviewAsync(Context, Request())).DestinationPath.Replace('\\', '/'));
     }
 
@@ -241,7 +247,7 @@ public sealed partial class LibraryPromotionTests : IAsyncLifetime
     {
         var preview = await service.PreviewAsync(Context, Request());
         Assert.Contains("MusicBrainz tags and cover", preview.Steps);
-        Assert.EndsWith("00 - Song.flac", preview.DestinationPath);
+        Assert.EndsWith("/Song.flac", preview.DestinationPath.Replace('\\', '/'));
         Assert.Equal(17, preview.Size);
         var run = await service.StartAsync(Context, Request());
         Directory.CreateDirectory(Path.GetDirectoryName(preview.DestinationPath)!);
@@ -364,7 +370,7 @@ public sealed partial class LibraryPromotionTests : IAsyncLifetime
         }
         var preview = await service.PreviewAsync(Context, Request());
         Assert.StartsWith(Path.Combine(directory, "library", "music") + Path.DirectorySeparatorChar, preview.DestinationPath);
-        Assert.EndsWith("00 - .._.._outside.flac", preview.DestinationPath);
+        Assert.EndsWith("/.._.._outside.flac", preview.DestinationPath.Replace('\\', '/'));
     }
 
     [Fact]

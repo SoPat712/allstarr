@@ -292,8 +292,8 @@ public sealed partial class LibraryPromotionTests
         await SetPromotionRoleAsync(true, false);
         var configured = FolderRoots([new(rootId, "Music", Path.Combine(directory, "library", "music"), BackendLibraryId: "music")]);
         var profiles = new PromotionProfiles(factory, configured, new TestBackendLibraryAccess(factory, "music"));
-        await profiles.SaveHouseholdAsync(Context, new(new() { LibraryRootId = rootId }));
-        await profiles.SaveMineAsync(Context, new() { NamingScript = "%title%.%_extension%" });
+        await profiles.SaveHouseholdAsync(Context, new(new() { NamingConfirmed = true, LibraryRootId = rootId }));
+        await profiles.SaveMineAsync(Context, new() { NamingConfirmed = true, NamingScript = "%title%.%_extension%" });
         Assert.Equal(rootId, (await profiles.GetMineAsync(Context)).Values.LibraryRootId);
         Assert.True((await profiles.SetupAsync(Context)).Ready);
     }

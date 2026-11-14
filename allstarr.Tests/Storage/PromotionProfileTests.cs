@@ -78,6 +78,7 @@ public sealed class PromotionProfileTests : IAsyncLifetime
     {
         var initial = await profiles.GetMineAsync(Context(listener));
         Assert.True(initial.UsesHouseholdDefault);
+        Assert.False(initial.Values.NamingConfirmed);
         Assert.Equal("lossless", initial.Values.QualityFloor.CodecFamily);
         Assert.Equal(16, initial.Values.QualityFloor.MinBitDepth);
         Assert.Equal(44100, initial.Values.QualityFloor.MinSampleRate);
@@ -169,7 +170,7 @@ public sealed class PromotionProfileTests : IAsyncLifetime
         Assert.IsType<UnauthorizedResult>(await Controller(detection: detection).Detect(null, default));
         using var json = JsonDocument.Parse(JsonSerializer.Serialize(result, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
         Assert.Equal(new[] { "script", "matched", "sampled", "examples", "reason" }, json.RootElement.EnumerateObject().Select(item => item.Name));
-        Assert.Equal(ApplicationCacheCategory.DerivedProjection, ApplicationCachePolicyRegistry.Classify("promotion:naming-detection:v1:test"));
+        Assert.Equal(ApplicationCacheCategory.DerivedProjection, ApplicationCachePolicyRegistry.Classify("promotion:naming-detection:v2:test"));
     }
 
     [Theory]

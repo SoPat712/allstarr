@@ -47,7 +47,7 @@ public sealed class PromotionNamingDetectionService(IDbContextFactory<AllstarrDb
             root,
             db.LibraryReadRevision
         });
-        var key = "promotion:naming-detection:v1:" + Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(identity)));
+        var key = "promotion:naming-detection:v2:" + Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(identity)));
         if (await cache.GetAsync<PromotionNamingDetection>(key) is { } cached) return cached;
         var rows = await LibraryTrackAccess.Query(db, context, access)
             .Where(item => item.BackendLibraryId == root.BackendLibraryId && item.FilePath.Replace("\\", "/").StartsWith(folder))
@@ -132,9 +132,9 @@ public sealed class PromotionNamingDetectionService(IDbContextFactory<AllstarrDb
         }
         var best = Enumerable.Range(0, Candidates.Length).MaxBy(index => matches[index].Count);
         var count = matches[best].Count;
-        var confident = count >= 5 && count * 5 >= samples.Length * 3;
+        var confident = count >= 5 && count == samples.Length;
         return await Save(new(confident ? Candidates[best].Script : null, count, samples.Length,
-            confident ? matches[best].Take(3).Select(path => new PromotionNamingDetectedExample(path)).ToArray() : [], confident ? null : "no-pattern"));
+            confident ? matches[best].Take(3).Select(path => new PromotionNamingDetectedExample(path)).ToArray() : [], confident ? null : count >= 5 ? "mixed-patterns" : "no-pattern"));
 
         async Task<PromotionNamingDetection> Save(PromotionNamingDetection result)
         {

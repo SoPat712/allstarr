@@ -338,4 +338,6 @@ If the container cannot reach the folder, mount it once, for example with `- /pa
 
 Kept songs remain playable and downloadable while adding to the library is not set up. Quality and naming settings remain available. Existing kept copies retain their filenames; naming changes apply to new copies.
 
-Under **How added files are named**, choose **Autodetect** to rescan the selected folder and reset edited folder and filename settings to its detected pattern. The pattern is previewed and saved to the profile you are editing. If no consistent pattern is found or detection fails, your settings stay unchanged.
+Under **How added files are named**, choose **Autodetect** to rescan the selected folder and reset edited folder and filename settings to its detected pattern. Autodetect only applies a pattern when at least five songs are sampled and every sampled path matches. Mixed layouts or unavailable detection preserve your edited pattern and require an explicit choice. Review the folders and filenames, then choose **Use this naming pattern**. Changing the destination or editing the pattern requires confirmation again. Existing profiles also need this one-time confirmation.
+
+Songs missing a year or track number used by the chosen pattern cannot be added. Allstarr first retrieves the selected release’s metadata; if it still cannot verify those values, choose a release with complete metadata or explicitly select a pattern without those fields. It does not silently drop a year or use track `00`. The same checks run before queueing and placing files.

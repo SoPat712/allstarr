@@ -3,6 +3,7 @@ import type { PromotionSetup } from "./library-promotion-api";
 
 export type PromotionProfile = {
   namingScript: string;
+  namingConfirmed?: boolean;
   libraryRootId: string | null;
   qualityFloor: { codecFamily: "lossless" | "lossy" | "any"; minBitDepth: number; minSampleRate: number };
   hiResCeiling: { maxBitDepth: number; maxSampleRate: number };

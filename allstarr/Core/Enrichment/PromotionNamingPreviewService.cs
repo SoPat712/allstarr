@@ -140,7 +140,11 @@ public sealed class PromotionNamingPreviewService(IDbContextFactory<AllstarrDbCo
         var rendered = new List<PromotionNamingExample>();
         foreach (var candidate in selected)
         {
-            var result = PromotionNaming.Render(script, PromotionSongFields.FromSong(candidate.Song), paths);
+            PromotionNamingResult result;
+            try { result = PromotionNaming.RenderForPromotion(script, PromotionSongFields.FromSong(candidate.Song)); }
+            catch (PromotionException error) when (error.Failure == PromotionFailure.NamingMetadataMissing)
+            { result = new(null, [new(0, 0, "This example is missing a year or track number used by the pattern. Its destination cannot be verified.")]); }
+            if (result.RelativePath != null) result = PromotionNaming.Render(script, PromotionSongFields.FromSong(candidate.Song), paths);
             if (result.RelativePath != null) paths.Add(result.RelativePath);
             rendered.Add(new(candidate.LibraryTrackId, candidate.RecordingId, candidate.Song.Title, Kind(candidate.Song), result.RelativePath, result.Errors));
         }

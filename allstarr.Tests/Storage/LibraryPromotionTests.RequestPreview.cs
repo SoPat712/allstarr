@@ -36,8 +36,8 @@ public sealed partial class LibraryPromotionTests
                 ExternalProvider = "qobuz", ExternalId = "song", Codec = "flac", Container = "flac", BitDepth = 16, SampleRate = 44100 } });
         var batch = BatchService(catalog.Object, Mock.Of<IPromotionAcquisition>());
         var pending = (await batch.StartOrRequestAsync(Context, Request())).Request!;
-        await new PromotionProfiles(factory).SaveMineAsync(Context, new() { NamingScript = "Requester/%title%.%_extension%", FakeLosslessCheck = false });
-        await new PromotionProfiles(factory).SaveMineAsync(administrator, new() { NamingScript = "Administrator/%title%.%_extension%" });
+        await new PromotionProfiles(factory).SaveMineAsync(Context, new() { NamingConfirmed = true, NamingScript = "Requester/%title%.%_extension%", FakeLosslessCheck = false });
+        await new PromotionProfiles(factory).SaveMineAsync(administrator, new() { NamingConfirmed = true, NamingScript = "Administrator/%title%.%_extension%" });
         catalog.Reset();
         var preview = await batch.PreviewRequestAsync(administrator, pending.Id);
         Assert.Contains("Requester", preview.DestinationPath);

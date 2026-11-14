@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "./lib/components/ui/button/touch-target.css";
 
 @font-face {
   font-family: "Roboto";

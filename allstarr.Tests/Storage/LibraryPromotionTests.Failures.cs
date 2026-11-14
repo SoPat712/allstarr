@@ -20,6 +20,9 @@ public sealed partial class LibraryPromotionTests
     [InlineData(PromotionFailure.LibraryFolderNotSet, 503, "library-folder-not-set")]
     [InlineData(PromotionFailure.LibraryFolderUnavailable, 503, "library-folder-unavailable")]
     [InlineData(PromotionFailure.LibraryFolderMismatch, 400, "library-folder-mismatch")]
+    [InlineData(PromotionFailure.NamingPatternNotSelected, 409, "naming-pattern-not-selected")]
+    [InlineData(PromotionFailure.NamingMetadataMissing, 409, "naming-metadata-missing")]
+    [InlineData(PromotionFailure.ReleaseMetadataUnavailable, 409, "release-metadata-unavailable")]
     [InlineData(PromotionFailure.SourceChanged, 409, "source-changed")]
     [InlineData(PromotionFailure.DestinationExists, 409, "destination-exists")]
     [InlineData(PromotionFailure.PromotionChanged, 409, "promotion-changed")]
@@ -34,6 +37,53 @@ public sealed partial class LibraryPromotionTests
         var body = JsonSerializer.SerializeToElement(result.Value);
         Assert.Equal(reason, body.GetProperty("reason").GetString());
         Assert.False(string.IsNullOrWhiteSpace(body.GetProperty("error").GetString()));
+    }
+
+    [Fact]
+    public async Task NamingMustBeChosenBeforePreviewOrQueue()
+    {
+        await new PromotionProfiles(factory).SaveMineAsync(Context, new()
+        { NamingScript = "%title%.%_extension%", NamingConfirmed = false });
+        var preview = await Assert.ThrowsAsync<PromotionException>(() => service.PreviewAsync(Context, Request()));
+        var start = await Assert.ThrowsAsync<PromotionException>(() => service.StartAsync(Context, Request()));
+        Assert.Equal(PromotionFailure.NamingPatternNotSelected, preview.Failure);
+        Assert.Equal(preview.Failure, start.Failure);
+        await using var db = factory.CreateDbContext();
+        Assert.False(await db.Jobs.AnyAsync(item => item.Type == LibraryPromotionService.JobType));
+        Assert.Empty(Directory.EnumerateFiles(Path.Combine(directory, "library"), "*", SearchOption.AllDirectories));
+    }
+
+    [Theory]
+    [InlineData("year")]
+    [InlineData("track")]
+    public async Task IncompleteNamingMetadataCannotPreviewOrQueue(string missing)
+    {
+        await new PromotionProfiles(factory).SaveMineAsync(Context, new() { NamingConfirmed = true });
+        var song = new allstarr.Models.Domain.Song
+        {
+            CanonicalRecordingId = recordingId,
+            Title = "I Like Ur Look",
+            Artist = "Kim Petras",
+            Album = "Detour",
+            Year = missing == "year" ? null : 2026,
+            Track = missing == "track" ? null : 3,
+            Codec = "flac",
+            Container = "flac",
+            BitDepth = 16,
+            SampleRate = 44100
+        };
+        var catalog = new Mock<IPromotionCatalog>();
+        catalog.Setup(item => item.ResolveAsync(It.IsAny<allstarr.Core.Protocols.ProtocolExecutionContext>(), recordingId, "song", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { song });
+        var batch = BatchService(catalog.Object, Mock.Of<IPromotionAcquisition>(MockBehavior.Strict));
+        var request = Request() with { Unit = "song", ArtifactId = Guid.Empty };
+        var preview = await Assert.ThrowsAsync<PromotionException>(() => batch.PreviewAsync(Context, request));
+        var start = await Assert.ThrowsAsync<PromotionException>(() => batch.StartAsync(Context, request));
+        Assert.Equal(PromotionFailure.NamingMetadataMissing, preview.Failure);
+        Assert.Equal(preview.Failure, start.Failure);
+        await using var db = factory.CreateDbContext();
+        Assert.False(await db.Jobs.AnyAsync(item => item.Type == LibraryPromotionService.JobType));
+        Assert.Empty(Directory.EnumerateFiles(Path.Combine(directory, "library"), "*", SearchOption.AllDirectories));
     }
 
     [Fact]

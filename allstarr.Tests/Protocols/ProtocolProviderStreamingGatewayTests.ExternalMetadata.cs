@@ -31,9 +31,9 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
                 started.TrySetResult();
                 await release.Task;
                 return ProviderOutcome<ProviderAlbumMetadata>.Success(new(new(provider, ProviderResourceKind.Album, "7"),
-                    "Album", [new("Artist")], tracks:
+                    "Album", [new("Artist")], trackCount: 2, year: 2026, releaseDate: "2026-01-02", tracks:
                     [new(new(provider, ProviderResourceKind.Track, "2"), "Second", [new("Artist")], duration: TimeSpan.FromMilliseconds(241160)),
-                     new(new(provider, ProviderResourceKind.Track, "1"), "First", [new("Artist")], albumId: new(provider, ProviderResourceKind.Album, "original"))]));
+                     new(new(provider, ProviderResourceKind.Track, "1"), "First", [new("Artist")], albumId: new(provider, ProviderResourceKind.Album, "original"), year: 2025, releaseDate: "2025-01-02", albumArtist: "Track artist")]));
             });
         var registry = MetadataRegistry(capability);
         var router = new Mock<IProviderRouter>(MockBehavior.Strict);
@@ -57,8 +57,18 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         Assert.Equal(["2", "1"], repeat!.Songs.Select(song => song.ExternalId));
         Assert.Equal($"ext-{publicProvider}-album-7", repeat.Songs[0].AlbumId);
         Assert.Equal($"ext-{publicProvider}-album-original", repeat.Songs[1].AlbumId);
+        Assert.Equal("Album", repeat.Songs[0].Album);
+        Assert.Equal(2026, repeat.Songs[0].Year);
+        Assert.Equal("2026-01-02", repeat.Songs[0].ReleaseDate);
+        Assert.Equal("Artist", repeat.Songs[0].AlbumArtist);
+        Assert.Equal(2, repeat.Songs[0].TotalTracks);
+        Assert.Equal(2025, repeat.Songs[1].Year);
+        Assert.Equal("2025-01-02", repeat.Songs[1].ReleaseDate);
+        Assert.Equal("Track artist", repeat.Songs[1].AlbumArtist);
+        Assert.Equal(2, repeat.Songs[1].TotalTracks);
         var cachedSong = await gateway.GetStoredSongAsync(context, provider, "2");
         Assert.Equal($"ext-{publicProvider}-album-7", cachedSong!.AlbumId);
+        Assert.Equal(2026, cachedSong.Year);
         Assert.Equal(TimeSpan.FromMilliseconds(241160), repeat.Songs[0].PreciseDuration);
         Assert.Equal(1, calls);
     }

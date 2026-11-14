@@ -2731,6 +2731,13 @@ public sealed partial class ProtocolProviderGateway(
         foreach (var song in songs)
         {
             song.AlbumId ??= ProtocolItemId(item.Id);
+            if (string.IsNullOrWhiteSpace(song.Album))
+                song.Album = item.Title;
+            song.ReleaseDate ??= item.ReleaseDate;
+            if (song.Year is null or <= 0) song.Year = item.Year ?? ReleaseYear(item.ReleaseDate);
+            song.TotalTracks ??= item.TrackCount;
+            if (string.IsNullOrWhiteSpace(song.AlbumArtist))
+                song.AlbumArtist = item.Artists.FirstOrDefault()?.Name;
             if (song.AlbumArtists.Count == 0)
                 song.AlbumArtists = artists.ToList();
         }
@@ -2782,6 +2789,9 @@ public sealed partial class ProtocolProviderGateway(
     private static string PublicProviderId(ProviderExternalResourceId id) =>
         id.ProviderId == "apple-musickit" && !allstarr.Core.Providers.AppleMusicKit.AppleMusicKitMetadataCapabilityAdapter.IsLibrary(id.Value)
             ? "apple-download" : id.ProviderId;
+
+    private static int? ReleaseYear(string? date) =>
+        date?.Length >= 4 && int.TryParse(date[..4], out var year) && year > 0 ? year : null;
 
     internal static string ProtocolItemId(ProviderExternalResourceId id) =>
         $"ext-{PublicProviderId(id)}-{id.ResourceKind switch

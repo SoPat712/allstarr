@@ -89,7 +89,7 @@ public static class ApplicationCachePolicyRegistry
             category = ApplicationCacheCategory.SearchResults;
         if (key.StartsWith("playlist:discovery:v3:", StringComparison.Ordinal))
             category = ApplicationCacheCategory.PlaylistDiscovery;
-        if (StartsWithAny(key, "track-matches:summary:v1:", "feed:read:v1:", "artist-review:library:", "promotion:naming-detection:v1:"))
+        if (StartsWithAny(key, "track-matches:summary:v1:", "feed:read:v1:", "artist-review:library:", "promotion:naming-detection:"))
             category = ApplicationCacheCategory.DerivedProjection;
         if (key.StartsWith("spotify:source-user:", StringComparison.Ordinal))
             category = ApplicationCacheCategory.ProviderResponse;

@@ -4,7 +4,7 @@ import { appearance, mockForYou } from "./for-you-fixtures";
 
 const initialScript = "%artist%/%title%.%_extension%";
 const initialProfile: PromotionProfile = {
-  namingScript: initialScript, libraryRootId: null,
+  namingScript: initialScript, namingConfirmed: true, libraryRootId: null,
   qualityFloor: { codecFamily: "lossless", minBitDepth: 16, minSampleRate: 44100 }, hiResCeiling: { maxBitDepth: 24, maxSampleRate: 96000 },
   fakeLosslessCheck: true, allowLossy: false, musicBrainzTags: true, coverMode: "both", lyricsMode: ".lrc", replayGain: true,
   defaultUnit: "album", removeKeptCopy: true,
@@ -150,20 +150,20 @@ test("Offers the naming pattern the library folder already uses", async ({ page 
   await page.getByRole("region", { name: "How added files are named", exact: true }).screenshot({ path: test.info().outputPath("detected-pattern.png") });
   await offer.getByRole("button", { name: "Use this pattern", exact: true }).click();
   await expect.poll(() => state.personal.namingScript).toBe(script);
-  await expect(page.getByText("Matches how this folder already names its files.", { exact: true })).toBeVisible();
+  await expect(page.getByText(/This pattern matches .* sampled songs\./)).toBeVisible();
   await expect(offer).toHaveCount(0);
 });
 
 test("Shows no pattern offer when the folder has no clear naming pattern", async ({ page }) => {
   await fixture(page, true, false, { script: null, matched: 0, sampled: 40, examples: [], reason: "no-pattern" });
   await expect(page.getByText("Your library already names files like this")).toHaveCount(0);
-  await expect(page.getByText("Matches how this folder already names its files.")).toHaveCount(0);
+  await expect(page.getByText(/This pattern matches .* sampled songs\./)).toHaveCount(0);
 });
 
 for (const [width, theme] of [[390, "light"], [1280, "dark"]] as const) test(`Autodetect resets edited folders and filenames at ${width}px ${theme}`, async ({ page }) => {
   await appearance(page, width, theme);
   const state = await fixture(page, true, false, { script: initialScript, matched: 40, sampled: 40, examples: [], reason: null });
-  await expect(page.getByText("Matches how this folder already names its files.", { exact: true })).toBeVisible();
+  await expect(page.getByText(/This pattern matches .* sampled songs\./)).toBeVisible();
   const script = await scriptField(page);
   await script.fill("%missing%/custom/%title%");
   await expect(script).toHaveAttribute("aria-invalid", "true");
@@ -176,7 +176,7 @@ for (const [width, theme] of [[390, "light"], [1280, "dark"]] as const) test(`Au
   await expect(script).toHaveAttribute("aria-invalid", "false");
   await expect(page.getByRole("list", { name: "Naming tokens" }).getByRole("button", { name: "Album, token 3", exact: true })).toBeVisible();
   await expect(page.getByText("North/Warm light/Blue morning.flac", { exact: true })).toBeVisible();
-  await expect.poll(() => state.personal).toEqual({ ...initialProfile, namingScript: detectedScript });
+  await expect.poll(() => state.personal).toEqual({ ...initialProfile, libraryRootId: "00000000-0000-0000-0000-000000000001", namingScript: detectedScript });
   expect(state.detectRoots.slice(requests)).toEqual(["00000000-0000-0000-0000-000000000001"]);
   expect(state.writes.every(write => write.scope === "me")).toBe(true);
   await expect(page.getByText("Detected folder and filename pattern applied.", { exact: true })).toBeVisible();
@@ -186,18 +186,20 @@ for (const [width, theme] of [[390, "light"], [1280, "dark"]] as const) test(`Au
   await expect(await scriptField(page)).toHaveValue(detectedScript);
 });
 
-for (const outcome of ["no-pattern", "unavailable"] as const) test(`Autodetect keeps edits when detection is ${outcome}`, async ({ page }) => {
+for (const outcome of ["no-pattern", "unavailable"] as const) test(`Autodetect keeps edits but requires a naming choice when detection is ${outcome}`, async ({ page }) => {
   const state = await fixture(page, true, false, { script: initialScript, matched: 40, sampled: 40, examples: [], reason: null });
   const script = await scriptField(page), custom = "custom/%title%.%_extension%";
   await script.fill(custom);
   await expect.poll(() => state.personal.namingScript).toBe(custom);
-  const writes = state.writes.length;
   state.detected = outcome === "no-pattern" ? { script: null, matched: 0, sampled: 40, examples: [], reason: "no-pattern" } : null;
   await page.getByRole("button", { name: "Autodetect", exact: true }).click();
-  await expect(page.getByRole("status").filter({ hasText: "Your settings were kept." })).toBeVisible();
+  await expect(page.getByRole("status").filter({ hasText: "Your edited pattern was kept." })).toBeVisible();
   await expect(script).toHaveValue(custom);
   expect(state.personal.namingScript).toBe(custom);
-  expect(state.writes).toHaveLength(writes);
+  await expect.poll(() => state.personal.namingConfirmed).toBe(false);
+  await page.getByRole("button", { name: "Use this naming pattern", exact: true }).click();
+  await expect.poll(() => state.personal.namingConfirmed).toBe(true);
+  expect(state.personal.namingScript).toBe(custom);
   await expect(page.getByRole("button", { name: "Autodetect", exact: true })).toBeEnabled();
 });
 

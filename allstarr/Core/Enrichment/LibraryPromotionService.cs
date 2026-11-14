@@ -511,6 +511,7 @@ public sealed partial class LibraryPromotionService(IDbContextFactory<AllstarrDb
             fields["_quality"] = PromotionSongFields.FromSong(new Song
             { Codec = artifact.Codec, BitDepth = artifact.BitDepth, SampleRate = artifact.SampleRate })["_quality"];
         var profile = await (profiles ?? new PromotionProfiles(factory)).GetMineAsync(context, token);
+        if (!profile.Values.NamingConfirmed) throw new PromotionException(PromotionFailure.NamingPatternNotSelected);
         return new(metadata, track, source.ProviderId, source.SourceExternalTrackId, artifact.QualityCheckJson)
         { NamingScript = profile.Values.NamingScript, NamingFields = fields };
     }
@@ -526,7 +527,7 @@ public sealed partial class LibraryPromotionService(IDbContextFactory<AllstarrDb
             Year = plan.Track.Year,
             Track = plan.Track.Track
         }, plan.Track.Extension);
-        var result = PromotionNaming.Render(plan.NamingScript, fields);
+        var result = PromotionNaming.RenderForPromotion(plan.NamingScript, fields);
         return result.RelativePath ?? throw new ArgumentException("The promotion naming script does not produce a safe relative path.");
     }
 

@@ -27,7 +27,7 @@ public sealed partial class LibraryPromotionTests
     {
         await SetPromotionRoleAsync(admin, trusted);
         var administrator = await AddPromotionUserAsync(true);
-        await new PromotionProfiles(factory).SaveHouseholdAsync(administrator, new(new(), setting));
+        await new PromotionProfiles(factory).SaveHouseholdAsync(administrator, new(new() { NamingConfirmed = true }, setting));
         var batch = RequestService();
         Assert.Equal(direct, (await batch.PreviewAsync(Context, Request())).CanAddDirectly);
         var result = await batch.StartOrRequestAsync(Context, Request());
@@ -153,8 +153,8 @@ public sealed partial class LibraryPromotionTests
         var administrator = await AddPromotionUserAsync(true);
         var batch = RequestService();
         var pending = (await batch.StartOrRequestAsync(Context, Request())).Request!;
-        await new PromotionProfiles(factory).SaveMineAsync(Context, new() { NamingScript = "Requester/%title%.%_extension%" });
-        await new PromotionProfiles(factory).SaveMineAsync(administrator, new() { NamingScript = "Administrator/%title%.%_extension%" });
+        await new PromotionProfiles(factory).SaveMineAsync(Context, new() { NamingConfirmed = true, NamingScript = "Requester/%title%.%_extension%" });
+        await new PromotionProfiles(factory).SaveMineAsync(administrator, new() { NamingConfirmed = true, NamingScript = "Administrator/%title%.%_extension%" });
         var approved = await batch.ApproveRequestAsync(administrator, pending.Id);
         Assert.Equal("approved", approved.State);
         Assert.Equal(administrator.Principal!.UserId, approved.DecidedByUserId);
@@ -416,7 +416,7 @@ public sealed partial class LibraryPromotionTests
     {
         var catalog = new Mock<IPromotionCatalog>();
         catalog.Setup(item => item.ResolveAsync(It.IsAny<ProtocolExecutionContext>(), recordingId, It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new[] { new Song { CanonicalRecordingId = recordingId, Title = "Song", Artist = "Artist", Album = "Album", Year = 2022,
+            .ReturnsAsync(new[] { new Song { CanonicalRecordingId = recordingId, Title = "Song", Artist = "Artist", Album = "Album", Year = 2022, Track = 1,
                 AlbumId = "release", ExternalProvider = "source", CoverArtUrl = "cover-reference" } });
         return BatchService(catalog.Object, acquisition ?? Mock.Of<IPromotionAcquisition>(), clientEvents: clientEvents);
     }
