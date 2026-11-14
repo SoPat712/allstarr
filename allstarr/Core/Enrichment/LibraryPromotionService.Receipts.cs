@@ -63,8 +63,9 @@ public sealed partial class LibraryPromotionService
         var access = await libraryAccess.ResolveAsync(context, token);
         if (!access.Succeeded) throw new UnauthorizedAccessException();
         var libraries = access.LibraryIds.Order(StringComparer.Ordinal).ToArray();
-        var library = libraries.FirstOrDefault();
         var profile = (await (profiles ?? new PromotionProfiles(factory)).GetMineAsync(context, token)).Values;
+        var selectedRoot = (await roots.ReadAsync(token)).SingleOrDefault(item => item.Id == profile.LibraryRootId);
+        var library = selectedRoot?.BackendLibraryId is { } candidate && access.Allows(candidate) ? candidate : null;
         var routes = await (from route in db.Set<RecordingKeptRouteEntity>().AsNoTracking()
                             join file in db.ManagedFiles.AsNoTracking() on route.ManagedFileId equals file.Id
                             where file.RemovedAt == null && file.IsManaged && (file.OwnerUserId == null || file.OwnerUserId == context.Principal!.UserId)

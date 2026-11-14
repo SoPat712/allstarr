@@ -63,7 +63,7 @@ for (const width of [1280, 390]) {
     await page.getByRole("button", { name: "Open song details for Check", exact: true }).click();
     const panel = page.getByRole("dialog", { name: file.album, exact: true });
     await expect(panel.getByRole("heading", { name: "Adding to your library isn't set up", exact: true })).toBeVisible();
-    await expect(panel).toContainText("Allstarr needs write access to the music folder Jellyfin reads.");
+    await expect(panel).toContainText("Choose where added songs go in library settings. Allstarr needs write access to that folder.");
     await expect(panel.getByRole("link", { name: "Open library settings", exact: true })).toBeVisible();
     await expect(panel.getByRole("alert")).toHaveCount(0);
     await expect(panel.getByRole("link", { name: "On the Road", exact: true })).toHaveAttribute("href", "#/library/playlists?playlist=road");
@@ -129,7 +129,7 @@ test("An administrator maps and approves a discovered music folder without a req
 test("A linked music folder shows where it leads and is used there", async ({ page }) => {
   const calls = await fixture(page); calls.linked = true; await page.goto("/#/settings/adding-to-library");
   const row = page.getByRole("list", { name: "Library folders", exact: true }).getByRole("listitem");
-  await expect(row).toContainText("Ready"); await expect(row).toContainText("Allstarr writes to /media/.music");
+  await expect(row).toContainText("Available"); await expect(row).toContainText("Allstarr writes to /media/.music");
   await page.getByRole("button", { name: "Add songs to Music", exact: true }).click();
   await expect(row).toContainText("Adds go here");
   expect(calls.roots).toHaveLength(1); expect(calls.roots[0]).toMatchObject({ path: "/media/.music", backendPath: "/media/music", name: "Music" });
@@ -138,7 +138,7 @@ test("A linked music folder shows where it leads and is used there", async ({ pa
 test("A folder mounted at Jellyfin's path is used in one click", async ({ page }) => {
   const calls = await fixture(page); calls.mounted = true; await page.goto("/#/settings/adding-to-library");
   const row = page.getByRole("list", { name: "Library folders", exact: true }).getByRole("listitem");
-  await expect(row).toContainText("Ready"); await expect(row).toContainText("33 GB free");
+  await expect(row).toContainText("Available"); await expect(row).toContainText("33 GB free");
   await expect(page.getByText("- /media/music:/media/music", { exact: true })).toHaveCount(0);
   await page.getByRole("button", { name: "Add songs to Music", exact: true }).click();
   await expect(row).toContainText("Adds go here");
@@ -146,3 +146,62 @@ test("A folder mounted at Jellyfin's path is used in one click", async ({ page }
   await expect(page.getByRole("textbox", { name: "Path inside Allstarr", exact: true })).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "No library folder yet", exact: true })).toHaveCount(0);
 });
+
+for (const [width, theme] of [[1280, "dark"], [390, "light"]] as const) {
+  test(`Three available folders need a saved destination before adding kept songs at ${width} ${theme}`, async ({ page }) => {
+    await appearance(page, width, theme);
+    await fixture(page);
+    const roots = ["Household", "My music", "Other music"].map((name, index) => ({
+      id: `00000000-0000-0000-0000-00000000000${index + 1}`, name,
+      path: `/music/${index}`, backendPath: `/music/${index}`,
+    }));
+    let selected: string | null = null;
+    let previewRequest: Record<string, unknown> | null = null;
+    const setup = () => ({ ready: selected !== null, allowedBaseConfigured: false,
+      reason: selected ? null : "library-folder-not-set", rootId: selected });
+    await page.route("**/api/admin/library-promotions/**", async route => {
+      const path = new URL(route.request().url()).pathname;
+      const reply = (json: unknown) => route.fulfill({ json });
+      if (path.endsWith("/roots")) return reply(roots);
+      if (path.endsWith("/folders")) return reply({ available: true, reason: null,
+        folders: roots.map(root => ({ ...root, rootId: root.id, mapped: false, reachable: true,
+          writable: true, status: "writable", freeBytes: 33 * 1024 ** 3 })) });
+      if (path.endsWith("/setup")) return reply(setup());
+      if (path.endsWith("/profiles/me")) {
+        if (route.request().method() === "PUT") selected = route.request().postDataJSON().libraryRootId;
+        return reply({ values: { ...profile, libraryRootId: selected },
+          householdDefault: { values: profile, addWithoutApproval: "admins" }, usesHouseholdDefault: selected === null });
+      }
+      if (path.endsWith("/kept")) return reply({
+        items: [{ path: file.path, recordingId: recording, backendLibraryId: "my-music", inLibrary: false }],
+        backendLibraryId: "my-music", rootId: selected, alreadyInLibrary: 0, setup: setup(),
+      });
+      if (path.endsWith("/library-promotions/preview")) {
+        previewRequest = route.request().postDataJSON();
+        return reply({ album: { title: file.album, artist: file.artist, songCount: 1 },
+          canAddDirectly: true, backendLibraryId: "my-music", rootId: selected,
+          alreadyInLibrary: 0, destinationPath: "/music/1/FLO", bestCopies: [], profileSteps: [] });
+      }
+      return route.fallback();
+    });
+    await page.goto("/#/library/kept");
+    await page.getByRole("button", { name: "Open song details for Check", exact: true }).click();
+    await page.getByRole("link", { name: "Open library settings", exact: true }).click();
+    const folders = page.getByRole("list", { name: "Library folders", exact: true });
+    await expect(folders.getByRole("listitem")).toHaveCount(3);
+    await expect(folders.getByText("Available", { exact: true })).toHaveCount(3);
+    await expect(folders.getByText("Ready", { exact: true })).toHaveCount(0);
+    await expect(page.getByRole("status").filter({ hasText: "No destination selected." })).toBeVisible();
+    await capture(page, "choose-library-destination", width, theme);
+    await page.getByRole("button", { name: "Add songs to My music", exact: true }).click();
+    await expect.poll(() => selected).toBe(roots[1].id);
+    await expect(folders.getByRole("listitem").filter({ hasText: "My music" })).toContainText("Adds go here");
+    await page.reload();
+    await expect(folders.getByRole("listitem").filter({ hasText: "My music" })).toContainText("Adds go here");
+    await expect(page.getByText("No destination selected.", { exact: true })).toHaveCount(0);
+    await page.goto("/#/library/kept");
+    await page.getByRole("button", { name: "Open song details for Check", exact: true }).click();
+    await expect.poll(() => previewRequest).toMatchObject({ rootId: roots[1].id, backendLibraryId: "my-music" });
+    await expect(page.getByRole("heading", { name: "Adding to your library isn't set up", exact: true })).toHaveCount(0);
+  });
+}

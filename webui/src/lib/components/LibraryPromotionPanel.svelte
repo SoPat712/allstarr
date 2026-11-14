@@ -86,7 +86,7 @@
 {#snippet albumArtwork()}<MediaArtwork url={coverUrl} loading="eager" />{/snippet}
 <SidePanel bind:open {title} {description} {onPrevious} {onNext} {onclose} artwork={simpleRequest ? undefined : albumArtwork} inlineFooter={simpleRequest} width={380} minimumContentWidth={560} wrapTitle navigationLabel={run ? "run" : "song"}>
   <div class="promotion-details" class:request-details={simpleRequest}>
-    {#if setupRequired}<EmptyState title={promotionSetupHint} description="Allstarr needs write access to the music folder Jellyfin reads.">
+    {#if setupRequired}<EmptyState title={promotionSetupHint} description="Choose where added songs go in library settings. Allstarr needs write access to that folder.">
       {#snippet action()}{#if administrator}<Button variant="outline" href="#/settings/adding-to-library">Open library settings</Button>{:else}<p class="request-context">Ask an administrator to set it up.</p>{/if}{/snippet}
     </EmptyState>{/if}
     {#if loading}<RowsSkeleton count={5} />{/if}

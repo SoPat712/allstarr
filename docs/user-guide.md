@@ -330,9 +330,9 @@ Home’s stored-song totals count unique existing cache paths and active managed
 
 ## Adding to your library
 
-Allstarr needs write access to the music folder Jellyfin reads. In **Settings › Library › Where and who**, an administrator can see Jellyfin's music folders and whether Allstarr can write to each one. Choose a folder to approve it.
+Allstarr needs write access to the music folder Jellyfin reads. In **Settings › Library › Where added songs go**, an administrator can see the available folders. **Available** means a folder can be chosen; it does not mean it is the destination for new songs. When several folders are available, choose **Add songs here** on the one you want. The selected folder shows **Adds go here**. Your profile can use its own destination or inherit the household choice; with no saved choice, Allstarr uses the only accessible folder automatically.
 
-If the container cannot reach the folder, mount it once, for example with `- /path/to/music:/music` in Compose. The host path must be the music folder on the machine running Allstarr. If Jellyfin is on another machine, make that folder accessible to the Allstarr host first. Map Jellyfin's folder to its path inside Allstarr (for example `/music`) in these settings, then choose **Use this library folder**. Allstarr verifies write access with a temporary probe file and removes it.
+If the container cannot reach the folder, mount it once, for example with `- /path/to/music:/music` in Compose. The host path must be the music folder on the machine running Allstarr. If Jellyfin is on another machine, make that folder accessible to the Allstarr host first. Choose **Set path**, enter its path inside Allstarr (for example `/music`), then choose **Use this folder**. Allstarr verifies write access with a temporary probe file and removes it.
 
 `Promotion__AllowedBase` is optional. When configured, approved folders and mappings must stay below that absolute directory inside the container. Approval rejects path traversal and symbolic links. Allstarr writes songs only inside approved folders.
 

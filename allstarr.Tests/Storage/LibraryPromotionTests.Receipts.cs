@@ -191,11 +191,14 @@ public sealed partial class LibraryPromotionTests
         Assert.False(receipt.Active);
     }
 
-    [Fact]
-    public async Task PromotionKept_ProjectsRealRecordingPathAndLibraryMembership()
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task PromotionKept_UsesSelectedLibraryAndNeverFallsBackToAnotherAccessibleLibrary(bool selectedAccessible)
     {
         var fileId = Guid.NewGuid();
         var keptRoot = Path.Combine(directory, "kept");
+        libraryAccess.Permissions[owner] = new(true, selectedAccessible ? ["a-library", "music"] : ["a-library"]);
         await new PromotionProfiles(factory).SaveMineAsync(Context, new() { LibraryRootId = rootId });
         await using (var db = factory.CreateDbContext())
         {
@@ -234,9 +237,10 @@ public sealed partial class LibraryPromotionTests
         var item = Assert.Single(page.Items);
         Assert.Equal(Path.Combine("Artist", "Song.flac"), item.Path);
         Assert.Equal(recordingId, item.RecordingId);
-        Assert.Equal("music", item.BackendLibraryId);
-        Assert.True(item.InLibrary);
-        Assert.Equal(1, page.AlreadyInLibrary);
+        Assert.Equal(selectedAccessible ? "music" : null, page.BackendLibraryId);
+        Assert.Equal(selectedAccessible ? "music" : null, item.BackendLibraryId);
+        Assert.Equal(selectedAccessible, item.InLibrary);
+        Assert.Equal(selectedAccessible ? 1 : 0, page.AlreadyInLibrary);
         Assert.Equal(rootId, page.RootId);
     }
 

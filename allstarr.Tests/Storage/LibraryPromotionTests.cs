@@ -32,6 +32,7 @@ public sealed partial class LibraryPromotionTests : IAsyncLifetime
     private DurableJobQueue queue = null!;
     private ServiceProvider services = null!;
     private LibraryPromotionService service = null!;
+    private TestBackendLibraryAccess libraryAccess = null!;
     private PromotionRoots roots = null!;
     private readonly Mock<IDurableRuntimeSettings> settings = new();
     private readonly Mutator mutator = new();
@@ -126,9 +127,10 @@ public sealed partial class LibraryPromotionTests : IAsyncLifetime
         var resolver = new ProviderDownloadArtifactResolver(new EfProviderDownloadArtifactStore(factory), workspaces);
         var cache = new FileMediaApplicationCache(new FileMediaCacheOptions(Path.Combine(directory, "cache")), new SystemPlatformClock(),
             NullLogger<FileMediaApplicationCache>.Instance);
+        libraryAccess = new(factory, "music");
         service = new(factory, queue, roots, resolver, workspaces, services.GetRequiredService<IServiceScopeFactory>(),
             new InterruptingWriter(new TagLibManagedMetadataWriter(mutator, new PhysicalManagedFileOperations()), mutator), new AudioQualityAnalyzer(cache),
-            new TestBackendLibraryAccess(factory, "music"));
+            libraryAccess);
     }
 
     [Fact]

@@ -111,7 +111,7 @@
     requestAnimationFrame(() => { scriptInput?.focus(); scriptInput?.setSelectionRange(error.position, error.position + Math.max(1, error.length)); });
   }
   // The folder added songs go to: the profile's own choice, else the one setup picked for this listener.
-  const chosenRootId = $derived(profile?.libraryRootId ?? setup?.rootId ?? null);
+  const chosenRootId = $derived(profile?.libraryRootId ?? (scope === "me" ? mine?.householdDefault.values.libraryRootId ?? setup?.rootId : null) ?? null);
   type FolderRow = { key: string; name: string; backendPath: string; path: string; mapped: boolean; freeBytes: number | null;
     rootId: string | null; folder: PromotionFolder | null; chosen: boolean; state: string; tone: "ok" | "warn" | "neutral"; action: "choose" | "link" | "map" | null };
   // One list of every folder Jellyfin reads, plus any folder set up by hand, so choosing and linking happen in the same place.
@@ -121,14 +121,14 @@
       const blocked = !folder.writable ? ({ "not-writable": "Read-only", "outside-allowed-base": "Not allowed" } as Record<string, string>)[folder.status] ?? "Can't reach" : null;
       return { key: folder.backendPath, name: folder.name, backendPath: folder.backendPath, path: folder.path, mapped: folder.mapped,
         freeBytes: folder.freeBytes ?? null, rootId: folder.rootId, folder, chosen,
-        state: chosen ? "Adds go here" : blocked ?? (folder.status === "almost-full" ? "Almost full" : "Ready"),
-        tone: chosen ? "ok" : blocked || folder.status === "almost-full" ? "warn" : "neutral",
-        action: chosen ? null : !folder.writable ? administrator ? "map" : null : folder.rootId ? "choose" : administrator ? "link" : null } satisfies FolderRow;
+        state: blocked ?? (folder.status === "almost-full" ? "Almost full" : chosen ? "Adds go here" : "Available"),
+        tone: blocked || folder.status === "almost-full" ? "warn" : chosen ? "ok" : "neutral",
+        action: !folder.writable ? administrator ? "map" : null : chosen ? null : folder.rootId ? "choose" : administrator ? "link" : null } satisfies FolderRow;
     });
     const extra = roots.filter(root => !listed.some(row => row.rootId === root.id)).map(root => {
       const chosen = root.id === chosenRootId;
       return { key: root.id, name: root.name, backendPath: root.backendPath ?? root.path ?? "", path: root.path ?? "", mapped: false, freeBytes: null,
-        rootId: root.id, folder: null, chosen, state: chosen ? "Adds go here" : "Ready", tone: chosen ? "ok" : "neutral", action: chosen ? null : "choose" } satisfies FolderRow;
+        rootId: root.id, folder: null, chosen, state: chosen ? "Adds go here" : "Available", tone: chosen ? "ok" : "neutral", action: chosen ? null : "choose" } satisfies FolderRow;
     });
     return [...listed, ...extra];
   });
@@ -201,7 +201,7 @@
         {#snippet action()}{#if !administrator}<p class="muted">Ask an administrator to set it up.</p>{/if}{/snippet}
       </EmptyState></div>{/if}
       {#if folderRows.length || administrator}<div class="folder-setup">
-        {#if !chosenRootId && folderRows.some(row => row.action === "choose" || row.action === "link")}<p class="folder-hint">Choose the folder added songs go to.</p>{/if}
+        {#if !chosenRootId && folderRows.some(row => row.action === "choose" || row.action === "link")}<p class="folder-hint" role="status"><strong>No destination selected.</strong> Choose Add songs here on the folder you want to use. Available folders are not selected destinations.</p>{/if}
         {#if folderRows.length}<ul class="folder-list" aria-label="Library folders">
         {#each folderRows as row (row.key)}
           <li class="folder-row" class:chosen={row.chosen}><div><strong>{row.name}</strong><code title={row.backendPath}>{row.backendPath}</code>

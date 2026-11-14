@@ -39,7 +39,7 @@ public sealed class PromotionException(PromotionFailure failure) : InvalidOperat
 
     private static string MessageFor(PromotionFailure failure) => failure switch
     {
-        PromotionFailure.LibraryFolderNotSet => "Adding to your library isn't set up. Allstarr needs write access to the music folder Jellyfin reads.",
+        PromotionFailure.LibraryFolderNotSet => "Adding to your library isn't set up. Choose where added songs go in library settings. Allstarr needs write access to that folder.",
         PromotionFailure.LibraryFolderUnavailable => "The approved library folder is unavailable. Ask an administrator to check its mount and write access.",
         PromotionFailure.LibraryFolderFull => "The library drive is almost full, so nothing was added. Free up space on it, then try again.",
         PromotionFailure.LibraryFolderMismatch => "This folder is not mapped to the selected Jellyfin library. Ask an administrator to select its music folder again.",
