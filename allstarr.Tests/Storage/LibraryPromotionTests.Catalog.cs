@@ -72,8 +72,10 @@ public sealed partial class LibraryPromotionTests
         providers.VerifyAll();
     }
 
-    [Fact]
-    public async Task PromotionCatalog_FreshSongMetadataCanPreviewAndQueueItsAlbum()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task PromotionCatalog_FreshSongMetadataCanPreviewAndQueueItsAlbum(bool missingCachedAlbum)
     {
         var song = new Song
         {
@@ -90,7 +92,17 @@ public sealed partial class LibraryPromotionTests
             .ReturnsAsync(Array.Empty<Song>());
         var providers = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
         providers.Setup(item => item.GetSongAsync(It.IsAny<ProtocolExecutionContext>(), "allstarr", recordingId.ToString("D")))
-            .ReturnsAsync(song);
+            .ReturnsAsync(missingCachedAlbum ? new Song
+            {
+                Title = song.Title,
+                Artist = song.Artist,
+                Album = song.Album,
+                ExternalProvider = song.ExternalProvider,
+                ExternalId = song.ExternalId
+            } : song);
+        if (missingCachedAlbum)
+            providers.Setup(item => item.GetExactSongAsync(It.IsAny<ProtocolExecutionContext>(), "apple-musickit", "track"))
+                .ReturnsAsync(song);
         providers.Setup(item => item.GetAlbumAsync(It.IsAny<ProtocolExecutionContext>(), "apple-download", "release"))
             .ReturnsAsync(new Album
             {

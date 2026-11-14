@@ -25,6 +25,9 @@ public sealed class PromotionCatalog(IDbContextFactory<AllstarrDbContext> factor
         var song = stored.FirstOrDefault(item => !item.IsLocal && !string.IsNullOrWhiteSpace(item.AlbumId)) ??
             await providers.GetSongAsync(context, "allstarr", recordingId.ToString("D")) ??
             throw new InvalidOperationException("The recording has no release metadata.");
+        if (string.IsNullOrWhiteSpace(song.AlbumId) && !song.IsLocal &&
+            song.ExternalProvider is { } source && source != "allstarr" && !string.IsNullOrWhiteSpace(song.ExternalId))
+            song = await providers.GetExactSongAsync(context, source, song.ExternalId) ?? song;
         song.CanonicalRecordingId = recording.Id;
         song.Isrc ??= recording.Isrc;
         if (recording.MusicBrainzRecordingId != null) song.ProviderIds["musicbrainz_recordingid"] = recording.MusicBrainzRecordingId;

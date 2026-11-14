@@ -120,7 +120,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
             Assert.Equal("deezer", song.ExternalProvider);
             Assert.Equal("song", song.ExternalId);
             Assert.Equal("Song", song.Title);
-            Assert.Null(song.AlbumId);
+            Assert.Equal("ext-deezer-album-album", song.AlbumId);
             Assert.Equal(new[] { "Original alias" }, song.AlternateTitles);
         }
         Mock.Get(metadata).Verify(item => item.GetTrackAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderTrackLookupRequest>()), Times.Never);

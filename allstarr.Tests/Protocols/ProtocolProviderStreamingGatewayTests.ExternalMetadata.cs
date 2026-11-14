@@ -15,12 +15,14 @@ namespace allstarr.Tests;
 
 public sealed partial class ProtocolProviderStreamingGatewayTests
 {
-    [Fact]
-    public async Task ExternalAlbumReads_ShareFetchAndKeepTrackOrderAndIndependentCopies()
+    [Theory]
+    [InlineData("deezer", "deezer")]
+    [InlineData("apple-musickit", "apple-download")]
+    public async Task ExternalAlbumReads_ShareFetchAndKeepTrackOrderAndIndependentCopies(string provider, string publicProvider)
     {
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var capability = SearchRankingCapability("deezer");
+        var capability = SearchRankingCapability(provider);
         var calls = 0;
         Mock.Get(capability).Setup(value => value.GetAlbumAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderAlbumLookupRequest>()))
             .Returns(async () =>
@@ -28,10 +30,10 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
                 Interlocked.Increment(ref calls);
                 started.TrySetResult();
                 await release.Task;
-                return ProviderOutcome<ProviderAlbumMetadata>.Success(new(new("deezer", ProviderResourceKind.Album, "7"),
+                return ProviderOutcome<ProviderAlbumMetadata>.Success(new(new(provider, ProviderResourceKind.Album, "7"),
                     "Album", [new("Artist")], tracks:
-                    [new(new("deezer", ProviderResourceKind.Track, "2"), "Second", [new("Artist")], duration: TimeSpan.FromMilliseconds(241160)),
-                     new(new("deezer", ProviderResourceKind.Track, "1"), "First", [new("Artist")])]));
+                    [new(new(provider, ProviderResourceKind.Track, "2"), "Second", [new("Artist")], duration: TimeSpan.FromMilliseconds(241160)),
+                     new(new(provider, ProviderResourceKind.Track, "1"), "First", [new("Artist")], albumId: new(provider, ProviderResourceKind.Album, "original"))]));
             });
         var registry = MetadataRegistry(capability);
         var router = new Mock<IProviderRouter>(MockBehavior.Strict);
@@ -40,7 +42,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         using var cache = new MemoryApplicationCache(new SystemPlatformClock());
         var gateway = new ProtocolProviderGateway(router.Object, registry, new HttpClientFactory(), applicationCache: cache);
         var context = Context();
-        var reads = Enumerable.Range(0, 12).Select(_ => gateway.GetAlbumAsync(context, "deezer", "7")).ToArray();
+        var reads = Enumerable.Range(0, 12).Select(_ => gateway.GetAlbumAsync(context, provider, "7")).ToArray();
         await started.Task;
         Assert.Equal(1, Volatile.Read(ref calls));
         release.SetResult();
@@ -49,10 +51,14 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         Assert.All(albums, album => Assert.Equal(expected, JsonSerializer.Serialize(album)));
         albums[0]!.Songs.Clear();
         using var timing = RequestTiming.Begin();
-        var repeat = await gateway.GetAlbumAsync(context, "deezer", "7");
+        var repeat = await gateway.GetAlbumAsync(context, provider, "7");
         Assert.All(new[] { "resolve", "fetch", "match" }, stage => Assert.Contains(stage, timing.Snapshot("jellyfin").Stages.Keys));
         Assert.Equal(expected, JsonSerializer.Serialize(repeat));
         Assert.Equal(["2", "1"], repeat!.Songs.Select(song => song.ExternalId));
+        Assert.Equal($"ext-{publicProvider}-album-7", repeat.Songs[0].AlbumId);
+        Assert.Equal($"ext-{publicProvider}-album-original", repeat.Songs[1].AlbumId);
+        var cachedSong = await gateway.GetStoredSongAsync(context, provider, "2");
+        Assert.Equal($"ext-{publicProvider}-album-7", cachedSong!.AlbumId);
         Assert.Equal(TimeSpan.FromMilliseconds(241160), repeat.Songs[0].PreciseDuration);
         Assert.Equal(1, calls);
     }

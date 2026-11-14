@@ -2730,6 +2730,7 @@ public sealed partial class ProtocolProviderGateway(
         var songs = item.Tracks.Select(Map).ToList();
         foreach (var song in songs)
         {
+            song.AlbumId ??= ProtocolItemId(item.Id);
             if (song.AlbumArtists.Count == 0)
                 song.AlbumArtists = artists.ToList();
         }
