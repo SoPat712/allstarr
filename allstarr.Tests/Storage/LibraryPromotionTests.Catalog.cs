@@ -77,8 +77,13 @@ public sealed partial class LibraryPromotionTests
     {
         var song = new Song
         {
-            Title = "Song", Artist = "Artist", Album = "Release", Track = 1,
-            ExternalProvider = "apple-musickit", ExternalId = "track", AlbumId = "ext-apple-download-album-release"
+            Title = "Song",
+            Artist = "Artist",
+            Album = "Release",
+            Track = 1,
+            ExternalProvider = "apple-musickit",
+            ExternalId = "track",
+            AlbumId = "ext-apple-download-album-release"
         };
         var identities = CatalogIdentities(song);
         identities.Setup(item => item.GetStoredSongsAsync(It.IsAny<ProviderActorContext>(), recordingId.ToString("D"), It.IsAny<CancellationToken>()))
