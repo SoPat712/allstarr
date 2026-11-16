@@ -135,8 +135,17 @@ public sealed class PromotionNamingPreviewService(IDbContextFactory<AllstarrDbCo
             if (explicitSelection && (libraryIds.Except(candidates.Where(item => item.LibraryTrackId.HasValue).Select(item => item.LibraryTrackId!.Value)).Any() ||
                 recordingIds.Except(candidates.Where(item => item.RecordingId.HasValue).Select(item => item.RecordingId!.Value)).Any()))
                 throw new UnauthorizedAccessException("These examples are unavailable to this listener.");
-            var chosen = explicitSelection ? candidates : SelectExamples(candidates);
-            await AddLibraryNumbersAsync(chosen);
+            if (explicitSelection)
+            {
+                await AddLibraryNumbersAsync(candidates);
+                return candidates;
+            }
+            // Badly tagged songs make poor examples, so a few of each kind are read and fully tagged ones are shown first.
+            var pool = SelectExamples(candidates, 5);
+            await AddLibraryNumbersAsync(pool);
+            var tagged = pool.Where(item => item.Song.Year != null && item.Song.Track != null).ToList();
+            var chosen = SelectExamples(tagged.Count > 0 ? tagged : pool, 1);
+            chosen.AddRange(pool.Where(item => !chosen.Contains(item)).Take(4 - chosen.Count).ToArray());
             return chosen;
         }
 
@@ -190,15 +199,12 @@ public sealed class PromotionNamingPreviewService(IDbContextFactory<AllstarrDbCo
         return new(script, !builder, tokens, rendered, []);
     }
 
-    private static List<Example> SelectExamples(List<Example> candidates)
+    private static List<Example> SelectExamples(List<Example> candidates, int perKind)
     {
         var selected = new List<Example>();
         foreach (var kind in new[] { "album", "multi-disc", "compilation", "single" })
-        {
-            var match = candidates.FirstOrDefault(item => !selected.Contains(item) && Kind(item.Song) == kind);
-            if (match != null) selected.Add(match);
-        }
-        selected.AddRange(candidates.Where(item => !selected.Contains(item)).Take(4 - selected.Count));
+            selected.AddRange(candidates.Where(item => !selected.Contains(item) && Kind(item.Song) == kind).Take(perKind).ToArray());
+        selected.AddRange(candidates.Where(item => !selected.Contains(item)).Take(4 * perKind - selected.Count).ToArray());
         return selected;
     }
 

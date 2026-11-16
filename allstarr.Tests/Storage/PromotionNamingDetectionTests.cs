@@ -152,6 +152,34 @@ public sealed class PromotionNamingDetectionTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task NamingExamplesPreferFullyTaggedSongs()
+    {
+        await Seed(1, index => $"Artist/Album (2024)/{index:00} - Title {index}.flac");
+        await using (var db = factory.CreateDbContext())
+        {
+            db.LibraryTracks.Add(new()
+            {
+                Id = Guid.CreateVersion7(),
+                OwnerUserId = user,
+                Protocol = "jellyfin",
+                BackendInstanceId = "backend",
+                BackendLibraryId = "music",
+                BackendItemId = "aaaa-untagged",
+                FilePath = "/backend/music/untagged.mp3",
+                Title = "Untagged",
+                Artist = "Artist",
+                Album = "Album"
+            });
+            await db.SaveChangesAsync();
+        }
+        backend.Items["aaaa-untagged"] = new { Id = "aaaa-untagged" };
+        var examples = (await new PromotionNamingPreviewService(factory, profiles, access, proxy).PreviewAsync(Context,
+            new("%artist%/%album%$if(%year%, \\(%year%\\))/$num(%tracknumber%,2) - %title%.%_extension%"), headers: Headers)).Examples;
+        Assert.Equal(["Title 1", "Untagged"], examples.Select(item => item.Title));
+        Assert.Equal("Artist/Album (2024)/01 - Title 1.flac", examples[0].RelativePath);
+    }
+
+    [Fact]
     public async Task UsesEffectiveRootAndChecksPermissionsBeforeReadingCache()
     {
         await Seed(8, index => $"Artist/Album/{index:00} - Title {index}.flac");
