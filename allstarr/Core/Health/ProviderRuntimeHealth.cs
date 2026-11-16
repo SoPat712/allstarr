@@ -264,6 +264,8 @@ public sealed class ProviderRuntimeHealth : IProviderOutcomeObserver, ILyricsOut
                 previous?.LyricsConfiguration is { } previousConfiguration && previousConfiguration.Revision > configuration.Value.Revision) return;
             var now = observedAt ?? _clock.UtcNow;
             var neutral = ProviderRuntimeStatus.IsNeutralReason(reason);
+            // A rate limit pauses the source for its wait; it says the service is busy, not that it is failing.
+            var busy = !success && reason == "rate-limited";
             if (!neutral)
             {
                 var comparable = previous != null && previous.AccountRevision == revision &&
@@ -281,7 +283,7 @@ public sealed class ProviderRuntimeHealth : IProviderOutcomeObserver, ILyricsOut
                 if (retryAfter > cooldown) cooldown = TimeSpan.FromSeconds(Math.Min(retryAfter.Value.TotalSeconds, 86400));
                 var priorHealth = comparable ? previous!.HealthBeforeProbe ?? previous.Health : ProviderHealthState.Unknown;
                 if (media && !withinWindow && priorHealth == ProviderHealthState.Degraded) priorHealth = ProviderHealthState.Unknown;
-                var health = success ? ProviderHealthState.Healthy : !passive && !media || opens ? ProviderHealthState.Degraded : priorHealth;
+                var health = success ? ProviderHealthState.Healthy : !busy && (!passive && !media || opens) ? ProviderHealthState.Degraded : priorHealth;
                 MakeRoom(key);
                 _observations[key] = new(revision, health,
                     now, latency, SafeReason(reason), failures, opens ? now.Add(cooldown) : null)
@@ -300,7 +302,7 @@ public sealed class ProviderRuntimeHealth : IProviderOutcomeObserver, ILyricsOut
                     LyricsRecovered?.Invoke(key.Provider, key.ProviderAccountId);
                 if (!_alertSamples.TryGetValue(key, out var alertSamples)) _alertSamples[key] = alertSamples = [];
                 if (alertSamples.Count >= 20) alertSamples.RemoveAt(0);
-                alertSamples.Add(!success && health != ProviderHealthState.Degraded
+                alertSamples.Add(!success && !busy && health != ProviderHealthState.Degraded
                     ? _observations[key] with { Health = ProviderHealthState.Degraded } : _observations[key]);
             }
             if (!passive && !recordAttempt) return;
@@ -313,7 +315,7 @@ public sealed class ProviderRuntimeHealth : IProviderOutcomeObserver, ILyricsOut
                 IsSupported = true,
                 IsEnabled = true,
                 Configuration = ProviderConfigurationState.Configured,
-                Health = neutral ? ProviderHealthState.Unknown : success ? ProviderHealthState.Healthy : ProviderHealthState.Degraded,
+                Health = neutral || busy ? ProviderHealthState.Unknown : success ? ProviderHealthState.Healthy : ProviderHealthState.Degraded,
                 TestedAt = now,
                 LatencyMilliseconds = latency,
                 ReasonCode = SafeReason(reason)

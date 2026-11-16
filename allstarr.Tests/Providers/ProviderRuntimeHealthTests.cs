@@ -371,12 +371,26 @@ public sealed class ProviderRuntimeHealthTests
         var store = Store();
         store.Observe(Context(), ProviderCapabilityKind.Streaming, null, TimeSpan.Zero);
         store.Observe(Context(), ProviderCapabilityKind.Streaming, new(ProviderErrorKind.RateLimited, TimeSpan.FromMinutes(10)), TimeSpan.Zero);
-        Assert.Equal(HealthState.Degraded, store.Get(Key(), 4)!.Health);
+        Assert.Equal(HealthState.Healthy, store.Get(Key(), 4)!.Health);
+        Assert.True(store.GetRouteStatus("deezer", _account, ProviderCapabilityKind.Streaming).CircuitOpen);
         _clock.UtcNow += TimeSpan.FromMinutes(9);
         Assert.True(store.GetRouteStatus("deezer", _account, ProviderCapabilityKind.Streaming).CircuitOpen);
         Assert.Null(Store().Get(Key()));
         _clock.UtcNow += TimeSpan.FromMinutes(2);
         Assert.False(store.GetRouteStatus("deezer", _account, ProviderCapabilityKind.Streaming).CircuitOpen);
+    }
+
+    [Fact]
+    public void RepeatedLyricsRateLimitsPauseTheSourceWithoutFailingIt()
+    {
+        var store = Store();
+        store.Observe(Context(), ProviderCapabilityKind.Lyrics, null, TimeSpan.Zero);
+        for (var attempt = 0; attempt < 6; attempt++)
+            store.Observe(Context(), ProviderCapabilityKind.Lyrics, new(ProviderErrorKind.RateLimited, TimeSpan.FromMinutes(1)), TimeSpan.Zero);
+        var key = Key(capability: "lyrics");
+        Assert.Equal(HealthState.Healthy, store.Get(key, 4)!.Health);
+        Assert.True(store.GetRouteStatus("deezer", _account, ProviderCapabilityKind.Lyrics).CircuitOpen);
+        Assert.All(store.Recent(key, 4).Take(6), item => Assert.Equal(HealthState.Unknown, item.Status.Health));
     }
 
     [Fact]
