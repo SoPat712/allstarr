@@ -203,6 +203,21 @@ for (const outcome of ["no-pattern", "unavailable"] as const) test(`Autodetect k
   await expect(page.getByRole("button", { name: "Autodetect", exact: true })).toBeEnabled();
 });
 
+test("Autodetect offers a clear majority pattern without applying it", async ({ page }) => {
+  const state = await fixture(page, true, false, { script: initialScript, matched: 40, sampled: 40, examples: [], reason: null });
+  const script = await scriptField(page), custom = "custom/%title%.%_extension%", detectedScript = "%artist%/%album%/%title%.%_extension%";
+  await script.fill(custom);
+  await expect.poll(() => state.personal.namingScript).toBe(custom);
+  state.detected = { script: detectedScript, matched: 266, sampled: 300, examples: [{ path: "North/Warm light/Blue morning.flac" }], reason: "mixed-patterns" };
+  await page.getByRole("button", { name: "Autodetect", exact: true }).click();
+  await expect(page.getByRole("status").filter({ hasText: "266 of 300 sampled songs follow one pattern" })).toBeVisible();
+  await expect(script).toHaveValue(custom);
+  expect(state.personal.namingScript).toBe(custom);
+  await page.getByRole("button", { name: "Use this pattern", exact: true }).click();
+  await expect.poll(() => state.personal.namingScript).toBe(detectedScript);
+  expect(state.personal.namingConfirmed).toBe(true);
+});
+
 test("Autodetect cannot apply a personal result after switching to the household profile", async ({ page }) => {
   const state = await fixture(page, true, false, { script: initialScript, matched: 40, sampled: 40, examples: [], reason: null });
   await expect(page.getByRole("button", { name: "Autodetect", exact: true })).toBeEnabled();

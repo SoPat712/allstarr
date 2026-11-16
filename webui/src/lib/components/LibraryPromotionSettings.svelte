@@ -153,9 +153,12 @@
       if (request.signal.aborted || scope !== target || chosenRootId !== rootId) return;
       detected = result;
       if (apply) {
-        if (result.script) {
+        if (result.script && !result.reason) {
           update({ namingScript: result.script, libraryRootId: rootId, namingConfirmed: true });
           detectionMessage = "Detected folder and filename pattern applied.";
+        } else if (result.script) {
+          // Most of the folder agrees but not all of it, so the pattern waits for an explicit choice.
+          detectionMessage = `${result.matched} of ${result.sampled} sampled songs follow one pattern and the rest are named differently, so nothing was changed. Review it and choose it below.`;
         } else {
           update({ namingConfirmed: false });
           detectionMessage = "No consistent naming pattern was found in this folder. Your edited pattern was kept. Choose and confirm a naming pattern before adding songs.";

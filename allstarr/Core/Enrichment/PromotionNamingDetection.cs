@@ -133,8 +133,10 @@ public sealed class PromotionNamingDetectionService(IDbContextFactory<AllstarrDb
         var best = Enumerable.Range(0, Candidates.Length).MaxBy(index => matches[index].Count);
         var count = matches[best].Count;
         var confident = count >= 5 && count == samples.Length;
-        return await Save(new(confident ? Candidates[best].Script : null, count, samples.Length,
-            confident ? matches[best].Take(3).Select(path => new PromotionNamingDetectedExample(path)).ToArray() : [], confident ? null : count >= 5 ? "mixed-patterns" : "no-pattern"));
+        // A clear majority is offered for the listener to confirm; only full agreement is applied on its own.
+        var suggested = count >= 5 && count * 5 >= samples.Length * 4;
+        return await Save(new(suggested ? Candidates[best].Script : null, count, samples.Length,
+            suggested ? matches[best].Take(3).Select(path => new PromotionNamingDetectedExample(path)).ToArray() : [], confident ? null : count >= 5 ? "mixed-patterns" : "no-pattern"));
 
         async Task<PromotionNamingDetection> Save(PromotionNamingDetection result)
         {

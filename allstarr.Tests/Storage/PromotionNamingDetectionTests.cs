@@ -119,21 +119,22 @@ public sealed class PromotionNamingDetectionTests : IAsyncLifetime
     }
 
     [Theory]
-    [InlineData(4, 4, false)]
-    [InlineData(5, 9, false)]
-    [InlineData(6, 10, false)]
-    [InlineData(9, 10, false)]
-    [InlineData(10, 10, true)]
-    [InlineData(0, 10, false)]
-    public async Task RequiresFiveMatchesAndAgreementAcrossTheSample(int matching, int total, bool confident)
+    [InlineData(4, 4, false, false)]
+    [InlineData(5, 9, false, false)]
+    [InlineData(6, 10, false, false)]
+    [InlineData(8, 10, false, true)]
+    [InlineData(9, 10, false, true)]
+    [InlineData(10, 10, true, true)]
+    [InlineData(0, 10, false, false)]
+    public async Task AgreementIsConfidentAndAClearMajorityIsOnlySuggested(int matching, int total, bool confident, bool suggested)
     {
         await Seed(total, index => index <= matching ? $"Artist/Album/{index:00} - Title {index}.flac" : $"Random/{index}/unrelated.flac");
         var result = await detection.DetectAsync(Context, rootId, Headers);
         Assert.Equal(matching, result.Matched);
         Assert.Equal(total, result.Sampled);
-        Assert.Equal(confident, result.Script != null);
+        Assert.Equal(suggested, result.Script != null);
         Assert.Equal(confident ? null : matching >= 5 ? "mixed-patterns" : "no-pattern", result.Reason);
-        if (!confident) Assert.Empty(result.Examples);
+        Assert.Equal(suggested, result.Examples.Length > 0);
     }
 
     [Fact]
