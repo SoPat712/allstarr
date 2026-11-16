@@ -76,8 +76,7 @@ public sealed partial class SpotifyPlaylistCapabilityAdapterTests
     [Theory]
     [InlineData("{\"errors\":[{\"message\":\"PersistedQueryNotFound\",\"extensions\":{\"code\":\"PERSISTED_QUERY_NOT_FOUND\"}}]}")]
     [InlineData("{\"data\":{\"home\":{\"sectionContainer\":{\"sections\":{\"items\":{}}}}}}")]
-    [InlineData("{\"data\":{\"home\":{\"sectionContainer\":{\"sections\":{\"items\":[{\"sectionItems\":{\"items\":{}}}]}}}}}")]
-    [InlineData("{\"data\":{\"home\":{\"sectionContainer\":{\"sections\":{\"items\":[{\"sectionItems\":{\"items\":[{\"content\":{\"data\":{\"__typename\":\"Playlist\",\"name\":\"Broken\"}}}]}}]}}}}}")]
+    [InlineData("{\"data\":{\"home\":{\"sectionContainer\":{\"sections\":{\"items\":[{\"sectionItems\":{\"items\":[{\"content\":{\"data\":{\"__typename\":\"Playlist\",\"uri\":\"spotify:playlist:37i9dQZ1Efixture0000001\"}}}]}}]}}}}}")]
     [InlineData("not-json")]
     public async Task IncompatibleHomeDisablesOnlyThatAccountUntilHashChangesAndKeepsSavedFeeds(string home)
     {
@@ -107,6 +106,32 @@ public sealed partial class SpotifyPlaylistCapabilityAdapterTests
         Assert.Equal(settings.HomeEndUserIntegration, handler.HomeRequest.Value.GetProperty("variables").GetProperty("homeEndUserIntegration").GetString());
         Assert.Equal(3, handler.HomeRequests);
         Assert.Single(messages);
+    }
+
+    [Fact]
+    public async Task HomeSkipsTilesItCannotReadAndKeepsItsPlaylists()
+    {
+        var handler = new SpotifyHomeFixtureHandler
+        {
+            HomePayload = """
+                {"data":{"home":{"sectionContainer":{"sections":{"items":[
+                {"data":{"title":{"text":"Shortcuts"}}},
+                {"data":{"title":{"text":"Made for you"}},"sectionItems":{"items":[
+                {"content":{"__typename":"UnknownType"}},
+                {"content":{"__typename":"NotFound","data":null}},
+                {"content":{"data":{"__typename":"Playlist","uri":"spotify:collection:tracks","name":"Liked Songs"}}},
+                {"content":{"data":{"__typename":"Playlist","name":"No link"}}},
+                {"content":{"data":{"__typename":"Playlist","uri":"spotify:playlist:37i9dQZ1Efixture0000001","name":"Daily Mix 1","ownerV2":{"data":{"name":"Spotify"}}}}}
+                ]}}]}}}},"errors":[{"message":"One shelf failed"}]}
+                """
+        };
+        using var http = new HttpClient(handler);
+        var messages = new List<string>();
+        var client = new SpotifyPathfinderPlaylistClient(http, null, new HomeLogger(messages));
+        var feed = Assert.Single((await client.GetHomePlaylistsAsync("fixture-token", Guid.NewGuid(), default)).RequireValue());
+        Assert.Equal("Daily Mix 1", feed.Name);
+        Assert.Equal("Made for you", feed.Description);
+        Assert.Empty(messages);
     }
 
     [Fact]

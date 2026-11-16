@@ -37,33 +37,35 @@ public sealed partial class SpotifyPathfinderPlaylistClient
         try
         {
             using var document = JsonDocument.Parse(response.Body!);
-            if (GraphQlFailure(document.RootElement, HomeOperation, logFailure: false) is { } failure)
-            {
-                if (failure.Code == ProviderError.CompatibilityContractChanged().Code)
-                    return DisableHome(accountId, operation.Sha256Hash);
-                return ProviderOutcome<IReadOnlyList<ProviderPlaylistSummary>>.Failure(failure);
-            }
+            // Errors beside readable sections mean one shelf failed to load; the rest of home is still good.
             if (!TryPath(document.RootElement, out var sections, "data", "home", "sectionContainer", "sections", "items") ||
                 sections.ValueKind != JsonValueKind.Array)
-                return DisableHome(accountId, operation.Sha256Hash);
+            {
+                if (GraphQlFailure(document.RootElement, HomeOperation, logFailure: false) is { } failure &&
+                    failure.Code != ProviderError.CompatibilityContractChanged().Code)
+                    return ProviderOutcome<IReadOnlyList<ProviderPlaylistSummary>>.Failure(failure);
+                return DisableHome(accountId, operation.Sha256Hash, "missing_sections");
+            }
             var feeds = new List<ProviderPlaylistSummary>();
             var seen = new HashSet<string>(StringComparer.Ordinal);
+            var unreadable = 0;
             foreach (var section in sections.EnumerateArray())
             {
-                if (!TryPath(section, out var items, "sectionItems", "items") || items.ValueKind != JsonValueKind.Array)
-                    return DisableHome(accountId, operation.Sha256Hash);
+                // Home mixes shelves and tiles of every kind (shortcuts, podcasts, Liked Songs, placeholders); only playlists become feeds.
+                if (!TryPath(section, out var items, "sectionItems", "items") || items.ValueKind != JsonValueKind.Array) continue;
                 var title = TryPath(section, out var data, "data") ? ContractText(Text(data, "title"), 500) : null;
                 foreach (var item in items.EnumerateArray())
                 {
-                    if (!TryPath(item, out var playlist, "content", "data") || String(playlist, "__typename") is not { } type)
-                        return DisableHome(accountId, operation.Sha256Hash);
-                    if (type != "Playlist") continue;
-                    if (!SpotifyPlaylistReference.TryNormalize(String(playlist, "uri")!, out var id) ||
-                        id == SpotifyPlaylistReference.LikedSongsId)
-                        return DisableHome(accountId, operation.Sha256Hash);
+                    if (!TryPath(item, out var playlist, "content", "data") || String(playlist, "__typename") != "Playlist" ||
+                        !SpotifyPlaylistReference.TryNormalize(String(playlist, "uri") ?? string.Empty, out var id) ||
+                        id == SpotifyPlaylistReference.LikedSongsId) continue;
                     var artwork = ArtworkUri(playlist);
                     var summary = MapSummary(playlist, id, artwork);
-                    if (summary == null) return DisableHome(accountId, operation.Sha256Hash);
+                    if (summary == null)
+                    {
+                        unreadable++;
+                        continue;
+                    }
                     var spotifyOwner = PlaylistSourceKinds.IsService(ProviderId, summary.Owner.ProviderUserId) ||
                                        PlaylistSourceKinds.IsService(ProviderId, summary.Owner.DisplayName ?? "");
                     if (!spotifyOwner && !id.StartsWith("37i9dQZ", StringComparison.Ordinal) || !seen.Add(id)) continue;
@@ -77,19 +79,21 @@ public sealed partial class SpotifyPathfinderPlaylistClient
                     }
                 }
             }
+            // Playlists that are listed but none of which can be read mean the shape changed, not that home is empty.
+            if (feeds.Count == 0 && unreadable > 0) return DisableHome(accountId, operation.Sha256Hash, "unreadable_playlists");
             return ProviderOutcome<IReadOnlyList<ProviderPlaylistSummary>>.Success(feeds);
         }
         catch (Exception exception) when (exception is JsonException or InvalidOperationException or ArgumentException or OverflowException)
         {
-            return DisableHome(accountId, operation.Sha256Hash);
+            return DisableHome(accountId, operation.Sha256Hash, "unreadable_response");
         }
     }
 
-    private ProviderOutcome<IReadOnlyList<ProviderPlaylistSummary>> DisableHome(Guid accountId, string hash)
+    private ProviderOutcome<IReadOnlyList<ProviderPlaylistSummary>> DisableHome(Guid accountId, string hash, string detail)
     {
         if (disabledHomeQueries.TryAdd(accountId, hash))
-            logger?.LogWarning("Spotify home discovery disabled for account {AccountId} until its query hash changes. ReasonCode: {ReasonCode}",
-                accountId, "provider-contract-changed");
+            logger?.LogWarning("Spotify home discovery disabled for account {AccountId} until its query hash changes. ReasonCode: {ReasonCode}. Detail: {Detail}",
+                accountId, "provider-contract-changed", detail);
         return ProviderOutcome<IReadOnlyList<ProviderPlaylistSummary>>.Failure(ProviderError.CompatibilityContractChanged());
     }
 }

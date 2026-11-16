@@ -289,7 +289,7 @@ public sealed class ProtocolLyricsResolverTests
         var context = LyricsContext();
         var providers = LyricsProviders(context, ProviderLyricsFormat.PlainText, ProviderLyricsFormat.LineTimed);
         var result = await new ProtocolLyricsResolver(providers.Object, NullLogger<ProtocolLyricsResolver>.Instance)
-            .FindAsync(context, LyricsSong(), "recording", "spotify", "fixture-track");
+            .FindAsync(context, LyricsSong(), "recording", "spotify", "4cOdK2wGLETKBW3PvgPWqT");
         Assert.Equal("lrclib", result?.Source);
         Assert.NotNull(result?.SyncedLyrics);
         providers.Verify(item => item.GetLyricsAsync(context, "lrclib", It.IsAny<string>(),
@@ -649,6 +649,20 @@ public sealed class ProtocolLyricsResolverTests
 
 
     [Theory]
+    [InlineData("spotify:track:4cOdK2wGLETKBW3PvgPWqT", "4cOdK2wGLETKBW3PvgPWqT")]
+    [InlineData("3b6e89edf2f06d8709c0bb2ff5b36db87a6e3338c6cc7b394c0a0f9d1e2c3b4a", null)]
+    public async Task Resolver_AsksSpotifyOnlyWithARealSpotifyTrackId(string stored, string? asked)
+    {
+        var context = LyricsContext();
+        var providers = LyricsProviders(context, ProviderLyricsFormat.LineTimed, ProviderLyricsFormat.LineTimed);
+        await new ProtocolLyricsResolver(providers.Object, NullLogger<ProtocolLyricsResolver>.Instance)
+            .FindAsync(context, LyricsSong(), "recording", "spotify", stored);
+        var spotify = providers.Invocations.Where(call => call.Method.Name == nameof(IProtocolProviderGateway.GetLyricsAsync) &&
+            (string)call.Arguments[1] == "spotify").Select(call => (string)call.Arguments[2]).ToArray();
+        Assert.Equal(asked == null ? Array.Empty<string>() : new[] { asked }, spotify);
+    }
+
+    [Theory]
     [InlineData(ProviderLyricsFormat.PlainText, ProviderLyricsFormat.LineTimed, "lrclib")]
     [InlineData(ProviderLyricsFormat.PlainText, ProviderLyricsFormat.PlainText, "spotify")]
     [InlineData(ProviderLyricsFormat.LineTimed, ProviderLyricsFormat.LineTimed, "spotify")]
@@ -658,11 +672,11 @@ public sealed class ProtocolLyricsResolverTests
         var context = LyricsContext();
         var providers = LyricsProviders(context, first, second);
         var result = await new ProtocolLyricsResolver(providers.Object, NullLogger<ProtocolLyricsResolver>.Instance)
-            .FindAsync(context, LyricsSong(), "recording", "spotify", "fixture-track");
+            .FindAsync(context, LyricsSong(), "recording", "spotify", "4cOdK2wGLETKBW3PvgPWqT");
         Assert.Equal(expected, result?.Source);
         Assert.Equal(first == ProviderLyricsFormat.PlainText && second == ProviderLyricsFormat.PlainText,
             result?.SyncedLyrics == null);
-        providers.Verify(item => item.GetLyricsAsync(context, "spotify", "fixture-track",
+        providers.Verify(item => item.GetLyricsAsync(context, "spotify", "4cOdK2wGLETKBW3PvgPWqT",
             ProviderLyricsFormat.LineTimed, "Fixture", It.IsAny<IReadOnlyList<string>>(), "Album", 120, null), Times.Once);
         providers.Verify(item => item.GetLyricsAsync(context, "lrclib", It.IsAny<string>(),
             ProviderLyricsFormat.LineTimed, "Fixture", It.IsAny<IReadOnlyList<string>>(), "Album", 120, null),
@@ -682,7 +696,7 @@ public sealed class ProtocolLyricsResolverTests
                 ImmutableHashSet.Create("spotify"), "lossless", 0.07));
         var resolver = new ProtocolLyricsResolver(providers.Object, NullLogger<ProtocolLyricsResolver>.Instance,
             effectivePolicies: policies.Object);
-        var result = await resolver.FindAsync(context, LyricsSong(), "recording", "spotify", "fixture-track");
+        var result = await resolver.FindAsync(context, LyricsSong(), "recording", "spotify", "4cOdK2wGLETKBW3PvgPWqT");
         Assert.Equal("lrclib", result?.Source);
         providers.Verify(item => item.GetLyricsAsync(context, "spotify", It.IsAny<string>(),
             It.IsAny<ProviderLyricsFormat?>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(),
@@ -696,15 +710,15 @@ public sealed class ProtocolLyricsResolverTests
         using var canceled = new CancellationTokenSource();
         var context = LyricsContext(canceled.Token);
         var providers = LyricsProviders(context, ProviderLyricsFormat.PlainText, ProviderLyricsFormat.LineTimed);
-        providers.Setup(item => item.GetLyricsAsync(context, "spotify", "fixture-track",
+        providers.Setup(item => item.GetLyricsAsync(context, "spotify", "4cOdK2wGLETKBW3PvgPWqT",
                 ProviderLyricsFormat.LineTimed, "Fixture", It.IsAny<IReadOnlyList<string>>(), "Album", 120, null))
             .ThrowsAsync(new HttpRequestException("Private upstream detail"));
         var resolver = new ProtocolLyricsResolver(providers.Object, NullLogger<ProtocolLyricsResolver>.Instance);
-        Assert.Equal("lrclib", (await resolver.FindAsync(context, LyricsSong(), "recording", "spotify", "fixture-track"))?.Source);
+        Assert.Equal("lrclib", (await resolver.FindAsync(context, LyricsSong(), "recording", "spotify", "4cOdK2wGLETKBW3PvgPWqT"))?.Source);
         providers.Invocations.Clear();
         canceled.Cancel();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
-            resolver.FindAsync(context, LyricsSong(), "recording", "spotify", "fixture-track"));
+            resolver.FindAsync(context, LyricsSong(), "recording", "spotify", "4cOdK2wGLETKBW3PvgPWqT"));
         providers.Verify(item => item.GetLyricsAsync(context, It.IsAny<string>(), It.IsAny<string>(),
             It.IsAny<ProviderLyricsFormat?>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(),
             It.IsAny<string>(), It.IsAny<int?>(), null), Times.Never);
@@ -716,14 +730,14 @@ public sealed class ProtocolLyricsResolverTests
         using var canceled = new CancellationTokenSource();
         var context = LyricsContext(canceled.Token);
         var providers = LyricsProviders(context, ProviderLyricsFormat.LineTimed, ProviderLyricsFormat.LineTimed);
-        providers.Setup(item => item.GetLyricsAsync(context, "spotify", "fixture-track",
+        providers.Setup(item => item.GetLyricsAsync(context, "spotify", "4cOdK2wGLETKBW3PvgPWqT",
                 ProviderLyricsFormat.LineTimed, "Fixture", It.IsAny<IReadOnlyList<string>>(), "Album", 120, null))
             .Callback(canceled.Cancel)
             .ReturnsAsync(new ProviderLyricsResult(ProviderLyricsAvailabilityState.Available, "spotify",
                 ProviderLyricsFormat.LineTimed, "[00:01.00]Synthetic words"));
         var resolver = new ProtocolLyricsResolver(providers.Object, NullLogger<ProtocolLyricsResolver>.Instance);
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
-            resolver.FindAsync(context, LyricsSong(), "recording", "spotify", "fixture-track"));
+            resolver.FindAsync(context, LyricsSong(), "recording", "spotify", "4cOdK2wGLETKBW3PvgPWqT"));
         providers.Verify(item => item.GetLyricsAsync(context, "lrclib", It.IsAny<string>(),
             It.IsAny<ProviderLyricsFormat?>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(),
             It.IsAny<string>(), It.IsAny<int?>(), null), Times.Never);

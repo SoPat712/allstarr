@@ -661,7 +661,8 @@ public sealed partial class ProtocolLyricsResolver(
         string? spotifyTrackId)
     {
         providerId = providerId.Trim().ToLowerInvariant();
-        if (providerId == "spicylyrics")
+        // Both read lyrics by Spotify track id, so they take only an id that really is one.
+        if (providerId is "spicylyrics" or "spotify")
         {
             if (SpotifyTrackReference.TryNormalize(spotifyTrackId, out var known)) return known;
             return (string.Equals(sourceProvider, "spotify", StringComparison.OrdinalIgnoreCase) ||
@@ -684,7 +685,6 @@ public sealed partial class ProtocolLyricsResolver(
         }
         if (providerId.Equals(sourceProvider, StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(sourceExternalId))
             return sourceExternalId;
-        if (providerId == "spotify") return string.IsNullOrWhiteSpace(spotifyTrackId) ? null : spotifyTrackId;
         if (providerId is "lrclib" or "lyricsplus" or "musixmatch" or "lrcred" or "amll" or "neteaselyrics" or "qqlyrics" or "kugoulyrics" or "lrcmux" or "unison" or "paxsenix" or "genius")
             return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(resourceKey))).ToLowerInvariant();
         if (providerId.Equals(sourceProvider, StringComparison.OrdinalIgnoreCase)) return sourceExternalId;

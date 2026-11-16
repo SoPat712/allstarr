@@ -217,7 +217,7 @@ public sealed partial class SpotifyPlaylistCapabilityAdapterTests
 
         Assert.Equal(ProviderErrorKind.Canceled, cancelled.Error!.Kind);
         Assert.Equal(ProviderErrorKind.CapabilityUnavailable, expired.Error!.Kind);
-        Assert.Equal(ProviderErrorKind.PermanentFailure, invalid.Error!.Kind);
+        Assert.Equal(ProviderErrorKind.NotFound, invalid.Error!.Kind);
         Assert.Empty(secrets.AccountIds);
         Assert.Equal(0, handler.LyricsRequests);
     }

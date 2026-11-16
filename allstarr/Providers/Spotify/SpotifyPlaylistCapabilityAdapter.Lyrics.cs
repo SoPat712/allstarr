@@ -91,8 +91,9 @@ public sealed partial class SpotifyPlaylistCapabilityAdapter
             !request.ProviderTrackId.ProviderId.Equals(StableProviderId, StringComparison.Ordinal) ||
             request.ProviderTrackId.ResourceKind != ProviderResourceKind.Track)
             return new ProviderError(ProviderErrorKind.Forbidden);
+        // An id that is not a Spotify track names no Spotify song; it says nothing about Spotify's health.
         if (!SpotifyTrackId.IsValid(request.ProviderTrackId.Value))
-            return new ProviderError(ProviderErrorKind.PermanentFailure);
+            return new ProviderError(ProviderErrorKind.NotFound);
         if (context.Actor.Kind == ProviderActorKind.PublicRead)
             return new ProviderError(ProviderErrorKind.Forbidden);
         if (context.Account == null || context.Account.SecretReferenceId == null)
