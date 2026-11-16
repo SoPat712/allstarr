@@ -86,6 +86,17 @@ public sealed class ChineseWordLyricsParserTests
     }
 
     [Fact]
+    public void QrcXmlWithUnescapedQuotesInTheLyricStillReads()
+    {
+        // QQ's own files look like this: a quote inside the lyric is not escaped, so the XML is not well formed.
+        const string xml = "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<QrcInfos>\n<QrcHeadInfo SaveTime=\"1\" Version=\"100\"/>\n<LyricInfo LyricCount=\"1\">\n" +
+            "<Lyric_1 LyricType=\"1\" LyricContent=\"[ti:Fixture]\n[1000,500]He said \"hi\"(1000,500) &amp; left(1500,500)\n\"/>\n</LyricInfo>\n</QrcInfos>";
+        var value = ChineseWordLyricsParser.ParseQrc(xml, "qqlyrics").RequireValue();
+        Assert.Equal("He said \"hi\" & left", Assert.Single(value.TimedLines!).Text);
+        Assert.Equal("Fixture", value.Metadata!.Title);
+    }
+
+    [Fact]
     public void KrcEnvelopeRequiresHeaderAndUsesBoundedZlibPayload()
     {
         const string text = "[1000,500]<0,500,0>Short";
@@ -126,6 +137,7 @@ public sealed class ChineseWordLyricsParserTests
     [Theory]
     [InlineData("<QrcInfos><Lyric_1 LyricContent='[1,1]Bad(1,1)'/><Lyric_1 LyricContent='[1,1]Other(1,1)'/></QrcInfos>")]
     [InlineData("<!DOCTYPE QrcInfos [<!ENTITY x SYSTEM 'file:///missing'>]><QrcInfos><Lyric_1 LyricContent='&x;'/></QrcInfos>")]
+    [InlineData("<QrcInfos><Lyric_1 LyricContent=\"[1,1]Say \"a\"(1,1)\"/><Lyric_1 LyricContent=\"[1,1]Other(1,1)\"/></QrcInfos>")]
     public void AmbiguousOrUnsafeQrcXmlFailsTheContract(string content)
     {
         Assert.Equal("provider-contract-changed", ChineseWordLyricsParser.ParseQrc(content, "qqlyrics").Error!.Code);

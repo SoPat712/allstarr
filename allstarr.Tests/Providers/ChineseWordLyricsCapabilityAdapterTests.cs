@@ -100,6 +100,20 @@ public sealed class ChineseWordLyricsCapabilityAdapterTests
         Assert.Equal("Rml4dHVyZQ==", parameter.GetProperty("songName").GetString());
     }
 
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    public async Task QqThrottlingIsARateLimitNotAChangedService(int throttledCall)
+    {
+        const string throttled = """{"code":0,"req_1":{"code":2001,"data":{"body":{"song":{"list":[]}}}}}""";
+        var handler = new Handler((_, index) => Response(index == throttledCall ? throttled : index == 1 ? QqSearch : "{}"));
+        var request = new ProviderLyricsRequest(Guid.CreateVersion7(), new("qqlyrics", ProviderResourceKind.Track, "lookup"), false, null,
+            "Fixture", ["Artist"], "Album", 180, $"USTHR00000{throttledCall}");
+        var result = await Adapter("qqlyrics", handler).FetchLyricsAsync(Context("qqlyrics"), request);
+        Assert.Equal(ProviderErrorKind.RateLimited, result.Error!.Kind);
+        Assert.Equal(throttledCall, handler.Requests.Count);
+    }
+
     [Fact]
     public async Task QqRejectsAConflictingDownloadedSongIdentifier()
     {

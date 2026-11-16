@@ -189,6 +189,20 @@ internal static partial class ChineseWordLyricsParser
 
     private static string ReadQrcXml(string xml)
     {
+        try { return ReadWellFormedQrcXml(xml); }
+        catch (XmlException) when (!xml.Contains("<!DOCTYPE", StringComparison.OrdinalIgnoreCase))
+        {
+            // QQ leaves quotes inside the lyric unescaped, which breaks the XML, so the one lyric attribute is read by position.
+            var match = LooseQrcContent().Match(xml);
+            if (!xml.Contains("<QrcInfos", StringComparison.Ordinal) || !match.Success ||
+                xml.IndexOf("LyricContent", StringComparison.Ordinal) != xml.LastIndexOf("LyricContent", StringComparison.Ordinal))
+                throw new FormatException("Invalid lyric XML content.");
+            return System.Net.WebUtility.HtmlDecode(match.Groups[1].Value);
+        }
+    }
+
+    private static string ReadWellFormedQrcXml(string xml)
+    {
         using var reader = new XmlTextReader(new StringReader(xml))
         {
             DtdProcessing = DtdProcessing.Prohibit,
@@ -230,6 +244,8 @@ internal static partial class ChineseWordLyricsParser
     private static partial Regex QrcTiming();
     [GeneratedRegex(@"<(\d+),(\d+),0>", RegexOptions.CultureInvariant)]
     private static partial Regex KrcTiming();
+    [GeneratedRegex(@"<Lyric_1\b[^>]*?\bLyricContent\s*=\s*""(.*)""\s*/>", RegexOptions.CultureInvariant | RegexOptions.Singleline)]
+    private static partial Regex LooseQrcContent();
     [GeneratedRegex(@"[<(]-?\d+,-?\d+(?:,-?\d+)?[>)]", RegexOptions.CultureInvariant)]
     private static partial Regex ReservedTiming();
 }

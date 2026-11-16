@@ -25,6 +25,7 @@ public abstract class ChineseWordLyricsCapabilityAdapter : MetadataLyricsCapabil
         if (response.Error != null) return ProviderOutcome<ProviderLyricsResult>.Failure(response.Error);
         if (string.IsNullOrWhiteSpace(response.Content)) return Unavailable();
         using var document = JsonDocument.Parse(response.Content, new JsonDocumentOptions { MaxDepth = 16 });
+        if (Throttled(document.RootElement)) return ProviderOutcome<ProviderLyricsResult>.Failure(Throttle);
         var candidates = ReadCandidates(document.RootElement).Where(candidate => MatchesCandidate(request, candidate)).Take(3).ToArray();
         foreach (var candidate in candidates)
         {
@@ -48,6 +49,8 @@ public abstract class ChineseWordLyricsCapabilityAdapter : MetadataLyricsCapabil
         return Unavailable();
     }
 
+    protected static readonly ProviderError Throttle = new(ProviderErrorKind.RateLimited, TimeSpan.FromMinutes(1));
+    protected virtual bool Throttled(JsonElement root) => false;
     protected abstract Uri SearchUri(ProviderLyricsRequest request);
     protected abstract IEnumerable<LyricCandidate> ReadCandidates(JsonElement root);
     protected abstract Task<(string? Text, ProviderError? Error)> DownloadAsync(LyricCandidate candidate, ProviderLyricsRequest request, CancellationToken token);
@@ -220,6 +223,7 @@ public sealed class QqWordLyricsCapabilityAdapter : ChineseWordLyricsCapabilityA
         }), token, "application/json");
         if (response.Error != null || response.Content == null) return response;
         using var document = JsonDocument.Parse(response.Content, new JsonDocumentOptions { MaxDepth = 16 });
+        if (Throttled(document.RootElement)) return (null, Throttle);
         var data = ResponseData(document.RootElement);
         if (data.TryGetProperty("songID", out var returnedId) && returnedId.ValueKind != JsonValueKind.Null && Id(data, "songID") != candidate.Id ||
             !IsrcMatches(request, Text(data, "isrc")))
@@ -236,6 +240,11 @@ public sealed class QqWordLyricsCapabilityAdapter : ChineseWordLyricsCapabilityA
 
     protected override ProviderOutcome<ProviderLyricsResult> ParseNative(string content) =>
         ChineseWordLyricsParser.ParseQrc(ChineseWordLyricsParser.DecodeQrc(content), ProviderId);
+
+    // QQ answers 2001 with empty results when it throttles a caller: a busy service, not a changed one.
+    protected override bool Throttled(JsonElement root) =>
+        root.ValueKind == JsonValueKind.Object && root.TryGetProperty("req_1", out var result) && result.ValueKind == JsonValueKind.Object &&
+        result.TryGetProperty("code", out var code) && code.ValueKind == JsonValueKind.Number && code.TryGetInt32(out var value) && value == 2001;
 
     private static JsonElement ResponseData(JsonElement root)
     {
