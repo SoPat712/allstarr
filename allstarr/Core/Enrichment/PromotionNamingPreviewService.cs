@@ -6,6 +6,7 @@ using allstarr.Core.Matching;
 using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
 using allstarr.Models.Domain;
+using allstarr.Services.Jellyfin;
 using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Core.Enrichment;
@@ -17,14 +18,14 @@ public sealed record PromotionNamingPreview(string Script, bool ScriptOnly, IRea
     IReadOnlyList<PromotionNamingExample> Examples, IReadOnlyList<PromotionNamingError> Errors);
 
 public sealed class PromotionNamingPreviewService(IDbContextFactory<AllstarrDbContext> factory, PromotionProfiles profiles,
-    IBackendLibraryAccessResolver libraryAccess)
+    IBackendLibraryAccessResolver libraryAccess, JellyfinProxyService? jellyfin = null)
 {
     private sealed record Example(Guid? LibraryTrackId, Guid? RecordingId, Song Song);
     private static readonly TimeSpan ExamplesFreshFor = TimeSpan.FromMinutes(5);
     private readonly ConcurrentDictionary<Guid, (DateTimeOffset At, string Key, List<Example> Examples)> _examples = new();
 
     public async Task<PromotionNamingPreview> PreviewAsync(ProtocolExecutionContext context, PromotionNamingPreviewRequest request,
-        CancellationToken token = default)
+        CancellationToken token = default, IHeaderDictionary? headers = null)
     {
         var profile = await profiles.GetMineAsync(context, token);
         var script = request.Script ?? profile.Values.NamingScript;
@@ -134,7 +135,45 @@ public sealed class PromotionNamingPreviewService(IDbContextFactory<AllstarrDbCo
             if (explicitSelection && (libraryIds.Except(candidates.Where(item => item.LibraryTrackId.HasValue).Select(item => item.LibraryTrackId!.Value)).Any() ||
                 recordingIds.Except(candidates.Where(item => item.RecordingId.HasValue).Select(item => item.RecordingId!.Value)).Any()))
                 throw new UnauthorizedAccessException("These examples are unavailable to this listener.");
-            return explicitSelection ? candidates : SelectExamples(candidates);
+            var chosen = explicitSelection ? candidates : SelectExamples(candidates);
+            await AddLibraryNumbersAsync(chosen);
+            return chosen;
+        }
+
+        // The library index has no year, track or disc numbers, so the few library examples read them from the backend.
+        async Task AddLibraryNumbersAsync(List<Example> chosen)
+        {
+            var ids = chosen.Where(item => item.LibraryTrackId.HasValue && !string.IsNullOrEmpty(item.Song.Id) &&
+                (item.Song.Year == null || item.Song.Track == null)).Select(item => item.Song.Id).Distinct().ToArray();
+            if (jellyfin == null || headers == null || ids.Length == 0) return;
+            try
+            {
+                var (body, status) = await jellyfin.GetJsonAsync("Items", new()
+                {
+                    ["Ids"] = string.Join(',', ids),
+                    ["UserId"] = context.VerifiedBackendPrincipalId,
+                    ["Limit"] = ids.Length.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                }, headers, token);
+                using (body)
+                {
+                    if (status is < 200 or >= 300 || body?.RootElement.ValueKind != JsonValueKind.Object ||
+                        !body.RootElement.TryGetProperty("Items", out var items) || items.ValueKind != JsonValueKind.Array) return;
+                    foreach (var item in items.EnumerateArray())
+                    {
+                        if (item.ValueKind != JsonValueKind.Object || !item.TryGetProperty("Id", out var id) || id.ValueKind != JsonValueKind.String) continue;
+                        foreach (var example in chosen.Where(example => example.LibraryTrackId.HasValue &&
+                            string.Equals(example.Song.Id, id.GetString(), StringComparison.OrdinalIgnoreCase)))
+                        {
+                            example.Song.Track ??= Number(item, "IndexNumber");
+                            example.Song.DiscNumber ??= Number(item, "ParentIndexNumber");
+                            example.Song.Year ??= Number(item, "ProductionYear");
+                        }
+                    }
+                }
+            }
+            catch (Exception error) when (error is HttpRequestException or JsonException ||
+                error is OperationCanceledException && !token.IsCancellationRequested)
+            { }
         }
         var paths = new List<string>();
         var rendered = new List<PromotionNamingExample>();
@@ -166,6 +205,9 @@ public sealed class PromotionNamingPreviewService(IDbContextFactory<AllstarrDbCo
     private static string Kind(Song song) => song.AlbumArtist?.Equals("Various Artists", StringComparison.OrdinalIgnoreCase) == true ? "compilation" :
         song.TotalDiscs > 1 || song.DiscNumber > 1 ? "multi-disc" :
         string.IsNullOrWhiteSpace(song.Album) || song.TotalTracks == 1 ? "single" : "album";
+
+    private static int? Number(JsonElement item, string name) => item.TryGetProperty(name, out var value) &&
+        value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out var number) && number > 0 ? number : null;
 
     private static string Extension(string path) => string.IsNullOrWhiteSpace(Path.GetExtension(path)) ? "flac" : Path.GetExtension(path).TrimStart('.');
 }

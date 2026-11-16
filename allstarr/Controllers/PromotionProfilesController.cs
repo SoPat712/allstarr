@@ -33,15 +33,17 @@ public sealed class PromotionProfilesController(PromotionProfiles profiles, Prom
 
     [HttpPost("preview")]
     public Task<IActionResult> Preview([FromBody] PromotionNamingPreviewRequest request, CancellationToken token) =>
-        ExecuteAsync(token, context => preview.PreviewAsync(context, request, token));
+        ExecuteAsync(token, context => preview.PreviewAsync(context, request, token, BackendHeaders()));
 
     [HttpGet("/api/admin/library-promotions/naming/detect")]
     public Task<IActionResult> Detect([FromQuery] Guid? rootId, CancellationToken token) => ExecuteAsync(token, context =>
-        detection!.DetectAsync(context, rootId, new HeaderDictionary
-        {
-            ["Authorization"] = AuthHeaderHelper.CreateAuthHeader(
-                ((AdminAuthSession)HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey]!).JellyfinAccessToken)
-        }, token));
+        detection!.DetectAsync(context, rootId, BackendHeaders(), token));
+
+    private HeaderDictionary BackendHeaders() => new()
+    {
+        ["Authorization"] = AuthHeaderHelper.CreateAuthHeader(
+            ((AdminAuthSession)HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey]!).JellyfinAccessToken)
+    };
 
     private async Task<IActionResult> ExecuteAsync<T>(CancellationToken token, Func<ProtocolExecutionContext, Task<T>> action, bool administrator = false)
     {

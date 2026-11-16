@@ -138,6 +138,20 @@ public sealed class PromotionNamingDetectionTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task NamingExamplesReadLibraryYearAndTrackFromTheBackend()
+    {
+        await Seed(1, index => $"Artist/Album (2024)/{index:00} - Title {index}.flac");
+        const string script = "%artist%/%album%$if(%year%, \\(%year%\\))/$num(%tracknumber%,2) - %title%.%_extension%";
+        var example = Assert.Single((await new PromotionNamingPreviewService(factory, profiles, access, proxy)
+            .PreviewAsync(Context, new(script), headers: Headers)).Examples);
+        Assert.Empty(example.Errors);
+        Assert.Equal("Artist/Album (2024)/01 - Title 1.flac", example.RelativePath);
+        Assert.Equal("listener-token", Assert.Single(backend.Tokens));
+        var unread = Assert.Single((await new PromotionNamingPreviewService(factory, profiles, access).PreviewAsync(Context, new(script))).Examples);
+        Assert.Null(unread.RelativePath);
+    }
+
+    [Fact]
     public async Task UsesEffectiveRootAndChecksPermissionsBeforeReadingCache()
     {
         await Seed(8, index => $"Artist/Album/{index:00} - Title {index}.flac");
