@@ -4,7 +4,7 @@
   import { CircleCheck, CircleDashed, Headphones, KeyRound, Music, Pause } from "@lucide/svelte";
   import { adminUrl } from "$lib/admin-url";
   import { home, listeningStats, mixes, releaseInbox, settings, downloads, matchReview, playlistLinks, sources, activityWork, type ActivityTask, type MatchReviewResponse, type ListeningStats, type MixCard, type ReleaseInboxEntry, type StorageOverview } from "$lib/api";
-  import { humanize, relativeTime, activityHeadline } from "$lib/activity";
+  import { humanize, relativeTime, activityHeadline, activitySummary } from "$lib/activity";
   import ProviderMark from "$lib/components/ProviderMark.svelte";
   import ActivityStatusIcon from "$lib/components/ActivityStatusIcon.svelte";
   import PageStatus from "$lib/components/patterns/PageStatus.svelte";
@@ -206,10 +206,6 @@
     return kind === "completed" && ["delivered", "ignored"].includes(state);
   }
 
-  function activityDetail(value: string) {
-    return /[_-]/.test(value) ? humanize(value) : value;
-  }
-
   function clockTime(seconds?: number | null) {
     if (seconds === undefined || seconds === null || !Number.isFinite(seconds)) return "";
     const whole = Math.max(0, Math.floor(seconds));
@@ -404,7 +400,7 @@
       <header><h2>Recent activity</h2><Button variant="text" size="sm" href="#/activity">View all</Button></header>
       {#if visibleActivity.length}
         {#each visibleActivity as item}
-          <ItemRow title={activityHeadline(item)} subtitle={`${activitySource(item.source)}${activityDetail(item.detail)} · ${relativeTime(item.occurredAt)}`} href="#/activity">
+          <ItemRow title={activityHeadline(item)} subtitle={[item.source === "System" ? "" : activitySource(item.source).replace(/ · $/, ""), activitySummary(item), relativeTime(item.occurredAt)].filter(Boolean).join(" · ")} href="#/activity">
             {#snippet leading()}<ActivityStatusIcon state={item.state} severity={item.severity} kind={item.kind} />{/snippet}
           </ItemRow>
         {/each}

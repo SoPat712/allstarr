@@ -51,7 +51,7 @@ test("Event log groups matching work and preserves actionable history", async ({
   const group = page.locator(".event-log-group").filter({ hasText: "Matched 3 songs" });
   await expect(page.locator(".event-log-group .item-row .activity-status-icon img")).toHaveCount(0);
   await expect(group.locator(".item-row .activity-status-icon svg")).toBeVisible();
-  await expect(page.getByText("Playlist sync", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("Playlist synced", { exact: true }).first()).toBeVisible();
   await expect(page.getByRole("button", { name: "Load earlier events" })).toHaveCount(0);
   await expect.poll(() => page.evaluate(() =>
     document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);

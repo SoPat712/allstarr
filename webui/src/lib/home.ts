@@ -9,7 +9,7 @@ import type {
   SignInExpiredAccount,
 } from "./api";
 import { formatPlaybackSource } from "./sources";
-import { isProblem, isRoutineActivity } from "./activity";
+import { activityHeadline, activitySummary, activityTone, isProblem, isRoutineActivity } from "./activity";
 
 export type HomeSnapshot = {
   providerCatalog?: ProviderDefinition[];
@@ -28,7 +28,10 @@ export function recentHomeActivity(items: ActivityItem[]) {
   return items.toSorted((a, b) => b.occurredAt.localeCompare(a.occurredAt)).filter(item => {
     if (isRoutineActivity(item)) return false;
     if (!isProblem(item) && ["pending", "waiting", "deferred", "retryscheduled"].includes(item.state.toLowerCase().replaceAll(/[-_ ]/g, ""))) return false;
-    const key = JSON.stringify([item.actorUserId, item.providerId, item.source, item.label, item.displayName, item.state, item.detail]);
+    // Rows that read the same show once; a failure the job and its source both logged counts as one.
+    const tone = activityTone(item.state, item.severity);
+    const key = JSON.stringify([item.actorUserId, activityHeadline(item), tone,
+      item.sourceTitle || item.targetTitle || item.playlistName || "", tone === "danger" ? "" : activitySummary(item)]);
     if (seen.has(key)) return false;
     seen.add(key);
     return true;

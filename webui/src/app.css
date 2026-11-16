@@ -516,6 +516,10 @@
     align-self: center;
   }
 
+  .app-shell.slim .profile-sso {
+    display: none;
+  }
+
   .app-shell.slim .profile .avatar { justify-self: center; }
 
   .app-shell.slim .sidebar .icon-button {
@@ -565,10 +569,13 @@
     font-size: var(--text-xs);
   }
 
+  /* Its own row under the name and sign-out button, so the whole label fits. */
   .profile-sso {
     display: block;
+    grid-column: 2 / -1;
+    justify-self: start;
     max-width: 100%;
-    margin-top: 0.1rem;
+    margin-top: -0.25rem;
     padding: 0;
     overflow: hidden;
     border: 0;

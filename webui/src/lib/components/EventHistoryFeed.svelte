@@ -43,6 +43,8 @@
     humanize,
     mergeActivity,
     outcomeClass,
+    activitySummary,
+    listenTitle,
   } from "$lib/activity";
   import MediaArtwork from "$lib/components/MediaArtwork.svelte";
   import ActivityIcon from "$lib/components/ActivityIcon.svelte";
@@ -95,7 +97,10 @@
   }));
   const shown = $derived(filtered.filter(item => category !== "library" || item.kind === "library").filter(item => category !== "matching" || item.kind !== "library"));
   const groups = $derived(groupActivity(shown));
-  const countFor = (id: string) => filterActivity(visibleItems, { query, category: id === "all" || id === "problems" || id === "library" ? "" : id, provider: providerFilter, problemsOnly: id === "problems" }).filter(item => id !== "library" || item.kind === "library").filter(item => id !== "matching" || item.kind !== "library").length;
+  // Counts are rows as shown, so six attempts of one failed job are one problem.
+  const groupsFor = (id: string) => groupActivity(filterActivity(visibleItems, { query, category: id === "all" || id === "problems" || id === "library" ? "" : id, provider: providerFilter, problemsOnly: id === "problems" }).filter(item => id !== "library" || item.kind === "library").filter(item => id !== "matching" || item.kind !== "library"));
+  const counts = $derived(Object.fromEntries(["all", "problems", "playlists", "matching", "listening", "library"].map(id => [id, groupsFor(id).length])));
+  const todayRows = $derived(groupsFor("all").filter(group => dayLabel(group.entries[0].occurredAt) === "Today").length);
   function selectFilter(next: string) { segment = next; problemsOnly = next === "problems"; category = ["all", "problems"].includes(next) ? "" : next; }
 
   const selectedGroup = $derived(groups.find(group => group.key === selectedKey));
@@ -249,10 +254,15 @@
       return [first.actorDisplayName || "Household", playlists.join(", "), `${matched} matched`, entries.length - matched ? `${entries.length - matched} need review` : ""]
         .filter(Boolean).join(" · ");
     }
+    // Whose work it was only matters when everyone's activity is shown; "System" says nothing.
+    const actor = scope === "everyone" ? first.actorDisplayName || "Household" : "";
+    const source = sourceName(first);
+    if (listenTitle(first) && entries.length > 1)
+      return [actor, [...new Set(entries.map(item => item.sourceTitle).filter(Boolean))].slice(0, 3).join(", ")].filter(Boolean).join(" · ");
     const title = first.sourceTitle || first.targetTitle || first.playlistName;
-    const target = title && !first.detail.includes(title)
+    const target = title && !first.detail.includes(title) && !source.toLowerCase().includes(title.toLowerCase())
       ? [title, first.sourceArtist || first.targetArtist].filter(Boolean).join(" · ") : "";
-    return [first.actorDisplayName || "Household", sourceName(first), target, activityText(first.detail)].filter(Boolean).join(" · ");
+    return [actor, source === "System" ? "" : source, target, activitySummary(first)].filter(Boolean).join(" · ");
   }
 
   function groupBadge(entries: ActivityItem[], state: string) {
@@ -316,8 +326,8 @@
 </script>
 
 <PageStatus label="History status" items={[
-  { label: loading ? "Loading history…" : countLabel(items.filter(item => dayLabel(item.occurredAt) === "Today").length, "event") + " today" },
-  { label: countFor("problems") ? countFor("problems") + " need attention" : "Nothing failed", tone: countFor("problems") ? "warn" : "neutral" },
+  { label: loading ? "Loading history…" : countLabel(todayRows, "event") + " today" },
+  { label: counts.problems ? counts.problems + " need attention" : "Nothing failed", tone: counts.problems ? "warn" : "neutral" },
 ]} />
 
 {#if loading}
@@ -341,12 +351,12 @@
       </form>
       <div class="event-log-chip-row">
               <FilterSegments label="History filters" storageKey={"activity.history." + scope} value={segment} onchange={selectFilter} options={[
-          { id: "all", label: "All", count: countFor("all") },
-          { id: "problems", label: "Problems", count: countFor("problems") },
-          { id: "playlists", label: "Playlists", count: countFor("playlists") },
-          { id: "matching", label: "Matches", count: countFor("matching") },
-          { id: "listening", label: "Listening", count: countFor("listening") },
-          { id: "library", label: "Library", count: countFor("library") },
+          { id: "all", label: "All", count: counts.all },
+          { id: "problems", label: "Problems", count: counts.problems },
+          { id: "playlists", label: "Playlists", count: counts.playlists },
+          { id: "matching", label: "Matches", count: counts.matching },
+          { id: "listening", label: "Listening", count: counts.listening },
+          { id: "library", label: "Library", count: counts.library },
         ]} />
       </div>
       <RefreshButton class="event-log-refresh" disabled={loadingEarlier} onrefresh={() => load("refresh")} />

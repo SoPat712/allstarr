@@ -171,7 +171,7 @@ export function groupActivity(items: ActivityItem[]) {
         : first.kind === "matching" || first.kind === "caching" || first.action?.startsWith("recording.") ? "song"
         : first.jobId ? "task" : "event";
       previous.title = first.kind === "matching" ? groupTitle(previous.entries)
-        : `${activityHeadline(first)} · ${countLabel(count, unit)}`;
+        : listenTitle(first, count) || `${activityHeadline(first)} · ${countLabel(count, unit)}`;
     } else consolidated.push(group);
   }
   // Library refreshes, scans and health checks repeat all day; while they keep succeeding the same way they fold into
@@ -212,7 +212,7 @@ function groupTitle(entries: ActivityItem[]) {
       (playlists.size ? ` in ${countLabel(playlists.size, "playlist")}` : "");
   }
   if (first.kind === "playlist") return `${humanize(first.label)} · ${countLabel(entries.length, "playlist")}`;
-  return `${humanize(first.label)} · ${countLabel(entries.length, "event")}`;
+  return listenTitle(first, entries.length) || `${humanize(first.label)} · ${countLabel(entries.length, "event")}`;
 }
 
 export function groupOutcome(entries: ActivityItem[]) {
@@ -337,13 +337,61 @@ export function activityText(value?: string | null) {
   if (/^(?:[0-9a-f]{24,}|[0-9a-f-]{36})$/i.test(value.trim())) return "Details were not retained for this older event.";
   return value.replace(opaqueReference, "the recorded item");
 }
+// Finished work reads in the past tense; work still running or failed keeps its plain name.
+const doneNames: Record<string, string> = {
+  "Refresh library index": "Library index refreshed", "Library refresh": "Library refreshed", "Scan Completed": "Library scanned",
+  "Prepare service playlists": "Service playlists prepared", "Find imported songs": "Imported songs found",
+  "Refresh your mixes": "Mixes refreshed", "Mix refresh": "Mixes refreshed", "Refresh matches": "Matches refreshed",
+  "Update playlist": "Playlist updated", "Playlist sync": "Playlist synced", "Update smart playlist": "Smart playlist updated",
+  "Record a listen": "Listen recorded", "Keep a song": "Song kept", "Keep playlist song": "Playlist song kept",
+  "Look for better lyrics": "Lyrics checked", "New releases check": "New releases checked", "Check new releases": "New releases checked",
+  "Check music server": "Server checked", "Health check": "Health check passing", "Back up database and keyring": "Database backed up",
+  "Identify recording": "Recording identified", "Find recording links": "Recording links found", "Identify listened song": "Listened song identified",
+  "Verify stored files": "Stored files verified", "Audio quality check": "Audio quality checked", "Generate recommendations": "Recommendations made",
+  "Verify source sign-in": "Source sign-in verified", "Merge linked favorites": "Linked favorites merged", "Update favorites": "Favorites updated",
+  "Remove unused kept copy": "Unused kept copy removed", "Update source playlist": "Source playlist updated",
+  "History import": "History imported", "Send problem alert": "Problem alert sent", "Send health alert": "Health alert sent",
+  "Import existing media": "Existing media imported", "Promote song to library": "Song added to library",
+  "Import Spotify likes": "Spotify likes imported", "Moving your music": "Music moved", "Clean up earlier checks": "Earlier checks cleaned up",
+  "Recover favorite details": "Favorite details recovered", "Match an artist's songs": "Artist's songs matched",
+};
+// "Allstarr sent the listening update to Last.fm, ListenBrainz." names where listens went.
+function listenTargets(item: ActivityItem) {
+  const match = /sent the listening update to (.+?)\.?$/i.exec(item.detail ?? "");
+  const names = match?.[1].split(/,\s*|\s+and\s+/).map(name => name.trim()).filter(Boolean) ?? [];
+  return names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names.at(-1)}` : names[0] ?? "";
+}
+export function listenTitle(item: ActivityItem, count = 1) {
+  const targets = item.kind === "scrobble" && activityTone(item.state) === "success" ? listenTargets(item) : "";
+  return targets ? `Sent ${count > 1 ? countLabel(count, "listen") : "a listen"} to ${targets}` : "";
+}
 export function activityHeadline(item: ActivityItem) {
+  const listen = listenTitle(item);
+  if (listen) return listen;
+  const name = baseHeadline(item);
+  return activityTone(item.state) === "success" ? doneNames[name] ?? name : name;
+}
+function baseHeadline(item: ActivityItem) {
   if (item.kind === "job") {
     if (item.displayName?.trim()) return activityText(jobName(item.action || item.label, item.displayName));
     if (jobNames[item.label] || /^[a-z0-9-]+\.[a-z0-9.-]+$/.test(item.label)) return jobName(item.label);
     if (item.label.toLowerCase() === "background task") return jobName(item.action || "");
   }
   return activityText(item.label) || "Activity update";
+}
+// The short detail under a title: what the icon and title already say is left out.
+export function activitySummary(item: ActivityItem) {
+  const text = activityText(item.detail).trim();
+  if (/^(?:Completed \(succeeded\)|Running|Waiting|Queued|Pending|Started)\.?$/i.test(text) ||
+    activityTone(item.state) === "success" && /^[^:]{1,80}: completed\.?$/i.test(text)) return "";
+  if (listenTitle(item)) return "";
+  const health = /^Health check \([^)]*\): (.+)$/i.exec(text);
+  if (health) return health[1].replace(/,? 0 failed\.?$/i, "").replace(/\bnot checked\b/i, "skipped").replace(/\.$/, "");
+  const own = baseHeadline(item);
+  const rest = text.replace(/^[^:]{1,80}: completed\. /i, "");
+  // "Prepare service playlists: attempt 5 failed." under that same title reads as "Attempt 5 failed."
+  return own && rest.toLowerCase().startsWith(own.toLowerCase() + ": ")
+    ? rest.slice(own.length + 2).replace(/^./, letter => letter.toUpperCase()) : rest;
 }
 export function activityDuration(value?: number | null) {
   if (value == null || !Number.isFinite(value) || value < 0) return "";

@@ -22,7 +22,7 @@ import {
   groupOutcome,
   humanize,
   mergeActivity,
-  relativeTime,
+  relativeTime, activitySummary, listenTitle
 } from "./activity";
 import type { ActivityItem } from "./api";
 
@@ -140,18 +140,27 @@ describe("event log presentation", () => {
 describe("background work presentation", () => {
   it("names known enrichment, import and maintenance work in older history", async () => {
     const { jobName } = await import("./activity");
-    for (const [type, label] of Object.entries({
-      "recording.tags.refresh": "Song details updated", "listening.musicbrainz.enrich": "Identify listened song",
-      "listening-history.import": "History import", "favorite.link-union": "Merge linked favorites",
-      "downloads.quality-check": "Audio quality check", "extension.session.verify": "Verify source sign-in",
-      "problem-alert.delivery": "Send problem alert", "recommendation.generate": "Generate recommendations",
-      "playlist.provider-source-update": "Update source playlist", "storage.verify-files": "Verify stored files",
-      "configuration.legacy-media": "Import existing media", "releases.poll": "New releases check",
-      "library.refresh": "Library refresh", "library.promote": "Promote song to library",
-      "playback.signal.process": "Record a listen", "spotify-likes.import": "Import Spotify likes",
-    })) {
+    for (const [type, label, done] of [
+      ["recording.tags.refresh", "Song details updated", "Song details updated"],
+      ["listening.musicbrainz.enrich", "Identify listened song", "Listened song identified"],
+      ["listening-history.import", "History import", "History imported"],
+      ["favorite.link-union", "Merge linked favorites", "Linked favorites merged"],
+      ["downloads.quality-check", "Audio quality check", "Audio quality checked"],
+      ["extension.session.verify", "Verify source sign-in", "Source sign-in verified"],
+      ["problem-alert.delivery", "Send problem alert", "Problem alert sent"],
+      ["recommendation.generate", "Generate recommendations", "Recommendations made"],
+      ["playlist.provider-source-update", "Update source playlist", "Source playlist updated"],
+      ["storage.verify-files", "Verify stored files", "Stored files verified"],
+      ["configuration.legacy-media", "Import existing media", "Existing media imported"],
+      ["releases.poll", "New releases check", "New releases checked"],
+      ["library.refresh", "Library refresh", "Library refreshed"],
+      ["library.promote", "Promote song to library", "Song added to library"],
+      ["playback.signal.process", "Record a listen", "Listen recorded"],
+      ["spotify-likes.import", "Import Spotify likes", "Spotify likes imported"],
+    ]) {
       expect(jobName(type)).toBe(label);
-      expect(activityHeadline({ ...item(type, "Completed"), kind: "job", label: type })).toBe(label);
+      expect(activityHeadline({ ...item(type, ""), kind: "job", label: type, state: "running" })).toBe(label);
+      expect(activityHeadline({ ...item(type, ""), kind: "job", label: type, state: "completed" })).toBe(done);
     }
   });
 
@@ -165,6 +174,31 @@ describe("background work presentation", () => {
     expect(progressPercent(-1, 10)).toBe(0);
     expect(progressPercent(5, 0)).toBeNull();
     expect(progressPercent(NaN, 10)).toBeNull();
+  });
+});
+
+describe("plain-words activity", () => {
+  const job = (label: string, state = "Succeeded", detail = ""): ActivityItem => ({ id: label, kind: "job", source: "System", label, action: label, state, detail, occurredAt: "2026-07-27T12:00:00Z" });
+  it("names finished work in the past tense and leaves running or failed work as it was", () => {
+    expect(activityHeadline(job("library.index"))).toBe("Library index refreshed");
+    expect(activityHeadline(job("library.index", "Running"))).toBe("Refresh library index");
+    expect(activityHeadline(job("library.index", "Failed"))).toBe("Refresh library index");
+  });
+  it("says where listens went and how many", () => {
+    const listen: ActivityItem = { id: "l", kind: "scrobble", source: "Scrobble", label: "Scrobble recorded", state: "delivered",
+      detail: "Allstarr sent the listening update to Last.fm, ListenBrainz.", occurredAt: "2026-07-27T12:00:00Z" };
+    expect(activityHeadline(listen)).toBe("Sent a listen to Last.fm and ListenBrainz");
+    expect(listenTitle(listen, 3)).toBe("Sent 3 listens to Last.fm and ListenBrainz");
+    expect(activitySummary(listen)).toBe("");
+  });
+  it("leaves out details the title and icon already say", () => {
+    expect(activitySummary(job("library.index", "Succeeded", "Library: completed."))).toBe("");
+    expect(activitySummary(job("x", "Succeeded", "Completed (succeeded)."))).toBe("");
+    expect(activitySummary(job("library.index", "Running", "Running."))).toBe("");
+    expect(activitySummary(job("health.smoke", "Succeeded", "Health check (server checks): 4 passed, 3 not checked, 0 failed."))).toBe("4 passed, 3 skipped");
+    expect(activitySummary(job("x", "Failed", "Library: attempt 2 failed. The server timed out."))).toBe("Library: attempt 2 failed. The server timed out.");
+    expect(activitySummary({ ...job("Prepare service playlists", "Failed", "Prepare service playlists: attempt 5 failed. Spotify did not answer."), action: "" }))
+      .toBe("Attempt 5 failed. Spotify did not answer.");
   });
 });
 
@@ -299,13 +333,13 @@ describe("activity labels and retry times", () => {
   });
 
   it("names all remaining registered work and respects supplied names", () => {
-    for (const [type, label] of Object.entries({
-      "mixes.refresh": "Mix refresh", "collection.migrate": "Moving your music",
-      "compilation": "Compilation", "listening-history.resolve": "Find imported songs",
-      "smart-playlist.materialize": "Update smart playlist",
-    })) {
+    for (const [type, label, done] of [
+      ["mixes.refresh", "Mix refresh", "Mixes refreshed"], ["collection.migrate", "Moving your music", "Music moved"],
+      ["compilation", "Compilation", "Compilation"], ["listening-history.resolve", "Find imported songs", "Imported songs found"],
+      ["smart-playlist.materialize", "Update smart playlist", "Smart playlist updated"],
+    ]) {
       expect(jobName(type)).toBe(label);
-      expect(activityHeadline({ ...item(type, "Finished"), kind: "job", label: "Background task", action: type })).toBe(label);
+      expect(activityHeadline({ ...item(type, "Finished"), kind: "job", label: "Background task", action: type })).toBe(done);
     }
     expect(jobName("listening-history.resolve", "Background task")).toBe("Find imported songs");
     expect(jobName("mixes.refresh", "Refresh evening mixes")).toBe("Refresh evening mixes");

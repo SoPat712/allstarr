@@ -18,6 +18,13 @@ describe("Home recent activity", () => {
       { ...check("1"), label: "Update playlist", action: "playlist.sync" }])).toHaveLength(4);
   });
 
+  it("shows a failure logged by its job and by its source once", () => {
+    const failed = (id: string, source: string, detail: string) => ({ ...check(id), id, kind: "job", label: "Prepare service playlists",
+      action: "", source, state: "failed", severity: "error", detail } as ActivityItem);
+    expect(recentHomeActivity([failed("4", "System", "Prepare service playlists: attempt 5 failed. Spotify did not answer."),
+      failed("3", "Spotify", "Spotify did not answer."), check("2")]).map(item => item.id)).toEqual(["4", "2"]);
+  });
+
   it("filters automatic rematches while keeping their progress summary and failures", () => {
     const rematch = { ...check("1"), label: "Track matched", action: "automatic.review", state: "accepted" };
     const progress = { ...check("4"), id: "progress", label: "Checking matches", action: "checking-matches", state: "running",

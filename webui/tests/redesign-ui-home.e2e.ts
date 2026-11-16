@@ -147,7 +147,7 @@ test("Home recent activity uses server flags and keeps background failures", asy
   await expect(recent).toContainText("Background task");
   await expect(recent).not.toContainText("Matching old listens");
   await expect(recent).not.toContainText("Nothing new lately");
-  await expect(recent.getByText("Health check", { exact: true })).toHaveCount(1);
+  await expect(recent.getByText("Health check passing", { exact: true })).toHaveCount(1);
 });
 
 for (const { section, label, stylesheet, ready } of [
