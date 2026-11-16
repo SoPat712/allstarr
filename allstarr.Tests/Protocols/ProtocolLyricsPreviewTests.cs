@@ -24,7 +24,7 @@ public sealed class ProtocolLyricsPreviewTests
             Title = "Fixture",
             Artist = "Artist",
             ExternalProvider = "spotify",
-            ExternalId = "exact"
+            ExternalId = "4cOdK2wGLETKBW3PvgPWqT"
         };
         var results = await Resolver(providers).FindAllAsync(context, source, source.Id,
             new ProtocolLyricsSources(_ =>
@@ -55,7 +55,7 @@ public sealed class ProtocolLyricsPreviewTests
                 ImmutableHashSet.Create("backend", "lrclib"), "lossless", .07));
         var results = await new ProtocolLyricsResolver(providers.Object, NullLogger<ProtocolLyricsResolver>.Instance,
             effectivePolicies: policy.Object).FindAllAsync(context,
-            new Song { Title = "Fixture", Artist = "Artist", ExternalProvider = "spotify", ExternalId = "exact" },
+            new Song { Title = "Fixture", Artist = "Artist", ExternalProvider = "spotify", ExternalId = "4cOdK2wGLETKBW3PvgPWqT" },
             "recording", new ProtocolLyricsSources(_ => throw new InvalidOperationException("Disabled backend was read")));
         Assert.Equal(["lyricsplus", "spotify"], results.Select(item => item.SourceId));
         Assert.Equal(["lyricsplus", "spotify"], calls);
@@ -68,12 +68,12 @@ public sealed class ProtocolLyricsPreviewTests
         var context = Context(cancellation.Token);
         var calls = new List<string>();
         var providers = Providers(context, calls);
-        providers.Setup(item => item.GetLyricsAsync(context, "spotify", "exact", ProviderLyricsFormat.LineTimed,
+        providers.Setup(item => item.GetLyricsAsync(context, "spotify", "4cOdK2wGLETKBW3PvgPWqT", ProviderLyricsFormat.LineTimed,
                 "Fixture", It.IsAny<IReadOnlyList<string>>(), It.IsAny<string>(), It.IsAny<int?>(), null))
             .Callback(cancellation.Cancel).ReturnsAsync(new ProviderLyricsResult(ProviderLyricsAvailabilityState.Available,
                 "spotify", ProviderLyricsFormat.LineTimed, "[00:01.234]Canceled words"));
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => Resolver(providers).FindAllAsync(context,
-            new Song { Title = "Fixture", Artist = "Artist", ExternalProvider = "spotify", ExternalId = "exact" }, "recording"));
+            new Song { Title = "Fixture", Artist = "Artist", ExternalProvider = "spotify", ExternalId = "4cOdK2wGLETKBW3PvgPWqT" }, "recording"));
         providers.Verify(item => item.GetLyricsAsync(context, "lyricsplus", It.IsAny<string>(), It.IsAny<ProviderLyricsFormat?>(),
             It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(), It.IsAny<string>(), It.IsAny<int?>(), null), Times.Never);
     }

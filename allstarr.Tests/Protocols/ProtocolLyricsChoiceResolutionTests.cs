@@ -31,7 +31,7 @@ public sealed class ProtocolLyricsChoiceResolutionTests
                 ImmutableHashSet<string>.Empty, "lossless", .07)
             { ProviderModes = ImmutableDictionary<string, ProviderUseMode>.Empty.Add("lrclib", ProviderUseMode.ManualOnly) });
         var result = await new ProtocolLyricsResolver(provider.Object, NullLogger<ProtocolLyricsResolver>.Instance,
-            effectivePolicies: policies.Object, choices: choices.Object).FindAsync(context, Song(recording), "source", "spotify", "exact");
+            effectivePolicies: policies.Object, choices: choices.Object).FindAsync(context, Song(recording), "source", "spotify", "4cOdK2wGLETKBW3PvgPWqT");
         Assert.Equal("lrclib", result?.Source);
         Assert.Equal("Chosen plain words", result?.PlainLyrics);
     }
@@ -50,7 +50,7 @@ public sealed class ProtocolLyricsChoiceResolutionTests
             ImmutableHashSet<string>.Empty, "lossless", .07));
         var providers = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
         providers.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Lyrics)).Returns(["backend", "spotify", "lrclib"]);
-        providers.Setup(item => item.GetHouseholdLyricsAsync(context, "spotify", "exact", ProviderLyricsFormat.LineTimed,
+        providers.Setup(item => item.GetHouseholdLyricsAsync(context, "spotify", "4cOdK2wGLETKBW3PvgPWqT", ProviderLyricsFormat.LineTimed,
             "Fixture", It.IsAny<IReadOnlyList<string>>(), "Album", 120, null)).ReturnsAsync(new ProviderLyricsResult(
                 ProviderLyricsAvailabilityState.Available, "spotify", ProviderLyricsFormat.PlainText, "Shared chosen words"));
         var nativeCalls = 0;
@@ -97,7 +97,7 @@ public sealed class ProtocolLyricsChoiceResolutionTests
         var preference = new RecordingLyricsChoice(Guid.CreateVersion7(), recording,
             personal ? context.Principal!.UserId : null, "lrclib", 2);
         var choices = Choices(context, recording, new(personal ? preference : null, personal ? null : preference));
-        var result = await Resolver(provider, choices).FindAsync(context, Song(recording), "source", "spotify", "exact");
+        var result = await Resolver(provider, choices).FindAsync(context, Song(recording), "source", "spotify", "4cOdK2wGLETKBW3PvgPWqT");
         Assert.Equal("lrclib", result?.Source);
         Assert.Equal("Chosen plain words", result?.PlainLyrics);
         provider.Verify(item => item.GetLyricsAsync(context, "spotify", It.IsAny<string>(), It.IsAny<ProviderLyricsFormat?>(),
@@ -112,7 +112,7 @@ public sealed class ProtocolLyricsChoiceResolutionTests
         var recording = Guid.CreateVersion7();
         var choices = Choices(context, recording, new(new(Guid.CreateVersion7(), recording, context.Principal!.UserId, "lrclib", 2), null));
         var provider = Providers(context, false);
-        var result = await Resolver(provider, choices).FindAsync(context, Song(recording), "source", "spotify", "exact");
+        var result = await Resolver(provider, choices).FindAsync(context, Song(recording), "source", "spotify", "4cOdK2wGLETKBW3PvgPWqT");
         Assert.Equal("spotify", result?.Source);
         choices.Verify(item => item.GetAsync(context, recording), Times.Once);
         choices.VerifyNoOtherCalls();
@@ -134,7 +134,7 @@ public sealed class ProtocolLyricsChoiceResolutionTests
                 { [ProviderCapabilityKind.Lyrics] = ["spotify", "lrclib"] }.ToImmutableDictionary(),
                 ImmutableHashSet.Create("lrclib"), "lossless", .07));
         var result = await new ProtocolLyricsResolver(provider.Object, NullLogger<ProtocolLyricsResolver>.Instance,
-            effectivePolicies: policies.Object, choices: choices.Object).FindAsync(context, Song(recording), "source", "spotify", "exact");
+            effectivePolicies: policies.Object, choices: choices.Object).FindAsync(context, Song(recording), "source", "spotify", "4cOdK2wGLETKBW3PvgPWqT");
         Assert.Equal("spotify", result?.Source);
         provider.Verify(item => item.GetLyricsAsync(context, "lrclib", It.IsAny<string>(), It.IsAny<ProviderLyricsFormat?>(),
             It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(), It.IsAny<string>(), It.IsAny<int?>(), null), Times.Never);
@@ -172,7 +172,7 @@ public sealed class ProtocolLyricsChoiceResolutionTests
         identities.Setup(item => item.ResolveRecordingAsync(context.Actor!, recording.ToString("D"), context.CancellationToken))
             .ThrowsAsync(new HttpRequestException());
         var result = await new ProtocolLyricsResolver(Providers(context, true).Object, NullLogger<ProtocolLyricsResolver>.Instance,
-            choices: choices.Object, identities: identities.Object).FindAsync(context, Song(recording), "source", "spotify", "exact");
+            choices: choices.Object, identities: identities.Object).FindAsync(context, Song(recording), "source", "spotify", "4cOdK2wGLETKBW3PvgPWqT");
         Assert.Equal("lrclib", result?.Source);
         Assert.Equal("Chosen plain words", result?.PlainLyrics);
     }
@@ -183,7 +183,7 @@ public sealed class ProtocolLyricsChoiceResolutionTests
         var context = Context();
         var choices = new Mock<IRecordingLyricsChoices>(MockBehavior.Strict);
         var provider = Providers(context, true);
-        var result = await Resolver(provider, choices).FindAsync(context, Song(null), Guid.CreateVersion7().ToString("D"), "spotify", "exact");
+        var result = await Resolver(provider, choices).FindAsync(context, Song(null), Guid.CreateVersion7().ToString("D"), "spotify", "4cOdK2wGLETKBW3PvgPWqT");
         Assert.Equal("spotify", result?.Source);
         choices.VerifyNoOtherCalls();
     }
@@ -217,7 +217,7 @@ public sealed class ProtocolLyricsChoiceResolutionTests
         Album = "Album",
         Duration = 120,
         ExternalProvider = "spotify",
-        ExternalId = "exact"
+        ExternalId = "4cOdK2wGLETKBW3PvgPWqT"
     };
     private static ProtocolExecutionContext Context() => new(ProtocolKind.Jellyfin, "backend", "listener",
         new AllstarrPrincipal(Guid.CreateVersion7(), "jellyfin", "backend", "listener", "Listener", false),
