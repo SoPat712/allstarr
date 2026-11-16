@@ -179,8 +179,8 @@
     --md-sys-color-on-error: #690005;
     --md-sys-color-error-container: #93000a;
     --md-sys-color-on-error-container: #ffdad6;
-    --color-danger-tonal: color-mix(in srgb, var(--md-sys-color-error) 16%, transparent);
-    --color-on-danger-tonal: var(--md-sys-color-error);
+    --color-danger-tonal: var(--md-sys-color-error);
+    --color-on-danger-tonal: var(--md-sys-color-on-error);
     --md-sys-color-surface: #111318;
     --md-sys-color-surface-container-lowest: #0c0e13;
     --md-sys-color-surface-container-low: #1a1c20;
