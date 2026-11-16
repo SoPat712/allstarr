@@ -154,6 +154,25 @@ public sealed class ProviderAccountCheckRunnerTests
     }
 
     [Fact]
+    public async Task OnePassingFailureOfAHealthySourceIsCheckedAgainBeforeItShowsAsFailing()
+    {
+        await using var database = await SqliteTestDatabase.CreateAsync();
+        var factory = new ProviderCheckServiceTests.Factory(database.Options);
+        var time = new ManualTimeProvider();
+        var config = Config("lrclib");
+        var handler = new Handler();
+        var history = new ProviderCheckHistory(factory, time);
+        var runner = Runner(factory, Manager(config, handler, time), history, config, time);
+        Assert.True(await runner.SweepAsync(default));
+        time.Advance(TimeSpan.FromMinutes(1));
+        handler.Failures = ProviderDiagnosticSamples.SourceFailureThreshold;
+        Assert.True(await runner.SweepAsync(default));
+        Assert.Equal(ProviderHealthState.Healthy, Assert.Single(await history.ReadLatestAsync(default)).Status.Health);
+        await using var db = factory.CreateDbContext();
+        Assert.Empty(await db.AuditEvents.Where(row => row.Action == "provider-degraded").ToListAsync());
+    }
+
+    [Fact]
     public async Task FirstAutomaticFailureAfterAManualSuccess_ProducesOneNotice()
     {
         await using var database = await SqliteTestDatabase.CreateAsync();
@@ -615,11 +634,12 @@ public sealed class ProviderAccountCheckRunnerTests
     private sealed class Handler : HttpMessageHandler
     {
         public bool Healthy = true;
+        public int Failures;
         public List<string> Paths = [];
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token)
         {
             Paths.Add(request.RequestUri!.Host + request.RequestUri.AbsolutePath);
-            return Task.FromResult(new HttpResponseMessage(Healthy ? HttpStatusCode.OK : HttpStatusCode.ServiceUnavailable)
+            return Task.FromResult(new HttpResponseMessage(Healthy && Interlocked.Decrement(ref Failures) < 0 ? HttpStatusCode.OK : HttpStatusCode.ServiceUnavailable)
             { Content = new StringContent(request.RequestUri.Host == "lrclib.net" ? "{\"plainLyrics\":\"Words\"}" : "{\"data\":[{\"id\":3135556}]}") });
         }
     }

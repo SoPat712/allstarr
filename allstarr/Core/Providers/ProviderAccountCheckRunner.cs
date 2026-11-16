@@ -92,42 +92,53 @@ public sealed class ProviderAccountCheckRunner(
                 }
                 var key = account == null ? ProviderRuntimeStatusKey.CreateAccountFree(target.Status.Provider, target.Status.Capability) :
                     ProviderRuntimeStatusKey.CreateManaged(target.Status.Provider, target.Status.Capability, account.Id);
-                ProviderCheckResult result;
-                var downloadBacked = key.Capability == ProviderCapabilities.Streaming && media != null &&
-                    registry?.TryGetCapability<IProviderStreamingCapability>(key.Provider, ProviderCapabilityKind.Streaming, out var streaming) == true &&
-                    streaming is IProviderDownloadStreamingCapability;
-                var checkTimeout = timeout;
-                if (downloadBacked)
+                async Task<ProviderCheckResult> CheckOnceAsync()
                 {
-                    var options = new ProtocolExecutionOptions();
-                    configuration.GetSection(ProtocolExecutionOptions.SectionName).Bind(options);
-                    checkTimeout = options.GetDownloadDiagnosticTimeout();
-                }
-                using var deadline = new CancellationTokenSource(checkTimeout, time);
-                using var linked = CancellationTokenSource.CreateLinkedTokenSource(token, deadline.Token);
-                try
-                {
-                    var check = CheckAsync(key, account, target.Status, correlation, linked.Token);
-                    result = downloadBacked ? await check.WaitAsync(linked.Token) : await check;
-                }
-                catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
-                catch (OperationCanceledException) when (downloadBacked && deadline.IsCancellationRequested)
-                {
-                    result = new(key, account?.Revision, target.Status with
+                    var downloadBacked = key.Capability == ProviderCapabilities.Streaming && media != null &&
+                        registry?.TryGetCapability<IProviderStreamingCapability>(key.Provider, ProviderCapabilityKind.Streaming, out var streaming) == true &&
+                        streaming is IProviderDownloadStreamingCapability;
+                    var checkTimeout = timeout;
+                    if (downloadBacked)
                     {
-                        Health = ProviderHealthState.Unknown,
-                        TestedAt = time.GetUtcNow(),
-                        ReasonCode = "sample-unavailable"
-                    });
-                }
-                catch (Exception exception)
-                {
-                    result = new(key, account?.Revision, target.Status with
+                        var options = new ProtocolExecutionOptions();
+                        configuration.GetSection(ProtocolExecutionOptions.SectionName).Bind(options);
+                        checkTimeout = options.GetDownloadDiagnosticTimeout();
+                    }
+                    using var deadline = new CancellationTokenSource(checkTimeout, time);
+                    using var linked = CancellationTokenSource.CreateLinkedTokenSource(token, deadline.Token);
+                    try
                     {
-                        Health = ProviderHealthState.Degraded,
-                        TestedAt = time.GetUtcNow(),
-                        ReasonCode = exception is OperationCanceledException ? "timeout" : "unreachable"
-                    });
+                        var check = CheckAsync(key, account, target.Status, correlation, linked.Token);
+                        return downloadBacked ? await check.WaitAsync(linked.Token) : await check;
+                    }
+                    catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
+                    catch (OperationCanceledException) when (downloadBacked && deadline.IsCancellationRequested)
+                    {
+                        return new(key, account?.Revision, target.Status with
+                        {
+                            Health = ProviderHealthState.Unknown,
+                            TestedAt = time.GetUtcNow(),
+                            ReasonCode = "sample-unavailable"
+                        });
+                    }
+                    catch (Exception exception)
+                    {
+                        return new(key, account?.Revision, target.Status with
+                        {
+                            Health = ProviderHealthState.Degraded,
+                            TestedAt = time.GetUtcNow(),
+                            ReasonCode = exception is OperationCanceledException ? "timeout" : "unreachable"
+                        });
+                    }
+                }
+                var result = await CheckOnceAsync();
+                // A healthy source that fails once for a passing reason is checked again before it shows as failing.
+                if (result.Status.Health == ProviderHealthState.Degraded && target.Status.Health == ProviderHealthState.Healthy &&
+                    result.Status.ReasonCode is "timeout" or "unreachable" or "service_unavailable" or "transient-failure" or "rate-limited" or
+                        "lyrics-upstream-busy-or-timed-out")
+                {
+                    await Task.Delay(pause, time, token);
+                    result = await CheckOnceAsync();
                 }
                 result = result with
                 {
