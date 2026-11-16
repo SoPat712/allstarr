@@ -55,7 +55,7 @@ for (const width of [1280, 390]) {
     await appearance(page, width, "dark");
     const calls = await fixture(page);
     await page.goto("/#/library/kept");
-    const add = page.getByRole("button", { name: "Add selected to library", exact: true });
+    const add = page.getByRole("button", { name: "Choose songs to add", exact: true });
     await expect(add).toBeDisabled(); await expect(add).toHaveAttribute("title", "Adding to your library isn't set up");
     await page.getByRole("button", { name: "Actions for Check", exact: true }).click();
     await expect(page.getByRole("menuitem", { name: "Add to library", exact: true })).toHaveAttribute("aria-disabled", "true");

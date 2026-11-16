@@ -102,7 +102,7 @@ test("opens a kept song and starts the whole album with the real context", async
 test("kept selections survive a change to search filters", async ({ page }) => {
   const mutations = await mockPromotions(page);
   await page.goto("/#/library/kept");
-  await page.getByRole("button", { name: "Add selected to library", exact: true }).click();
+  await page.getByRole("button", { name: "Choose songs to add", exact: true }).click();
   await page.getByRole("checkbox", { name: "Select Backseat Freestyle", exact: true }).click();
   await page.getByRole("button", { name: "Actions for kept songs", exact: true }).click();
   await page.getByRole("menuitem", { name: "Search and sort", exact: true }).click();
@@ -117,7 +117,7 @@ test("kept selections survive a change to search filters", async ({ page }) => {
   await expect(page.getByRole("checkbox", { name: "Select Backseat Freestyle", exact: true })).toBeChecked();
   await page.getByRole("searchbox", { name: "Filter kept songs", exact: true }).fill("Nicole");
   await expect(rows).toHaveCount(1);
-  await page.getByRole("button", { name: "Add selected to library", exact: true }).click();
+  await page.getByRole("button", { name: "Add 1 to library", exact: true }).click();
   const dialog = page.getByRole("alertdialog", { name: "Add selected albums to your library?", exact: true });
   await expect(dialog).toContainText("1 selected song");
   await dialog.getByRole("button", { name: "Add to library", exact: true }).click();

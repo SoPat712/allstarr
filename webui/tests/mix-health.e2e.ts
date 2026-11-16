@@ -29,10 +29,10 @@ for (const width of [1280, 390]) for (const theme of ["dark", "light"] as const)
     await page.goto("/#/library/playlists");
     const rows = page.locator(".playlist-row");
     await expect(rows).toHaveCount(4);
-    await expect(rows.filter({ hasText: "Heavy Rotation" }).locator(".state-pill")).toHaveText("Healthy");
+    await expect(rows.filter({ hasText: "Heavy Rotation" }).locator(".state-pill")).toHaveCount(0);
     await expect(rows.filter({ hasText: "Blend 1" }).locator(".state-pill")).toHaveText("Updating");
     await expect(rows.filter({ hasText: "Workout" }).locator(".state-pill")).toHaveText("Needs a look");
-    await expect(rows.filter({ hasText: "Discover Weekly" }).locator(".state-pill")).toHaveText("Healthy");
+    await expect(rows.filter({ hasText: "Discover Weekly" }).locator(".state-pill")).toHaveCount(0);
     await expect(page.getByRole("radio", { name: "Healthy 2", exact: true })).toBeVisible();
     await expect(page.getByRole("radio", { name: "Needs a look 1", exact: true })).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);

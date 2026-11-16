@@ -64,6 +64,14 @@ describe("mix requests", () => {
     const provider = new URL(fetch.mock.calls.find(([path]) => path.includes("/provider?"))![0], "http://localhost");
     expect(provider.searchParams.get("answer")).toBe("fast");
   });
+  it("leaves room for service songs when the library has many matches", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (path: string) => Response.json({ tracks: path.includes("/local?")
+      ? Array.from({ length: 8 }, (_, index) => ({ id: `${index}`, backendItemId: `local/${index}`, title: `Demo ${index}` }))
+      : Array.from({ length: 6 }, (_, index) => ({ externalProvider: "catalog", externalId: `${index}`, title: `Hit ${index}` })) })));
+    const rows = (await mixes.seeds("charli")).slice(0, 8);
+    expect(rows.filter(row => row.id.startsWith("local/"))).toHaveLength(4);
+    expect(rows.filter(row => row.id.startsWith("ext-"))).toHaveLength(4);
+  });
   it("asks match review searches for every service", async () => {
     const fetch = vi.fn(async (_path: string) => Response.json({ tracks: [], providers: [] })); vi.stubGlobal("fetch", fetch);
     await matchReview.searchProviders("song", "snapshot", true);

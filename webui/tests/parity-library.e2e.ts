@@ -271,7 +271,7 @@ test("Cached and Kept keep media facts and actions readable on mobile", async ({
   await expect(panel.getByRole("link", { name: "Download", exact: true })).toHaveAttribute("href", /downloads\/file/);
   await expectContainedMobileGeometry(page);
   await panel.getByRole("button", { name: "Close", exact: true }).click();
-  await kept.getByRole("button", { name: "Add selected to library", exact: true }).click();
+  await kept.getByRole("button", { name: "Choose songs to add", exact: true }).click();
   await expect(row.getByRole("checkbox", { name: `Select ${title}`, exact: true })).toBeVisible();
   await expectReadableRow();
   await expect(row.getByRole("link", { name: "Download", exact: true })).toHaveAttribute("href", /downloads\/file/);

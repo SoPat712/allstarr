@@ -198,7 +198,7 @@ for (const width of [320, 390]) test(`kept actions fit with wider text at ${widt
   await page.goto("/#/library/kept");
   const opener = page.getByRole("button", { name: "Open song details for Take On Me", exact: true });
   await expect(opener).toBeVisible();
-  await widenText(page.getByRole("button", { name: "Add selected to library", exact: true }));
+  await widenText(page.getByRole("button", { name: "Choose songs to add", exact: true }));
   await expectContainedMobileGeometry(page);
   await opener.focus();
   await opener.press("Enter");
@@ -222,8 +222,8 @@ for (const viewport of [{ width: 1280, theme: "light" }, { width: 1280, theme: "
     const list = page.getByRole("region", { name: "Kept songs", exact: true });
     await expectPageSurface(list);
     await expect(list.locator(".kept-song-group")).toHaveCount(3);
-    await expect(list.getByRole("button", { name: "Add selected to library", exact: true })).toBeVisible();
-    if (viewport.width === 1280) expect((await list.getByRole("button", { name: "Add selected to library", exact: true }).boundingBox())!.height).toBe(32);
+    await expect(list.getByRole("button", { name: "Choose songs to add", exact: true })).toBeVisible();
+    if (viewport.width === 1280) expect((await list.getByRole("button", { name: "Choose songs to add", exact: true }).boundingBox())!.height).toBe(32);
     await page.getByRole("button", { name: "Show 2 copies of Nicole Kidman", exact: true }).click();
     const copies = page.getByRole("table", { name: "Copies of Nicole Kidman", exact: true });
     await expect(copies.locator(".library-download-row")).toHaveCount(2);

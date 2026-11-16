@@ -2448,7 +2448,8 @@ export const mixes = {
   // The library answers in a moment while services can take seconds, so library rows are handed to onLibrary first.
   // The full list keeps those rows in place and adds service rows after them.
   seeds: async (query: string, onLibrary?: (rows: MixSeed[]) => void): Promise<MixSeed[]> => {
-    const library = matchReview.searchLocal(query, "").then(result => { const rows = uniqueSeeds(result.tracks.map(mixSeed)); onLibrary?.(rows); return rows; });
+    // The library answers first; it keeps half the list so songs from services always have room.
+    const library = matchReview.searchLocal(query, "").then(result => { const rows = uniqueSeeds(result.tracks.map(mixSeed)).slice(0, 4); onLibrary?.(rows); return rows; });
     const services = matchReview.searchProviders(query, "", false, true).then(result => result.tracks.map(mixSeed));
     const results = await Promise.allSettled([library, services]);
     if (results.every(result => result.status === "rejected")) throw new Error("Search unavailable");

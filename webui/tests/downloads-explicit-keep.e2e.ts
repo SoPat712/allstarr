@@ -480,7 +480,7 @@ for (const storage of ["cached", "kept"]) test(`Downloads have one outlined acti
   const list = storage === "cached" ? page.getByRole("table", { name: "Cached songs" }) : page.getByRole("region", { name: "Kept songs", exact: true });
   if (storage === "cached") await expect(list.locator("thead th")).toHaveText(["Song", "Source", "Quality", "Leaves cache", "Size", "Actions"]);
   else {
-    await expect(list.getByRole("button", { name: "Add selected to library", exact: true })).toBeVisible();
+    await expect(list.getByRole("button", { name: "Choose songs to add", exact: true })).toBeVisible();
     await expect(list.locator(".quality-labels")).toHaveText("FLAC 16/44.1");
     await expect(list.getByRole("columnheader", { name: "Kept by", exact: true })).toBeVisible();
     await list.getByRole("button", { name: "Open song details for Fixture Song", exact: true }).click();

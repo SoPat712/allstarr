@@ -690,13 +690,13 @@
           {#if isPlaylistMix(playlist)}
             <ItemRow title={playlist.name} subtitle={`Mix · in your apps · ${playlist.trackCount ?? "?"} ${playlist.trackCount === 1 ? "song" : "songs"}`} href={`#/for-you?mix=${encodeURIComponent(playlist.id)}`} actionLabel={`Open ${playlist.name} mix`} attention={needsLook(playlist)}>
               {#snippet leading()}<MediaArtwork class="playlist-art" url={`/api/admin/mixes/${encodeURIComponent(playlist.id)}/cover?v=${encodeURIComponent(playlist.updatedAt ?? playlist.recipeVersion ?? "")}`} />{/snippet}
-              {#snippet pill()}<StatePill tone={needsLook(playlist) ? "warn" : playlist.publication?.status === "updating" ? "info" : "ok"} text={rowState(playlist)} />{/snippet}
+              {#snippet pill()}{#if rowState(playlist) !== "Healthy"}<StatePill tone={needsLook(playlist) ? "warn" : playlist.publication?.status === "updating" ? "info" : "ok"} text={rowState(playlist)} />{/if}{/snippet}
               {#snippet menu()}<DropdownMenu.Root><DropdownMenu.Trigger class={buttonVariants({ variant: "text", size: "icon" })} aria-label={`More options for ${playlist.name}`}><MoreHorizontal size={18} /></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content preventScroll={false} class="bits-menu" align="end"><DropdownMenu.Item class="bits-menu-item library-danger" onSelect={() => { removeError = ""; removingMix = playlist; }}>Remove from my apps</DropdownMenu.Item></DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root>{/snippet}
             </ItemRow>
           {:else}
             <ItemRow title={playlist.name} subtitle={`${providerName(playlist.sourceProviderId)} → ${providerName(playlist.targetProtocol)} · ${countLabel(playlist.trackCount, "song")}${playlist.routeCoverage.some(route => ["local", playlist.targetProtocol].includes(route.providerId)) ? ` · ${playlist.routeCoverage.filter(route => ["local", playlist.targetProtocol].includes(route.providerId)).reduce((sum, route) => sum + route.count, 0)} from your library` : ""}${hasCopy(playlist) ? " · Your copy" : ""}${libraryNote(playlist)}`} actionLabel={`Open ${playlist.name} playlist details`} selected={playlist.id === selectedId} attention={needsLook(playlist)} onclick={event => void loadDetails(playlist.id, event.currentTarget as HTMLElement)}>
               {#snippet leading()}<MediaArtwork class="playlist-art" url={playlist.artworkUrl} />{/snippet}
-              {#snippet pill()}<StatePill tone={needsLook(playlist) ? "warn" : "ok"} text={rowState(playlist)} />{/snippet}
+              {#snippet pill()}{#if rowState(playlist) !== "Healthy"}<StatePill tone={needsLook(playlist) ? "warn" : "ok"} text={rowState(playlist)} />{/if}{/snippet}
               {#snippet menu()}{#if isServiceMix(playlist) || canRemovePlaylistFromApps(playlist)}
                 <DropdownMenu.Root>
                   <DropdownMenu.Trigger class={buttonVariants({ variant: "text", size: "icon" })} aria-label={`More options for ${playlist.name}`}><MoreHorizontal size={18} /></DropdownMenu.Trigger>

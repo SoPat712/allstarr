@@ -328,7 +328,7 @@
   .profile-toolbar { align-items: start; }
   .profile-choice { min-width: 0; max-width: 100%; }
   .save-status { min-height: 1.2em; }
-  .promotion-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-4); }
+  .promotion-columns { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 26rem), 1fr)); gap: var(--space-4); }
   .promotion-columns :global(.settings-row) { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) !important; }
   .naming-content { display: grid; gap: var(--space-3); padding: var(--space-1) var(--space-4) var(--space-4); }
   header p { margin: var(--space-2) 0 0; font-size: var(--text-xs); color: var(--color-ink-muted); }
@@ -348,7 +348,6 @@
   .error-location { display: block; color: var(--color-ink-muted); white-space: pre-wrap; overflow-wrap: anywhere; }
   .error-location mark { background: var(--md-sys-color-error-container); color: var(--md-sys-color-on-error-container); text-decoration: underline wavy; }
   .save-error { color: var(--danger); font-size: var(--text-sm); }
-  @media (max-width: 1100px) { .promotion-columns { grid-template-columns: minmax(0, 1fr); } }
   @media (max-width: 650px) {
     .promotion-columns :global(.settings-row) { grid-template-columns: minmax(0, 1fr) !important; }
     .naming-example { grid-template-columns: minmax(0, 1fr); gap: var(--space-1); }

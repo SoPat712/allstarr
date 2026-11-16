@@ -12,19 +12,12 @@ for (const width of [320, 390, 1280]) for (const theme of ["light", "dark"] as c
   expect(art!.width).toBe(96);
   expect(art!.x + art!.width).toBeLessThanOrEqual(title!.x);
   await expect(page.getByRole("dialog").getByRole("list", { name: "Songs", exact: true }).getByRole("listitem")).toHaveCount(8);
-  const expectAligned = async () => {
-    const dialog = page.getByRole("dialog");
-    const boxes = await Promise.all([dialog.getByRole("button", { name: "Add to apps", exact: true }), dialog.getByRole("button", { name: "Refresh mix", exact: true })].map(control => control.boundingBox()));
-    const centres = boxes.map(box => box!.y + box!.height / 2);
-    expect(Math.max(...centres) - Math.min(...centres)).toBeLessThanOrEqual(1);
-  };
-  await expectAligned();
   if (width <= 390) await expectContainedMobileGeometry(page);
   const before = await coverState(cover); await page.waitForTimeout(400); expect(await coverState(cover)).toEqual(before);
   const firstSong = page.getByRole("dialog").getByRole("list", { name: "Songs", exact: true }).getByRole("listitem").first();
   const songTop = (await firstSong.boundingBox())!.y;
   await capture(page, "blend-before-add", width, theme);
-  await page.getByRole("dialog").getByRole("button", { name: "Add to apps", exact: true }).click();
+  await page.getByRole("dialog").getByRole("switch", { name: "Show in my apps", exact: true }).click();
   await expect(page.getByRole("dialog").getByText("✓ In your apps", { exact: true })).toBeVisible();
   expect(await coverState(cover)).toEqual(before);
   if (width <= 390) await expectContainedMobileGeometry(page);

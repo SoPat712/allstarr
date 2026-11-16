@@ -181,7 +181,6 @@
   {/if}
   {#snippet footer()}{#if detail}<div class="mix-footer">
     {#if detail.mix.kind !== "custom" && detail.mix.kind !== "external"}<Button variant="outline" disabled={busy || throttled || Boolean(refreshJob)} onclick={() => void refresh()}>Refresh mix</Button>{/if}
-    {#if !showsInApps(detail.mix)}<Button disabled={busy || !detail.mix.appsAllowed} onclick={() => void showInApps(true)}>Add to apps</Button>{/if}
   </div>{/if}{/snippet}
 </SidePanel>
 <ConfirmDialog bind:open={deleteOpen} title="Delete mix?" description="This saved mix will be removed from your mixes and apps." confirmLabel="Delete mix" disabled={busy} closeOnConfirm={false} onConfirm={() => perform(async target => { await mixes.delete(target); if (id === target) close(); })} />
