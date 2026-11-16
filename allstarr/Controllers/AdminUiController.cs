@@ -124,16 +124,17 @@ public class AdminUiController : ControllerBase
             });
         }
 
+        var providers = BuildProviders(disabledProviders, originNames, policy);
         var schema = new AdminUiSchemaResponse
         {
             ActiveBackend = activeBackend,
             ListenersCanConnectOwnAccounts = _providerAccountOptions.ListenersCanConnectOwnAccounts,
             Routes = BuildRoutes(),
             Backends = BuildBackends(),
-            Providers = BuildProviders(disabledProviders, originNames, policy),
+            Providers = providers,
             ProviderSupportMatrix = CurrentProviderSupportCatalog.All.ToList(),
             MultiProviderCategories = ["metadata", "streaming", "download", "playlist", "lyrics", "enrichment"],
-            PriorityGroups = BuildPriorityGroups(policy),
+            PriorityGroups = BuildPriorityGroups(policy, providers.Select(provider => provider.Id).ToHashSet(StringComparer.OrdinalIgnoreCase)),
             ConfigSections = BuildConfigSections(),
             ExtensionStore = new AdminUiExtensionStore
             {
@@ -1915,7 +1916,7 @@ public class AdminUiController : ControllerBase
         return "available";
     }
 
-    private List<AdminUiPriorityGroup> BuildPriorityGroups(EffectiveProviderPolicySnapshot? policy)
+    private List<AdminUiPriorityGroup> BuildPriorityGroups(EffectiveProviderPolicySnapshot? policy, IReadOnlySet<string> known)
     {
         var activeBackend = _configuration.GetValue<string>("Backend:Type") ?? "Jellyfin";
         var pinnedLocalProvider = BuildPinnedLocalProvider(activeBackend);
@@ -1928,7 +1929,8 @@ public class AdminUiController : ControllerBase
                 "Orders sources among similarly relevant search results. Title, artist, and requested versions determine relevance. Playback uses Streaming and Download order below.",
                 "MULTI_PROVIDER_ENABLED_SEARCH",
                 pinnedProvider: null,
-                policy: policy),
+                policy: policy,
+                known: known),
             Priority(
                 ProviderCapabilityKind.Download,
                 "download",
@@ -1936,7 +1938,8 @@ public class AdminUiController : ControllerBase
                 "Download routes after the local library. Drag to change which source fills a missing track.",
                 null,
                 pinnedProvider: pinnedLocalProvider,
-                policy: policy),
+                policy: policy,
+                known: known),
             Priority(
                 ProviderCapabilityKind.Streaming,
                 "streaming",
@@ -1944,7 +1947,8 @@ public class AdminUiController : ControllerBase
                 "Stream routes after the local library. Drag to change which source plays a missing track.",
                 null,
                 pinnedProvider: pinnedLocalProvider,
-                policy: policy),
+                policy: policy,
+                known: known),
             Priority(
                 ProviderCapabilityKind.Playlist,
                 "playlist",
@@ -1952,7 +1956,8 @@ public class AdminUiController : ControllerBase
                 "Order used when fetching playlists and playlist tracks from each source.",
                 "MULTI_PROVIDER_ENABLED_PLAYLIST",
                 pinnedProvider: null,
-                policy: policy),
+                policy: policy,
+                known: known),
             Priority(
                 ProviderCapabilityKind.Lyrics,
                 "lyrics",
@@ -1960,7 +1965,8 @@ public class AdminUiController : ControllerBase
                 "Saved choices take precedence. Otherwise, word timing wins over line timing, then plain text. This order breaks ties.",
                 null,
                 pinnedProvider: null,
-                policy: policy)
+                policy: policy,
+                known: known)
         ];
     }
 
@@ -1993,7 +1999,8 @@ public class AdminUiController : ControllerBase
         string description,
         string? enabledEnvKey,
         AdminUiPinnedProvider? pinnedProvider,
-        EffectiveProviderPolicySnapshot? policy)
+        EffectiveProviderPolicySnapshot? policy,
+        IReadOnlySet<string> known)
     {
         var definition = ProviderOrderPolicyCatalog.Find(capability)!;
         var providers = (policy?.GetProviderOrder(capability) ??
@@ -2001,6 +2008,8 @@ public class AdminUiController : ControllerBase
                 .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
             .Select(allstarr.Core.Providers.AppleMusicKit.AppleMusicClient.NormalizeProviderId)
             .Distinct(StringComparer.OrdinalIgnoreCase)
+            // A saved order can still name a source that was removed; there is nothing left to order there.
+            .Where(providerId => known.Contains(providerId) || capability == ProviderCapabilityKind.Lyrics && providerId is "backend" or "kept")
             .ToList();
         if (_providerRegistry != null)
         {

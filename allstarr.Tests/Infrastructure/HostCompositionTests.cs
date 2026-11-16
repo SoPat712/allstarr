@@ -439,7 +439,9 @@ public sealed class HostCompositionTests
             item => item.Capability,
             item => (item.Capability == ProviderCapabilityKind.Streaming
                 ? new[] { "qobuz", "deezer" }
-                : item.DefaultValue.Split(',')).ToImmutableArray());
+                : item.Capability == ProviderCapabilityKind.Lyrics
+                    ? item.DefaultValue.Split(',').Append("removed-source").ToArray()
+                    : item.DefaultValue.Split(',')).ToImmutableArray());
         var policy = new EffectiveProviderPolicySnapshot(
             orders,
             ImmutableHashSet.Create(StringComparer.OrdinalIgnoreCase, "deezer"),
@@ -460,6 +462,7 @@ public sealed class HostCompositionTests
         Assert.Null(lyrics.PinnedProvider);
         Assert.Equal("backend", lyrics.Providers[0]);
         Assert.Equal("kept", lyrics.Providers[1]);
+        Assert.DoesNotContain("removed-source", lyrics.Providers);
         Assert.DoesNotContain(schema.Providers, item => item.Id is "backend" or "kept");
         Assert.NotNull(streaming.PinnedProvider);
     }
