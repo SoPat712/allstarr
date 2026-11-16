@@ -266,8 +266,14 @@ for (const { width, theme } of modes) {
     await appearance(page, width, theme); const state = await mockForYou(page); await openHome(page);
     await expect(page.getByRole("region", { name: "Page status", exact: true })).toContainText("mixes ready");
     const made = page.getByRole("region", { name: "Made for you", exact: true });
+    const waiting = state.cards.filter(card => card.section === "madeForYou" && !card.inApps).length;
     await made.getByRole("button", { name: "Add all to apps", exact: true }).click();
+    const confirm = page.getByRole("alertdialog", { name: `Add ${waiting} ${waiting === 1 ? "mix" : "mixes"} to your apps?`, exact: true });
+    await expect(confirm).toBeVisible();
+    expect(state.calls.filter(call => call.path.endsWith("/in-apps"))).toHaveLength(0);
+    await confirm.getByRole("button", { name: `Add ${waiting}`, exact: true }).click();
     await expect.poll(() => state.cards.filter(card => card.section === "madeForYou" && !card.inApps).length).toBe(0);
+    await expect(page.getByText(`${waiting} ${waiting === 1 ? "mix" : "mixes"} added to your apps`, { exact: true })).toBeVisible();
     await shot(page, "for-you", width, theme);
     await page.getByRole("button", { name: "Start a mix", exact: true }).click();
     await expect(page.getByRole("dialog", { name: "Start a mix", exact: true })).toBeVisible();

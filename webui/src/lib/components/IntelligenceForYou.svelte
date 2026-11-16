@@ -17,6 +17,7 @@
   import EmptyState from "$lib/components/patterns/EmptyState.svelte";
   import { serviceCards, allServiceCards, addableFirst } from "$lib/for-you";
   import MixShelf from "$lib/components/MixShelf.svelte";
+  import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
   import IntelligenceHistoryImports from "$lib/components/IntelligenceHistoryImports.svelte";
   let { administrator = false, listenerId = "", listenerName = "", initialImport = false }: { initialImport?: boolean; administrator?: boolean; listenerId?: string; listenerName?: string } = $props();
   let startOpen = $state(false);
@@ -108,36 +109,63 @@
     }
     void poll();
   }
-  async function addAll(shelf: MixCard[]) {
-    for (const card of shelf.filter(item => !item.inApps && !item.added && item.appsAllowed && item.readiness.ready)) {
+  const addable = (card: MixCard) => !card.inApps && !card.added && card.appsAllowed && card.readiness.ready;
+  let addAllCards = $state<MixCard[]>([]), addAllOpen = $state(false);
+  function askAddAll(shelf: MixCard[]) {
+    addAllCards = shelf.filter(addable);
+    if (addAllCards.length) addAllOpen = true;
+  }
+  // Adds one mix without reloading the page; the caller reloads once when it is done.
+  async function addRequest(selected: MixCard) {
+    if (selected.id.startsWith("add:")) {
+      const [, source, kind] = selected.id.split(":");
+      const card = await mixes.external(source, kind);
       if (disposed) return;
-      if (!await add(card)) break;
+      addedSuggestions = [...addedSuggestions, selected.id];
+      cards = [...cards.filter(item => item.id !== card.id), card];
+      if (card.initialJobId) watchExternal(card, card.initialJobId);
+    } else {
+      await mixes.add(selected.id);
+      if (disposed) return;
+      cards = cards.map(card => card.id === selected.id ? { ...card, inApps: true, added: true } : card);
     }
   }
+  const addError = (cause: unknown) => cause instanceof ApiError && cause.status === 403 ? "Your admin hasn't allowed adding mixes."
+    : cause instanceof Error ? cause.message : "This mix could not be added. Try again later.";
   async function add(selected: MixCard) {
     if (busy || !selected.appsAllowed) return;
     busy = selected.id;
     try {
-      if (selected.id.startsWith("add:")) {
-        const [, source, kind] = selected.id.split(":");
-        const card = await mixes.external(source, kind);
-        if (disposed) return;
-        addedSuggestions = [...addedSuggestions, selected.id];
-        cards = [...cards.filter(item => item.id !== card.id), card];
-        if (card.initialJobId) watchExternal(card, card.initialJobId);
-      } else {
-        await mixes.add(selected.id);
-        if (disposed) return;
-        cards = cards.map(card => card.id === selected.id ? { ...card, inApps: true, added: true } : card);
-      }
+      await addRequest(selected);
       // The card already shows its new state; the refresh below must not label it "Removing…".
       busy = "";
       await pending;
       if (!disposed) await load();
-      return true;
     }
-    catch (cause) { if (!disposed) toast.error(cause instanceof ApiError && cause.status === 403 ? "Your admin hasn't allowed adding mixes." : cause instanceof Error ? cause.message : "This mix could not be added. Try again later."); return false; }
+    catch (cause) { if (!disposed) toast.error(addError(cause)); }
     finally { busy = ""; }
+  }
+  // Adds every chosen mix in turn and reloads once; one mix failing doesn't stop the rest.
+  async function addAll() {
+    const chosen = addAllCards;
+    addAllOpen = false;
+    if (busy || !chosen.length) return;
+    const failed: string[] = [];
+    let denied = false;
+    for (const card of chosen) {
+      if (disposed) return;
+      busy = card.id;
+      try { await addRequest(card); }
+      catch (cause) { failed.push(mixName(card.name)); denied ||= cause instanceof ApiError && cause.status === 403; }
+    }
+    busy = "";
+    if (disposed) return;
+    const added = chosen.length - failed.length;
+    if (denied && !added) toast.error("Your admin hasn't allowed adding mixes.");
+    else if (failed.length) toast.error(`${countLabel(added, "mix", "mixes")} added. ${failed.join(", ")} could not be added. Try again later.`);
+    else toast.success(`${countLabel(added, "mix", "mixes")} added to your apps`);
+    await pending;
+    if (!disposed) await load();
   }
   async function remove(selected: MixCard) {
     if (busy) return;
@@ -174,10 +202,10 @@
     </section>{/if}
     {#if error}<ErrorState title="Couldn't load your mixes" detail={error} onretry={load} />{/if}
     {#if !error && !made.some(item => item.readiness.ready)}<EmptyState title="Your mixes will appear here" description="Your mixes will appear here. Play some music, or import your history to start right away." />{/if}
-    <MixShelf title="Made for you" cards={made} onaddall={() => void addAll(made)} onopen={openMix} {busy} onadd={card => void add(card)} onremove={card => void remove(card)} />
-    <MixShelf title="Moods" cards={moods} onaddall={() => void addAll(moods)} onopen={openMix} {busy} onadd={card => void add(card)} onremove={card => void remove(card)} />
-    {#if custom.length}<MixShelf title="Your mixes" cards={custom} onaddall={() => void addAll(custom)} onopen={openMix} {busy} onadd={card => void add(card)} onremove={card => void remove(card)} />{/if}
-    {#if services.length}<MixShelf title="From your services" columns={5} cards={servicesExpanded ? allServiceCards(services) : services} expanded={servicesExpanded} onseeall={() => servicesExpanded = !servicesExpanded} onaddall={() => void addAll(services)} additions={suggestions.map(item => item.id)} onopen={openMix} {busy} onadd={card => void add(card)} onremove={card => void remove(card)} />{/if}
+    <MixShelf title="Made for you" cards={made} onaddall={() => askAddAll(made)} onopen={openMix} {busy} onadd={card => void add(card)} onremove={card => void remove(card)} />
+    <MixShelf title="Moods" cards={moods} onaddall={() => askAddAll(moods)} onopen={openMix} {busy} onadd={card => void add(card)} onremove={card => void remove(card)} />
+    {#if custom.length}<MixShelf title="Your mixes" cards={custom} onaddall={() => askAddAll(custom)} onopen={openMix} {busy} onadd={card => void add(card)} onremove={card => void remove(card)} />{/if}
+    {#if services.length}<MixShelf title="From your services" columns={5} cards={servicesExpanded ? allServiceCards(services) : services} expanded={servicesExpanded} onseeall={() => servicesExpanded = !servicesExpanded} onaddall={() => askAddAll(services)} additions={suggestions.map(item => item.id)} onopen={openMix} {busy} onadd={card => void add(card)} onremove={card => void remove(card)} />{/if}
     {#if releases.length}<MixShelf title="New releases" columns={6} cards={releases} albumArt seeAll="#/for-you?section=releases" onopen={card => { void goto(`#/for-you?section=releases&release=${encodeURIComponent(card.id)}`, { keepFocus: true, noScroll: true }); }} />{/if}
     {#if cards.length && !cards.some(card => card.appsAllowed)}<p class="muted apps-hint">Your admin hasn't allowed adding mixes.</p>{/if}
   {/if}
@@ -187,6 +215,9 @@
   <header><div><Dialog.Title>Bring in your history</Dialog.Title><Dialog.Description>Start your mixes with the music you've already played.</Dialog.Description></div><Dialog.Close type="button" class="icon-button" aria-label="Close history">×</Dialog.Close></header>
   <IntelligenceHistoryImports onchanged={async () => { await pending; await load(); }} /><footer class="dialog-actions"><Dialog.Close type="button" class={buttonVariants({ variant: "secondary" })}>Done</Dialog.Close></footer>
 </Dialog.Content></Dialog.Portal></Dialog.Root>
+<ConfirmDialog bind:open={addAllOpen} title={`Add ${countLabel(addAllCards.length, "mix", "mixes")} to your apps?`}
+  description={`${addAllCards.map(card => mixName(card.name)).join(", ")}. Each appears as a playlist in your music apps; you can remove any of them later in Library.`}
+  confirmLabel={`Add ${addAllCards.length}`} confirmVariant="default" onConfirm={addAll} />
 <style>
   .for-you { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--section-gap); min-width: 0; }
   .for-you > :global(section) { min-width: 0; }
