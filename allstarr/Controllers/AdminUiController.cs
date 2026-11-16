@@ -986,9 +986,11 @@ public class AdminUiController : ControllerBase
             var actor = Guid.TryParse(item.ActorUserId, out var actorId) ? actors.GetValueOrDefault(actorId) : null;
             var library = item.Label == "library.index" || item.Action == "library.index" || item.Kind == "library";
             var jobType = item.Kind == "job" ? item.Action ?? item.Label : item.Label;
+            // Library refreshes and health checks run for the whole household, so they are Allstarr's work, not the job owner's.
+            var maintenance = library || jobType == HealthSmokeService.JobType;
             return item with
             {
-                ActorDisplayName = item.ActorUserId == null ? "Household" : ActivityPresentation.UserName(actor?.DisplayName),
+                ActorDisplayName = item.ActorUserId == null ? "Household" : maintenance ? "Allstarr" : ActivityPresentation.UserName(actor?.DisplayName),
                 Source = library ? ActivityPresentation.LibraryName(actor?.BackendType) : item.Kind == "job" && item.ProviderId == null
                     ? ActivityPresentation.JobSource(jobType, actor?.BackendType) : item.Source,
                 ProviderId = library ? "library" : item.ProviderId
@@ -1179,9 +1181,11 @@ public class AdminUiController : ControllerBase
             _ => "finished"
         };
         var target = display.TargetName ?? display.DisplayName;
+        var reason = ActivityPresentation.SafeText(attempt?.ErrorMessage) is { } text ? $" {text}" : string.Empty;
+        // A first try that worked needs no attempt number; retries and failures keep it.
+        if (attempt?.AttemptNumber == 1 && outcome == "completed") return $"{target}: completed.{reason}";
         var number = attempt == null ? "Attempt" : $"Attempt {attempt.AttemptNumber}";
-        return $"{target}: {number.ToLowerInvariant()} {outcome}." +
-            (ActivityPresentation.SafeText(attempt?.ErrorMessage) is { } reason ? $" {reason}" : string.Empty);
+        return $"{target}: {number.ToLowerInvariant()} {outcome}.{reason}";
     }
 
     private static string LibraryScanDetail(string json)
