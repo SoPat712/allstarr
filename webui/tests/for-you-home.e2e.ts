@@ -37,6 +37,15 @@ for (const width of [390, 899, 900, 1280]) test(`Mix shelves keep one row and ev
   }
 });
 
+test("Mixes show without waiting for new releases", async ({ page }) => {
+  await mockForYou(page);
+  await page.route("**/api/admin/releases?*", () => { /* Never answers, like a slow release check. */ });
+  await page.route("**/api/admin/releases", () => { /* Never answers, like a slow release check. */ });
+  await openHome(page);
+  await expect(page.getByRole("region", { name: "Made for you", exact: true }).locator(".mix-open").first()).toBeVisible();
+  await expect(page.getByRole("region", { name: "New releases", exact: true })).toHaveCount(0);
+});
+
 test("Checklist keeps history and dismissal without an admin publishing action", async ({ page }) => {
   const state = await mockForYou(page, { admin: true, publish: false, brandNew: true }); await openHome(page);
   await expect(page.getByText("Mixes are only visible here for now")).toHaveCount(0);

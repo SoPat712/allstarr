@@ -28,6 +28,8 @@
   }
   let cards = $state<MixCard[]>([]), releases = $state<MixCard[]>([]), accounts = $state<PlaylistSourceAccount[]>([]), links = $state<PlaylistLink[]>([]);
   let status = $state<AudioMuseStatus | null>(null), loading = $state(true), error = $state("");
+  // Mixes show as soon as they arrive; the checklist and suggestions wait for the lists they read, so they never flicker.
+  let settled = $state(false);
   let servicesExpanded = $state(false);
   let hidden = $state(false), importOpen = $state(false), busy = $state("");
   let addedSuggestions = $state<string[]>([]), imported = $state(false);
@@ -44,7 +46,7 @@
   const dailyReady = $derived(imported || daily.length > 0 && daily.every(item => item.readiness.ready));
   const remaining = $derived(daily.find(item => !item.readiness.ready)?.readiness.message.match(/about (\d+) more/)?.[1]);
   const soundReady = $derived(status?.reason === null && status.analyzedSongs > 0);
-  const checklist = $derived(!hidden && (!dailyReady || !connected || administrator && !soundReady));
+  const checklist = $derived(settled && !hidden && (!dailyReady || !connected || administrator && !soundReady));
   const recipes = [
     { source: "listenbrainz", kind: "weekly-jams", name: "Weekly Jams", label: "ListenBrainz" },
     { source: "listenbrainz", kind: "weekly-exploration", name: "Weekly Exploration", label: "ListenBrainz" },
@@ -52,22 +54,21 @@
     { source: "lastfm", kind: "top", name: "Your top tracks", label: "Last.fm" },
     { source: "lastfm", kind: "similar", name: "Similar to your top tracks", label: "Last.fm" },
   ];
-  const suggestions = $derived(recipes.filter(recipe => !addedSuggestions.includes(`add:${recipe.source}:${recipe.kind}`) && accounts.some(account => account.scope === "personal" && account.providerId === recipe.source) && !links.some(link => link.enabled && link.sourceProviderId === recipe.source && link.sourcePlaylistId === (recipe.source === "listenbrainz" ? `createdfor:${recipe.kind}` : recipe.kind === "top" ? "top:1month:50" : recipe.kind))).map(recipe => ({ id: `add:${recipe.source}:${recipe.kind}`, kind: "external", name: recipe.name, description: `From ${recipe.label} · kept in sync`, section: "yourServices", source: recipe.source, sourcePlaylistId: recipe.source === "listenbrainz" ? `createdfor:${recipe.kind}` : recipe.kind === "top" ? "top:1month:50" : recipe.kind, sortOrder: 0, sourceLabel: recipe.label, recipeVersion: null, updatedAt: null, readiness: { ready: true, message: "Ready" }, inApps: false, appsAllowed: cards.some(card => card.appsAllowed), coverArtwork: [] }) satisfies MixCard));
+  const suggestions = $derived(!settled ? [] : recipes.filter(recipe => !addedSuggestions.includes(`add:${recipe.source}:${recipe.kind}`) && accounts.some(account => account.scope === "personal" && account.providerId === recipe.source) && !links.some(link => link.enabled && link.sourceProviderId === recipe.source && link.sourcePlaylistId === (recipe.source === "listenbrainz" ? `createdfor:${recipe.kind}` : recipe.kind === "top" ? "top:1month:50" : recipe.kind))).map(recipe => ({ id: `add:${recipe.source}:${recipe.kind}`, kind: "external", name: recipe.name, description: `From ${recipe.label} · kept in sync`, section: "yourServices", source: recipe.source, sourcePlaylistId: recipe.source === "listenbrainz" ? `createdfor:${recipe.kind}` : recipe.kind === "top" ? "top:1month:50" : recipe.kind, sortOrder: 0, sourceLabel: recipe.label, recipeVersion: null, updatedAt: null, readiness: { ready: true, message: "Ready" }, inApps: false, appsAllowed: cards.some(card => card.appsAllowed), coverArtwork: [] }) satisfies MixCard));
   const services = $derived(addableFirst(serviceCards(cards, suggestions)));
   async function load() {
     if (pending) return pending;
-    pending = (async () => {
-      const results = await Promise.allSettled([mixes.list(), playlistLinks.sources(), playlistLinks.list(), releaseInbox.get(), administrator ? audioMuse.status() : Promise.resolve(null), historyImports.list()] as const);
-      if (disposed) return;
-      const [mixResult, sourceResult, linkResult, releaseResult, soundResult, importResult] = results;
-      if (mixResult.status === "fulfilled") { cards = mixResult.value; error = ""; } else error = "Couldn't load your mixes. Try again.";
-      if (sourceResult.status === "fulfilled") accounts = sourceResult.value.accounts ?? [];
-      if (linkResult.status === "fulfilled") { links = linkResult.value.playlistLinks ?? []; addedSuggestions = []; }
-      if (importResult.status === "fulfilled") imported = importResult.value.some(item => importPhase(item) === "completed");
-      if (soundResult.status === "fulfilled") status = soundResult.value;
-      if (releaseResult.status === "fulfilled") releases = releaseResult.value.entries.slice(0, 8).map(entry => ({ id: entry.id, kind: "release", name: entry.title, description: `${entry.artist} · ${entry.type === "album" ? "Album" : entry.type === "single" ? "Single" : "Release"}${/^\d{4}-\d{2}-\d{2}$/.test(entry.releaseDate ?? "") ? ` · ${new Date(`${entry.releaseDate}T12:00:00`).toLocaleDateString(undefined, { weekday: "short" })}` : ""}`, section: "madeForYou", sortOrder: 0, sourceLabel: null, recipeVersion: null, updatedAt: null, readiness: { ready: true, message: "Ready" }, inApps: false, appsAllowed: false, coverArtwork: entry.artworkUrl ? [entry.artworkUrl] : [] }));
-      loading = false;
-    })().finally(() => { pending = null; });
+    const apply = <T,>(request: Promise<T>, use: (value: T) => void, failed?: () => void) =>
+      request.then(value => { if (!disposed) use(value); }, () => { if (!disposed) failed?.(); });
+    // Each part shows as soon as it answers, so mixes never wait for the slowest list (new releases).
+    pending = Promise.all([
+      apply(mixes.list(), value => { cards = value; error = ""; loading = false; }, () => { error = "Couldn't load your mixes. Try again."; loading = false; }),
+      apply(playlistLinks.sources(), value => accounts = value.accounts ?? []),
+      apply(playlistLinks.list(), value => { links = value.playlistLinks ?? []; addedSuggestions = []; }),
+      apply(historyImports.list(), value => imported = value.some(item => importPhase(item) === "completed")),
+      apply(administrator ? audioMuse.status() : Promise.resolve(null), value => status = value),
+      apply(releaseInbox.get(), value => releases = value.entries.slice(0, 8).map(entry => ({ id: entry.id, kind: "release", name: entry.title, description: `${entry.artist} · ${entry.type === "album" ? "Album" : entry.type === "single" ? "Single" : "Release"}${/^\d{4}-\d{2}-\d{2}$/.test(entry.releaseDate ?? "") ? ` · ${new Date(`${entry.releaseDate}T12:00:00`).toLocaleDateString(undefined, { weekday: "short" })}` : ""}`, section: "madeForYou", sortOrder: 0, sourceLabel: null, recipeVersion: null, updatedAt: null, readiness: { ready: true, message: "Ready" }, inApps: false, appsAllowed: false, coverArtwork: entry.artworkUrl ? [entry.artworkUrl] : [] }))),
+    ]).then(() => { if (!disposed) { loading = false; settled = true; } }).finally(() => { pending = null; });
     return pending;
   }
   $effect(() => { if (startQuery) void startMix(); });
