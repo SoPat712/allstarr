@@ -174,7 +174,21 @@ export function groupActivity(items: ActivityItem[]) {
         : `${activityHeadline(first)} · ${countLabel(count, unit)}`;
     } else consolidated.push(group);
   }
-  return consolidated;
+  // Library refreshes, scans and health checks repeat all day; while they keep succeeding the same way they fold into
+  // their latest line of the day, so what differs stands out.
+  const folded: ActivityGroup[] = [];
+  const routine = new Map<string, ActivityGroup>();
+  for (const group of consolidated) {
+    const first = group.entries[0];
+    const maintenance = first.kind === "library" || first.action === "library.index" || first.action === "health.smoke" || first.label === "health.smoke";
+    const key = maintenance && activityTone(groupOutcome(group.entries)) === "success"
+      ? [new Date(first.occurredAt).toDateString(), first.kind, first.label, first.action, first.source, first.providerId, first.severity, first.detail].join("|") : "";
+    const kept = key ? routine.get(key) : undefined;
+    if (!kept) { folded.push(group); if (key) routine.set(key, group); continue; }
+    kept.entries.push(...group.entries);
+    kept.title = `${activityHeadline(kept.entries[0])} · ${countLabel(new Set(kept.entries.map(entry => activityJobKey(entry) || entry.id)).size, "time")}`;
+  }
+  return folded;
 }
 
 function canConsolidate(left: ActivityItem[], right: ActivityItem[]) {
@@ -306,8 +320,8 @@ export function activityTone(state: string, severity = "info"): ActivityTone {
   const normalized = state.toLowerCase().replaceAll(/[-_ ]/g, "");
   if (["cancelled", "canceled", "superseded", "notchecked", "paused", "automatic"].includes(normalized)) return "neutral";
   if (["failed", "rejected", "unhealthy", "unresolved", "error", "blocked", "unauthorized"].includes(normalized)) return "danger";
-  if (normalized.startsWith("skipped") || normalized.startsWith("retry") || ["ambiguous", "partial", "partlychecked", "partiallysucceeded", "partialfailure", "conflict", "conflicted", "deferred", "interrupted", "suggested", "warning", "warn", "degraded", "needsattention", "needsreview", "sampleunavailable"].includes(normalized)) return "warning";
-  if (["accepted", "delivered", "healthy", "pinned", "succeeded", "success", "passed", "completed", "verified", "placed", "saved", "resolved", "ok", "updated", "released", "created", "enriched", "merged", "alreadylinked", "concurrentexisting", "rematched", "republished"].includes(normalized)) return "success";
+  if (normalized.startsWith("skipped") || normalized.startsWith("retry") || ["ambiguous", "partial", "partiallysucceeded", "partialfailure", "conflict", "conflicted", "deferred", "interrupted", "suggested", "warning", "warn", "degraded", "needsattention", "needsreview", "sampleunavailable"].includes(normalized)) return "warning";
+  if (["accepted", "delivered", "healthy", "pinned", "succeeded", "success", "passed", "partlychecked", "completed", "verified", "placed", "saved", "resolved", "ok", "updated", "released", "created", "enriched", "merged", "alreadylinked", "concurrentexisting", "rematched", "republished"].includes(normalized)) return "success";
   if (["running", "inprogress", "started", "pending", "waiting", "queued", "scheduled", "checking", "active"].includes(normalized)) return "accent";
   return severity.toLowerCase() === "error" ? "danger" : ["warning", "warn"].includes(severity.toLowerCase()) ? "warning" : "neutral";
 }

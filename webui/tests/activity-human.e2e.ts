@@ -58,7 +58,7 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     await page.addInitScript(value => localStorage.setItem("allstarr.theme", value), theme);
     const fixture = await mockActivity(page); await page.goto("/#/activity");
     const groups = page.locator(".event-log-group"); await expect(groups).toHaveCount(6);
-    const tones = ["success", "danger", "accent", "warning", "warning", "neutral"];
+    const tones = ["success", "danger", "accent", "warning", "success", "neutral"];
     const colors = [];
     for (let index = 0; index < tones.length; index++) {
       await expect(groups.nth(index).locator(".item-row .activity-status-icon")).toHaveAttribute("data-tone", tones[index]);

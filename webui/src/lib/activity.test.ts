@@ -65,6 +65,15 @@ describe("event log presentation", () => {
       .toBe("mixed");
   });
 
+  it("folds routine work that keeps succeeding into its latest line of the day", () => {
+    const run = (id: string, hour: string): ActivityItem => ({ id, kind: "job", source: "library", label: "library.index", action: "library.index",
+      state: "Succeeded", detail: "Library: completed.", occurredAt: `2026-07-27T${hour}:00:00Z`, jobId: `job-${id}`, actorUserId: "owner" });
+    const groups = groupActivity([run("1", "12"), { ...item("2", "Song A"), occurredAt: "2026-07-27T11:30:00Z" }, run("3", "11"), run("4", "10"),
+      { ...run("5", "09"), state: "Failed", detail: "Library: attempt 1 failed." }]);
+    expect(groups.map(group => group.entries.map(entry => entry.id))).toEqual([["1", "3", "4"], ["2"], ["5"]]);
+    expect(groups[0].title).toMatch(/· 3 times$/);
+  });
+
   it("retains loaded history while deduplicating live refreshes", () => {
     const current = Array.from({ length: 250 }, (_, index) =>
       ({ ...item(String(index), `Song ${index}`), occurredAt: `2026-07-26T${String(index % 24).padStart(2, "0")}:00:00Z` }));
@@ -259,10 +268,10 @@ it("uses meaningful outcome tones without marking cancelled or unknown work as f
 
 describe("Activity outcome tones", () => {
   const outcomes = {
-    success: ["Accepted", "Pinned", "Delivered", "Healthy", "Succeeded", "Success", "Passed", "Completed", "Verified", "Placed", "Saved", "Resolved", "Ok", "Updated", "Released", "Created", "Enriched", "Merged", "already-linked", "concurrent-existing", "Rematched", "Republished"],
+    success: ["Accepted", "Pinned", "Delivered", "Healthy", "Succeeded", "Success", "Passed", "partly_checked", "Completed", "Verified", "Placed", "Saved", "Resolved", "Ok", "Updated", "Released", "Created", "Enriched", "Merged", "already-linked", "concurrent-existing", "Rematched", "Republished"],
     danger: ["Failed", "Rejected", "Unhealthy", "Unresolved", "Error", "Blocked", "Unauthorized"],
     accent: ["Pending", "Running", "Started", "Waiting", "Queued", "Scheduled", "Checking", "Active", "In progress"],
-    warning: ["Skipped", "partly_checked", "PartiallySucceeded", "Conflicted", "Conflict", "Ambiguous", "Suggested", "Retrying", "RetryScheduled", "retry_scheduled", "Deferred", "Interrupted", "Partial", "partial-failure", "Warning", "Warn", "Degraded", "Needs attention", "Needs review", "sample-unavailable", "skipped_manual", "skipped_invalid", "skipped_notfound", "skipped_forbidden", "skipped_conflict", "skipped_revision_conflict", "retry_identity_unavailable", "retry_conflict", "retry_exception", "retry_local_library_unavailable"],
+    warning: ["Skipped", "PartiallySucceeded", "Conflicted", "Conflict", "Ambiguous", "Suggested", "Retrying", "RetryScheduled", "retry_scheduled", "Deferred", "Interrupted", "Partial", "partial-failure", "Warning", "Warn", "Degraded", "Needs attention", "Needs review", "sample-unavailable", "skipped_manual", "skipped_invalid", "skipped_notfound", "skipped_forbidden", "skipped_conflict", "skipped_revision_conflict", "retry_identity_unavailable", "retry_conflict", "retry_exception", "retry_local_library_unavailable"],
     neutral: ["Cancelled", "Superseded", "not_checked", "Not checked", "Paused", "Automatic", "Unknown", "Neutral", "Info", "Information", "Debug", "Recorded", "Mixed", ""],
   } as const;
   for (const [tone, states] of Object.entries(outcomes)) {
