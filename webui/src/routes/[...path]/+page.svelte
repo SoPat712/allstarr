@@ -454,14 +454,14 @@
   }
 
   async function disconnectSso() {
-    if (authBusy || !confirm("Disconnect SSO? You can still sign in with your media-server account.")) return;
+    if (authBusy || !confirm(`Disconnect ${oidc.displayName ?? "single sign-on"}? You can still sign in with your media-server account.`)) return;
     authBusy = true;
     authError = "";
     try {
       await adminOidc.unlink(oidc.csrfToken ?? "");
       await bootstrap();
     } catch (cause) {
-      authError = cause instanceof Error ? cause.message : "Could not disconnect SSO.";
+      authError = cause instanceof Error ? cause.message : "Could not disconnect single sign-on.";
     } finally {
       authBusy = false;
     }
@@ -611,6 +611,7 @@
             <strong>{session.user?.name}</strong>
             <small>{administrator ? "Administrator" : "Listener"}</small>
           </a>
+          {#if oidc.linked}<button class="profile-sso" type="button" disabled={authBusy} aria-label={`Disconnect ${oidc.displayName}`} onclick={() => void disconnectSso()}>{oidc.displayName} · Disconnect</button>{/if}
         </div>
         <button
           class="icon-button"
@@ -623,12 +624,6 @@
     </aside>
 
     <main class="workspace" id="main-workspace">
-      {#if oidc.linked}
-        <div class="flex items-center justify-end gap-3 p-2 text-sm">
-          <span class="text-ink-muted">{oidc.displayName} connected</span>
-          <Button disabled={authBusy} onclick={() => void disconnectSso()}>Disconnect SSO</Button>
-        </div>
-      {/if}
       <header class="workspace-header">
         <div class="workspace-title">
           <h1>{activeDestination.label}</h1>
@@ -765,6 +760,10 @@
               <ThemeIcon aria-hidden="true" />
               <span><strong>Appearance</strong><small>{themeMode[0].toUpperCase() + themeMode.slice(1)} · switch to {nextTheme}</small></span>
             </button>
+            {#if oidc.linked}<button type="button" disabled={authBusy} onclick={() => void disconnectSso()}>
+              <UiIcon name="unlink" />
+              <span><strong>Disconnect {oidc.displayName}</strong><small>Your media-server sign-in stays</small></span>
+            </button>{/if}
             <button type="button" disabled={authBusy} onclick={() => void logout()}>
               <UiIcon name="logout" />
               <span><strong>{authBusy ? "Signing out…" : "Sign out"}</strong><small>End this Allstarr session</small></span>

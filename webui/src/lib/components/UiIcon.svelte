@@ -10,6 +10,7 @@
     LogOut,
     MoreHorizontal,
     Settings,
+    Unlink,
     Waypoints,
   } from "@lucide/svelte";
 
@@ -26,6 +27,7 @@
     report: Flag,
     settings: Settings,
     sources: Waypoints,
+    unlink: Unlink,
   };
   const Icon = $derived(icons[name as keyof typeof icons] ?? House);
 </script>

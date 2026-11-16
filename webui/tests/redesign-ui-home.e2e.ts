@@ -16,7 +16,7 @@ test("For you actions fit with wider text at 320px", async ({ page }) => {
   await expectContainedMobileGeometry(page);
   await page.getByRole("button", { name: "Open Blend 1", exact: true }).click();
   const panel = page.getByRole("dialog");
-  await expect(panel.getByRole("button", { name: "Add to apps", exact: true })).toBeVisible();
+  await expect(panel.getByRole("switch", { name: "Show in my apps", exact: true })).toBeVisible();
   await widenText(panel.locator(".panel-footer [data-slot=button]"));
   await expectContainedMobileGeometry(page);
 });
@@ -191,7 +191,8 @@ for (const { width, theme } of modes) {
       await expect(storage.locator(".tile-value")).toHaveText("600 MB cached of 2 GB");
       await expect(page.locator(".source-dots > i")).toHaveCount(28);
       const status = page.getByRole("region", { name: "Page status", exact: true });
-      await expect(status).toContainText("5 sources need a look");
+      // The notice names failing sources once; the status line leaves them to it.
+      await expect(status).not.toContainText("need a look");
       await expect(status).toContainText("1 job waiting");
       if (width < 650) await expect(status.getByText("1 job waiting", { exact: true })).toBeHidden();
       else await expect(status.getByText("1 job waiting", { exact: true })).toBeVisible();

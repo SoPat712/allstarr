@@ -99,7 +99,10 @@
   const sourceHealth = $derived(snapshot ? homeSourceHealth(snapshot) : { checked: [], failing: [], slow: [], down: [] });
   const sourceIssues = $derived(playbackSourceIssues(snapshot?.providerCatalog ?? [], snapshot?.providers ?? []));
   const failingNames = $derived(sourceHealth.failing.map(provider => providerDisplayName(snapshot?.providerCatalog ?? [], provider.providerId)));
-  const sourcesNeedingLook = $derived(new Set([...sourceHealth.failing.map(source => source.providerId), ...sourceIssues.map(source => source.providerId)]).size);
+  // Lyrics-only sources don't play anything, so their consequence is about lyrics, not playback.
+  const lyricsOnly = (providerId: string) => snapshot?.providerCatalog?.find(provider => provider.id === providerId)?.categories?.every(category => category === "lyrics") === true;
+  const failingConsequence = $derived(sourceHealth.failing.every(source => lyricsOnly(source.providerId)) ? "Lyrics come from the other sources meanwhile."
+    : sourceHealth.failing.some(source => lyricsOnly(source.providerId)) ? "Playback and lyrics fall back to the other sources." : "Playback falls back to the others.");
   const phoneSourceNames = $derived(failingNames.slice(0, 3).join(", ") + (failingNames.length > 3 ? ` and ${failingNames.length - 3} more` : ""));
   const completelyUnavailable = $derived(
     snapshot !== null &&
@@ -263,7 +266,7 @@
         key: "health:sources",
         title: countLabel(failingNames.length, "source is failing checks", "sources are failing checks"),
         detail: failingNames.join(", ") + ".",
-        consequence: "Playback falls back to the others.",
+        consequence: failingConsequence,
         href: "#/sources/services",
         action: "Review sources",
       });
@@ -306,7 +309,7 @@
 <div class="home-view">
   <PageStatus separated items={[
     { label: playing.length ? playing.every(row => row.item.isPaused === true) ? "Playback paused" : "Playing normally" : snapshot.nowPlaying === undefined ? "Playback status unavailable" : "Nothing playing" },
-    ...(administrator ? [...(sourcesNeedingLook ? [{ label: countLabel(sourcesNeedingLook, "source needs a look", "sources need a look"), tone: "stop" as const }] : []), ...(snapshot.stats?.waitingJobs ? [{ label: `${countLabel(snapshot.stats.waitingJobs, "job")} waiting`, hideOnPhone: true }] : [])] : []),
+    ...(administrator && snapshot.stats?.waitingJobs ? [{ label: `${countLabel(snapshot.stats.waitingJobs, "job")} waiting`, hideOnPhone: true }] : []),
   ]} />
   {#if snapshot.failures.length}<ErrorState title="Some live data is unavailable" detail={snapshot.failures.join(" · ")} onretry={refresh} />{/if}
 

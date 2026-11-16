@@ -565,6 +565,27 @@
     font-size: var(--text-xs);
   }
 
+  .profile-sso {
+    display: block;
+    max-width: 100%;
+    margin-top: 0.1rem;
+    padding: 0;
+    overflow: hidden;
+    border: 0;
+    background: none;
+    color: var(--color-ink-muted);
+    font-size: var(--text-xs);
+    text-align: left;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    cursor: pointer;
+  }
+
+  .profile-sso:is(:hover, :focus-visible) {
+    color: var(--color-signal-text);
+    text-decoration: underline;
+  }
+
   .desktop-navigation {
     display: grid;
     min-height: 0;

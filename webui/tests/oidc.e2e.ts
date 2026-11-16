@@ -238,11 +238,14 @@ for (const width of [390, 1280]) {
     await page.getByLabel("Username", { exact: true }).fill("listener");
     await page.getByLabel("Password", { exact: true }).fill("fixture-password");
     await page.getByRole("button", { name: "Link account and sign in" }).click();
-    await expect(page.getByRole("button", { name: "Disconnect SSO" })).toBeVisible();
+    // The account area holds the link, on phones inside More; no page header carries it.
+    if (width < 760) await page.getByRole("button", { name: "More destinations", exact: true }).click();
+    const disconnect = page.getByRole("button", { name: /^Disconnect Home SSO/ });
+    await expect(disconnect).toBeVisible();
     expect(submitted).toMatchObject({ username: "listener", password: "fixture-password", linkOidc: true });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
     page.once("dialog", (dialog) => dialog.accept());
-    await page.getByRole("button", { name: "Disconnect SSO" }).click();
-    await expect(page.getByRole("button", { name: "Disconnect SSO" })).toHaveCount(0);
+    await disconnect.click();
+    await expect(page.getByRole("button", { name: /^Disconnect Home SSO/ })).toHaveCount(0);
   });
 }
