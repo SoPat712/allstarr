@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { MixCard } from "./api";
-import { appsWaiting, artworkUrl, soundDifference, soundSummary, steeringNames, greeting, mixDescription, mosaicArtwork, reasonLabel, shortReadiness, tasteSummary, nudgeMarker, mixName, mixNextStep, serviceCards, allServiceCards } from "./for-you";
+import { appsWaiting, artworkUrl, soundDifference, soundSummary, steeringNames, greeting, mixDescription, mosaicArtwork, reasonLabel, shortReadiness, tasteSummary, nudgeMarker, mixName, mixNextStep, serviceCards, allServiceCards, addableFirst } from "./for-you";
 
 describe("personal mix presentation", () => {
   it("says an added mix is still on its way to the apps", () => {
@@ -121,7 +121,7 @@ describe("Service feed cards", () => {
     expect(serviceCards([feed])[0]).toMatchObject({ inApps: false, description: "From Spotify" });
     expect(serviceCards([{ ...feed, inApps: true }])[0]).toMatchObject({ inApps: true, description: "From Spotify · kept in sync" });
   });
-  it("shows every feed with synced feeds first, then service and name", () => {
+  it("shows every feed by service and name, with feeds already in the apps last", () => {
     const rows = [
       { ...feed, id: "spotify-z", name: "Z mix" },
       { ...feed, id: "lastfm", sourceLabel: "Last.fm" },
@@ -130,7 +130,9 @@ describe("Service feed cards", () => {
       { ...feed, id: "synced-spotify", inApps: true },
       { ...feed, id: "synced-apple", sourceLabel: "Apple Music", inApps: true },
     ];
-    expect(allServiceCards(rows).map(card => card.id)).toEqual(["synced-apple", "synced-spotify", "apple", "lastfm", "spotify-a", "spotify-z"]);
+    expect(allServiceCards(rows).map(card => card.id)).toEqual(["apple", "lastfm", "spotify-a", "spotify-z", "synced-apple", "synced-spotify"]);
+    expect(addableFirst([{ ...feed, id: "added", added: true }, { ...feed, id: "new" }, { ...feed, id: "synced", inApps: true }]).map(card => card.id))
+      .toEqual(["new", "added", "synced"]);
     expect(rows[0].id).toBe("spotify-z");
   });
   it("shows only known song counts, including zero", () => {

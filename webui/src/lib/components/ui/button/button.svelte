@@ -14,6 +14,7 @@
 				text: "bg-transparent text-[var(--color-signal-text)] hover:bg-muted aria-expanded:bg-muted dark:hover:bg-muted/50",
 				"destructive-text": "bg-transparent text-[var(--color-danger)] hover:bg-[color-mix(in_srgb,var(--color-danger)_8%,transparent)] focus-visible:ring-[color-mix(in_srgb,var(--color-danger)_30%,transparent)]",
 				destructive: "bg-[var(--md-sys-color-error)] text-[var(--md-sys-color-on-error)] hover:shadow-[var(--shadow-sm)] focus-visible:ring-[color-mix(in_srgb,var(--color-danger)_30%,transparent)]",
+				"destructive-tonal": "bg-[var(--color-danger-tonal)] text-[var(--color-on-danger-tonal)] hover:shadow-[var(--shadow-sm)] focus-visible:ring-[color-mix(in_srgb,var(--color-danger)_30%,transparent)]",
 				link: "text-primary underline-offset-4 hover:underline",
 			},
 			size: {

@@ -65,9 +65,11 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     await shelf.getByRole("button", { name: "See all", exact: true }).click();
     await expect(shelf.getByRole("button", { name: "Show less", exact: true })).toHaveAttribute("aria-expanded", "true");
     await expect(shelf.getByRole("group")).toHaveCount(46);
-    await expect(shelf.getByRole("group").nth(0)).toHaveAttribute("aria-label", "Service mix 03");
-    await expect(shelf.getByRole("group").nth(1)).toHaveAttribute("aria-label", "Discover Weekly");
-    await expect(shelf.getByRole("group").last()).toHaveAttribute("aria-label", "Service mix 40");
+    // Feeds still to add lead; the ones already in the apps follow, since Library can remove them too.
+    await expect(shelf.getByRole("group").nth(44)).toHaveAttribute("aria-label", "Service mix 03");
+    await expect(shelf.getByRole("group").last()).toHaveAttribute("aria-label", "Discover Weekly");
+    const actions = await shelf.locator(".add-chip").allTextContents();
+    expect(actions.lastIndexOf("Add to apps")).toBeLessThan(actions.indexOf("Remove from apps"));
     await expect(shelf.getByRole("group", { name: "Service mix 00", exact: true }).getByText("From Spotify · 0 songs", { exact: true })).toBeVisible();
     await expect(shelf.getByRole("group", { name: "Service mix 04", exact: true }).getByText("Saved from Riju Patra", { exact: true })).toBeVisible();
     const saved = shelf.getByRole("group", { name: "Service mix 04", exact: true });
@@ -80,8 +82,8 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     expect(geometry.at(-1)!.top).toBeGreaterThan(geometry[0].top);
     await apple.evaluate(element => element.scrollIntoView({ block: "center", inline: "nearest", behavior: "instant" }));
     await page.screenshot({ path: testInfo.outputPath(`services-footer-${width}-${theme}.png`) });
-    await shelf.getByRole("group").last().getByRole("button", { name: "Open Service mix 40", exact: true }).scrollIntoViewIfNeeded();
-    await expect(shelf.getByRole("group").last().getByRole("button", { name: "Open Service mix 40", exact: true })).toBeVisible();
+    await shelf.getByRole("group").last().getByRole("button", { name: "Open Discover Weekly", exact: true }).scrollIntoViewIfNeeded();
+    await expect(shelf.getByRole("group").last().getByRole("button", { name: "Open Discover Weekly", exact: true })).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     if (width === 390) await expectContainedMobileGeometry(page);
     await page.evaluate(() => window.scrollTo(0, 0));

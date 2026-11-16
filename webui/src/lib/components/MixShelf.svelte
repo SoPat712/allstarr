@@ -26,9 +26,9 @@
           {#if card.savedFrom}<span class="description saved-from">Saved from {card.savedFrom}</span>{/if}
           {#if appsWaiting(card)}<span class="description saved-from">{appsWaiting(card)}</span>{/if}
           {#if onadd && !card.inApps && !card.added && card.appsAllowed && card.readiness.ready}
-            <Button variant="outline" size="sm" class="add-chip" aria-label={`Add ${mixName(card.name)}`} disabled={Boolean(busy)} onclick={() => onadd?.(card)}>{busy === card.id ? "Adding…" : "Add to apps"}</Button>
+            <Button size="sm" class="add-chip" aria-label={`Add ${mixName(card.name)}`} disabled={Boolean(busy)} onclick={() => onadd?.(card)}>{busy === card.id ? "Adding…" : "Add to apps"}</Button>
           {:else if onremove && (card.inApps || card.added)}
-            <Button variant="outline" size="sm" class="add-chip" aria-label={`Remove ${mixName(card.name)} from apps`} disabled={Boolean(busy)} onclick={() => onremove?.(card)}>{busy === card.id ? "Removing…" : "Remove from apps"}</Button>
+            <Button variant="destructive-tonal" size="sm" class="add-chip" aria-label={`Remove ${mixName(card.name)} from apps`} disabled={Boolean(busy)} onclick={() => onremove?.(card)}>{busy === card.id ? "Removing…" : "Remove from apps"}</Button>
           {:else if !albumArt}<small class:added={card.inApps}>{card.inApps ? card.section === "yourServices" ? "✓ In your apps · kept in sync" : "✓ In your apps" : ""}</small>{/if}
         </div>
       </div>

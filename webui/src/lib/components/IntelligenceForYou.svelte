@@ -15,7 +15,7 @@
   import RowsSkeleton from "$lib/components/patterns/RowsSkeleton.svelte";
   import ErrorState from "$lib/components/patterns/ErrorState.svelte";
   import EmptyState from "$lib/components/patterns/EmptyState.svelte";
-  import { serviceCards, allServiceCards } from "$lib/for-you";
+  import { serviceCards, allServiceCards, addableFirst } from "$lib/for-you";
   import MixShelf from "$lib/components/MixShelf.svelte";
   import IntelligenceHistoryImports from "$lib/components/IntelligenceHistoryImports.svelte";
   let { administrator = false, listenerId = "", listenerName = "", initialImport = false }: { initialImport?: boolean; administrator?: boolean; listenerId?: string; listenerName?: string } = $props();
@@ -35,9 +35,9 @@
   const storageKey = $derived(`allstarr.mix-checklist.${listenerId}`);
   // Recap can send a song or artist here to start a mix from it.
   const startQuery = typeof location === "undefined" ? "" : new URLSearchParams(location.hash.split("?")[1] ?? "").get("start") ?? "";
-  const made = $derived(cards.filter(item => item.section === "madeForYou").sort((a, b) => Number(b.readiness.ready) - Number(a.readiness.ready) || mixOrder.indexOf(a.kind) - mixOrder.indexOf(b.kind)));
-  const moods = $derived(cards.filter(item => item.section === "moods").sort((a, b) => mixOrder.indexOf(a.kind) - mixOrder.indexOf(b.kind)));
-  const custom = $derived(cards.filter(item => item.section === "custom"));
+  const made = $derived(addableFirst(cards.filter(item => item.section === "madeForYou").sort((a, b) => Number(b.readiness.ready) - Number(a.readiness.ready) || mixOrder.indexOf(a.kind) - mixOrder.indexOf(b.kind))));
+  const moods = $derived(addableFirst(cards.filter(item => item.section === "moods").sort((a, b) => mixOrder.indexOf(a.kind) - mixOrder.indexOf(b.kind))));
+  const custom = $derived(addableFirst(cards.filter(item => item.section === "custom")));
   const connected = $derived(accounts.some(item => item.scope === "personal" && ["lastfm", "listenbrainz"].includes(item.providerId)));
   const daily = $derived(cards.filter(item => item.kind.startsWith("daily-")));
   const dailyReady = $derived(imported || daily.length > 0 && daily.every(item => item.readiness.ready));
@@ -52,7 +52,7 @@
     { source: "lastfm", kind: "similar", name: "Similar to your top tracks", label: "Last.fm" },
   ];
   const suggestions = $derived(recipes.filter(recipe => !addedSuggestions.includes(`add:${recipe.source}:${recipe.kind}`) && accounts.some(account => account.scope === "personal" && account.providerId === recipe.source) && !links.some(link => link.enabled && link.sourceProviderId === recipe.source && link.sourcePlaylistId === (recipe.source === "listenbrainz" ? `createdfor:${recipe.kind}` : recipe.kind === "top" ? "top:1month:50" : recipe.kind))).map(recipe => ({ id: `add:${recipe.source}:${recipe.kind}`, kind: "external", name: recipe.name, description: `From ${recipe.label} · kept in sync`, section: "yourServices", source: recipe.source, sourcePlaylistId: recipe.source === "listenbrainz" ? `createdfor:${recipe.kind}` : recipe.kind === "top" ? "top:1month:50" : recipe.kind, sortOrder: 0, sourceLabel: recipe.label, recipeVersion: null, updatedAt: null, readiness: { ready: true, message: "Ready" }, inApps: false, appsAllowed: cards.some(card => card.appsAllowed), coverArtwork: [] }) satisfies MixCard));
-  const services = $derived(serviceCards(cards, suggestions));
+  const services = $derived(addableFirst(serviceCards(cards, suggestions)));
   async function load() {
     if (pending) return pending;
     pending = (async () => {

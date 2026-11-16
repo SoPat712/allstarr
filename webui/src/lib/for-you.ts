@@ -125,7 +125,11 @@ export function serviceCards(cards: MixCard[], suggestions: MixCard[] = []): Mix
     ...suggestions.filter(suggestion => !feeds.some(card => card.source && card.source === suggestion.source && card.sourcePlaylistId === suggestion.sourcePlaylistId))];
 }
 
+// Mixes already in the apps go last: the Library page can remove them too, so the ones still to add lead.
+export function addableFirst(cards: MixCard[]): MixCard[] {
+  return [...cards].sort((a, b) => Number(Boolean(a.inApps || a.added)) - Number(Boolean(b.inApps || b.added)));
+}
+
 export function allServiceCards(cards: MixCard[]): MixCard[] {
-  return [...cards].sort((a, b) => Number(b.inApps) - Number(a.inApps) ||
-    (a.sourceLabel ?? "").localeCompare(b.sourceLabel ?? "") || a.name.localeCompare(b.name));
+  return addableFirst([...cards].sort((a, b) => (a.sourceLabel ?? "").localeCompare(b.sourceLabel ?? "") || a.name.localeCompare(b.name)));
 }
