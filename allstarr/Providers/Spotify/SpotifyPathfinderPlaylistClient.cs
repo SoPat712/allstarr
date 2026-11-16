@@ -632,7 +632,8 @@ public sealed partial class SpotifyPathfinderPlaylistClient
             return null;
         }
         var id = SpotifyId(String(data, "uri") ?? (liked && TryPath(item, out var likedTrack, "track") ? String(likedTrack, "_uri") : null), "track");
-        var title = String(data, "name");
+        // Spotify names can carry stray spaces or control characters; they are cleaned so one song can't fail its playlist.
+        var title = ContractText(String(data, "name"), 500);
         if (string.IsNullOrWhiteSpace(id))
         {
             reasonCode = "unsupported_item_identity";
@@ -651,7 +652,7 @@ public sealed partial class SpotifyPathfinderPlaylistClient
             foreach (var artist in artistItems.EnumerateArray())
             {
                 var name = TryPath(artist, out var profile, "profile")
-                    ? String(profile, "name")
+                    ? ContractText(String(profile, "name"), 300)
                     : null;
                 if (string.IsNullOrWhiteSpace(name))
                     continue;
@@ -674,7 +675,7 @@ public sealed partial class SpotifyPathfinderPlaylistClient
         Uri? artwork = null;
         if (TryPath(data, out var album, "albumOfTrack"))
         {
-            albumTitle = String(album, "name");
+            albumTitle = ContractText(String(album, "name"), 500);
             var albumValue = SpotifyId(String(album, "uri"), "album");
             if (albumValue != null)
                 albumId = new(ProviderId, ProviderResourceKind.Album, albumValue);
@@ -923,7 +924,7 @@ public sealed partial class SpotifyPathfinderPlaylistClient
             return null;
         return normalized.Length <= maximumLength
             ? normalized
-            : normalized[..maximumLength];
+            : normalized[..maximumLength].TrimEnd();
     }
 
     private static int? Integer(JsonElement root, string name)

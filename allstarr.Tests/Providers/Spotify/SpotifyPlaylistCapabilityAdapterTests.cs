@@ -464,6 +464,19 @@ public sealed partial class SpotifyPlaylistCapabilityAdapterTests
     }
 
     [Fact]
+    public async Task Song_and_artist_names_with_stray_spaces_still_read()
+    {
+        var handler = new SpotifyFakeHandler { ReturnUntidyNames = true };
+        var adapter = new SpotifyPlaylistCapabilityAdapter(new HttpClient(handler), new FakeSecretAccessor("cookie"));
+        var outcome = await adapter.GetPlaylistTracksAsync(Context(),
+            new(new ProviderExternalResourceId("spotify", ProviderResourceKind.Playlist, "playlist-opaque"), new ProviderPageRequest(10)));
+        var first = outcome.RequireValue().Tracks.Items[0].Metadata!;
+        Assert.Equal("Song", first.Title);
+        Assert.Equal("Naisha", Assert.Single(first.Artists).Name);
+        Assert.Equal(2, outcome.RequireValue().Tracks.Items.Count);
+    }
+
+    [Fact]
     public async Task Incompatible_raw_track_slot_fails_closed_instead_of_publishing_a_partial_page()
     {
         var handler = new SpotifyFakeHandler { ReturnMalformedTrack = true };
@@ -713,6 +726,7 @@ public sealed partial class SpotifyPlaylistCapabilityAdapterTests
         public bool ReturnAlternativeLibraryEnvelope { get; set; }
         public bool ReturnMalformedTrack { get; set; }
         public bool ReturnOtherMedia { get; set; }
+        public bool ReturnUntidyNames { get; set; }
         public string TokenValue { get; set; } = "account-access-token";
         public bool TokenIsAnonymous { get; set; }
         public long? TokenExpirationTimestampMs { get; set; }
@@ -1003,6 +1017,8 @@ public sealed partial class SpotifyPlaylistCapabilityAdapterTests
                         totalCount = PlaylistTotalCount,
                         items = ReturnMalformedTrack
                             ? new object[] { new { itemV2 = new { } }, Track("track-a", "Duplicate") }
+                            : ReturnUntidyNames
+                            ? new object[] { Track("track-a", "Song ", " Naisha\u0007"), Track("track-b", "Next") }
                             : ReturnOtherMedia
                             ? new object[]
                             {
@@ -1020,7 +1036,7 @@ public sealed partial class SpotifyPlaylistCapabilityAdapterTests
             }
         };
 
-        private static object Track(string id, string name) => new
+        private static object Track(string id, string name, string artist = "Artist") => new
         {
             addedAt = new { isoString = "2026-02-16T05:00:00Z" },
             itemV2 = new
@@ -1036,7 +1052,7 @@ public sealed partial class SpotifyPlaylistCapabilityAdapterTests
                             new
                             {
                                 uri = "spotify:artist:artist",
-                                profile = new { name = "Artist" }
+                                profile = new { name = artist }
                             }
                         }
                     },

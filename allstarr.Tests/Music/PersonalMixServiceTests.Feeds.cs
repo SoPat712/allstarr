@@ -299,6 +299,25 @@ public sealed partial class PersonalMixServiceTests
     }
 
     [Fact]
+    public async Task ServiceFeeds_APlaylistThatKeepsFailingDoesNotHoldBackTheNextOnes()
+    {
+        var options = new DurableJobOptions();
+        var queue = new DurableJobQueue(factory, options, new(options), clock);
+        var (capability, account) = await FeedAccount(queue: queue);
+        var ids = new[] { "37i9dQZa", "37i9dQZb", "37i9dQZc", "37i9dQZd" };
+        capability.Setup(item => item.GetUserPlaylistsAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderUserPlaylistsRequest>()))
+            .ReturnsAsync(ProviderOutcome<ProviderPage<ProviderPlaylistSummary>>.Success(new("spotify",
+                ids.Select(id => new ProviderPlaylistSummary(new("spotify", ProviderResourceKind.Playlist, id), "Mix " + id[^1], new("spotify"), "revision", trackCount: 1)).ToArray())));
+        capability.Setup(item => item.GetPlaylistTracksAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderPlaylistTracksRequest>()))
+            .ThrowsAsync(new ArgumentException("A song name the service sent could not be read."));
+        Assert.Equal(4, (await service.ListCardsAsync(owner)).Count(item => item.Kind == "external"));
+        await Assert.ThrowsAsync<ArgumentException>(() => service.PrepareServiceFeedsAsync(owner, new(account, 0), default));
+        await using var read = factory.CreateDbContext();
+        Assert.Contains(await read.Jobs.Where(item => item.Type == PersonalMixService.FeedPrepareJobType).ToArrayAsync(),
+            item => item.IdempotencyKey.EndsWith(":3", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task ServiceFeeds_PreferTheExistingLocalRecordingBeforeCheckingStreaming()
     {
         var local = new Mock<ILibraryIndexService>();

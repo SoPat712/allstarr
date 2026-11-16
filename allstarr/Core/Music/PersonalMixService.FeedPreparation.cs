@@ -48,6 +48,9 @@ public sealed partial class PersonalMixService
                 item.ResourceKind == "service-feeds" && item.ExternalIdHash == feedKey).OrderByDescending(item => item.RetrievedAt).Select(item => item.RetrievedAt).FirstOrDefaultAsync(token);
         if (generation == default) return;
         await QueueServiceFeedPreparationAsync(owner, account, 0, generation + FeedWindow, token);
+        // The next batch is queued first, so a playlist that keeps failing holds back only its own batch.
+        if (request.Offset + 3 < cards.Length)
+            await QueueServiceFeedPreparationAsync(owner, account, request.Offset + 3, generation, token);
         var linked = await ExternalLinks(db, user).Where(item => item.Enabled && item.SourceProviderId == account.ProviderId &&
             (item.ProviderAccountId == account.Id || item.ProviderAccountId == null)).Select(item => item.SourcePlaylistId).ToArrayAsync(token);
         foreach (var card in cards.Skip(request.Offset).Take(3).Where(item => !linked.Contains(item.SourcePlaylistId)))
@@ -87,8 +90,6 @@ public sealed partial class PersonalMixService
             await PlaylistSnapshotRetention.PruneDocumentsAsync(rows.Where(item => item.SnapshotVersion <= version - KeptDocuments), token);
             clientEvents?.Publish(owner, ClientEvent.Mix(card.Id));
         }
-        if (request.Offset + 3 < cards.Length)
-            await QueueServiceFeedPreparationAsync(owner, account, request.Offset + 3, generation, token);
     }
 
     private async Task<PersonalMix> PreparedServiceFeedAsync(UserRecord user, PersonalMix card, CancellationToken token) =>
