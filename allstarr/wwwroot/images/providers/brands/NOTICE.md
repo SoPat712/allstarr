@@ -35,5 +35,5 @@ These files show which service or source a song comes from. Every mark is a trad
 | QQ Music | Official app icon; glyph traced from it | Tencent trademark |
 | Kugou | Official app icon; glyph traced from it | Kugou trademark |
 | LRCMux | lrcmux.dev logo | LRCMux |
-| lrc.red, Paxsenix | Simple lettermarks drawn for Allstarr; these sources publish no logo | Allstarr |
+| lrc.red | Simple lettermarks drawn for Allstarr; this source publishes no logo | Allstarr |
 | Allstarr | Allstarr | Allstarr |

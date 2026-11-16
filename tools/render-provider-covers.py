@@ -9,7 +9,7 @@ import xml.etree.ElementTree as ET
 root = Path(__file__).resolve().parents[1] / "allstarr/wwwroot/images/providers"
 backgrounds = {
     "qobuz": "white", "applemusic": "white", "tidal": "#08090b",
-    "genius": "#ffff64", "paxsenix": "#5b4bc4",
+    "genius": "#ffff64",
 }
 for source in sorted(root.glob("*.svg")):
     svg = ET.parse(source).getroot()

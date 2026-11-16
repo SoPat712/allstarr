@@ -1660,15 +1660,6 @@ public class AdminUiController : ControllerBase
         },
         new()
         {
-            Id = "paxsenix",
-            Name = "Paxsenix",
-            Icon = "lyrics",
-            Status = "available",
-            Categories = ["lyrics"],
-            Notes = ["Apple Music lyrics through Paxsenix; no account required"]
-        },
-        new()
-        {
             Id = "lyricsplus",
             Name = "LyricsPlus",
             Icon = "lyrics",

@@ -83,7 +83,7 @@ describe("provider mark sources", () => {
     const root = new URL("../../../allstarr/wwwroot/", import.meta.url);
     const brands = readdirSync(new URL("./images/providers/brands", root), { withFileTypes: true })
       .filter(entry => entry.isDirectory()).map(entry => entry.name);
-    expect(brands).toHaveLength(37);
+    expect(brands).toHaveLength(36);
     for (const brand of brands) {
       const id = ["melon", "genie", "bugs"].includes(brand) ? `spotiflac-${brand}-music`
         : brand === "jiosaavn" ? "spotiflac-jiosaavn" : brand;

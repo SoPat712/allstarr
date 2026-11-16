@@ -104,11 +104,6 @@ public static class CurrentProviderSupportCatalog
             Capability("lyrics", Supported, "Public community lyrics in TTML, LRC or plain text; paced reads and cached results.", "UnisonCapabilityAdapterTests"),
             Capability("health", Supported, "Bounded public metadata probe.", "ProviderStatusManagerTests")),
         Provider(
-            "paxsenix", "paxsenix", "Paxsenix", "none",
-            "Apple Music lyrics through Paxsenix; no account required.",
-            Capability("lyrics", Supported, "Metadata search with public timed and plain lyrics; paced reads and cached results.", "PaxsenixCapabilityAdapterTests; ProtocolLyricsResolverTests"),
-            Capability("health", Supported, "Bounded public metadata probe.", "ProviderStatusManagerTests")),
-        Provider(
             "lyricsplus", "lyricsplus", "LyricsPlus", "none",
             "Public instances with fallback, or an exclusive optional self-hosted URL.",
             Capability("lyrics", Supported, "Metadata lookup preserves plain content and millisecond line timing through the shared resolver.", "LyricsPlusCapabilityAdapterTests; ProtocolLyricsResolverTests")),

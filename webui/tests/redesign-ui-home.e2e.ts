@@ -29,7 +29,7 @@ async function shot(page: Page, name: string, width: number, theme: string) {
 }
 async function homeFixture(page: Page, admin: boolean, playing = true, todayCount = true, activityItems?: unknown[]) {
   await mockForYou(page, { admin });
-  const failing = ["Monochrome", "Paxsenix", "Amazon Music", "Qobuz", "SoundCloud"].map(name => ({ id: name.toLowerCase().replaceAll(" ", "-"), name }));
+  const failing = ["Monochrome", "LyricsPlus", "Amazon Music", "Qobuz", "SoundCloud"].map(name => ({ id: name.toLowerCase().replaceAll(" ", "-"), name }));
   const providers = [{ id: "catalog", name: "Music service" }, ...Array.from({ length: 22 }, (_, index) => ({ id: `working-${index}`, name: `Working source ${index + 1}` })), ...failing];
   await page.route("**/api/admin/ui/home", route => route.fulfill({ json: {
     schema: { providers, activeBackend: "Jellyfin" },

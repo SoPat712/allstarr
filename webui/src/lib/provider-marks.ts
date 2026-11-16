@@ -12,7 +12,7 @@ const aliases: Record<string, string> = {
 };
 const colorFiles: Record<string, string> = Object.fromEntries([
   "allstarr", "amazonmusic", "applemusic", "artistgrid", "deezer", "genius", "jellyfin", "navidrome", "subsonic", "listenbrainz",
-  "lrcmux", "lrcred", "netease", "lyricsplus", "monochrome", "multiscrobbler", "musicbrainz", "musixmatch", "paxsenix",
+  "lrcmux", "lrcred", "netease", "lyricsplus", "monochrome", "multiscrobbler", "musicbrainz", "musixmatch",
   "qobuz", "soundcloud", "spicylyrics", "spotify", "tidal", "unison", "youtubemusic",
 ].map(brand => [brand, "color.svg"]));
 for (const brand of ["amll", "audiomuse", "bugs", "genie", "jiosaavn", "koito", "kugou", "lastfm", "lrclib", "melon", "qqmusic"])

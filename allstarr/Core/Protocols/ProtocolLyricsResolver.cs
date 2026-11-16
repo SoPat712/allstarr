@@ -685,7 +685,7 @@ public sealed partial class ProtocolLyricsResolver(
         }
         if (providerId.Equals(sourceProvider, StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(sourceExternalId))
             return sourceExternalId;
-        if (providerId is "lrclib" or "lyricsplus" or "musixmatch" or "lrcred" or "amll" or "neteaselyrics" or "qqlyrics" or "kugoulyrics" or "lrcmux" or "unison" or "paxsenix" or "genius")
+        if (providerId is "lrclib" or "lyricsplus" or "musixmatch" or "lrcred" or "amll" or "neteaselyrics" or "qqlyrics" or "kugoulyrics" or "lrcmux" or "unison" or "genius")
             return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(resourceKey))).ToLowerInvariant();
         if (providerId.Equals(sourceProvider, StringComparison.OrdinalIgnoreCase)) return sourceExternalId;
         var sourceIsApple = sourceProvider is not null &&

@@ -52,7 +52,6 @@ public sealed class ProviderIconTests : IDisposable
     [InlineData("lrcred", "lrcred")]
     [InlineData("lyricsplus", "lyricsplus")]
     [InlineData("unison", "unison")]
-    [InlineData("paxsenix", "paxsenix")]
     [InlineData("spicylyrics", "spicylyrics")]
     [InlineData("monochrome", "monochrome")]
     [InlineData("artistgrid", "artistgrid")]

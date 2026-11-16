@@ -299,26 +299,26 @@ for (const width of [390, 1280]) for (const scheme of ["light", "dark"] as const
     await mockTry(page, searches);
     await page.route("**/api/admin/ui/schema", route => route.fulfill({ json: {
       ...schema, priorityGroups: [{ id: "metadata", label: "Metadata search order", providers: ["lumen-audio"] }],
-      providers: [...schema.providers, { id: "paxsenix", name: "Paxsenix", categories: ["lyrics"], runtimeCapabilities: [
+      providers: [...schema.providers, { id: "verse", name: "Verse", categories: ["lyrics"], runtimeCapabilities: [
         { id: "lyrics", supported: true, ready: true, canAttempt: true, canTest: true, configuration: "not_required" },
       ] }],
     } }));
-    await page.route(/\/images\/providers\/(?:brands\/paxsenix\/color\.(?:svg|png)|paxsenix\.svg)$/, route => route.abort());
-    await page.route("**/api/admin/providers/paxsenix/try**", route => {
-      if (route.request().method() === "GET") return route.fulfill({ json: { provider: "paxsenix", capabilities: [tryCatalog.capabilities[1]] } });
+    await page.route(/\/images\/providers\/(?:brands\/verse\/color\.(?:svg|png)|verse\.svg)$/, route => route.abort());
+    await page.route("**/api/admin/providers/verse/try**", route => {
+      if (route.request().method() === "GET") return route.fulfill({ json: { provider: "verse", capabilities: [tryCatalog.capabilities[1]] } });
       const body = route.request().postDataJSON();
       lyrics.push(body);
-      return route.fulfill({ json: { provider: "paxsenix", capability: "lyrics", operation: "lyrics", succeeded: false,
+      return route.fulfill({ json: { provider: "verse", capability: "lyrics", operation: "lyrics", succeeded: false,
         elapsedMs: 240, reasonCode: needsArtist ? "needs_artist" : null, message: needsArtist ? "This source needs the artist too" : null,
-        ...(needsArtist ? {} : { succeeded: true, lyrics: { format: "line", source: "Paxsenix", language: "en", lineCount: 80,
+        ...(needsArtist ? {} : { succeeded: true, lyrics: { format: "line", source: "Verse", language: "en", lineCount: 80,
           lines: Array.from({ length: 80 }, (_, index) => ({ startMs: index * 2000, text: `Fixture lyric line ${index + 1}` })) } }),
       } });
     });
-    await page.goto("#/integrations/services/paxsenix");
-    await openSourceSettings(page, "Paxsenix");
+    await page.goto("#/integrations/services/verse");
+    await openSourceSettings(page, "Verse");
     await page.getByRole("button", { name: "Open Lyrics tests" }).click();
-    const dialog = page.getByRole("dialog", { name: "Test Paxsenix" });
-    await expect(dialog.locator(".try-mark .provider-monogram")).toHaveText("P");
+    const dialog = page.getByRole("dialog", { name: "Test Verse" });
+    await expect(dialog.locator(".try-mark .provider-monogram")).toHaveText("V");
     await page.screenshot({ path: `test-results/try-lyrics-empty-${width}-${scheme}.png` });
     await dialog.getByRole("searchbox", { name: "Song", exact: true }).fill("get lucky");
     await dialog.getByRole("button", { name: "Find", exact: true }).click();
@@ -397,13 +397,13 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
     await page.setViewportSize({ width, height: 844 });
     await page.addInitScript(value => localStorage.setItem("allstarr.theme", value), theme);
     await mockApi(page);
-    let order = "backend,lrclib,kept,paxsenix";
+    let order = "backend,lrclib,kept,verse";
     let saved: Record<string, string> | undefined;
     await page.route("**/api/admin/ui/schema", route => route.fulfill({ json: {
       ...schema,
       providers: [...schema.providers, { id: "lrclib", name: "LRCLib", categories: ["lyrics"] },
-        { id: "paxsenix", name: "Paxsenix", categories: ["lyrics"] }],
-      priorityGroups: [{ id: "lyrics", label: "Lyrics", envKey: "MULTI_PROVIDER_LYRICS_ORDER", providers: ["backend", "lrclib", "kept", "paxsenix"] }],
+        { id: "verse", name: "Verse", categories: ["lyrics"] }],
+      priorityGroups: [{ id: "lyrics", label: "Lyrics", envKey: "MULTI_PROVIDER_LYRICS_ORDER", providers: ["backend", "lrclib", "kept", "verse"] }],
     } }));
     await page.route("**/api/admin/config", route => {
       if (route.request().method() === "POST") {
@@ -415,10 +415,10 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
     });
     const lyricsScore = (providerId: string, score: number) => ({ providerId, score, uptimePercent: 100, checks: 12, days: [], quality: null,
       capabilities: [{ capability: "lyrics", score, uptimePercent: 100, checks: 12, failures: 0, typicalLatencyMilliseconds: 300, lastFailureCode: null }] });
-    await page.route("**/api/admin/providers/scores", route => route.fulfill({ json: { providers: [lyricsScore("lrclib", 41), lyricsScore("paxsenix", 88)] } }));
+    await page.route("**/api/admin/providers/scores", route => route.fulfill({ json: { providers: [lyricsScore("lrclib", 41), lyricsScore("verse", 88)] } }));
     await page.goto("#/integrations/routing");
     const group = page.locator(".routing-group").filter({ has: page.getByRole("heading", { name: "Lyrics source order", exact: true }) });
-    await expect(group.locator("li strong")).toHaveText(["Media server lyrics", "LRCLib", "Kept LRC", "Paxsenix"]);
+    await expect(group.locator("li strong")).toHaveText(["Media server lyrics", "LRCLib", "Kept LRC", "Verse"]);
     await group.getByLabel("Reorder Kept LRC", { exact: true }).click();
     await expect(group.getByRole("button", { name: "Move Kept LRC up", exact: true })).toBeEnabled();
     await expect(group.getByRole("button", { name: "Move Kept LRC down", exact: true })).toBeEnabled();
@@ -426,23 +426,23 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
     await group.locator("li").nth(2).dispatchEvent("dragstart");
     await group.locator("li").first().dispatchEvent("drop");
     await group.locator("li").first().dispatchEvent("dragend");
-    await expect(group.locator("li strong")).toHaveText(["Kept LRC", "Media server lyrics", "LRCLib", "Paxsenix"]);
+    await expect(group.locator("li strong")).toHaveText(["Kept LRC", "Media server lyrics", "LRCLib", "Verse"]);
     await group.getByRole("button", { name: "Move Kept LRC down", exact: true }).click();
     await group.getByLabel("Reorder LRCLib", { exact: true }).click();
     await group.getByRole("button", { name: "Move LRCLib up", exact: true }).focus();
     await page.keyboard.press("Enter");
-    await expect(group.locator("li strong")).toHaveText(["Media server lyrics", "LRCLib", "Kept LRC", "Paxsenix"]);
+    await expect(group.locator("li strong")).toHaveText(["Media server lyrics", "LRCLib", "Kept LRC", "Verse"]);
     await group.getByRole("button", { name: "Move LRCLib up", exact: true }).click();
-    await expect.poll(() => saved).toEqual({ MULTI_PROVIDER_LYRICS_ORDER: "lrclib,backend,kept,paxsenix" });
-    await expect(group.locator("li strong")).toHaveText(["LRCLib", "Media server lyrics", "Kept LRC", "Paxsenix"]);
+    await expect.poll(() => saved).toEqual({ MULTI_PROVIDER_LYRICS_ORDER: "lrclib,backend,kept,verse" });
+    await expect(group.locator("li strong")).toHaveText(["LRCLib", "Media server lyrics", "Kept LRC", "Verse"]);
     await expect(group.locator("header")).toContainText("Drag to reorder. Saves as you drop.");
     await expect(group).not.toContainText("gets 5 confidence points");
     // Lyrics sources are scored too; audio quality means nothing for them, and local lyrics stay first when sorting.
     await expect(group.locator(".routing-quality-label")).toHaveCount(0);
     await expect(group.locator("li").filter({ hasText: "Kept LRC" })).toContainText("Local");
     await group.getByRole("button", { name: "Sort by score", exact: true }).click();
-    await expect(group.locator("li strong")).toHaveText(["Media server lyrics", "Kept LRC", "Paxsenix", "LRCLib"]);
-    await expect.poll(() => saved).toEqual({ MULTI_PROVIDER_LYRICS_ORDER: "backend,kept,paxsenix,lrclib" });
+    await expect(group.locator("li strong")).toHaveText(["Media server lyrics", "Kept LRC", "Verse", "LRCLib"]);
+    await expect.poll(() => saved).toEqual({ MULTI_PROVIDER_LYRICS_ORDER: "backend,kept,verse,lrclib" });
     while (await page.getByRole("button", { name: "Dismiss notification", exact: true }).count())
       await page.getByRole("button", { name: "Dismiss notification", exact: true }).first().click();
     await group.getByRole("heading", { name: "Lyrics source order", exact: true }).click();

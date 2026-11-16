@@ -78,7 +78,6 @@ internal static class ProviderArtworkResolver
         ["lrcred"] = "lrcred",
         ["lyricsplus"] = "lyricsplus",
         ["unison"] = "unison",
-        ["paxsenix"] = "paxsenix",
         ["spicylyrics"] = "spicylyrics",
         ["monochrome"] = "monochrome",
         ["artistgrid"] = "artistgrid",

@@ -211,34 +211,34 @@ test("Sources without an account can be tested in detail", async ({ page }) => {
 test("Lyrics-only source checks show lyrics outcomes and no playback controls", async ({ page }) => {
   await mockApi(page);
   await page.route("**/api/admin/ui/schema", (route) => route.fulfill({ json: {
-    ...schema, providers: [...schema.providers, { id: "paxsenix", name: "Paxsenix", categories: ["lyrics"], runtimeCapabilities: [
+    ...schema, providers: [...schema.providers, { id: "verse", name: "Verse", categories: ["lyrics"], runtimeCapabilities: [
       { id: "lyrics", supported: true, health: "unknown", ready: false, canAttempt: true, canTest: true, configuration: "not_required" },
     ] }],
   } }));
   let healthy = false;
   let unavailable = false;
   const requests: string[] = [];
-  await page.route("**/api/admin/providers/test/paxsenix/**", route => {
+  await page.route("**/api/admin/providers/test/verse/**", route => {
     requests.push(new URL(route.request().url()).pathname);
     if (unavailable) return route.fulfill({ status: 503, json: { error: "unavailable" } });
     return route.fulfill({ json: { success: healthy, health: healthy ? "healthy" : "degraded", metric: "api-latency",
       capability: "lyrics", reasonCode: healthy ? null : "lyrics-upstream-busy-or-timed-out" } });
   });
-  await page.route("**/api/admin/providers/paxsenix/try**", route => route.fulfill({ json: { provider: "paxsenix", capabilities: [
+  await page.route("**/api/admin/providers/verse/try**", route => route.fulfill({ json: { provider: "verse", capabilities: [
     { capability: "lyrics", accountRequirement: "none", operations: [{ id: "lyrics", inputs: ["title", "artist"] }] },
   ] } }));
-  await page.goto("#/integrations/services/paxsenix");
-  await openSourceSettings(page, "Paxsenix");
+  await page.goto("#/integrations/services/verse");
+  await openSourceSettings(page, "Verse");
   const row = page.locator(".service-check").filter({ hasText: "Lyrics" });
   await row.getByRole("button", { name: "Test", exact: true }).click();
-  const failure = page.getByRole("alert").filter({ hasText: "Paxsenix Lyrics needs attention." });
+  const failure = page.getByRole("alert").filter({ hasText: "Verse Lyrics needs attention." });
   await expect(failure).toContainText("The lyrics upstream is busy or timed out.");
   await expect(failure).not.toContainText("Playback");
   await failure.getByRole("button", { name: "Dismiss notification" }).click();
   healthy = true;
   await expect(page.locator(".source-more")).toHaveAttribute("open", "");
   await row.getByRole("button", { name: "Test", exact: true }).click();
-  await expect(page.getByRole("status").filter({ hasText: "Paxsenix Lyrics passed." })).toBeVisible();
+  await expect(page.getByRole("status").filter({ hasText: "Verse Lyrics passed." })).toBeVisible();
   await row.getByRole("button", { name: "Test", exact: true }).click({ trial: true, timeout: 5000 });
   unavailable = true;
   await row.getByRole("button", { name: "Test", exact: true }).click();
@@ -246,10 +246,10 @@ test("Lyrics-only source checks show lyrics outcomes and no playback controls", 
   await expect(error).toBeVisible();
   await expect(error).not.toContainText("Playback");
   await expect(page.locator(".toaster [role=alert]")).toHaveCount(1);
-  expect(requests).toEqual(["/api/admin/providers/test/paxsenix/lyrics", "/api/admin/providers/test/paxsenix/lyrics", "/api/admin/providers/test/paxsenix/lyrics"]);
+  expect(requests).toEqual(["/api/admin/providers/test/verse/lyrics", "/api/admin/providers/test/verse/lyrics", "/api/admin/providers/test/verse/lyrics"]);
   await error.getByRole("button", { name: "Dismiss notification" }).click();
   await row.getByRole("button", { name: "Open Lyrics tests" }).click();
-  const dialog = page.getByRole("dialog", { name: "Test Paxsenix" });
+  const dialog = page.getByRole("dialog", { name: "Test Verse" });
   await expect(dialog.getByRole("button", { name: "Use what I typed" })).toBeDisabled();
   await expect(dialog.getByRole("tab", { name: /stream|download/i })).toHaveCount(0);
   await expect(dialog.locator("audio")).toHaveCount(0);

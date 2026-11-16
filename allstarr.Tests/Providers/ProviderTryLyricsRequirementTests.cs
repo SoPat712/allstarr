@@ -22,7 +22,6 @@ public sealed class ProviderTryLyricsRequirementTests
     [InlineData("lrclib", "Fixture", null)]
     [InlineData("lrclib", null, "USQX91300108")]
     [InlineData("lrcred", "Fixture", null)]
-    [InlineData("paxsenix", "Fixture", null)]
     public async Task SourcesRequiringArtist_ReturnSpecificGuidanceWithoutSending(string provider, string? title, string? isrc)
     {
         var handler = new RejectingHandler();
@@ -44,7 +43,6 @@ public sealed class ProviderTryLyricsRequirementTests
     [InlineData("unison")]
     [InlineData("lrclib")]
     [InlineData("lrcred")]
-    [InlineData("paxsenix")]
     public async Task SourcesRequiringArtist_EmptyInputKeepsUnavailableResult(string provider)
     {
         var handler = new RejectingHandler();
@@ -76,7 +74,6 @@ public sealed class ProviderTryLyricsRequirementTests
         "unison" => new UnisonCapabilityAdapter(new HttpClient(handler), cache),
         "lrclib" => BuiltInLyricsCapabilityRegistration.CreateLrclib(Lrclib(handler)),
         "lrcred" => new LrcRedCapabilityAdapter(new HttpClient(handler), cache),
-        "paxsenix" => new PaxsenixCapabilityAdapter(new HttpClient(handler), cache),
         _ => throw new ArgumentOutOfRangeException(nameof(provider))
     };
 

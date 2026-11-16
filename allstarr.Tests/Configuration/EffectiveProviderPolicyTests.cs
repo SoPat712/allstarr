@@ -172,16 +172,16 @@ public sealed class EffectiveProviderPolicyTests
     [Fact]
     public void LyricsDefaultAppendsPublicSourcesAndSavedOrdersAppendAvailableSources()
     {
-        Assert.Equal("backend,kept,spotify,apple-download,lrcred,lyricsplus,musixmatch,amll,neteaselyrics,qqlyrics,kugoulyrics,lrcmux,lrclib,unison,genius,spicylyrics,paxsenix",
+        Assert.Equal("backend,kept,spotify,apple-download,lrcred,lyricsplus,musixmatch,amll,neteaselyrics,qqlyrics,kugoulyrics,lrcmux,lrclib,unison,genius,spicylyrics",
             RuntimeSettingCatalog.Require("Providers:LyricsOrder").DefaultValue);
         var snapshot = new EffectiveProviderPolicySnapshot(
             System.Collections.Immutable.ImmutableDictionary<ProviderCapabilityKind, System.Collections.Immutable.ImmutableArray<string>>.Empty
                 .Add(ProviderCapabilityKind.Lyrics, ["lrclib", "lyricsplus"]),
             System.Collections.Immutable.ImmutableHashSet<string>.Empty, "lossless", 0);
-        Assert.Equal(new[] { "lrclib", "lyricsplus", "lrcred", "paxsenix" },
-            snapshot.ApplyProviderAvailability(ProviderCapabilityKind.Lyrics, ["paxsenix", "lrcred", "lyricsplus", "lrclib"]));
-        Assert.Equal(new[] { "lrclib", "lyricsplus", "lrcred", "paxsenix", "spicylyrics" },
-            snapshot.ApplyProviderAvailability(ProviderCapabilityKind.Lyrics, ["spicylyrics", "paxsenix", "lrcred", "lyricsplus", "lrclib"]));
+        Assert.Equal(new[] { "lrclib", "lyricsplus", "genius", "lrcred" },
+            snapshot.ApplyProviderAvailability(ProviderCapabilityKind.Lyrics, ["genius", "lrcred", "lyricsplus", "lrclib"]));
+        Assert.Equal(new[] { "lrclib", "lyricsplus", "genius", "lrcred", "spicylyrics" },
+            snapshot.ApplyProviderAvailability(ProviderCapabilityKind.Lyrics, ["spicylyrics", "genius", "lrcred", "lyricsplus", "lrclib"]));
     }
 
     [Fact]

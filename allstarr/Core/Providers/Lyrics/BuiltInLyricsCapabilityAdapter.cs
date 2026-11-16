@@ -126,17 +126,6 @@ public static class BuiltInLyricsCapabilityRegistration
         services.AddSingleton<ProviderRegistration>(provider => PublicRegistration(
             "unison", "Unison", "Lyrics from Unison (https://unison.boidu.dev)",
             provider.GetRequiredService<UnisonCapabilityAdapter>()));
-        services.AddHttpClient(PaxsenixCapabilityAdapter.HttpClientName)
-            .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { UseCookies = false, AllowAutoRedirect = false });
-        services.AddSingleton(provider => new PaxsenixCapabilityAdapter(
-            provider.GetRequiredService<IHttpClientFactory>().CreateClient(PaxsenixCapabilityAdapter.HttpClientName),
-            provider.GetRequiredService<IApplicationCache>(),
-            provider.GetRequiredService<allstarr.Core.Providers.AppleMusicKit.AppleMusicKitMetadataCapabilityAdapter>(),
-            () => provider.GetRequiredService<allstarr.Core.Matching.ITrackIdentityService>(),
-            () => provider.GetRequiredService<Microsoft.Extensions.Options.IOptions<allstarr.Models.Settings.CacheSettings>>().Value.LyricsTTL));
-        services.AddSingleton<ProviderRegistration>(provider => PublicRegistration(
-            "paxsenix", "Paxsenix", "Apple Music lyrics through Paxsenix; no account required.",
-            provider.GetRequiredService<PaxsenixCapabilityAdapter>()));
         services.AddHttpClient(CloudflareChallengeSolver.HttpClientName, client => client.Timeout = Timeout.InfiniteTimeSpan)
             .RemoveAllLoggers()
             .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler

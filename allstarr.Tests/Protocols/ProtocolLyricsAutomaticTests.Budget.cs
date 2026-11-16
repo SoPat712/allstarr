@@ -32,7 +32,7 @@ public sealed partial class ProtocolLyricsAutomaticTests
     [Fact]
     public async Task AutomaticChoiceUsesTheSameTwentyCandidateLimitAsSourceDiscovery()
     {
-        var sources = new[] { "lyricsplus", "lrcred", "unison", "paxsenix", "musixmatch" }.Select((provider, index) =>
+        var sources = new[] { "lyricsplus", "lrcred", "unison", "lrclib", "musixmatch" }.Select((provider, index) =>
         {
             var versions = Enumerable.Range(0, 5).Select(version => new ProviderLyricsResult(
                 ProviderLyricsAvailabilityState.Available, provider, index == 4 ? ProviderLyricsFormat.WordTimed : ProviderLyricsFormat.PlainText,
@@ -118,14 +118,14 @@ public sealed partial class ProtocolLyricsAutomaticTests
     {
         var slow = new[] { new Source("lyricsplus"), new Source("lrcred"), new Source("unison"), new Source("genius") };
         foreach (var source in slow) source.ObserveCancellation = true;
-        var fast = new Source("paxsenix", Result("paxsenix", true));
+        var fast = new Source("lrclib", Result("lrclib", true));
         await using var fixture = new Fixture(slow.Append(fast).ToArray());
         fixture.LookupOptions.SourceTimeoutMilliseconds = 400;
         var pending = fixture.FindAsync();
         foreach (var source in slow) await StartAsync(pending, source);
         await fixture.Clock.WaitForTimersAsync(TimeSpan.FromMilliseconds(400));
         fixture.Clock.Advance(TimeSpan.FromMilliseconds(400));
-        Assert.Equal("paxsenix", (await pending.WaitAsync(TimeSpan.FromSeconds(5)))?.Source);
+        Assert.Equal("lrclib", (await pending.WaitAsync(TimeSpan.FromSeconds(5)))?.Source);
         Assert.Equal(1, fast.Calls);
         Assert.All(slow, source => Assert.True(Assert.Single(source.Tokens).IsCancellationRequested));
     }

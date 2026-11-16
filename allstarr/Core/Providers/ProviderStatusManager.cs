@@ -73,7 +73,6 @@ public class ProviderStatusManager
         ("lrcmux", ProviderCapabilities.Lyrics, ProviderAccountRequirement.None),
         ("lrcred", ProviderCapabilities.Lyrics, ProviderAccountRequirement.None),
         ("unison", ProviderCapabilities.Lyrics, ProviderAccountRequirement.None),
-        ("paxsenix", ProviderCapabilities.Lyrics, ProviderAccountRequirement.None),
         ("genius", ProviderCapabilities.Lyrics, ProviderAccountRequirement.None),
         ("lrclib", ProviderCapabilities.Lyrics, ProviderAccountRequirement.None),
         ("lyricsplus", ProviderCapabilities.Lyrics, ProviderAccountRequirement.None),
@@ -776,7 +775,7 @@ public class ProviderStatusManager
                     ? (ProviderConfigurationState.Configured, null)
                     : (ProviderConfigurationState.NeedsConfiguration, "missing_spotify_session"),
 
-            ("lrcred" or "amll" or "neteaselyrics" or "qqlyrics" or "kugoulyrics" or "lrcmux" or "unison" or "paxsenix" or "genius" or "lrclib" or "lyricsplus" or "musixmatch", ProviderCapabilities.Lyrics) =>
+            ("lrcred" or "amll" or "neteaselyrics" or "qqlyrics" or "kugoulyrics" or "lrcmux" or "unison" or "genius" or "lrclib" or "lyricsplus" or "musixmatch", ProviderCapabilities.Lyrics) =>
                 (ProviderConfigurationState.NotRequired, null),
 
             _ => (ProviderConfigurationState.NeedsConfiguration, "unsupported_capability")
@@ -934,7 +933,7 @@ public class ProviderStatusManager
             ("deezer", ProviderCapabilities.Metadata or ProviderCapabilities.Streaming or ProviderCapabilities.Download or ProviderCapabilities.Playlist) => true,
             ("qobuz", ProviderCapabilities.Metadata or ProviderCapabilities.Streaming or ProviderCapabilities.Download or ProviderCapabilities.Playlist) => true,
             ("spotify", ProviderCapabilities.Playlist or ProviderCapabilities.Lyrics) => true,
-            ("lrcred" or "amll" or "neteaselyrics" or "qqlyrics" or "kugoulyrics" or "lrcmux" or "unison" or "paxsenix" or "genius" or "lrclib" or "lyricsplus" or "musixmatch", ProviderCapabilities.Lyrics) => true,
+            ("lrcred" or "amll" or "neteaselyrics" or "qqlyrics" or "kugoulyrics" or "lrcmux" or "unison" or "genius" or "lrclib" or "lyricsplus" or "musixmatch", ProviderCapabilities.Lyrics) => true,
             ("spicylyrics", ProviderCapabilities.Lyrics) => true,
             ("lastfm", ProviderCapabilities.Scrobbling) => true,
             ("listenbrainz", ProviderCapabilities.Playlist) => true,
@@ -969,7 +968,7 @@ public class ProviderStatusManager
             ("deezer", ProviderCapabilities.Metadata or ProviderCapabilities.Playlist or ProviderCapabilities.Streaming or ProviderCapabilities.Download) => true,
             ("qobuz", ProviderCapabilities.Metadata or ProviderCapabilities.Playlist or ProviderCapabilities.Streaming or ProviderCapabilities.Download) => true,
             ("spotify", ProviderCapabilities.Playlist or ProviderCapabilities.Lyrics) => true,
-            ("lrcred" or "amll" or "neteaselyrics" or "qqlyrics" or "kugoulyrics" or "lrcmux" or "unison" or "paxsenix" or "genius" or "lrclib" or "lyricsplus" or "musixmatch", ProviderCapabilities.Lyrics) => true,
+            ("lrcred" or "amll" or "neteaselyrics" or "qqlyrics" or "kugoulyrics" or "lrcmux" or "unison" or "genius" or "lrclib" or "lyricsplus" or "musixmatch", ProviderCapabilities.Lyrics) => true,
             ("spicylyrics", ProviderCapabilities.Lyrics) => true,
             ("lastfm", ProviderCapabilities.Scrobbling) => true,
             ("listenbrainz" or "multi-scrobbler" or "koito", ProviderCapabilities.Scrobbling) => true,
@@ -1018,7 +1017,7 @@ public class ProviderStatusManager
                 SecretValue(accountSecrets, "userid") ?? _qobuzSettings.UserId,
                 cancellationToken),
             ("lrclib", ProviderCapabilities.Lyrics) => await TestLrclibAsync(cancellationToken),
-            ("lrcred" or "amll" or "neteaselyrics" or "qqlyrics" or "kugoulyrics" or "lrcmux" or "unison" or "paxsenix" or "genius" or "lyricsplus" or "musixmatch", ProviderCapabilities.Lyrics) => await TestMetadataLyricsAsync(provider, accountSecrets, cancellationToken),
+            ("lrcred" or "amll" or "neteaselyrics" or "qqlyrics" or "kugoulyrics" or "lrcmux" or "unison" or "genius" or "lyricsplus" or "musixmatch", ProviderCapabilities.Lyrics) => await TestMetadataLyricsAsync(provider, accountSecrets, cancellationToken),
             ("lastfm", ProviderCapabilities.Scrobbling) => await TestLastFmAsync(accountSecrets, cancellationToken),
             ("listenbrainz" or "multi-scrobbler" or "koito", ProviderCapabilities.Scrobbling) => await TestListenBrainzAsync(provider, accountSecrets, cancellationToken),
             ("audiomuse-ai", ProviderCapabilities.Intelligence) => await TestAudioMuseAsync(accountSecrets, cancellationToken),
@@ -1204,9 +1203,8 @@ public class ProviderStatusManager
                 return new ProviderSampleCheck(outcome.Success, outcome.ReasonCode,
                     outcome.ReasonCode is "sample-unavailable" or "not-found");
             }, ct => DiscoverLyricsSamplesAsync(provider, ct), cancellationToken,
-            timeoutReason: provider == "paxsenix" ? ProviderError.LyricsUpstreamBusyOrTimedOut().Code : "timeout",
-            attemptTimeout: provider == "paxsenix" ? allstarr.Core.Providers.Lyrics.PaxsenixCapabilityAdapter.DiagnosticLookupBudget + TimeSpan.FromSeconds(1) :
-                provider == "genius" ? allstarr.Core.Providers.Lyrics.MetadataLyricsCapabilityAdapter.OverallLookupBudget : null);
+            timeoutReason: "timeout",
+            attemptTimeout: provider == "genius" ? allstarr.Core.Providers.Lyrics.MetadataLyricsCapabilityAdapter.OverallLookupBudget : null);
         return new(result.Success, result.ReasonCode, IsNeutral: result.SampleUnavailable);
     }
 
@@ -1241,9 +1239,7 @@ public class ProviderStatusManager
     private async Task<ProbeOutcome> TestMetadataLyricsSampleAsync(string provider,
         IReadOnlyDictionary<string, string>? secrets, ProviderDiagnosticSample sample, CancellationToken cancellationToken)
     {
-        var probeTimeout = provider == "paxsenix"
-            ? allstarr.Core.Providers.Lyrics.PaxsenixCapabilityAdapter.DiagnosticLookupBudget + TimeSpan.FromSeconds(1)
-            : provider == "genius" ? allstarr.Core.Providers.Lyrics.MetadataLyricsCapabilityAdapter.OverallLookupBudget : ProbeTimeout;
+        var probeTimeout = provider == "genius" ? allstarr.Core.Providers.Lyrics.MetadataLyricsCapabilityAdapter.OverallLookupBudget : ProbeTimeout;
         var solver = provider == "lyricsplus" ? _services?.GetService<CloudflareChallengeSolver>() : null;
         if (solver != null && await solver.ConfiguredTimeoutAsync(cancellationToken) is { } solveTimeout)
             probeTimeout += solveTimeout;
@@ -1293,26 +1289,19 @@ public class ProviderStatusManager
                 else return new(false, "account_needs_configuration");
             }
         }
-        else if (provider is "lrcred" or "amll" or "neteaselyrics" or "qqlyrics" or "kugoulyrics" or "lrcmux" or "unison" or "paxsenix" or "genius")
+        else if (provider is "lrcred" or "unison" or "genius")
         {
             using var client = _httpClientFactory.CreateClient(provider switch
             {
                 "lrcred" => allstarr.Core.Providers.Lyrics.LrcRedCapabilityAdapter.HttpClientName,
                 "unison" => allstarr.Core.Providers.Lyrics.UnisonCapabilityAdapter.HttpClientName,
-                "genius" => allstarr.Core.Providers.Lyrics.GeniusCapabilityAdapter.HttpClientName,
-                _ => allstarr.Core.Providers.Lyrics.PaxsenixCapabilityAdapter.HttpClientName
+                _ => allstarr.Core.Providers.Lyrics.GeniusCapabilityAdapter.HttpClientName
             });
-            var apple = provider == "paxsenix" ? _services?.GetService<AppleMusicClient>() : null;
-            var paxsenix = provider == "paxsenix"
-                ? _services?.GetService<allstarr.Core.Providers.Lyrics.PaxsenixCapabilityAdapter>() : null;
-            if (provider == "paxsenix" && apple == null && paxsenix == null) return new(false, "apple-web-token-unavailable");
             IProviderLyricsCapability adapter = provider switch
             {
                 "lrcred" => new allstarr.Core.Providers.Lyrics.LrcRedCapabilityAdapter(client, null),
                 "unison" => new allstarr.Core.Providers.Lyrics.UnisonCapabilityAdapter(client, null),
-                "genius" => _services?.GetService<allstarr.Core.Providers.Lyrics.GeniusCapabilityAdapter>() ?? new(client, null),
-                _ => paxsenix ?? new allstarr.Core.Providers.Lyrics.PaxsenixCapabilityAdapter(client, null,
-                    new AppleMusicKitMetadataCapabilityAdapter(apple!))
+                _ => _services?.GetService<allstarr.Core.Providers.Lyrics.GeniusCapabilityAdapter>() ?? new(client, null)
             };
             var context = new ProviderExecutionContext(new(ProviderActorKind.PublicRead, null), provider, null,
                 new(new(ProviderAudioQuality.Any, ProviderAudioQuality.HighResolution, true), ProviderExplicitContentPolicy.Allow,
@@ -1332,8 +1321,6 @@ public class ProviderStatusManager
             result = await adapter.FetchLyricsAsync(context, request);
         }
         cancellationToken.ThrowIfCancellationRequested();
-        if (provider == "paxsenix" && result.Error?.Kind is ProviderErrorKind.TransientFailure or ProviderErrorKind.Canceled)
-            return new(false, ProviderError.LyricsUpstreamBusyOrTimedOut().Code);
         return result.IsSuccess
             ? new(result.RequireValue().Availability == ProviderLyricsAvailabilityState.Available,
                 result.RequireValue().Availability == ProviderLyricsAvailabilityState.Available ? null : "sample-unavailable")

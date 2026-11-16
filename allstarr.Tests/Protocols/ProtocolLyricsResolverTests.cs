@@ -323,7 +323,6 @@ public sealed class ProtocolLyricsResolverTests
 
     [Theory]
     [InlineData("lrcred")]
-    [InlineData("paxsenix")]
     [InlineData("genius")]
     public async Task PublicMetadataLyricsReceiveIsrcAndMetadataFromTheSong(string provider)
     {
@@ -745,16 +744,16 @@ public sealed class ProtocolLyricsResolverTests
 
     [Theory]
     [InlineData(ProviderLyricsFormat.LineTimed)]
-    public async Task EarlierWordLyricsReturnWithoutWaitingForPaxsenix(ProviderLyricsFormat format)
+    public async Task EarlierWordLyricsReturnWithoutWaitingForAnotherSource(ProviderLyricsFormat format)
     {
         var context = LyricsContext();
         var providers = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
-        providers.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Lyrics)).Returns(["lrclib", "paxsenix"]);
+        providers.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Lyrics)).Returns(["lrclib", "lrcred"]);
         providers.Setup(item => item.GetLyricsAsync(context, "lrclib", It.IsAny<string>(), ProviderLyricsFormat.LineTimed,
                 "Fixture", It.IsAny<IReadOnlyList<string>>(), "Album", 120, null))
             .ReturnsAsync(new ProviderLyricsResult(ProviderLyricsAvailabilityState.Available, "lrclib", format,
                 "[01:50]<01:50>Two <01:51>words"));
-        providers.Setup(item => item.GetLyricsAsync(context, "paxsenix", It.IsAny<string>(), ProviderLyricsFormat.LineTimed,
+        providers.Setup(item => item.GetLyricsAsync(context, "lrcred", It.IsAny<string>(), ProviderLyricsFormat.LineTimed,
                 "Fixture", It.IsAny<IReadOnlyList<string>>(), "Album", 120, null))
             .Returns(new TaskCompletionSource<ProviderLyricsResult?>().Task);
 
@@ -763,17 +762,17 @@ public sealed class ProtocolLyricsResolverTests
 
         Assert.True(pending.IsCompletedSuccessfully);
         Assert.Equal("lrclib", (await pending)?.Source);
-        providers.Verify(item => item.GetLyricsAsync(context, "paxsenix", It.IsAny<string>(), ProviderLyricsFormat.LineTimed,
+        providers.Verify(item => item.GetLyricsAsync(context, "lrcred", It.IsAny<string>(), ProviderLyricsFormat.LineTimed,
             "Fixture", It.IsAny<IReadOnlyList<string>>(), "Album", 120, null), Times.Never);
     }
 
     [Fact]
-    public async Task PaxsenixTimeoutFallsThroughToTheNextConfiguredSource()
+    public async Task PublicLyricsTimeoutFallsThroughToTheNextConfiguredSource()
     {
         var context = LyricsContext();
         var providers = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
-        providers.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Lyrics)).Returns(["paxsenix", "lrclib"]);
-        providers.Setup(item => item.GetLyricsAsync(context, "paxsenix", It.IsAny<string>(), ProviderLyricsFormat.LineTimed,
+        providers.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Lyrics)).Returns(["lrcred", "lrclib"]);
+        providers.Setup(item => item.GetLyricsAsync(context, "lrcred", It.IsAny<string>(), ProviderLyricsFormat.LineTimed,
                 "Fixture", It.IsAny<IReadOnlyList<string>>(), "Album", 120, null))
             .ThrowsAsync(new HttpRequestException("The lyrics upstream is busy or timed out."));
         providers.Setup(item => item.GetLyricsAsync(context, "lrclib", It.IsAny<string>(), ProviderLyricsFormat.LineTimed,

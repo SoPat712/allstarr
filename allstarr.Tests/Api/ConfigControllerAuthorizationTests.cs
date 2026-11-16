@@ -31,6 +31,71 @@ namespace allstarr.Tests;
 public class ConfigControllerAuthorizationTests : IAsyncLifetime
 {
     [Fact]
+    public async Task StaleProviderSettingsCanBeReadAndSavedThroughTheConfigEndpoint()
+    {
+        var removedProvider = "removed-source";
+        var now = DateTimeOffset.UtcNow;
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.RuntimeSettings.AddRange(
+                new RuntimeSettingRecord
+                {
+                    Id = Guid.CreateVersion7(),
+                    Key = "Providers:LyricsOrder",
+                    ValueType = RuntimeSettingValueType.StringList,
+                    ValueJson = JsonSerializer.Serialize(new[] { "lrcred", removedProvider, "lrclib" }),
+                    Source = "fixture",
+                    Revision = 1,
+                    CreatedAt = now,
+                    UpdatedAt = now
+                },
+                new RuntimeSettingRecord
+                {
+                    Id = Guid.CreateVersion7(),
+                    Key = ProviderUsePolicy.SettingKey,
+                    ValueType = RuntimeSettingValueType.String,
+                    ValueJson = JsonSerializer.Serialize(JsonSerializer.Serialize(new Dictionary<string, string> { [removedProvider] = "off" })),
+                    Source = "fixture",
+                    Revision = 1,
+                    CreatedAt = now,
+                    UpdatedAt = now
+                },
+                new RuntimeSettingRecord
+                {
+                    Id = Guid.CreateVersion7(),
+                    OwnerUserId = _userId,
+                    Key = "Providers:LyricsOrder",
+                    ValueType = RuntimeSettingValueType.StringList,
+                    ValueJson = JsonSerializer.Serialize(new[] { "lrclib", removedProvider, "lrcred" }),
+                    Source = "fixture",
+                    Revision = 1,
+                    CreatedAt = now,
+                    UpdatedAt = now
+                });
+            await db.SaveChangesAsync();
+        }
+
+        var controller = CreateController(CreateHttpContextWithSession(true));
+        var settings = controller.HttpContext.RequestServices.GetRequiredService<IDurableRuntimeSettings>();
+        var preferences = await settings.GetPreferencesAsync(_userId);
+        Assert.Equal($"lrcred,{removedProvider},lrclib", preferences.Values.LyricsOrder);
+        Assert.Equal(new KeyValuePair<string, string>(removedProvider, "off"), Assert.Single(preferences.HouseholdDefaults.ProviderModes!));
+
+        var policy = await new EffectiveProviderPolicyResolver(settings).ResolveForUserAsync(_userId);
+        Assert.Equal(new[] { "lrcred", removedProvider, "lrclib" }, policy.GetProviderOrder(ProviderCapabilityKind.Lyrics));
+        Assert.Equal(ProviderUseMode.Off, policy.GetProviderMode(removedProvider));
+        Assert.Equal(new[] { "lrcred", "lrclib" },
+            policy.ApplyProviderAvailability(ProviderCapabilityKind.Lyrics, ["lrclib", "lrcred"]));
+
+        var saved = await controller.UpdateConfig(new()
+        {
+            Updates = new() { ["MULTI_PROVIDER_LYRICS_ORDER"] = $"lrcred,{removedProvider},lrclib" }
+        });
+        Assert.IsType<OkObjectResult>(saved);
+        Assert.Equal($"lrcred,{removedProvider},lrclib", (await settings.GetAsync("Providers:LyricsOrder")).NormalizedValue);
+    }
+
+    [Fact]
     public async Task TranslationSettingsSaveThroughTheExistingConfigFieldsWithoutRestart()
     {
         var controller = CreateController(CreateHttpContextWithSession(true));
@@ -746,7 +811,6 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
     }
 
     [Theory]
-    [InlineData("paxsenix")]
     [InlineData("lrclib")]
     [InlineData("lyricsplus")]
     [InlineData("musixmatch")]

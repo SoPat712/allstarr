@@ -9,7 +9,6 @@ using System.Net.Http.Headers;
 using allstarr.Core.Health;
 using allstarr.Core.Routing;
 using allstarr.Core.Capabilities;
-using allstarr.Core.Providers.AppleMusicKit;
 using allstarr.Core.Operations;
 using allstarr.Core.Storage;
 using allstarr.Models.Settings;
@@ -433,7 +432,7 @@ public sealed class ProviderAccountCheckRunnerTests
             IsAdministrator = true,
             AllstarrUserId = Guid.NewGuid()
         };
-        foreach (var provider in new[] { "paxsenix", "lrclib", "lyricsplus", "musixmatch", "spotify", "fixture-metadata" })
+        foreach (var provider in new[] { "lrcred", "lrclib", "lyricsplus", "musixmatch", "spotify", "fixture-metadata" })
             ledger.AuditEvents.Add(new()
             {
                 Id = Guid.NewGuid(),
@@ -549,68 +548,6 @@ public sealed class ProviderAccountCheckRunnerTests
         finally { release.TrySetResult(ProviderOutcome<ProviderStreamLease>.Failure(new(ProviderErrorKind.Canceled))); }
     }
 
-    [Theory]
-    [InlineData("healthy")]
-    [InlineData("busy")]
-    [InlineData("timeout")]
-    public async Task LyricsSweep_UsesTheBoundedLyricsProbeAndIgnoresStoredPlayback(string outcome)
-    {
-        await using var database = await SqliteTestDatabase.CreateAsync();
-        var factory = new ProviderCheckServiceTests.Factory(database.Options);
-        var time = new ManualTimeProvider(DateTimeOffset.UtcNow);
-        var config = Config("paxsenix");
-        var handler = new LyricsHandler(outcome);
-        var apple = AppleProviderTestFactory.Client(new HttpClient(new AppleProviderTestFactory.Handler(_ =>
-            new HttpResponseMessage(HttpStatusCode.OK)
-            {
-                Content = new StringContent(
-                """{"data":[{"id":"987654","attributes":{"name":"Never Gonna Give You Up","artistName":"Rick Astley"}}]}""")
-            })));
-        using var client = new HttpClient(handler);
-        var adapter = new allstarr.Core.Providers.Lyrics.PaxsenixCapabilityAdapter(client, null,
-            new allstarr.Core.Providers.Lyrics.PaxsenixRequestPacer(time, TimeSpan.Zero), time,
-            new AppleMusicKitMetadataCapabilityAdapter(apple));
-        var manager = Manager(config, handler, time, configureServices: services => services.AddSingleton(apple).AddSingleton(adapter));
-        using var samples = new ProviderDiagnosticSamples(time);
-        typeof(ProviderStatusManager).GetField("_diagnosticSamples",
-            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.SetValue(manager, samples);
-        var history = new ProviderCheckHistory(factory, time);
-        var staleKey = ProviderRuntimeStatusKey.CreateAccountFree("paxsenix", "streaming");
-        await history.RecordAsync(new(staleKey, null, new ProviderRuntimeStatus
-        {
-            Provider = "paxsenix",
-            Capability = "streaming",
-            IsSupported = true,
-            IsEnabled = true,
-            Configuration = ProviderConfigurationState.NotRequired,
-            Health = ProviderHealthState.Degraded,
-            TestedAt = time.GetUtcNow(),
-            ReasonCode = "probe_failed"
-        }), "old-check", default);
-        var runner = Runner(factory, manager, history, config, time);
-        await runner.RestoreAsync(default);
-        var pending = runner.SweepAsync(default);
-        if (outcome == "timeout")
-        {
-            await time.WaitForTimersAsync(TimeSpan.FromSeconds(8));
-            time.Advance(TimeSpan.FromSeconds(8));
-            await time.WaitForTimersAsync(TimeSpan.FromSeconds(8));
-            Assert.False(pending.IsCompleted);
-            time.Advance(ProviderDiagnosticSamples.Timeout - TimeSpan.FromSeconds(8));
-        }
-        Assert.Equal(outcome != "busy", await pending.WaitAsync(TimeSpan.FromSeconds(30)));
-        var status = Assert.Single(manager.GetAllAccountFreeStatuses(), item => item.Provider == "paxsenix");
-        Assert.Equal("lyrics", status.Capability);
-        Assert.Equal(outcome == "healthy" ? ProviderHealthState.Healthy : outcome == "timeout" ? ProviderHealthState.Unknown : ProviderHealthState.Degraded, status.Health);
-        Assert.Equal(outcome == "healthy" ? null : "lyrics-upstream-busy-or-timed-out", status.ReasonCode);
-        if (outcome == "timeout") Assert.Null(status.LatencyMilliseconds);
-        else Assert.InRange(status.LatencyMilliseconds!.Value, 0, 20000);
-        Assert.All(handler.Paths, path => Assert.Equal("/apple-music/lyrics", path));
-        Assert.NotEmpty(handler.Paths);
-        var recorded = Assert.Single(await history.ReadLatestAsync(default), item => item.Key.Capability == "lyrics");
-        Assert.Equal(status.Health, recorded.Status.Health);
-    }
-
     [Fact]
     public async Task LimitedCapabilitySweep_ChecksOnlyDeclaredLyricsAndMetadata()
     {
@@ -649,18 +586,6 @@ public sealed class ProviderAccountCheckRunnerTests
         lyrics.Verify(item => item.FetchLyricsAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderLyricsRequest>()), Times.Exactly(3));
     }
 
-    private sealed class LyricsHandler(string outcome) : HttpMessageHandler
-    {
-        public List<string> Paths { get; } = [];
-        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token)
-        {
-            Paths.Add(request.RequestUri!.AbsolutePath);
-            if (outcome == "timeout") await Task.Delay(Timeout.InfiniteTimeSpan, token);
-            return new HttpResponseMessage(outcome == "healthy" ? HttpStatusCode.OK : HttpStatusCode.ServiceUnavailable)
-            { Content = new StringContent("""{"type":"Line","content":[{}],"lrc":"[00:01]Words"}""") };
-        }
-    }
-
     private static ProviderAccountRecord Account(string provider, bool enabled) => new()
     { Id = Guid.NewGuid(), ProviderId = provider, Enabled = enabled, DisplayName = "Fixture", Revision = 1 };
     private static IConfiguration Config(string enabled)
@@ -668,7 +593,7 @@ public sealed class ProviderAccountCheckRunnerTests
         var all = new[] { "apple-musickit", "qobuz", "deezer", "spotify", "lrcred", "unison", "lrclib", "lyricsplus", "musixmatch", "lastfm", "listenbrainz", "multi-scrobbler", "koito", "audiomuse-ai" };
         return new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
-            ["MULTI_PROVIDER_DISABLED_PROVIDERS"] = string.Join(',', all.Concat(new[] { "paxsenix", "genius", "amll", "neteaselyrics", "qqlyrics", "kugoulyrics", "lrcmux" }).Except(enabled.Split(','))),
+            ["MULTI_PROVIDER_DISABLED_PROVIDERS"] = string.Join(',', all.Concat(new[] { "genius", "amll", "neteaselyrics", "qqlyrics", "kugoulyrics", "lrcmux" }).Except(enabled.Split(','))),
             ["ProviderChecks:PauseMilliseconds"] = "0"
         }).Build();
     }

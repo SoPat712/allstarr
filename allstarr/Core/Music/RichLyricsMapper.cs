@@ -116,7 +116,6 @@ public static class RichLyricsMapper
         "spotify" => "Spotify",
         "apple" => "Apple Music",
         "unison" => "Unison",
-        "paxsenix" => "Paxsenix",
         "backend" => "Library",
         "kept" => "Kept lyrics",
         _ => LyricsVersions.ProviderId(id)

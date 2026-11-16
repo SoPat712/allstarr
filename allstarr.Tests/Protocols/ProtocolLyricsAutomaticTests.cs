@@ -457,7 +457,7 @@ public sealed partial class ProtocolLyricsAutomaticTests
     [Fact]
     public async Task QueuedSourceStartsOnlyAfterAnActualSlotIsReleased()
     {
-        var sources = new[] { new Source("lrclib"), new Source("lrcred"), new Source("unison"), new Source("genius"), new Source("paxsenix", Result("paxsenix", true)) };
+        var sources = new[] { new Source("lrclib"), new Source("lrcred"), new Source("unison"), new Source("genius"), new Source("lyricsplus", Result("lyricsplus", true)) };
         await using var fixture = new Fixture(sources);
         var pending = fixture.FindAsync();
         foreach (var source in sources.Take(4)) await StartAsync(pending, source);
@@ -494,7 +494,7 @@ public sealed partial class ProtocolLyricsAutomaticTests
     [Fact]
     public async Task SixteenActualCallsRemainReservedAfterAllFourCallersAbort()
     {
-        var sources = new[] { new Source("lrclib"), new Source("lrcred"), new Source("unison"), new Source("genius"), new Source("paxsenix") };
+        var sources = new[] { new Source("lrclib"), new Source("lrcred"), new Source("unison"), new Source("genius"), new Source("lyricsplus") };
         foreach (var source in sources) source.PerCall = true;
         await using var fixture = new Fixture(sources);
         var cancellations = Enumerable.Range(0, 4).Select(_ => new CancellationTokenSource()).ToArray();
