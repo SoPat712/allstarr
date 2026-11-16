@@ -611,7 +611,7 @@
             <strong>{session.user?.name}</strong>
             <small>{administrator ? "Administrator" : "Listener"}</small>
           </a>
-          {#if oidc.linked}<button class="profile-sso" type="button" disabled={authBusy} aria-label={`Disconnect ${oidc.displayName}`} onclick={() => void disconnectSso()}>{oidc.displayName} · Disconnect</button>{/if}
+          {#if oidc.linked}<button class="profile-sso" type="button" disabled={authBusy} aria-label={`Disconnect ${oidc.displayName}`} title={`Signed in with ${oidc.displayName}`} onclick={() => void disconnectSso()}>Disconnect SSO</button>{/if}
         </div>
         <button
           class="icon-button"
