@@ -454,6 +454,16 @@ public sealed partial class SpotifyPlaylistCapabilityAdapterTests
     }
 
     [Fact]
+    public async Task Podcast_episodes_and_local_files_are_left_out_of_the_playlist_songs()
+    {
+        var handler = new SpotifyFakeHandler { ReturnOtherMedia = true };
+        var adapter = new SpotifyPlaylistCapabilityAdapter(new HttpClient(handler), new FakeSecretAccessor("cookie"));
+        var outcome = await adapter.GetPlaylistTracksAsync(Context(),
+            new(new ProviderExternalResourceId("spotify", ProviderResourceKind.Playlist, "playlist-opaque"), new ProviderPageRequest(10)));
+        Assert.Equal("First", Assert.Single(outcome.RequireValue().Tracks.Items).Metadata!.Title);
+    }
+
+    [Fact]
     public async Task Incompatible_raw_track_slot_fails_closed_instead_of_publishing_a_partial_page()
     {
         var handler = new SpotifyFakeHandler { ReturnMalformedTrack = true };
@@ -702,6 +712,7 @@ public sealed partial class SpotifyPlaylistCapabilityAdapterTests
         public bool ReturnPersistedQueryError { get; set; }
         public bool ReturnAlternativeLibraryEnvelope { get; set; }
         public bool ReturnMalformedTrack { get; set; }
+        public bool ReturnOtherMedia { get; set; }
         public string TokenValue { get; set; } = "account-access-token";
         public bool TokenIsAnonymous { get; set; }
         public long? TokenExpirationTimestampMs { get; set; }
@@ -992,6 +1003,13 @@ public sealed partial class SpotifyPlaylistCapabilityAdapterTests
                         totalCount = PlaylistTotalCount,
                         items = ReturnMalformedTrack
                             ? new object[] { new { itemV2 = new { } }, Track("track-a", "Duplicate") }
+                            : ReturnOtherMedia
+                            ? new object[]
+                            {
+                                new { itemV2 = new { data = new { __typename = "Episode", uri = "spotify:episode:episode", name = "A podcast" } } },
+                                new { itemV2 = new { data = new { uri = "spotify:local:Artist:Album:Song:180", name = "Song" } } },
+                                Track("track-a", "First")
+                            }
                             : new object[]
                         {
                             Track("track-a", "First"),

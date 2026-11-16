@@ -328,6 +328,8 @@ public sealed partial class SpotifyPathfinderPlaylistClient
                 var position = offset + index;
                 if (MapTrack(rawItems[index], position, out var reasonCode) is not { } track)
                 {
+                    // Podcast episodes and local files sit in playlists too; they have no song to play, so they are left out.
+                    if (OtherMedia(rawItems[index])) continue;
                     LogPlaylistPage(
                         request,
                         accountFingerprint,
@@ -611,6 +613,11 @@ public sealed partial class SpotifyPathfinderPlaylistClient
         value.ValueKind == JsonValueKind.Object
             ? string.Join(", ", value.EnumerateObject().Select(property => property.Name).Take(12))
             : "none";
+
+    private static bool OtherMedia(JsonElement item) =>
+        (TryPath(item, out var data, "itemV2", "data") || TryPath(item, out data, "track", "data")) &&
+        (String(data, "__typename") is "Episode" or "Chapter" or "LocalTrack" || String(data, "uri") is { } uri &&
+            (uri.StartsWith("spotify:episode:", StringComparison.Ordinal) || uri.StartsWith("spotify:local:", StringComparison.Ordinal)));
 
     private static ProviderPlaylistTrack? MapTrack(
         JsonElement item,
