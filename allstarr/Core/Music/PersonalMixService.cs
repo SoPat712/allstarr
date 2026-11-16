@@ -360,9 +360,11 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
             saved == null && timeZoneId != null)
             document = (await SnapshotAsync(owner, token, timeZoneId)).Document;
         else
-            document = await LoadAsync(db, user, token, saved: row, document: saved);
-        return (await VisibleAsync(owner, document, token, preferLocalCopies: !cardsOnly))
-            .Concat(await ServiceMixesAsync(user, token, cardsOnly: cardsOnly, background: background)).ToArray();
+            using (RequestTiming.Current?.Stage("saved")) document = await LoadAsync(db, user, token, saved: row, document: saved);
+        IEnumerable<PersonalMix> visible;
+        using (RequestTiming.Current?.Stage("library")) visible = await VisibleAsync(owner, document, token, preferLocalCopies: !cardsOnly);
+        using (RequestTiming.Current?.Stage("sources"))
+            return visible.Concat(await ServiceMixesAsync(user, token, cardsOnly: cardsOnly, background: background)).ToArray();
     }
 
     public async Task<PersonalMix> GetAsync(Guid owner, Guid id, CancellationToken token = default)

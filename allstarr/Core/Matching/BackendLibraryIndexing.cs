@@ -370,10 +370,14 @@ public sealed class LibraryIndexMaintenanceService(
     ILibraryIndexService? libraryIndex = null) : BackgroundService
 {
     private static readonly TimeSpan RefreshInterval = LocalLibraryAvailability.RefreshInterval;
+    // The saved index serves pages right after a restart, so its refresh waits for the first page loads.
+    internal static readonly TimeSpan StartupGrace = TimeSpan.FromMinutes(3);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         taskActivity?.Register("library-index", "Library index refresh", RefreshInterval);
+        try { await Task.Delay(StartupGrace, stoppingToken); }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { return; }
         while (!stoppingToken.IsCancellationRequested)
         {
             try
