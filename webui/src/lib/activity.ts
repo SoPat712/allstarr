@@ -182,7 +182,7 @@ export function groupActivity(items: ActivityItem[]) {
     const first = group.entries[0];
     const maintenance = first.kind === "library" || first.action === "library.index" || first.action === "health.smoke" || first.label === "health.smoke";
     const key = maintenance && activityTone(groupOutcome(group.entries)) === "success"
-      ? [new Date(first.occurredAt).toDateString(), first.kind, first.label, first.action, first.source, first.providerId, first.severity, first.detail].join("|") : "";
+      ? [new Date(first.occurredAt).toDateString(), first.kind, first.label, first.action, first.actorUserId, first.source, first.providerId, first.severity, first.detail].join("|") : "";
     const kept = key ? routine.get(key) : undefined;
     if (!kept) { folded.push(group); if (key) routine.set(key, group); continue; }
     kept.entries.push(...group.entries);

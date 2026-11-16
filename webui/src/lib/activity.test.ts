@@ -72,6 +72,7 @@ describe("event log presentation", () => {
       { ...run("5", "09"), state: "Failed", detail: "Library: attempt 1 failed." }]);
     expect(groups.map(group => group.entries.map(entry => entry.id))).toEqual([["1", "3", "4"], ["2"], ["5"]]);
     expect(groups[0].title).toMatch(/· 3 times$/);
+    expect(groupActivity([run("1", "12"), { ...run("2", "11"), actorUserId: "other" }])).toHaveLength(2);
   });
 
   it("retains loaded history while deduplicating live refreshes", () => {
