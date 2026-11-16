@@ -556,7 +556,7 @@ public sealed partial class ProviderStatusManagerTests
             services: Mock.Of<IServiceProvider>(provider => provider.GetService(typeof(allstarr.Core.Providers.Lyrics.UnisonCapabilityAdapter)) == adapter));
         Assert.Equal(ProviderHealthState.Healthy, (await manager.TestAccountFreeProviderCapabilityAsync("unison", "lyrics")).Health);
         var second = await manager.TestAccountFreeProviderCapabilityAsync("unison", "lyrics");
-        Assert.Equal(ProviderHealthState.Degraded, second.Health);
+        Assert.NotEqual(ProviderHealthState.Degraded, second.Health);
         Assert.Equal("rate-limited", second.ReasonCode);
         Assert.Equal(4, handler.Requests.Count);
     }

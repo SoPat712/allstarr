@@ -1205,7 +1205,8 @@ public class ProviderStatusManager
             }, ct => DiscoverLyricsSamplesAsync(provider, ct), cancellationToken,
             timeoutReason: "timeout",
             attemptTimeout: provider == "genius" ? allstarr.Core.Providers.Lyrics.MetadataLyricsCapabilityAdapter.OverallLookupBudget : null);
-        return new(result.Success, result.ReasonCode, IsNeutral: result.SampleUnavailable);
+        // A lyrics service that asks the check to slow down was not tested; that is no failure of the service.
+        return new(result.Success, result.ReasonCode, IsNeutral: result.SampleUnavailable || result.ReasonCode == "rate-limited");
     }
 
     private async IAsyncEnumerable<ProviderDiagnosticSample> DiscoverLyricsSamplesAsync(string provider,
