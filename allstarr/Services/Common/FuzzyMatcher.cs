@@ -21,7 +21,7 @@ public static partial class FuzzyMatcher
     [System.Text.RegularExpressions.GeneratedRegex(@"\s*[\(\[][^\)\]]*\b(feat\.?|ft\.?|with|featuring)\s+[^\)\]]+[\)\]]", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
     private static partial System.Text.RegularExpressions.Regex ParenthesizedCreditsRegex();
 
-    [System.Text.RegularExpressions.GeneratedRegex(@"\s*(?:[-–—]\s*|[\(\[]\s*)from\s+(?:[""“‘'][^""”’']+[""”’']|[^\(\)\[\]]+?)(?:[\)\]]|(?=\s*[\(\[]|$))", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
+    [System.Text.RegularExpressions.GeneratedRegex(@"\s*(?:[-–—]\s*|[\(\[]\s*)(?:(?:music|songs)\s+)?from\s+(?:[""“‘'][^""”’']+[""”’']|[^\(\)\[\]]+?)(?:[\)\]]|(?=\s*[\(\[]|$))", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
     private static partial System.Text.RegularExpressions.Regex FromAlbumDecoratorRegex();
 
     [System.Text.RegularExpressions.GeneratedRegex(@"\s*(?:[-–—]\s*|[\(\[]\s*)from\s+(?:the\s+)?(?:animated\s+)?(?:film|movie|series)\s+[^\)\]]+[\)\]]?", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
@@ -77,6 +77,10 @@ public static partial class FuzzyMatcher
 
     [System.Text.RegularExpressions.GeneratedRegex(@"[^\w\s]")]
     private static partial System.Text.RegularExpressions.Regex PunctuationRegex();
+
+    // Hyphens and dashes other than "-", such as the U+2010 in "Spider‐Man", separate words the same way.
+    [System.Text.RegularExpressions.GeneratedRegex(@"[-\u2010-\u2015\u2212\uFE58\uFE63\uFF0D]")]
+    private static partial System.Text.RegularExpressions.Regex DashRegex();
 
     [System.Text.RegularExpressions.GeneratedRegex(@"\s+")]
     private static partial System.Text.RegularExpressions.Regex WhitespaceRegex();
@@ -164,6 +168,14 @@ public static partial class FuzzyMatcher
             .ToHashSet(StringComparer.Ordinal).SetEquals(candidateTags);
     }
 
+    // The source album can name a version its title leaves out, such as "Heavy" on "Heavy (acoustic)".
+    internal static bool CarriesSourceAlbumMarkers(string sourceTitle, string? sourceAlbum, string candidateTitle, string? candidateAlbum)
+    {
+        var markers = AlbumRecordingTags(sourceAlbum).Except(RecordingVersionTags(sourceTitle)).ToArray();
+        return markers.Length > 0 &&
+               !markers.Except(RecordingVersionTags(candidateTitle).Concat(AlbumRecordingTags(candidateAlbum))).Any();
+    }
+
     internal static bool SourceAlbumMarkersMatch(string sourceTitle, string? sourceAlbum, string? candidateAlbum)
     {
         var markers = AlbumRecordingTags(sourceAlbum).Except(RecordingVersionTags(sourceTitle)).ToArray();
@@ -181,7 +193,7 @@ public static partial class FuzzyMatcher
         if (string.IsNullOrWhiteSpace(value)) return [];
         return System.Text.RegularExpressions.Regex.Split(
                 value,
-                @"\s*(?:,|&|;|\band\b|\bx\b|\bfeat(?:uring)?\b\.?|\bft\b\.?|\bwith\b)\s*",
+                @"\s*(?:,|&|;|×|\band\b|\bx\b|\bfeat(?:uring)?\b\.?|\bft\b\.?|\bwith\b)\s*",
                 System.Text.RegularExpressions.RegexOptions.IgnoreCase |
                 System.Text.RegularExpressions.RegexOptions.CultureInvariant)
             .Select(artist => artist.Trim())
@@ -243,15 +255,12 @@ public static partial class FuzzyMatcher
 
     internal static string WithoutSoundtrackAlbumAnnotation(string title, string? album)
     {
-        static string NormalizeContext(string value) =>
-            NormalizeForMatching(value.Replace('\u2010', '-').Replace('\u2011', '-'));
-
-        var normalizedAlbum = " " + NormalizeContext(album ?? "") + " ";
+        var normalizedAlbum = " " + NormalizeForMatching(album ?? "") + " ";
         if (!normalizedAlbum.Contains(" soundtrack ", StringComparison.Ordinal)) return title;
         return WhitespaceRegex().Replace(BracketedTitlePartRegex().Replace(title, match =>
         {
             var annotation = match.Groups[1].Value;
-            var normalized = NormalizeContext(annotation);
+            var normalized = NormalizeForMatching(annotation);
             return normalized.Length > 0 && RecordingVersionTags(annotation).Count == 0 &&
                    normalizedAlbum.Contains(" " + normalized + " ", StringComparison.Ordinal) ? " " : match.Value;
         }), " ").Trim();
@@ -556,7 +565,7 @@ public static partial class FuzzyMatcher
         var normalized = text.ToLowerInvariant().Trim();
 
         normalized = RemoveDiacritics(normalized);
-        normalized = normalized.Replace('$', 's').Replace('-', ' ').Replace('_', ' ')
+        normalized = DashRegex().Replace(normalized.Replace('$', 's'), " ").Replace('_', ' ')
             .Replace("&", " and ", StringComparison.Ordinal);
 
         normalized = PunctuationRegex().Replace(normalized, "");

@@ -2197,6 +2197,76 @@ public sealed class TrackMatchDecisionEngineTests(ITestOutputHelper output)
         SourceSnapshotVersion: 1,
         AccessibleLibraryIds: new HashSet<string>(StringComparer.Ordinal) { "music" });
 
+    [Fact]
+    public void TheSlowedCopyTheSourceAlbumNamesIsNotTiedWithTheOriginalOrAFeatureVersion()
+    {
+        var scope = Scope();
+        var source = Source() with { Title = "NOBLE", Artist = "F3miii", Album = "NOBLE (Slowed Down)", AlbumArtist = "F3miii", DurationMilliseconds = 185_806 };
+        var slowed = ServiceCopy(scope, "spotiflac-deezer", "NOBLE", "F3miii", "NOBLE (Slowed Down)", 186_000, "GXJBS2557689");
+        var decision = new TrackMatchDecisionEngine().Decide(scope, source,
+            [
+                slowed,
+                ServiceCopy(scope, "spotiflac-deezer", "NOBLE (with The Kid LAROI)", "F3miii", "NOBLE (with The Kid LAROI)", 186_000, "GBARL2600855"),
+                ServiceCopy(scope, "spotiflac-tidal-web", "NOBLE", "F3miii", "NOBLE", 186_000, "GXJBS2557689"),
+                ServiceCopy(scope, "spotiflac-tidal-web", "NOBLE (with The Kid LAROI)", "F3miii", "NOBLE (with The Kid LAROI)", 186_000, "GBARL2600855")
+            ],
+            providerPriority: ["spotiflac-deezer", "spotiflac-tidal-web"]);
+        Assert.Equal(TrackMatchReviewState.Accepted, decision.State);
+        Assert.Equal(slowed.LibraryTrackId, decision.SelectedLibraryTrackId);
+    }
+
+    [Fact]
+    public void TheAcousticCopyTheSourceAlbumNamesIsNotTiedWithTheStudioRecording()
+    {
+        var scope = Scope();
+        var source = Source() with
+        {
+            ProviderId = "listenbrainz",
+            Title = "Heavy",
+            Artist = "Peach PRC",
+            Album = "Heavy (acoustic)",
+            AlbumArtist = "Peach PRC",
+            DurationMilliseconds = 166_000,
+            IsExplicit = null
+        };
+        var acoustic = ServiceCopy(scope, "spotiflac-deezer", "Heavy (Acoustic)", "Peach PRC", "Heavy (Acoustic)", 165_000, "USUM72122035");
+        var decision = new TrackMatchDecisionEngine().Decide(scope, source,
+            [
+                acoustic,
+                ServiceCopy(scope, "spotiflac-deezer", "Heavy", "Peach PRC", "Heavy", 166_000, "USUM72121080"),
+                ServiceCopy(scope, "spotiflac-tidal-web", "Heavy (Acoustic)", "Peach PRC", "Heavy (Acoustic)", 166_000, "USUM72122035"),
+                ServiceCopy(scope, "spotiflac-tidal-web", "Heavy", "Peach PRC", "Heavy", 166_000, "USUM72121080")
+            ],
+            providerPriority: ["spotiflac-deezer", "spotiflac-tidal-web"]);
+        Assert.Equal(TrackMatchReviewState.Accepted, decision.State);
+        Assert.Equal(acoustic.LibraryTrackId, decision.SelectedLibraryTrackId);
+    }
+
+    [Fact]
+    public void TheStudioRecordingStillWinsWhenTheSourceAlbumNamesNoVersion()
+    {
+        var scope = Scope();
+        var source = Source() with { Title = "Heavy", Artist = "Peach PRC", Album = "Heavy", AlbumArtist = "Peach PRC", DurationMilliseconds = 166_000 };
+        var studio = ServiceCopy(scope, "spotiflac-deezer", "Heavy", "Peach PRC", "Heavy", 166_000, "USUM72121080");
+        var decision = new TrackMatchDecisionEngine().Decide(scope, source,
+            [ServiceCopy(scope, "spotiflac-deezer", "Heavy (Acoustic)", "Peach PRC", "Heavy (Acoustic)", 165_000, "USUM72122035"), studio],
+            providerPriority: ["spotiflac-deezer"]);
+        Assert.Equal(TrackMatchReviewState.Accepted, decision.State);
+        Assert.Equal(studio.LibraryTrackId, decision.SelectedLibraryTrackId);
+    }
+
+    private static LocalTrackMatchCandidate ServiceCopy(TrackMatchScope scope, string provider, string title, string artist,
+        string album, long durationMilliseconds, string isrc) => ProviderCandidate(scope, provider, durationMilliseconds) with
+        {
+            BackendItemId = $"{provider}:{title}:{album}",
+            Title = title,
+            Artist = artist,
+            Album = album,
+            AlbumArtist = artist,
+            Isrc = isrc,
+            ProviderTrackIds = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { [provider] = $"{provider}:{title}:{album}" }
+        };
+
     private static ExternalTrackMatchSnapshot Source() => new(
         "snapshot-1",
         "spotify",

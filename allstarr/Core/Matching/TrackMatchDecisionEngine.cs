@@ -587,6 +587,10 @@ public sealed class TrackMatchDecisionEngine
                 providerPriority).Rank == selectedPriority.Rank &&
             (!MatchesSourceVariant(source, selected, _policy.DurationToleranceSeconds, best) ||
              MatchesSourceVariant(source, visible.Single(candidate => candidate.LibraryTrackId == score.LibraryTrackId), _policy.DurationToleranceSeconds, score)) &&
+            // A copy without the version the source album names is another recording, not a rival.
+            (!FuzzyMatcher.CarriesSourceAlbumMarkers(source.Title, source.Album, selected.Title, selected.Album) ||
+             visible.Single(candidate => candidate.LibraryTrackId == score.LibraryTrackId) is var rival &&
+             FuzzyMatcher.CarriesSourceAlbumMarkers(source.Title, source.Album, rival.Title, rival.Album)) &&
             !SameLibraryRecording(selected, visible.Single(candidate => candidate.LibraryTrackId == score.LibraryTrackId)) &&
             !SameRecordingIdentity(
                 selected,

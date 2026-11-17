@@ -298,6 +298,32 @@ public class FuzzyMatcherTests
     }
 
     [Theory]
+    [InlineData("Sunflower - Spider-Man: Into the Spider-Verse", "Post Malone, Swae Lee", "Sunflower (Spider‐Man: Into the Spider‐Verse)", "Post Malone, Swae Lee")]
+    [InlineData("Popular (with Playboi Carti & Madonna) - From The Idol Vol. 1 (Music from the HBO Original Series)", "The Weeknd", "Popular", "The Weeknd, Playboi Carti, Madonna")]
+    [InlineData("Head & Heart", "Joel Corry × MNEK", "Head & Heart (feat. MNEK)", "Joel Corry")]
+    public void ServiceSpellingsOfTheSameTitleMatch(string source, string artist, string candidate, string candidateArtist)
+    {
+        Assert.True(FuzzyMatcher.TitleAnnotationsMatch(source, artist, candidate, candidateArtist));
+    }
+
+    [Theory]
+    [InlineData("Are You Gonna Be My Girl? - iTunes Originals Version", "Jet", "Are You Gonna Be My Girl", "Jet")]
+    [InlineData("Cups", "Anna Kendrick", "Cups (Movie Version)", "Anna Kendrick")]
+    [InlineData("Song (Music Box Version)", "Artist", "Song", "Artist")]
+    public void ADifferentRecordingNamedInTheTitleStillDiffers(string source, string artist, string candidate, string candidateArtist)
+    {
+        Assert.False(FuzzyMatcher.TitleAnnotationsMatch(source, artist, candidate, candidateArtist));
+    }
+
+    [Fact]
+    public void UnicodeHyphensSeparateWordsLikeAnAsciiHyphen()
+    {
+        Assert.Equal(FuzzyMatcher.NormalizeForMatching("Spider-Man"), FuzzyMatcher.NormalizeForMatching("Spider‐Man"));
+        Assert.Equal(FuzzyMatcher.NormalizeForMatching("Jay-Z"), FuzzyMatcher.NormalizeForMatching("Jay‑Z"));
+        Assert.Equal(["Joel Corry", "MNEK"], FuzzyMatcher.SplitCredits("Joel Corry × MNEK"));
+    }
+
+    [Theory]
     [InlineData("Let Me Hit It - Audiostalkers Mix", "Sporty-O", "Let Me Hit It (Audiostalkers Mix)", "Sporty-O")]
     [InlineData("Enemy (with JID) - from the series Arcane League of Legends", "Imagine Dragons", "Enemy (From the animated series \"Arcane League of Legends\")", "Imagine Dragons, Arcane & League of Legends Music")]
     public void EquivalentTitleAnnotationsMatch(string source, string artist, string candidate, string candidateArtist)
