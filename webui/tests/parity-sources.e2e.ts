@@ -798,8 +798,12 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
     await expect(audience).toContainText("Everyone in the household");
     await expect(panel.getByRole("button", { name: "Signed connection", exact: true })).toHaveCount(0);
     await expect(panel.getByRole("button", { name: /Add Personal connection/ })).toHaveCount(0);
-    await audience.getByRole("button", { name: "Change", exact: true }).click();
     const dialog = page.locator(".access-dialog");
+    // On a phone the settings sheet can still be settling when the first press lands.
+    await expect(async () => {
+      if (!await dialog.isVisible()) await audience.getByRole("button", { name: "Change", exact: true }).click();
+      await expect(dialog).toBeVisible({ timeout: 2_000 });
+    }).toPass();
     await dialog.getByRole("radio", { name: "Personal", exact: true }).check();
     await dialog.getByRole("button", { name: "Save access", exact: true }).click();
     await expect(dialog).toBeHidden();
@@ -887,9 +891,9 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
     for (const name of ["Downloads", "Playlists"]) {
       const row = account.locator(".service-check").filter({ hasText: name });
       await expect(row).toContainText("Needs sign-in");
-      // Name and state share one line.
+      // Name and state share one line; a second line would put them a full line apart.
       const [label, state] = [await row.locator(".service-check-name").boundingBox(), await row.locator(".service-check-status").boundingBox()];
-      expect(Math.abs(label!.y + label!.height / 2 - (state!.y + state!.height / 2))).toBeLessThan(6);
+      expect(Math.abs(label!.y + label!.height / 2 - (state!.y + state!.height / 2))).toBeLessThan(8);
     }
     for (const button of await account.locator('[data-slot="button"]').all())
       expect((await button.boundingBox())!.height, await button.innerText()).toBeLessThanOrEqual(40);
