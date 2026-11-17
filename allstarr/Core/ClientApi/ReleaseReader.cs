@@ -80,6 +80,16 @@ public sealed class ReleaseReader(NewReleasesService releases, IProtocolProvider
         return new(followed, new(visibleId, artist.DisplayName, ArtistImage(visibleId, artist.LibraryImageTag)));
     }
 
+    /// <summary>Whether this listener follows the library or service artist, without resolving it.</summary>
+    public async Task<bool> IsFollowingAsync(ProtocolExecutionContext execution, string artistId)
+    {
+        var follows = await releases.ListAsync(execution.RequireActor().EffectiveUserId!.Value, execution.CancellationToken);
+        var parsed = LocalLibraryService.ParseExternalResource(artistId);
+        if (!parsed.isExternal) return follows.Any(item => SameNativeId(item.LibraryArtistId, artistId));
+        var provider = registry.TryGet(parsed.provider!, out var descriptor) ? descriptor!.Id : parsed.provider;
+        return follows.Any(item => item.LibraryArtistId == null && registry.ResolveProviderId(item.ProviderId) == provider && item.ArtistId == parsed.externalId);
+    }
+
     private async Task<FollowedReleaseArtist?> ResolveArtistAsync(HttpContext http, ProtocolExecutionContext execution, string artistId, bool followed)
     {
         if (artistId.Length > 500 || artistId.Any(char.IsControl)) return null;

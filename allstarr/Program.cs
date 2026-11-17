@@ -519,6 +519,7 @@ builder.Services.AddScoped<V2TrackEndpoints>();
 builder.Services.AddScoped<V2TrackResources>();
 builder.Services.AddScoped<V2SessionReader>();
 builder.Services.AddScoped<V2AlbumEndpoints>();
+builder.Services.AddScoped<V2ArtistEndpoints>();
 builder.Services.AddScoped<V2LibraryEndpoints>();
 builder.Services.AddSingleton<V2ServingStreams>();
 builder.Services.AddScoped<LyricsTranslation>();

@@ -100,7 +100,7 @@ public sealed class V2AlbumEndpoints(V2TrackReader tracks, IProtocolProviderGate
         return new(200, response);
     }
 
-    private static V2AlbumSummary Summary(string source, Album album)
+    internal static V2AlbumSummary Summary(string source, Album album)
     {
         var artists = album.Artists.Where(artist => !string.IsNullOrWhiteSpace(artist.Name))
             .Select(artist => new V2Ref(V2Ids.IsValidSource(artist.Id, V2IdKind.Artist) ? V2Ids.Artist(artist.Id) : null, artist.Name)).ToArray();
@@ -110,17 +110,18 @@ public sealed class V2AlbumEndpoints(V2TrackReader tracks, IProtocolProviderGate
             V2ArtworkUrls.For(source, JellyfinItemArtwork.AlbumImageTag(source, false)));
     }
 
-    private async Task<IReadOnlyList<V2AlbumSummary>> LibraryAlbumsAsync(HttpContext http, ProtocolExecutionContext execution, Dictionary<string, string> query)
+    internal async Task<IReadOnlyList<V2AlbumSummary>> LibraryAlbumsAsync(HttpContext http, ProtocolExecutionContext execution,
+        Dictionary<string, string> query, int limit = 20)
     {
         query["includeItemTypes"] = "MusicAlbum";
-        query["limit"] = "20";
+        query["limit"] = limit.ToString(System.Globalization.CultureInfo.InvariantCulture);
         using var document = await LibraryAsync(http, execution, query);
         return Items(document).Where(item => String(item, "Type") == "MusicAlbum" && String(item, "Id") is { } id && V2Ids.IsValidSource(id, V2IdKind.Album))
             .Select(item => new V2AlbumSummary(V2Ids.Album(String(item, "Id")!), String(item, "Name") ?? "", Refs(item, "AlbumArtists"),
                 Int(item, "ProductionYear"), false, V2ArtworkUrls.For(String(item, "Id"), item.TryGetProperty("ImageTags", out var tags) ? String(tags, "Primary") : null))).ToArray();
     }
 
-    private async Task<JsonDocument?> LibraryAsync(HttpContext http, ProtocolExecutionContext execution, Dictionary<string, string> query)
+    internal async Task<JsonDocument?> LibraryAsync(HttpContext http, ProtocolExecutionContext execution, Dictionary<string, string> query)
     {
         var (document, status) = await jellyfin.GetJsonAsync($"Users/{Uri.EscapeDataString(execution.VerifiedBackendPrincipalId)}/Items",
             query, http.Request.Headers, execution.CancellationToken);
@@ -130,6 +131,6 @@ public sealed class V2AlbumEndpoints(V2TrackReader tracks, IProtocolProviderGate
         throw new HttpRequestException("Library albums are unavailable.");
     }
 
-    private static IEnumerable<JsonElement> Items(JsonDocument? document) =>
+    internal static IEnumerable<JsonElement> Items(JsonDocument? document) =>
         document?.RootElement.TryGetProperty("Items", out var items) == true && items.ValueKind == JsonValueKind.Array ? items.EnumerateArray() : [];
 }

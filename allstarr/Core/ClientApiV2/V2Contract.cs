@@ -141,6 +141,31 @@ public sealed record V2AlbumResponse([property: JsonPropertyName("album")] V2Alb
 
 public sealed record V2AlbumViews([property: JsonPropertyName("moreByArtist")] IReadOnlyList<V2AlbumSummary> MoreByArtist);
 
+/// <summary>A library or service artist.</summary>
+public sealed record V2ArtistSummary(
+    [property: JsonPropertyName("id")] string Id,
+    [property: JsonPropertyName("name")] string Name,
+    [property: JsonPropertyName("isExternal"), Description("True for a service artist that is not in the media server library.")] bool IsExternal,
+    [property: JsonPropertyName("artwork")] V2Artwork? Artwork,
+    [property: JsonPropertyName("genres")] IReadOnlyList<string> Genres,
+    [property: JsonPropertyName("following"), Description("Whether this listener follows the artist for new releases.")] bool Following)
+{
+    [JsonPropertyName("libraryId"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull), Description("The media server artist when it is in the library.")]
+    public string? LibraryId => V2Ids.LibrarySource(Id, V2IdKind.Artist);
+}
+
+public sealed record V2ArtistResponse([property: JsonPropertyName("artist")] V2ArtistSummary Artist)
+{
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull), JsonPropertyName("albums"), Description("Up to 50 albums, newest first for library artists.")]
+    public IReadOnlyList<V2AlbumSummary>? Albums { get; init; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull), JsonPropertyName("tracks"), Description("Up to 20 top songs.")]
+    public IReadOnlyList<V2Track>? Tracks { get; init; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull), JsonPropertyName("missing")]
+    public IReadOnlyList<string>? Missing { get; init; }
+}
+
 public sealed record V2TracksResponse(
     [property: JsonPropertyName("tracks")] IReadOnlyList<V2Track> Tracks,
     [property: JsonPropertyName("missing")] IReadOnlyList<string> Missing)

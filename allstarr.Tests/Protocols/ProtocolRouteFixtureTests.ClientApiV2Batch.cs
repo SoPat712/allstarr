@@ -144,6 +144,70 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.False(summary.AsObject().ContainsKey("views"));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ClientApiV2_ArtistIncludesAlbumsAndTopSongsInStandaloneAndBatchReads(bool external)
+    {
+        var source = external ? "ext-deezer-artist-9" : "artist1";
+        var gateway = V2BatchGateway();
+        gateway.Setup(item => item.GetStoredArtistAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "9"))
+            .ReturnsAsync(new Artist { Id = source, Name = "Service artist", Genres = ["Pop"] });
+        gateway.Setup(item => item.GetArtistAlbumsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "9", 50)).ReturnsAsync([
+            new Album { Id = "ext-deezer-album-7", Title = "First album", Artist = "Service artist", ArtistId = source },
+            new Album { Id = "ext-deezer-album-7", Title = "First album", Artist = "Service artist", ArtistId = source }]);
+        gateway.Setup(item => item.GetArtistTracksAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "9", 20)).ReturnsAsync([V2BatchSong("known")]);
+        using var factory = ClientDetailsFactory(request =>
+        {
+            if (request.RequestUri!.AbsolutePath == "/Users/Me") return Json(200, """{"Id":"listener"}""");
+            if (request.RequestUri.AbsolutePath == "/UserViews") return Json(200, """{"Items":[]}""");
+            Assert.Equal("/Users/listener/Items", request.RequestUri.AbsolutePath);
+            var query = QueryHelpers.ParseQuery(request.RequestUri.Query);
+            if (query.GetValueOrDefault("ids") == "artist1")
+                return Json(200, """{"Items":[{"Id":"artist1","Name":"Library artist","Type":"MusicArtist","Genres":["Pop"],"ImageTags":{"Primary":"face"}}]}""");
+            if (query.GetValueOrDefault("includeItemTypes") == "MusicAlbum")
+            {
+                Assert.Equal("artist1", query["albumArtistIds"]);
+                Assert.Equal("50", query["limit"]);
+                return Json(200, """{"Items":[{"Id":"album1","Name":"Library album","Type":"MusicAlbum","ProductionYear":2020}]}""");
+            }
+            if (query.ContainsKey("artistIds")) Assert.Equal("PlayCount,SortName", query["sortBy"]);
+            return Json(200, V2LibrarySong);
+        }, services =>
+        {
+            services.RemoveAll<IProtocolProviderGateway>();
+            services.AddSingleton(gateway.Object);
+            services.AddSingleton<V2PlaybackErrors>();
+            services.AddSingleton<ILogger<ClientApiMiddleware>>(provider => provider.GetRequiredService<V2PlaybackErrors>());
+        });
+        using var icons = new ProviderIconFiles();
+        using var client = CreateClientApiClient(factory);
+        icons.Use(factory.Services);
+        client.DefaultRequestHeaders.Authorization = new("Bearer", "listener-token");
+        if (external) await SeedV2DetailsAsync(factory, "listener", "known", personal: true);
+        var path = $"/allstarr/v2/artists/{V2Ids.Artist(source)}?include=albums,tracks";
+        using var response = await client.GetAsync(path);
+        var text = await response.Content.ReadAsStringAsync();
+        Assert.True(response.StatusCode == HttpStatusCode.OK, text + "\n" + factory.Services.GetRequiredService<V2PlaybackErrors>().Last);
+        var body = JsonNode.Parse(text)!;
+        Assert.Equal(V2Ids.Artist(source), body["artist"]!["id"]!.GetValue<string>());
+        Assert.Equal(external ? "Service artist" : "Library artist", body["artist"]!["name"]!.GetValue<string>());
+        Assert.Equal(external, body["artist"]!["isExternal"]!.GetValue<bool>());
+        Assert.Equal(external ? null : "artist1", body["artist"]!["libraryId"]?.GetValue<string>());
+        Assert.Equal("Pop", Assert.Single(body["artist"]!["genres"]!.AsArray())!.GetValue<string>());
+        Assert.False(body["artist"]!["following"]!.GetValue<bool>());
+        Assert.Equal(V2Ids.Album(external ? "ext-deezer-album-7" : "album1"), Assert.Single(body["albums"]!.AsArray())!["id"]!.GetValue<string>());
+        Assert.Single(body["tracks"]!.AsArray());
+        var batch = await ReadV2Batch(client, path);
+        Assert.Equal(200, batch["status"]!.GetValue<int>());
+        Assert.True(JsonNode.DeepEquals(body, batch["body"]));
+        await AssertV2NotModified(client, path, response.Headers.ETag!.ToString());
+        using var plain = await client.GetAsync($"/allstarr/v2/artists/{source}");
+        var summary = JsonNode.Parse(await plain.Content.ReadAsStringAsync())!;
+        Assert.False(summary.AsObject().ContainsKey("albums"));
+        Assert.False(summary.AsObject().ContainsKey("tracks"));
+    }
+
     [Fact]
     public async Task ClientApiV2_BulkLyricsKeepsFoundTracksAndReportsMissingIds()
     {
@@ -256,6 +320,8 @@ public sealed partial class ProtocolRouteFixtureTests
     [InlineData("/allstarr/v2/albums/album1?include=track", 400)]
     [InlineData("/allstarr/v2/albums/album1?views=more-by-artist,more-by-artist", 400)]
     [InlineData("/allstarr/v2/albums/trk_sbmF0aXZlMQ", 404)]
+    [InlineData("/allstarr/v2/artists/artist1?include=songs", 400)]
+    [InlineData("/allstarr/v2/artists/alb_YWxidW0x", 404)]
     [InlineData("/allstarr/v2/albums/unknown", 404)]
     public async Task ClientApiV2_AlbumAndBulkQueriesValidateInStandaloneAndBatchReads(string path, int status)
     {

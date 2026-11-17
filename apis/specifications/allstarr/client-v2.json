@@ -686,6 +686,122 @@
         }
       }
     },
+    "/allstarr/v2/artists/{id}": {
+      "get": {
+        "tags": [
+          "Artists"
+        ],
+        "description": "Reads a library or service artist by its native or older id. Can also be read inside a batch.",
+        "operationId": "getArtist",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "include",
+            "in": "query",
+            "description": "\u0060albums\u0060 adds up to 50 of the artist\u0027s albums; \u0060tracks\u0060 adds up to 20 top songs as native track shapes.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "If-None-Match",
+            "in": "header",
+            "description": "The stored ETag; a matching representation returns 304 without a body.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "headers": {
+              "ETag": {
+                "description": "Representation validator, also returned by the batch entry.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V2ArtistResponse"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Not Modified",
+            "headers": {
+              "ETag": {
+                "description": "Representation validator, also returned by the batch entry.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/allstarr/v2/batch": {
       "post": {
         "tags": [
@@ -6623,6 +6739,100 @@
           }
         }
       },
+      "V2ArtistResponse": {
+        "required": [
+          "artist"
+        ],
+        "type": "object",
+        "properties": {
+          "artist": {
+            "$ref": "#/components/schemas/V2ArtistSummary"
+          },
+          "albums": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/V2AlbumSummary"
+            },
+            "description": "Up to 50 albums, newest first for library artists."
+          },
+          "tracks": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/V2Track"
+            },
+            "description": "Up to 20 top songs."
+          },
+          "missing": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "V2ArtistSummary": {
+        "required": [
+          "id",
+          "name",
+          "isExternal",
+          "artwork",
+          "genres",
+          "following"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "isExternal": {
+            "type": "boolean",
+            "description": "True for a service artist that is not in the media server library."
+          },
+          "artwork": {
+            "type": [
+              "null",
+              "object"
+            ],
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/V2Artwork"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "genres": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "following": {
+            "type": "boolean",
+            "description": "Whether this listener follows the artist for new releases."
+          },
+          "libraryId": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "description": "The media server artist when it is in the library."
+          }
+        }
+      },
       "V2Artwork": {
         "required": [
           "url"
@@ -9022,6 +9232,9 @@
     },
     {
       "name": "ArtistLinks"
+    },
+    {
+      "name": "Artists"
     },
     {
       "name": "Batch"
