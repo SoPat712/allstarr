@@ -36,6 +36,21 @@ public sealed class V2IdsTests
         Assert.Null(V2Ids.LibrarySource(V2Ids.Track(Guid.NewGuid()), V2IdKind.Track));
     }
 
+    [Fact]
+    public void ServiceReferencesCarryTheirOlderIdAndLibraryReferencesDoNot()
+    {
+        var service = System.Text.Json.JsonSerializer.SerializeToNode(new V2Ref(V2Ids.Artist("ext-deezer-artist-7"), "Service artist"))!;
+        Assert.Equal("ext-deezer-artist-7", Assert.Single(service["aliases"]!.AsArray())!.GetValue<string>());
+        Assert.Null(service["libraryId"]);
+        var album = System.Text.Json.JsonSerializer.SerializeToNode(new V2AlbumRef(V2Ids.Album("ext-deezer-album-1"), "Service album"))!;
+        Assert.Equal("ext-deezer-album-1", Assert.Single(album["aliases"]!.AsArray())!.GetValue<string>());
+        var library = System.Text.Json.JsonSerializer.SerializeToNode(new V2Ref(V2Ids.Artist("ec9e9fcb79a05f57d2a9b711cba869db"), "Library artist"))!;
+        Assert.Null(library["aliases"]);
+        Assert.Equal("ec9e9fcb79a05f57d2a9b711cba869db", library["libraryId"]!.GetValue<string>());
+        Assert.Null(System.Text.Json.JsonSerializer.SerializeToNode(new V2Ref(null, "Credit only"))!["aliases"]);
+        Assert.Null(V2Ids.ServiceSource(V2Ids.Artist("ext-deezer-artist-7"), V2IdKind.Album));
+    }
+
     [Theory]
     [InlineData("alb_ZXh0LWRlZXplci1hbGJ1bS0x")]
     [InlineData("ext-deezer-album-1")]

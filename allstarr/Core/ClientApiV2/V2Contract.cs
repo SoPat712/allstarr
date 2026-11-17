@@ -55,6 +55,9 @@ public sealed record V2Ref(
 {
     [JsonPropertyName("libraryId"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull), Description("The media server artist when it is in the library.")]
     public string? LibraryId => V2Ids.LibrarySource(Id, V2IdKind.Artist);
+
+    [JsonPropertyName("aliases"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull), Description("The older service id of an artist that is not in the library, which the media-server routes accept.")]
+    public IReadOnlyList<string>? Aliases => V2Ids.ServiceSource(Id, V2IdKind.Artist) is { } source ? [source] : null;
 }
 
 public sealed record V2AlbumRef(
@@ -65,6 +68,9 @@ public sealed record V2AlbumRef(
 
     [JsonPropertyName("libraryId"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull), Description("The media server album when it is in the library.")]
     public string? LibraryId => V2Ids.LibrarySource(Id, V2IdKind.Album);
+
+    [JsonPropertyName("aliases"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull), Description("The older service id of an album that is not in the library, which the media-server routes accept.")]
+    public IReadOnlyList<string>? Aliases => V2Ids.ServiceSource(Id, V2IdKind.Album) is { } source ? [source] : null;
 }
 
 public sealed record V2Provider(

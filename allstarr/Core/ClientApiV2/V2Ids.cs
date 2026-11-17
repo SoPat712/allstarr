@@ -40,6 +40,11 @@ public static class V2Ids
         TryDecode(value, kind, out var id) && id.Recording == null && id.Source is { } source &&
         !source.StartsWith("ext-", StringComparison.Ordinal) ? source : null;
 
+    /// <summary>The older service id inside a v2 artist or album id, such as ext-deezer-artist-1, or null for library items.</summary>
+    public static string? ServiceSource(string? value, V2IdKind kind) =>
+        TryDecode(value, kind, out var id) && id.Recording == null && id.Source is { } source &&
+        source.StartsWith("ext-", StringComparison.Ordinal) ? source : null;
+
     /// <summary>Decodes a v2 id of the expected kind, or accepts an older library or service id; returns false for anything else.</summary>
     public static bool TryDecode(string? value, V2IdKind expected, out V2IdRef id)
     {

@@ -6614,6 +6614,16 @@
               "string"
             ],
             "description": "The media server album when it is in the library."
+          },
+          "aliases": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "The older service id of an album that is not in the library, which the media-server routes accept."
           }
         }
       },
@@ -8316,6 +8326,16 @@
               "string"
             ],
             "description": "The media server artist when it is in the library."
+          },
+          "aliases": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "The older service id of an artist that is not in the library, which the media-server routes accept."
           }
         }
       },
