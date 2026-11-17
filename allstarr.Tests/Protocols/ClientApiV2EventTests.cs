@@ -42,6 +42,21 @@ public sealed class ClientApiV2EventTests
     }
 
     [Fact]
+    public async Task ClientApiV2_EveryConnectionStartsWithAResumableReadyFrame()
+    {
+        using var fixture = new EventsFixture();
+        var owner = Guid.NewGuid();
+        var first = fixture.Subscribe(owner);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var ready = (await first.ReadAsync(timeout.Token))!;
+        Assert.Equal("ready", ready.Value.Type);
+        first.Dispose();
+        fixture.Events.Publish(owner, ClientEvent.Releases(7));
+        using var resumed = fixture.Subscribe(owner, ready.Id);
+        Assert.Contains("\"count\":7", (await Read(resumed)).Value.Json);
+    }
+
+    [Fact]
     public async Task ClientApiV2_PreferenceChangesReachTheListenersApps()
     {
         using var fixture = new EventsFixture();
@@ -102,10 +117,15 @@ public sealed class ClientApiV2EventTests
         Assert.Null(fixture.Hub.Subscribe(owner, null));
     }
 
+    // The ready frame each connection starts with is skipped; a test that wants it reads the subscription itself.
     private static async Task<V2StreamEvent> Read(V2EventSubscription subscription)
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        return (await subscription.ReadAsync(timeout.Token))!;
+        while (true)
+        {
+            var value = (await subscription.ReadAsync(timeout.Token))!;
+            if (value.Value.Type != "ready") return value;
+        }
     }
 
     private sealed class EventsFixture : IDisposable

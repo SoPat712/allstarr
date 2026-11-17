@@ -56,6 +56,9 @@ public sealed partial class ProtocolRouteFixtureTests
         var principal = (await factory.Services.GetRequiredService<BackendIdentityResolver>().ResolveAsync(new("Jellyfin", "listener")))!;
         var hub = factory.Services.GetRequiredService<ClientEventHub>();
         using var stream = await OpenV2EventsAsync(client);
+        var ready = await V2FrameAsync(stream, "ready");
+        Assert.False(string.IsNullOrEmpty(ready.Id));
+        Assert.Empty(ready.Data.EnumerateObject());
         hub.Publish(principal.UserId, ClientEvent.Keep("ext-deezer-song-known", "inProgress", .5));
         var track = (await V2FrameAsync(stream, "track.updated")).Data.GetProperty("track");
         Assert.Equal(V2Ids.Track(recording), track.GetProperty("id").GetString());
@@ -141,6 +144,7 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.Equal("text/event-stream", stream.Response.Content.Headers.ContentType!.MediaType);
         Assert.True(stream.Response.Headers.CacheControl!.NoStore);
         Assert.Empty(stream.Response.Content.Headers.ContentEncoding);
+        Assert.Contains("\nevent: ready\n", await stream.FrameAsync());
         Assert.Equal(": ping", await stream.FrameAsync());
         using var capped = await client.GetAsync("/allstarr/v2/events", HttpCompletionOption.ResponseHeadersRead);
         await AssertClientApiError(capped, 503, "unavailable");
@@ -171,7 +175,7 @@ public sealed partial class ProtocolRouteFixtureTests
         for (var attempt = 0; attempt < 100; attempt++)
         {
             var frame = await stream.FrameAsync();
-            if (frame.StartsWith(':')) continue;
+            if (frame.StartsWith(':') || expected != "ready" && frame.Contains("\nevent: ready\n", StringComparison.Ordinal)) continue;
             var lines = frame.Split('\n');
             Assert.StartsWith("id: ", lines[0]);
             Assert.Equal("event: " + expected, lines[1]);

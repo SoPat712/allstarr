@@ -166,7 +166,6 @@ public sealed partial class ProtocolRouteFixtureTests
     [Theory]
     [InlineData("/allstarr/v2/tracks")]
     [InlineData("/allstarr/v2/tracks?ids=")]
-    [InlineData("/allstarr/v2/tracks?ids=trk_s!!")]
     [InlineData("/allstarr/v2/tracks/trk_s!!")]
     [InlineData("/allstarr/v2/tracks?ids=native1,,native2")]
     [InlineData("/allstarr/v2/tracks?ids=native1&include=albums")]
@@ -180,6 +179,21 @@ public sealed partial class ProtocolRouteFixtureTests
         client.DefaultRequestHeaders.Authorization = new("Bearer", "listener-token");
         using var response = await client.GetAsync(path);
         await AssertClientApiError(response, 400, "invalid_request");
+    }
+
+    [Fact]
+    public async Task ClientApiV2_TrackListsReportIdsThatCannotBeSongsAsMissing()
+    {
+        using var factory = ClientDetailsFactory(request => request.RequestUri!.AbsolutePath == "/Users/Me"
+            ? Json(200, """{"Id":"listener"}""") : throw new InvalidOperationException("Unexpected upstream request"));
+        using var client = CreateClientApiClient(factory);
+        client.DefaultRequestHeaders.Authorization = new("Bearer", "listener-token");
+        using var response = await client.GetAsync("/allstarr/v2/tracks?ids=trk_s!!,ext-deezer-album-1");
+        var text = await response.Content.ReadAsStringAsync();
+        Assert.True(response.StatusCode == HttpStatusCode.OK, text);
+        using var json = JsonDocument.Parse(text);
+        Assert.Empty(json.RootElement.GetProperty("tracks").EnumerateArray());
+        Assert.Equal(["trk_s!!", "ext-deezer-album-1"], json.RootElement.GetProperty("missing").EnumerateArray().Select(id => id.GetString()!).ToArray());
     }
 
     [Fact]

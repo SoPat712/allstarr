@@ -78,11 +78,13 @@ public sealed class V2EventStream : BackgroundService
             {
                 if (listener.Buffer.Any(item => item.Id == lastId))
                 {
-                    foreach (var item in listener.Buffer.SkipWhile(item => item.Id != lastId).Skip(1))
+                    foreach (var item in listener.Buffer.SkipWhile(item => item.Id != lastId).Skip(1).Where(item => item.Value.Type != "ready"))
                         subscription.Events.Writer.TryWrite(item);
                 }
                 else subscription.Events.Writer.TryWrite(Store(listener, ClientEvent.Create("resync", "", new { })));
             }
+            // Every connection gets a frame with a cursor at once, so an app holds a place to resume from before any change.
+            subscription.Events.Writer.TryWrite(Store(listener, ClientEvent.Create("ready", "", new { })));
             listener.Subscriptions.Add(subscription);
             return subscription;
         }

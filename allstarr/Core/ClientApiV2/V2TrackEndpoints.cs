@@ -40,9 +40,12 @@ public sealed class V2TrackEndpoints(V2TrackReader reader, V2TrackViewReader vie
 
     public async Task<V2Result> ListAsync(HttpContext http, ProtocolExecutionContext execution, string? ids, string? include, string? view = null)
     {
-        if (!V2Query.TryIds(ids, out var requested) || requested.Any(id => !V2Ids.TryDecode(id, V2IdKind.Track, out _)) || !V2Query.TryNames(include, Includes, out var included) ||
+        if (!V2Query.TryIds(ids, out var requested) || !V2Query.TryNames(include, Includes, out var included) ||
             !V2Query.TryNames(view, new HashSet<string>(StringComparer.Ordinal) { "lyrics" }, out var requestedViews)) return new(400, null);
-        var (result, sources) = await reader.ReadWithSourcesAsync(http, execution, requested, included.Contains("album"));
+        // An id that is not a song, such as an album's, is reported missing like an unknown song rather than failing the list.
+        var unreadable = requested.Where(id => !V2Ids.TryDecode(id, V2IdKind.Track, out _)).ToArray();
+        var (read, sources) = await reader.ReadWithSourcesAsync(http, execution, requested.Except(unreadable).ToArray(), included.Contains("album"));
+        var result = unreadable.Length == 0 ? read : read with { Missing = read.Missing.Concat(unreadable).ToArray() };
         if (requestedViews.Count == 0) return new(200, result);
         var readViews = new Dictionary<string, V2TrackViews>(StringComparer.Ordinal);
         var statuses = new Dictionary<string, IReadOnlyDictionary<string, string>>(StringComparer.Ordinal);
