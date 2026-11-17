@@ -18,6 +18,13 @@ describe("Home recent activity", () => {
       { ...check("1"), label: "Update playlist", action: "playlist.sync" }])).toHaveLength(4);
   });
 
+  it("leaves out the start of a run that has finished", () => {
+    const started = { ...check("3", "The Health check started."), id: "started", state: "running", correlationId: "run" } as ActivityItem;
+    const passed = { ...check("4"), id: "passed", correlationId: "run" } as ActivityItem;
+    const other = { ...check("2", "The Health check started."), id: "other", state: "running", correlationId: "later" } as ActivityItem;
+    expect(recentHomeActivity([started, passed, other]).map(item => item.id)).toEqual(["passed", "other"]);
+  });
+
   it("shows a failure logged by its job and by its source once", () => {
     const failed = (id: string, source: string, detail: string) => ({ ...check(id), id, kind: "job", label: "Prepare service playlists",
       action: "", source, state: "failed", severity: "error", detail } as ActivityItem);

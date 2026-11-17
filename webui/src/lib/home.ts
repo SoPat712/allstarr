@@ -25,8 +25,11 @@ export type HomeSnapshot = {
 // Home shows what changed: routine and waiting work stays in Activity, and a repeated result shows once.
 export function recentHomeActivity(items: ActivityItem[]) {
   const seen = new Set<string>();
+  // A run that has finished shows its result, not also the line saying it started.
+  const finished = new Set(items.filter(item => item.correlationId && activityTone(item.state, item.severity) !== "accent").map(item => item.correlationId));
   return items.toSorted((a, b) => b.occurredAt.localeCompare(a.occurredAt)).filter(item => {
     if (isRoutineActivity(item)) return false;
+    if (item.correlationId && finished.has(item.correlationId) && activityTone(item.state, item.severity) === "accent") return false;
     if (!isProblem(item) && ["pending", "waiting", "deferred", "retryscheduled"].includes(item.state.toLowerCase().replaceAll(/[-_ ]/g, ""))) return false;
     // Rows that read the same show once; a failure the job and its source both logged counts as one.
     const tone = activityTone(item.state, item.severity);
