@@ -48,6 +48,8 @@ public sealed partial class ProtocolRouteFixtureTests
         var card = Assert.Single(body.GetProperty("mixes").EnumerateArray(), item => item.GetProperty("id").GetString() == V2Ids.Mix(mix.Id));
         Assert.True(card.GetProperty("inApps").GetBoolean());
         Assert.StartsWith("pl_", card.GetProperty("playlistId").GetString());
+        Assert.Equal(allstarr.Core.Playlists.PlaylistVirtualizationService.CreateProtocolId(mix.Id), card.GetProperty("playlistLibraryId").GetString());
+        Assert.All(card.GetProperty("artworkUrls").EnumerateArray(), url => Assert.StartsWith(V2ArtworkUrls.PathPrefix, url.GetString()));
         Assert.Equal("ready", card.GetProperty("state").GetString());
         Assert.Equal(2, card.GetProperty("itemCount").GetInt32());
         Assert.StartsWith($"/allstarr/v2/mixes/{V2Ids.Mix(mix.Id)}/cover?v=", card.GetProperty("coverUrl").GetString());

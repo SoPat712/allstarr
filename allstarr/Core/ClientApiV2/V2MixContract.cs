@@ -20,7 +20,15 @@ public sealed record V2Mix(
     [property: JsonPropertyName("section")] string Section,
     [property: JsonPropertyName("source")] string? Source,
     [property: JsonPropertyName("sourcePlaylistId")] string? SourcePlaylistId,
-    [property: JsonPropertyName("appsUnavailableReason")] string? AppsUnavailableReason);
+    [property: JsonPropertyName("appsUnavailableReason")] string? AppsUnavailableReason)
+{
+    [JsonPropertyName("playlistLibraryId"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull),
+     System.ComponentModel.Description("The media server's id for the mix's playlist, which /Playlists routes take.")]
+    public string? PlaylistLibraryId { get; init; }
+
+    [JsonPropertyName("artworkUrls"), System.ComponentModel.Description("Covers of the mix's songs, for tiling when the mix has no cover of its own.")]
+    public IReadOnlyList<string> ArtworkUrls { get; init; } = [];
+}
 
 public sealed record V2MixTracks(
     [property: JsonPropertyName("id")] string Id,

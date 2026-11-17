@@ -17,7 +17,7 @@ namespace allstarr.Tests;
 public sealed partial class ProtocolRouteFixtureTests
 {
     [Fact]
-    public async Task ClientApiV2_PingRequiresBearerAndReturnsNoContent()
+    public async Task ClientApiV2_PingRequiresAnAuthorizationHeaderAndReturnsNoContent()
     {
         using var factory = V2EventsFactory(_ => Json(200, """{"Id":"listener"}"""));
         using var client = CreateClientApiClient(factory);
@@ -32,6 +32,12 @@ public sealed partial class ProtocolRouteFixtureTests
         using var response = await client.SendAsync(new(HttpMethod.Head, "/allstarr/v2/ping"));
         Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
         Assert.Empty(await response.Content.ReadAsByteArrayAsync());
+        client.DefaultRequestHeaders.Remove("X-Emby-Token");
+        client.DefaultRequestHeaders.Authorization = null;
+        client.DefaultRequestHeaders.TryAddWithoutValidation("Authorization",
+            "MediaBrowser Client=\"Songbird\", Device=\"Phone\", DeviceId=\"phone\", Version=\"1\", Token=\"listener-token\"");
+        using var jellyfinForm = await client.SendAsync(new(HttpMethod.Head, "/allstarr/v2/ping"));
+        Assert.Equal(HttpStatusCode.NoContent, jellyfinForm.StatusCode);
     }
 
     [Fact]

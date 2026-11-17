@@ -4,9 +4,9 @@ using allstarr.Core.ClientApiV2;
 namespace allstarr.Middleware;
 
 /// <summary>
-/// Prepares native client API requests: the token travels only in <c>Authorization: Bearer</c>, never in the url where
-/// logs and proxies keep it, and artwork is handed to the existing image route so resizing, caching and access checks
-/// stay in one place. Runs after the client API checks and before routing.
+/// Prepares native client API requests: the token travels in the Authorization header, as a Bearer token or the media
+/// server's own form, never in the url where logs and proxies keep it, and artwork is handed to the existing image route so
+/// resizing, caching and access checks stay in one place. Runs after the client API checks and before routing.
 /// </summary>
 public sealed class V2RequestMiddleware(RequestDelegate next)
 {
@@ -27,9 +27,11 @@ public sealed class V2RequestMiddleware(RequestDelegate next)
         }
         // The media server reads only its own header format; a token-only header keeps the device the token belongs to.
         var authorization = request.Headers.Authorization.ToString();
+        // The event stream and its ping name the listener in the Authorization header, in either form, and nowhere else.
         if ((request.Path.StartsWithSegments("/allstarr/v2/events", StringComparison.OrdinalIgnoreCase) ||
             request.Path.StartsWithSegments("/allstarr/v2/ping", StringComparison.OrdinalIgnoreCase)) &&
-            !authorization.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+            !authorization.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase) &&
+            !(authorization.StartsWith("MediaBrowser ", StringComparison.OrdinalIgnoreCase) && authorization.Contains("Token=", StringComparison.OrdinalIgnoreCase)))
         {
             await ClientApiError.WriteAsync(context, 401);
             return;

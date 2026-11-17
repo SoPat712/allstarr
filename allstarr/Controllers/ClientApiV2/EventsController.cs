@@ -11,7 +11,7 @@ public sealed class EventsController(V2EventStream events, ClientEventOptions op
 {
     [HttpHead("ping")]
     [EndpointName("ping")]
-    [EndpointDescription("Checks reachability when the event stream is disconnected. Requires a Bearer token.")]
+    [EndpointDescription("Checks reachability when the event stream is disconnected. Takes the Authorization header as a Bearer token or the media server's own form.")]
     [ProducesResponseType(204)]
     public IActionResult Ping() => NoContent();
 
@@ -21,10 +21,11 @@ public sealed class EventsController(V2EventStream events, ClientEventOptions op
         "Replay uses Last-Event-ID (preferred) or lastEventId, retaining at most 1,000 events for 10 minutes. " +
         "An unknown or expired cursor starts with resync {}; refetch client state, then continue live. " +
         "Comments ping every 25 seconds. Connections are limited to 8 per listener, 256 total; excess returns 503. " +
-        "Payloads: track.updated {track: V2Track}, lyrics.updated {trackId, revision} (read views=lyrics), " +
-        "match.updated {trackId, state}, keep.updated {trackId, state, progress}, mix.updated {mixId, playlistId}, " +
-        "releases.updated {count}, libraryAddition.updated {row}, preferences.updated {field}, track.renamed {old, new}. " +
-        "Renames reach currently connected v2 listeners. Requires a Bearer token.")]
+        "Payloads: ready {} (every connection, after any replay), track.updated {track: V2Track}, " +
+        "lyrics.updated {trackId, aliases, revision} (read views=lyrics), match.updated {trackId, aliases, state}, " +
+        "keep.updated {trackId, aliases, state, progress}, mix.updated {mixId, playlistId, playlistLibraryId}, playback.updated {trackId, aliases}, " +
+        "releases.updated {count}, libraryAddition.updated {row}, libraryRequest.updated {row}, preferences.updated {field}, track.renamed {old, new}. " +
+        "Renames reach currently connected v2 listeners. Takes the Authorization header as a Bearer token or the media server's own form.")]
     [ProducesResponseType<string>(200, "text/event-stream")]
     public async Task<IActionResult> Get(
         [FromHeader(Name = "Last-Event-ID"), Description("The last received event id; takes precedence over the query parameter.")] string? lastEventIdHeader,

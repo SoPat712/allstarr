@@ -898,7 +898,7 @@
         "tags": [
           "Events"
         ],
-        "description": "Checks reachability when the event stream is disconnected. Requires a Bearer token.",
+        "description": "Checks reachability when the event stream is disconnected. Takes the Authorization header as a Bearer token or the media server\u0027s own form.",
         "operationId": "ping",
         "responses": {
           "400": {
@@ -965,7 +965,7 @@
         "tags": [
           "Events"
         ],
-        "description": "Streams listener-scoped JSON payloads with increasing id, event and data lines. Replay uses Last-Event-ID (preferred) or lastEventId, retaining at most 1,000 events for 10 minutes. An unknown or expired cursor starts with resync {}; refetch client state, then continue live. Comments ping every 25 seconds. Connections are limited to 8 per listener, 256 total; excess returns 503. Payloads: track.updated {track: V2Track}, lyrics.updated {trackId, revision} (read views=lyrics), match.updated {trackId, state}, keep.updated {trackId, state, progress}, mix.updated {mixId, playlistId}, releases.updated {count}, libraryAddition.updated {row}, preferences.updated {field}, track.renamed {old, new}. Renames reach currently connected v2 listeners. Requires a Bearer token.",
+        "description": "Streams listener-scoped JSON payloads with increasing id, event and data lines. Replay uses Last-Event-ID (preferred) or lastEventId, retaining at most 1,000 events for 10 minutes. An unknown or expired cursor starts with resync {}; refetch client state, then continue live. Comments ping every 25 seconds. Connections are limited to 8 per listener, 256 total; excess returns 503. Payloads: ready {} (every connection, after any replay), track.updated {track: V2Track}, lyrics.updated {trackId, aliases, revision} (read views=lyrics), match.updated {trackId, aliases, state}, keep.updated {trackId, aliases, state, progress}, mix.updated {mixId, playlistId, playlistLibraryId}, playback.updated {trackId, aliases}, releases.updated {count}, libraryAddition.updated {row}, libraryRequest.updated {row}, preferences.updated {field}, track.renamed {old, new}. Renames reach currently connected v2 listeners. Takes the Authorization header as a Bearer token or the media server\u0027s own form.",
         "operationId": "getV2Events",
         "parameters": [
           {
@@ -8055,6 +8055,20 @@
               "null",
               "string"
             ]
+          },
+          "playlistLibraryId": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "description": "The media server\u0027s id for the mix\u0027s playlist, which /Playlists routes take."
+          },
+          "artworkUrls": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Covers of the mix\u0027s songs, for tiling when the mix has no cover of its own."
           }
         }
       },

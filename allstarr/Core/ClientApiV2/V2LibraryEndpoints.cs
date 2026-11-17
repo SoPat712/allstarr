@@ -18,8 +18,20 @@ public sealed class V2LibraryEndpoints(MixReader mixes, ReleaseReader releases, 
             mix.Description, mix.State, mix.ItemCount, mix.DurationMs, mix.UpdatedAt,
             $"/allstarr/v2/mixes/{V2Ids.Mix(mix.MixId)}/cover" + new Uri("http://localhost" + mix.CoverUrl).Query,
             mix.InApps, mix.PlaylistId == null ? null : V2Ids.Playlist(mix.PlaylistId), mix.Section,
-            mix.Source, mix.SourcePlaylistId, mix.AppsUnavailableReason)).ToArray()));
+            mix.Source, mix.SourcePlaylistId, mix.AppsUnavailableReason)
+        {
+            PlaylistLibraryId = mix.PlaylistId,
+            ArtworkUrls = (mix.ArtworkUrls ?? []).Select(Artwork).OfType<string>().ToArray()
+        }).ToArray()));
     });
+
+    // The mix list names its song covers by media-server image path; v2 serves the same images under its artwork route.
+    private static string? Artwork(string url)
+    {
+        var match = System.Text.RegularExpressions.Regex.Match(url, @"^/Items/(?<id>[^/?]+)/Images/Primary(?:\?tag=(?<tag>[^&]+))?");
+        return match.Success ? V2ArtworkUrls.For(Uri.UnescapeDataString(match.Groups["id"].Value),
+            match.Groups["tag"].Success ? Uri.UnescapeDataString(match.Groups["tag"].Value) : null)?.Url : null;
+    }
 
     public Task<V2Result> MixTracksAsync(HttpContext http, ProtocolExecutionContext execution, string id) => ExecuteAsync(async () =>
     {
