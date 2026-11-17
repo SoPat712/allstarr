@@ -95,7 +95,7 @@ for (const width of [390, 1280]) {
           requiresReauthentication: false, sendCount: 0, updatedAt: "2026-10-20T12:00:00Z" }] : []),
         { id: "unknown-song", revision: 2, targetId: "listenbrainz", kind: "completed", state: "permanentfailure",
           providerCode: "song-unidentified", canResend: false, canConfirm: false, canDismiss: true,
-          unavailableReason: "We couldn't identify this song after seven days. This listen cannot be sent. You can dismiss it.",
+          unavailableReason: "We couldn't identify this song within seven days. This listen cannot be sent. You can dismiss it.",
           requiresReauthentication: false, sendCount: 0, updatedAt: "2026-10-20T12:00:00Z" },
       ] } });
     });
@@ -103,7 +103,7 @@ for (const width of [390, 1280]) {
     const panel = page.getByRole("region", { name: "Scrobble delivery" });
     await expect(panel).not.toContainText("Old now-playing notice");
     await expect(panel).toContainText("no saved completed listen");
-    await expect(panel).toContainText("couldn't identify this song after seven days");
+    await expect(panel).toContainText("couldn't identify this song within seven days");
     await expect(panel.getByRole("button", { name: /Retry|Already in history|Confirm destination/ })).toHaveCount(0);
     for (const group of await panel.locator(".group-toggle").all()) await group.click();
     await expect(panel.getByRole("button", { name: "Dismiss", exact: true })).toHaveCount(2);
