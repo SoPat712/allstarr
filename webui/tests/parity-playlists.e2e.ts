@@ -800,8 +800,10 @@ for (const width of [390, 1280]) {
       const dialog = page.getByRole("dialog", { name: "Test playlist" });
       await dialog.getByRole("button", { name: "Actions" }).click();
       const item = page.getByRole("menuitem", { name: `Export missing songs as ${format.toUpperCase()}` });
-      await expect(item).toBeVisible();
+      // The item stays disabled until the playlist details load, and the menu settles its own focus first.
+      await expect(item).toBeEnabled();
       await item.focus();
+      await expect(item).toBeFocused();
       const downloaded = page.waitForEvent("download");
       await item.press("Enter");
       const file = await downloaded;
