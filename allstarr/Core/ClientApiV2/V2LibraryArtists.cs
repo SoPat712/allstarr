@@ -17,7 +17,7 @@ namespace allstarr.Core.ClientApiV2;
 public sealed class V2LibraryArtists(JellyfinProxyService jellyfin, IProviderRegistry registry, LibraryArtistIndex? links = null)
 {
     private static readonly TimeSpan Kept = TimeSpan.FromMinutes(10);
-    private static readonly ConcurrentDictionary<(string Backend, string Principal), (DateTimeOffset At, IReadOnlyDictionary<string, string> Names)> Listings = new();
+    private readonly ConcurrentDictionary<(string Backend, string Principal), (DateTimeOffset At, IReadOnlyDictionary<string, string> Names)> listings = new();
 
     internal V2Provider? ServiceProvider(string? id, V2IdKind kind)
     {
@@ -34,7 +34,7 @@ public sealed class V2LibraryArtists(JellyfinProxyService jellyfin, IProviderReg
         if (!tracks.Any(track => track.IsExternal)) return tracks;
         var library = await ByNameAsync(http, execution);
         var owner = execution.Actor?.EffectiveUserId;
-        var refused = new Dictionary<string, HashSet<(string, string)>>(StringComparer.Ordinal);
+        var refused = new Dictionary<string, HashSet<(string, string)>?>(StringComparer.Ordinal);
         async Task<V2Ref> Link(V2Ref artist)
         {
             if (artist.LibraryId != null) return artist;
@@ -45,9 +45,20 @@ public sealed class V2LibraryArtists(JellyfinProxyService jellyfin, IProviderReg
                 LocalLibraryService.ParseExternalResource(source) is { isExternal: true, provider: { } provider, externalId: { } external })
             {
                 if (!refused.TryGetValue(key, out var others))
-                    refused[key] = others = (await links.ReadPartsAsync(user, artist.Name, execution.CancellationToken)).Fixes
-                        .Where(fix => !fix.Same).Select(fix => (fix.ProviderId, fix.ArtistId)).ToHashSet();
-                if (others.Contains((provider, external))) return artist with { Provider = ServiceProvider(artist.Id, V2IdKind.Artist) };
+                {
+                    try
+                    {
+                        others = (await links.ReadPartsAsync(user, artist.Name, execution.CancellationToken)).Fixes
+                            .Where(fix => !fix.Same).Select(fix => (fix.ProviderId, fix.ArtistId)).ToHashSet();
+                    }
+                    // Without the listener's answers the service artist stays, rather than risk a link they refused.
+                    catch (Exception error) when (error is not OperationCanceledException || !execution.CancellationToken.IsCancellationRequested)
+                    {
+                        others = null;
+                    }
+                    refused[key] = others;
+                }
+                if (others == null || others.Contains((provider, external))) return artist with { Provider = ServiceProvider(artist.Id, V2IdKind.Artist) };
             }
             return new V2Ref(V2Ids.Artist(libraryId), artist.Name);
         }
@@ -80,7 +91,7 @@ public sealed class V2LibraryArtists(JellyfinProxyService jellyfin, IProviderReg
     private async Task<IReadOnlyDictionary<string, string>> ByNameAsync(HttpContext http, ProtocolExecutionContext execution)
     {
         var key = (execution.BackendInstanceId, execution.VerifiedBackendPrincipalId);
-        if (Listings.TryGetValue(key, out var kept) && DateTimeOffset.UtcNow - kept.At < Kept) return kept.Names;
+        if (listings.TryGetValue(key, out var kept) && DateTimeOffset.UtcNow - kept.At < Kept) return kept.Names;
         var named = new Dictionary<string, string?>(StringComparer.Ordinal);
         try
         {
@@ -103,9 +114,13 @@ public sealed class V2LibraryArtists(JellyfinProxyService jellyfin, IProviderReg
                     }
             }
         }
-        catch (HttpRequestException) { return new Dictionary<string, string>(); }
+        // Linking is a convenience: a listing that fails for any reason leaves songs with their service artists.
+        catch (Exception error) when (error is not OperationCanceledException || !execution.CancellationToken.IsCancellationRequested)
+        {
+            return new Dictionary<string, string>();
+        }
         var map = named.Where(item => item.Value != null).ToDictionary(item => item.Key, item => item.Value!, StringComparer.Ordinal);
-        Listings[key] = (DateTimeOffset.UtcNow, map);
+        listings[key] = (DateTimeOffset.UtcNow, map);
         return map;
     }
 }
