@@ -89,7 +89,7 @@ public sealed class PlayTracesController(PlayTraceService traces, ITrackMatchRep
         TrackMatchCommandFailure.Forbidden => 403,
         TrackMatchCommandFailure.Invalid => 400,
         TrackMatchCommandFailure.Conflict => 409,
-        TrackMatchCommandFailure.LocalLibraryUnavailable => 503,
+        TrackMatchCommandFailure.LocalLibraryUnavailable or TrackMatchCommandFailure.ServicesUnavailable => 503,
         _ => 500
     }, new { code = "match_unavailable", error = "The match could not be changed. Refresh it and try again." });
 

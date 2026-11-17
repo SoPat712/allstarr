@@ -527,9 +527,12 @@ public sealed class TrackRematchAllJobHandler(
                         item,
                         permanent
                             ? $"skipped_{result.Failure.ToString().ToLowerInvariant()}"
-                            : result.Failure == TrackMatchCommandFailure.LocalLibraryUnavailable
-                                ? "retry_local_library_unavailable"
-                                : "retry_conflict",
+                            : result.Failure switch
+                            {
+                                TrackMatchCommandFailure.LocalLibraryUnavailable => "retry_local_library_unavailable",
+                                TrackMatchCommandFailure.ServicesUnavailable => "retry_services_unavailable",
+                                _ => "retry_conflict"
+                            },
                         null));
                 if (result.Succeeded || permanent) completed++;
                 else transientFailures++;

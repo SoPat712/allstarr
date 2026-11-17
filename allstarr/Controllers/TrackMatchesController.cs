@@ -942,6 +942,8 @@ public sealed class TrackMatchesController(
                 TrackMatchCommandFailure.Conflict => Conflict(new { error = result.Error }),
                 TrackMatchCommandFailure.LocalLibraryUnavailable => StatusCode(503,
                     new { error = result.Error, code = "local_library_unavailable", retryable = true }),
+                TrackMatchCommandFailure.ServicesUnavailable => StatusCode(503,
+                    new { error = result.Error, code = "services_unavailable", retryable = true }),
                 _ => StatusCode(500, new { error = result.Error ?? "Failed to rematch track" })
             };
         }

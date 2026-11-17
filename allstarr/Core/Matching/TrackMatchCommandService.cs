@@ -93,7 +93,8 @@ public enum TrackMatchCommandFailure
     NotFound,
     Forbidden,
     Conflict,
-    LocalLibraryUnavailable
+    LocalLibraryUnavailable,
+    ServicesUnavailable
 }
 
 public sealed record TrackMatchCommandResult(

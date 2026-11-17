@@ -81,4 +81,63 @@ public sealed partial class TrackRematchAllIntegrationTests
             Assert.Equal(0, await rematches.QueueAlgorithmUpgradesAsync());
         }
     }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [Trait("Category", "Sqlite")]
+    public async Task ARematchThatFindsNoServiceCopyKeepsTheStrongerMatch(bool incomplete, bool found)
+    {
+        await using var database = await SqliteTestDatabase.CreateAsync();
+        var factory = new DbFactory(database.Options);
+        var now = DateTimeOffset.UtcNow;
+        var clock = new Clock(now);
+        var owner = Guid.CreateVersion7();
+        var account = Guid.NewGuid();
+        var snapshot = Guid.NewGuid();
+        await using (var setup = factory.CreateDbContext())
+        {
+            setup.Users.Add(User(owner, "Owner", now));
+            setup.ProviderAccounts.Add(Account(account, owner, now));
+            setup.ExternalMetadataSnapshots.Add(Snapshot(snapshot, account, owner, "Track", Hash(1001), now));
+            var held = Decision(snapshot, owner, null, null, TrackMatchState.Ambiguous, now);
+            held.Confidence = .992;
+            held.CandidateResultsJson = JsonSerializer.Serialize(new[]
+            {
+                new { IsLocal = false, Title = "Track", ProviderTrackIds = new Dictionary<string, string> { ["deezer"] = "held" } }
+            });
+            setup.TrackMatches.Add(held);
+            await setup.SaveChangesAsync();
+        }
+        var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming)).Returns(["apple-download", "deezer"]);
+        gateway.Setup(item => item.SearchMatchingSongsAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), 15))
+            .ReturnsAsync(new MatchingSongSearchResult(
+                found ? [new Song { ExternalProvider = "deezer", ExternalId = "again", Title = "Track", Artist = "Artist", Duration = 180 }] : [],
+                incomplete ? ["deezer"] : []));
+        var commands = new TrackMatchCommandService(factory, new(), new ProviderAccountResolver(factory), clock,
+            new TestBackendLibraryAccess(factory, "music"),
+            new TrackMatchPlayableSearch(gateway.Object, new(), NullLogger<TrackMatchPlayableSearch>.Instance));
+        var execution = new ProtocolExecutionContext(ProtocolKind.Jellyfin, "backend", owner.ToString("N"),
+            new AllstarrPrincipal(owner, "jellyfin", "backend", owner.ToString("N"), "Owner", true),
+            "kept-match", now.AddMinutes(2), default);
+
+        var result = await commands.RematchSnapshotAsync(execution, snapshot, "kept-match", "manual-rematch-v3");
+
+        await using var saved = factory.CreateDbContext();
+        var decisions = await saved.TrackMatches.OrderBy(item => item.DecisionVersion).ToArrayAsync();
+        if (found)
+        {
+            Assert.True(result.Succeeded, result.Error);
+            Assert.Equal(2, decisions.Length);
+            return;
+        }
+        Assert.False(result.Succeeded);
+        Assert.Equal(TrackMatchCommandFailure.ServicesUnavailable, result.Failure);
+        Assert.False(result.Lasting);
+        var kept = Assert.Single(decisions);
+        Assert.Equal(TrackMatchState.Ambiguous, kept.State);
+        Assert.Equal(.992, kept.Confidence);
+    }
 }

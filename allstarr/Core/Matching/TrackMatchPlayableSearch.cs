@@ -54,7 +54,7 @@ public sealed class TrackMatchPlayableSearch(
         var match = DecideMatch(source, scope, songs, localCandidates, manualOverride, providerOrder, effectiveMatcher);
         if (!allowIncompleteSearch && !CanSettle(match))
             throw new ProtocolProviderUnavailableException(new(ProviderErrorKind.TransientFailure));
-        return match;
+        return match with { SearchIncomplete = incompleteProviders.Count > 0 };
 
         async Task<MatchingSongSearchResult> SearchAsync(string query)
         {
@@ -456,6 +456,9 @@ public sealed record PlayableTrackMatch(
     IReadOnlyDictionary<Guid, IReadOnlyList<Song>> EquivalentExternalCandidates)
 {
     internal ProviderError? SearchFailure { get; init; }
+
+    /// <summary>At least one service did not answer, so a missing copy may only be unseen.</summary>
+    internal bool SearchIncomplete { get; init; }
 
     public Song? SelectedExternal =>
         Decision.SelectedLibraryTrackId is { } id

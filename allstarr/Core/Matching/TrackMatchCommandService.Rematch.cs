@@ -271,6 +271,14 @@ public sealed partial class TrackMatchCommandService
                 cancellationToken,
                 allowIncompleteSearch: policyVersion != TrackRematchAllService.RolloutPolicyVersion);
             decision = playable.Decision;
+            // A search that some services didn't answer, or that found no service copy of a song that had them,
+            // failed rather than proved the copies gone, so it can't replace a stronger match.
+            if (rejectedOverride == null && existingSelection is { } previous &&
+                Strength(decision.State) < Strength(previous.State) &&
+                (playable.SearchIncomplete || !decision.Candidates.Any(candidate => !candidate.IsLocal) &&
+                    StoredProviderEvidence(previous.CandidateResultsJson).Length > 0))
+                return new(false, TrackMatchCommandFailure.ServicesUnavailable,
+                    "Some music services didn't answer, so the current match was kept. Try again in a minute.");
         }
         var selected = decision.SelectedLibraryTrackId.HasValue
             ? candidates.SingleOrDefault(item => item.Id == decision.SelectedLibraryTrackId.Value)
@@ -420,6 +428,20 @@ public sealed partial class TrackMatchCommandService
             CandidateCount: decision.Candidates.Count,
             DecisionVersion: record.DecisionVersion);
     }
+
+    private static int Strength(TrackMatchReviewState state) => state switch
+    {
+        TrackMatchReviewState.Accepted or TrackMatchReviewState.Pinned => 2,
+        TrackMatchReviewState.Suggested or TrackMatchReviewState.Ambiguous => 1,
+        _ => 0
+    };
+
+    private static int Strength(TrackMatchState state) => state switch
+    {
+        TrackMatchState.Accepted or TrackMatchState.Pinned => 2,
+        TrackMatchState.Suggested or TrackMatchState.Ambiguous => 1,
+        _ => 0
+    };
 
     private async Task<TrackRematchCommandResult> LocalLibraryUnavailableAsync(
         AllstarrDbContext db,

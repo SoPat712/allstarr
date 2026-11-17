@@ -71,11 +71,14 @@ public sealed class TrackRematchJobHandler(
                 $"track_rematch_{result.Failure.ToString().ToLowerInvariant()}",
                 result.Error ?? "The song could not be rematched.");
         return DurableJobCompletion.Retry(
-            result.Failure == TrackMatchCommandFailure.LocalLibraryUnavailable
-                ? "track_rematch_local_library_unavailable"
-                : "track_rematch_conflict",
+            result.Failure switch
+            {
+                TrackMatchCommandFailure.LocalLibraryUnavailable => "track_rematch_local_library_unavailable",
+                TrackMatchCommandFailure.ServicesUnavailable => "track_rematch_services_unavailable",
+                _ => "track_rematch_conflict"
+            },
             result.Error ?? "The song rematch will be retried.",
-            TimeSpan.FromSeconds(2));
+            result.Failure == TrackMatchCommandFailure.ServicesUnavailable ? TimeSpan.FromMinutes(1) : TimeSpan.FromSeconds(2));
     }
 
     private static string? ReadScope(JsonElement payload)
