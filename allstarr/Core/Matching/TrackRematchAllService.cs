@@ -518,8 +518,9 @@ public sealed class TrackRematchAllJobHandler(
                             ? TrackRematchAllService.RolloutFallbackPolicyVersion
                             : TrackRematchAllService.RolloutPolicyVersion,
                     cancellationToken);
+                // A lasting conflict waits for a person, so retrying it every minute only fails the whole run.
                 var permanent = result.Failure is TrackMatchCommandFailure.Invalid or
-                    TrackMatchCommandFailure.NotFound or TrackMatchCommandFailure.Forbidden;
+                    TrackMatchCommandFailure.NotFound or TrackMatchCommandFailure.Forbidden || result.Lasting;
                 if (!result.Succeeded)
                     audits.Add(Audit(
                         context,

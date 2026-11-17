@@ -29,6 +29,23 @@ public sealed class TrackRematchJobHandlerTests
         repository.VerifyAll();
     }
 
+    [Theory]
+    [InlineData(true, DurableJobCompletionKind.Failed)]
+    [InlineData(false, DurableJobCompletionKind.Retry)]
+    public async Task SongScope_RetriesOnlyAConflictThatCanClear(bool lasting, DurableJobCompletionKind expected)
+    {
+        var snapshot = Guid.CreateVersion7();
+        var repository = new Mock<ITrackMatchRepository>(MockBehavior.Strict);
+        repository.Setup(item => item.RematchSnapshotAsync(It.IsAny<TrackMatchActor>(), snapshot, "correlation", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new TrackRematchCommandResult(false, TrackMatchCommandFailure.Conflict, "Needs review") { Lasting = lasting });
+        var handler = new TrackRematchJobHandler(null!, null!, repository.Object);
+
+        var completion = await handler.ExecuteAsync(
+            Context(new TrackRematchSongPayload(snapshot), Guid.CreateVersion7()), CancellationToken.None);
+
+        Assert.Equal(expected, completion.Kind);
+    }
+
     [Fact]
     public async Task SongScope_MissingSnapshotFailsWithoutRetry()
     {

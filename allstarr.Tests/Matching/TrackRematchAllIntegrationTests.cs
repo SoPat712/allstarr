@@ -81,6 +81,47 @@ public sealed partial class TrackRematchAllIntegrationTests
     }
 
     [Theory]
+    [InlineData(true, DurableJobCompletionKind.Succeeded)]
+    [InlineData(false, DurableJobCompletionKind.Retry)]
+    [Trait("Category", "Sqlite")]
+    public async Task AlgorithmRolloutSettlesASongThatWaitsForAPersonInsteadOfRetryingIt(bool lasting, DurableJobCompletionKind expected)
+    {
+        await using var database = await SqliteTestDatabase.CreateAsync();
+        var factory = new DbFactory(database.Options);
+        var now = DateTimeOffset.UtcNow;
+        var clock = new Clock(now);
+        var owner = Guid.NewGuid();
+        var account = Guid.NewGuid();
+        var snapshot = Guid.NewGuid();
+        var candidate = Guid.NewGuid();
+        await using (var setup = factory.CreateDbContext())
+        {
+            setup.Users.Add(User(owner, "Owner", now));
+            setup.ProviderAccounts.Add(Account(account, owner, now));
+            setup.LibraryTracks.Add(Local(candidate, owner, "Track", now));
+            setup.ExternalMetadataSnapshots.Add(Snapshot(snapshot, account, owner, "Track", Hash(1000), now));
+            setup.TrackMatches.Add(Decision(snapshot, owner, candidate, null, TrackMatchState.Accepted, now));
+            await setup.SaveChangesAsync();
+        }
+        var rematches = new TrackRematchAllService(factory, Queue(factory, clock), clock);
+        Assert.Equal(1, await rematches.QueueAlgorithmUpgradesAsync());
+        DurableJobRecord job;
+        await using (var queued = factory.CreateDbContext()) job = await queued.Jobs.SingleAsync();
+        var payload = JsonSerializer.Deserialize<TrackRematchAllJobPayload>(job.PayloadJson)!;
+        var claim = new DurableJobClaim(job.Id, 1, TrackRematchJobHandler.Type, JsonSerializer.SerializeToElement(payload), owner,
+            null, null, JsonSerializer.SerializeToElement(new { }), TrackRematchAllService.OperationCorrelation(payload.OperationId));
+        var repository = new Mock<ITrackMatchRepository>(MockBehavior.Strict);
+        repository.Setup(item => item.RematchSnapshotAsync(It.IsAny<ProtocolExecutionContext>(), snapshot, It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new TrackRematchCommandResult(false, TrackMatchCommandFailure.Conflict, "Needs review") { Lasting = lasting });
+        var handler = new TrackRematchAllJobHandler(factory, rematches, repository.Object, clock);
+
+        Assert.Equal(expected, (await handler.ExecuteAsync(new(claim, EmptyServices.Instance), default)).Kind);
+        await using var saved = factory.CreateDbContext();
+        Assert.Contains(await saved.AuditEvents.Where(item => item.Category == "track-rematch").Select(item => item.Outcome).ToArrayAsync(),
+            outcome => outcome == (lasting ? "skipped_conflict" : "retry_conflict"));
+    }
+
+    [Theory]
     [InlineData("retired-matcher")]
     [InlineData("accepted-routing-v22")]
     [Trait("Category", "Sqlite")]

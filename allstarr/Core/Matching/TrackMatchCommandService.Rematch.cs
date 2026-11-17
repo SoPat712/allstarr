@@ -146,7 +146,8 @@ public sealed partial class TrackMatchCommandService
             return new(
                 false,
                 TrackMatchCommandFailure.Conflict,
-                "A manual match became authoritative while the full rematch was running");
+                "A manual match became authoritative while the full rematch was running")
+            { Lasting = true };
         BackendLibraryAccessContext access;
         try
         {
@@ -309,7 +310,8 @@ public sealed partial class TrackMatchCommandService
                     cancellationToken);
                 if (!canonicalRecordingId.HasValue)
                     return new(false, TrackMatchCommandFailure.Conflict,
-                        "The source recording has conflicting identity evidence; review the match before merging it.");
+                        "The source recording has conflicting identity evidence; review the match before merging it.")
+                    { Lasting = true };
             }
         }
         catch (InvalidOperationException) when (retriesRemaining > 0)
@@ -356,7 +358,8 @@ public sealed partial class TrackMatchCommandService
             return new(
                 false,
                 TrackMatchCommandFailure.Conflict,
-                "A manual match became authoritative while the full rematch was running");
+                "A manual match became authoritative while the full rematch was running")
+            { Lasting = true };
         db.TrackMatches.Add(record);
         if (TrackRematchAllService.IsManagedPolicy(policyVersion))
             db.AuditEvents.Add(TrackRematchAllService.SuccessAudit(

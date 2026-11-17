@@ -113,7 +113,11 @@ public sealed record TrackRematchCommandResult(
     string? State = null,
     double Confidence = 0,
     int CandidateCount = 0,
-    int DecisionVersion = 0);
+    int DecisionVersion = 0)
+{
+    /// <summary>A conflict that trying again cannot clear, such as a manual decision now owning the song; it waits for a person.</summary>
+    public bool Lasting { get; init; }
+}
 
 public enum ManualTrackAuthorityKind
 {

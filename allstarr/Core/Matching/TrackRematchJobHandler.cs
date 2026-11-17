@@ -66,7 +66,7 @@ public sealed class TrackRematchJobHandler(
         if (result.Succeeded)
             return DurableJobCompletion.Success();
         if (result.Failure is TrackMatchCommandFailure.Invalid or
-            TrackMatchCommandFailure.NotFound or TrackMatchCommandFailure.Forbidden)
+            TrackMatchCommandFailure.NotFound or TrackMatchCommandFailure.Forbidden || result.Lasting)
             return DurableJobCompletion.Failure(
                 $"track_rematch_{result.Failure.ToString().ToLowerInvariant()}",
                 result.Error ?? "The song could not be rematched.");
