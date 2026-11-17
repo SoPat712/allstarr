@@ -63,8 +63,8 @@ public interface IDurableRuntimeSettings
         Guid userId, ListeningPreferences? overrides, string expectedRevision,
         CancellationToken cancellationToken = default);
     Task UpdateHeartActionAsync(Guid userId, string heartAction, CancellationToken cancellationToken = default);
-    /// <summary>The music libraries this listener chose, or null for every library they can open.</summary>
-    Task<IReadOnlyList<string>?> GetMyLibrariesAsync(Guid userId, CancellationToken cancellationToken = default);
+    /// <summary>The music libraries this listener chose, or null for every library they can open, with how often the choice changed.</summary>
+    Task<MyLibrariesSetting> GetMyLibrariesAsync(Guid userId, CancellationToken cancellationToken = default);
     Task UpdateMyLibrariesAsync(Guid userId, IReadOnlyList<string>? libraries, CancellationToken cancellationToken = default);
     Task<PersonalListeningPreferences> GetManagedPreferencesAsync(
         Guid userId, Guid actorUserId, CancellationToken cancellationToken = default);
@@ -497,14 +497,14 @@ public sealed partial class DurableRuntimeSettingsService : BackgroundService, I
         _signal.Publish();
     }
 
-    public async Task<IReadOnlyList<string>?> GetMyLibrariesAsync(Guid userId, CancellationToken cancellationToken = default)
+    public async Task<MyLibrariesSetting> GetMyLibrariesAsync(Guid userId, CancellationToken cancellationToken = default)
     {
         await using var db = await _factory.CreateDbContextAsync(cancellationToken);
-        var json = await db.RuntimeSettings.AsNoTracking().Where(item => item.OwnerUserId == userId && item.Key == ListeningPreferenceKeys.MyLibraries)
-            .Select(item => item.ValueJson).SingleOrDefaultAsync(cancellationToken);
-        var ids = json == null ? [] : (JsonSerializer.Deserialize<string>(json) ?? "")
+        var row = await db.RuntimeSettings.AsNoTracking().Where(item => item.OwnerUserId == userId && item.Key == ListeningPreferenceKeys.MyLibraries)
+            .Select(item => new { item.ValueJson, item.Revision }).SingleOrDefaultAsync(cancellationToken);
+        var ids = row == null ? [] : (JsonSerializer.Deserialize<string>(row.ValueJson) ?? "")
             .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Distinct(StringComparer.Ordinal).ToArray();
-        return ids.Length == 0 ? null : ids;
+        return new(ids.Length == 0 ? null : ids, row?.Revision ?? 0);
     }
 
     public async Task UpdateMyLibrariesAsync(Guid userId, IReadOnlyList<string>? libraries, CancellationToken cancellationToken = default)

@@ -8,7 +8,7 @@ using Microsoft.EntityFrameworkCore;
 namespace allstarr.Core.Protocols;
 
 /// <summary>A listener's music libraries: the chosen ones, or null for all, and every one they could choose.</summary>
-public sealed record ListeningLibraryChoice(IReadOnlyList<string>? Selected, IReadOnlyList<BackendMusicLibrary> Available);
+public sealed record ListeningLibraryChoice(IReadOnlyList<string>? Selected, IReadOnlyList<BackendMusicLibrary> Available, long Revision);
 
 /// <summary>
 /// Library access narrowed to the music libraries a listener chose, for picking songs: mixes, Made for you and autoplay.
@@ -67,9 +67,9 @@ public sealed class ListeningLibraries(
     {
         var available = await AvailableAsync(context, cancellationToken);
         if (available == null) return null;
-        var selected = await settings.GetMyLibrariesAsync(Owner(context) ?? throw new UnauthorizedAccessException(), cancellationToken);
-        var shown = selected?.Where(id => available.Any(library => library.Id == id)).ToArray();
-        return new(shown is { Length: > 0 } ? shown : null, available);
+        var saved = await settings.GetMyLibrariesAsync(Owner(context) ?? throw new UnauthorizedAccessException(), cancellationToken);
+        var shown = saved.Selected?.Where(id => available.Any(library => library.Id == id)).ToArray();
+        return new(shown is { Length: > 0 } ? shown : null, available, saved.Revision);
     }
 
     /// <summary>Saves the choice; null, or every available library, means all of them. Unknown ids are rejected.</summary>
@@ -86,7 +86,7 @@ public sealed class ListeningLibraries(
         chosen.TryRemove(owner, out _);
         // Every app of this listener re-reads the choice, wherever it was changed.
         events?.Publish(owner, allstarr.Core.ClientEvents.ClientEvent.Preferences("libraries"));
-        return new(stored, available);
+        return new(stored, available, (await settings.GetMyLibrariesAsync(owner, cancellationToken)).Revision);
     }
 
     private async Task<IReadOnlyList<string>?> SelectedAsync(Guid? owner, CancellationToken cancellationToken)
@@ -94,7 +94,7 @@ public sealed class ListeningLibraries(
         if (owner is not { } user) return null;
         var now = clock.GetUtcNow();
         if (chosen.TryGetValue(user, out var known) && now - known.At < Remembered) return known.Selected;
-        var selected = await settings.GetMyLibrariesAsync(user, cancellationToken);
+        var selected = (await settings.GetMyLibrariesAsync(user, cancellationToken)).Selected;
         chosen[user] = (now, selected);
         return selected;
     }

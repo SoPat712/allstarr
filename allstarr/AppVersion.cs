@@ -10,6 +10,12 @@ public static class AppVersion
     /// Current application version.
     /// </summary>
     public const string Version = "3.1.0-beta.1";
+
+    /// <summary>
+    /// The released commit as "git-" and its first 8 characters, or null outside released images.
+    /// </summary>
+    public static string? Build { get; } = Environment.GetEnvironmentVariable("ALLSTARR_REVISION") is { Length: >= 8 } revision
+        ? "git-" + revision[..8] : null;
 }
 
 public static class AppIdentity

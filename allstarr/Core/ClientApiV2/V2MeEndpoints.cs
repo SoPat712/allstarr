@@ -101,7 +101,7 @@ public sealed class V2MeEndpoints(ClientListeningHistory history, ListeningHisto
         try { choice = await libraries.ReadAsync(execution, token); }
         catch (HttpRequestException) { choice = null; }
         return new(heart, choice == null ? null
-            : new(choice.Selected, choice.Available.Select(library => new V2MusicLibrary(library.Id, library.Name)).ToArray()));
+            : new(choice.Selected, choice.Available.Select(library => new V2MusicLibrary(library.Id, library.Name)).ToArray(), choice.Revision));
     }
 
     private async Task<Dictionary<string, V2Track>> TrackMapAsync(HttpContext http, ProtocolExecutionContext execution, IEnumerable<string?> ids)

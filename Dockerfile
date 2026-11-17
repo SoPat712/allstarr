@@ -48,4 +48,8 @@ ENV ASPNETCORE_HTTP_PORTS=
 
 EXPOSE 8080 5275
 
+# Last, so a new commit only changes this small layer.
+ARG ALLSTARR_REVISION=
+ENV ALLSTARR_REVISION=${ALLSTARR_REVISION}
+
 ENTRYPOINT ["dotnet", "allstarr.dll"]

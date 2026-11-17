@@ -94,7 +94,8 @@ public sealed record V2Preferences(
 
 public sealed record V2LibraryChoice(
     [property: JsonPropertyName("selected"), Description("The chosen library ids, or null for every library this listener can open.")] IReadOnlyList<string>? Selected,
-    [property: JsonPropertyName("available"), Description("Every music library this listener can choose. Read only.")] IReadOnlyList<V2MusicLibrary>? Available = null);
+    [property: JsonPropertyName("available"), Description("Every music library this listener can choose. Read only.")] IReadOnlyList<V2MusicLibrary>? Available = null,
+    [property: JsonPropertyName("revision"), Description("Rises each time the choice is saved, from any app; 0 when it was never set. Read only.")] long? Revision = null);
 
 public sealed record V2MusicLibrary(
     [property: JsonPropertyName("id")] string Id,

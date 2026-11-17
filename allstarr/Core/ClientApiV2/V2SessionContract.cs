@@ -6,7 +6,12 @@ public sealed record V2SessionResponse(
     [property: JsonPropertyName("listener")] V2Listener Listener,
     [property: JsonPropertyName("serverVersion")] string ServerVersion,
     [property: JsonPropertyName("features")] IReadOnlyDictionary<string, bool> Features,
-    [property: JsonPropertyName("dashboard"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] V2Dashboard? Dashboard);
+    [property: JsonPropertyName("dashboard"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] V2Dashboard? Dashboard)
+{
+    /// <summary>Changes with every release, unlike serverVersion; null for development builds.</summary>
+    [JsonPropertyName("build"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Build { get; init; } = AppVersion.Build;
+}
 
 public sealed record V2Listener(
     [property: JsonPropertyName("id")] Guid Id,

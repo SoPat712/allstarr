@@ -7496,6 +7496,14 @@
               "$ref": "#/components/schemas/V2MusicLibrary"
             },
             "description": "Every music library this listener can choose. Read only."
+          },
+          "revision": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "description": "Rises each time the choice is saved, from any app; 0 when it was never set. Read only.",
+            "format": "int64"
           }
         }
       },
@@ -8848,6 +8856,12 @@
               {
                 "type": "null"
               }
+            ]
+          },
+          "build": {
+            "type": [
+              "null",
+              "string"
             ]
           }
         }

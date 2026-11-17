@@ -10,6 +10,9 @@ public sealed record ListeningPreferences(
     string? QualityLimit = null,
     string? HeartAction = null);
 
+/// <summary>A listener's chosen music libraries, null for all, and a revision that rises whenever the choice is saved.</summary>
+public sealed record MyLibrariesSetting(IReadOnlyList<string>? Selected, long Revision);
+
 public sealed record PersonalListeningPreferences(
     ListeningPreferences Values,
     ListeningPreferences HouseholdDefaults,

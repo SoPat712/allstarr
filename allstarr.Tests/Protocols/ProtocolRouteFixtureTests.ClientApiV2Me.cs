@@ -338,6 +338,7 @@ public sealed partial class ProtocolRouteFixtureTests
         {
             var body = JsonNode.Parse(await initial.Content.ReadAsStringAsync())!;
             Assert.Null(body["libraries"]!["selected"]);
+            Assert.Equal(0, body["libraries"]!["revision"]!.GetValue<long>());
             Assert.Equal(["kids:Kids", "mine:My music"], body["libraries"]!["available"]!.AsArray()
                 .Select(item => $"{item!["id"]}:{item["name"]}").ToArray());
         }
@@ -347,6 +348,7 @@ public sealed partial class ProtocolRouteFixtureTests
             Assert.True(chosen.StatusCode == HttpStatusCode.OK, $"{chosen.StatusCode}: {text} {log.Last}");
             var body = JsonNode.Parse(text)!;
             Assert.Equal("mine", Assert.Single(body["libraries"]!["selected"]!.AsArray())!.GetValue<string>());
+            Assert.Equal(1, body["libraries"]!["revision"]!.GetValue<long>());
             Assert.Equal("keep", body["heartAction"]!.GetValue<string>());
         }
         foreach (var request in new object[] { new { libraries = new { selected = new[] { "films" } } }, new { libraries = new { selected = Array.Empty<string>() } } })
@@ -355,7 +357,11 @@ public sealed partial class ProtocolRouteFixtureTests
             Assert.Equal(HttpStatusCode.BadRequest, invalid.StatusCode);
         }
         using (var all = await client.PatchAsJsonAsync("/allstarr/v2/me/preferences", new { libraries = new { selected = new[] { "kids", "mine" } } }))
-            Assert.Null(JsonNode.Parse(await all.Content.ReadAsStringAsync())!["libraries"]!["selected"]);
+        {
+            var body = JsonNode.Parse(await all.Content.ReadAsStringAsync())!;
+            Assert.Null(body["libraries"]!["selected"]);
+            Assert.Equal(2, body["libraries"]!["revision"]!.GetValue<long>());
+        }
         await client.PatchAsJsonAsync("/allstarr/v2/me/preferences", new { libraries = new { selected = new[] { "kids" } } });
         client.DefaultRequestHeaders.Authorization = new("Bearer", "other-token");
         using var other = await client.GetAsync("/allstarr/v2/me/preferences");
