@@ -42,8 +42,8 @@ async function sharedControls(page: Page, width: number) {
   }
   for (const heading of await page.locator("table thead th").all()) {
     if (!await heading.isVisible()) continue;
-    await expect(heading).toHaveCSS("text-transform", "uppercase");
-    expect(await heading.evaluate(element => parseFloat(getComputedStyle(element).fontSize))).toBeCloseTo(10.88, 2);
+    await expect(heading).toHaveCSS("text-transform", "none");
+    expect(await heading.evaluate(element => parseFloat(getComputedStyle(element).fontSize))).toBeCloseTo(12, 2);
   }
   for (const refresh of await page.locator('button[aria-label^="Refresh"]').all()) {
     if (!await refresh.isVisible()) continue;

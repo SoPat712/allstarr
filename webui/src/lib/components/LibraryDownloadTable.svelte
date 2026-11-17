@@ -36,7 +36,7 @@
 
 <style>
   .library-downloads-table { width: 100%; min-width: 800px; table-layout: fixed; border-collapse: collapse; text-align: left; }
-  th { border-bottom: 1px solid var(--color-edge); padding: var(--space-2) var(--space-3); color: var(--color-ink-muted); font-size: .68rem; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; }
+  th { border-bottom: 1px solid var(--color-edge); padding: var(--space-2) var(--space-3); color: var(--color-ink-muted); font-size: var(--text-xs); font-weight: 600; }
   th button { min-height: var(--control-sm); border: 0; padding: 0; background: transparent; color: inherit; cursor: pointer; font: inherit; text-transform: inherit; letter-spacing: inherit; text-align: left; white-space: nowrap; }
   th[aria-sort="ascending"] button, th[aria-sort="descending"] button { color: var(--color-signal-text); font-weight: 600; }
   .song-heading { padding-left: var(--space-4); }

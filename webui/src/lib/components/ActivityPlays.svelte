@@ -383,7 +383,7 @@
   .play-result { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .play-headings .play-columns { font: inherit; letter-spacing: inherit; }
   .play-columns time { white-space: nowrap; font-variant-numeric: tabular-nums; }
-  .play-headings { padding: var(--space-2) var(--space-4); background: var(--color-panel); color: var(--color-ink-muted); font-size: var(--text-table-heading); text-transform: uppercase; }
+  .play-headings { padding: var(--space-2) var(--space-4); background: var(--color-panel); color: var(--color-ink-muted); font-size: var(--text-table-heading); }
   .play-headings > span { grid-column: 1 / 3; }
   .play-detail { display: grid; gap: var(--space-4); }
   :global(.play-forget) { color: var(--danger); }

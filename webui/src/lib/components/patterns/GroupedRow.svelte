@@ -66,6 +66,6 @@
   .static-group[data-tone] { border: 0; border-radius: 0; }
   .static-group + :global(.static-group) { border-top: 1px solid var(--color-edge); }
   .static-group .group-heading { min-height: 0; padding: 0; background: var(--color-panel-raised); }
-  .group-label { margin: 0; padding: 10px 14px; color: var(--color-ink-muted); font-size: .7rem; font-weight: 500; letter-spacing: .06em; text-transform: uppercase; }
+  .group-label { margin: 0; padding: 10px 14px; color: var(--color-ink-muted); font-size: var(--text-xs); font-weight: 500; }
   @media (prefers-reduced-motion: reduce) { .group-toggle :global(.group-chevron) { transition: none; } }
 </style>

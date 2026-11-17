@@ -456,7 +456,7 @@
   .week-numbers span, .week-chart > p { color: var(--color-ink-muted); font-size: .7rem; }
   .week-chart { overflow-x: auto; }
   .week-chart :global(.recap-bars) { min-width: 0; }
-  .week-chart > p { margin-bottom: 10px; font-size: .7rem; letter-spacing: .06em; text-transform: uppercase; }
+  .week-chart > p { margin-bottom: 10px; font-size: var(--text-xs); }
   .recent-panel { overflow: hidden; }
   .recent-panel header { padding: var(--space-2) var(--space-4); }
   .release-note { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); font-size: var(--text-sm); }

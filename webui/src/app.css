@@ -152,7 +152,7 @@
     --text-sm: 0.875rem;
     --text-md: 1rem;
     --text-section: 1.35rem;
-    --text-table-heading: .68rem;
+    --text-table-heading: var(--text-xs);
     --data-row-height: 4.4rem;
     --data-artwork-size: 2.75rem;
     --shadow-sm: 0 1px 2px rgb(0 0 0 / 14%), 0 2px 6px rgb(0 0 0 / 8%);
@@ -238,8 +238,6 @@
   .table-heading {
     font-size: var(--text-table-heading);
     font-weight: 500;
-    letter-spacing: .05em;
-    text-transform: uppercase;
   }
 
   a { color: var(--color-signal-text); }
@@ -267,8 +265,6 @@
 :root :is(.workspace, .side-panel, [role="dialog"]) table thead :is(th, th button, th a) {
   font-size: var(--text-table-heading);
   font-weight: 500;
-  letter-spacing: .05em;
-  text-transform: uppercase;
 }
 
 @layer components {
@@ -1241,8 +1237,6 @@
   color: var(--color-signal-text);
   font-size: var(--text-xs);
   font-weight: 800;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
 }
 
 .signal-boot h1 {
@@ -1287,8 +1281,6 @@
   color: var(--color-ink-muted);
   font-size: var(--text-xs);
   font-weight: 650;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
 }
 
 .refresh-spinning { animation: signal-boot-spin 1s linear infinite; }
@@ -5920,10 +5912,8 @@
     padding: var(--space-3) var(--space-4) var(--space-2);
     background: var(--color-panel-raised);
     color: var(--color-ink-muted);
-    font-size: .7rem;
+    font-size: var(--text-xs);
     font-weight: 400;
-    letter-spacing: .06em;
-    text-transform: uppercase;
   }
 
   .event-log-list {
@@ -6283,8 +6273,6 @@
     font-size: var(--text-xs);
     line-height: 1rem;
     font-weight: 500;
-    letter-spacing: .06em;
-    text-transform: uppercase;
   }
 
   .settings-nav > p:first-child {

@@ -96,7 +96,7 @@
   .track-title small { color: var(--color-ink-muted); font-size: var(--text-xs); }
   .track-title abbr { margin-left: var(--space-1); padding: 0 4px; border-radius: 3px; background: var(--color-panel-raised); color: var(--color-ink-muted); font-size: .65rem; text-decoration: none; }
   .tracks-source { margin: calc(-1 * var(--space-2)) 0 var(--space-2); font-size: var(--text-xs) !important; }
-  h3 { margin-bottom: var(--space-3); color: var(--color-ink-muted); font-size: var(--text-xs); font-weight: 600; text-transform: uppercase; letter-spacing: .05em; }
+  h3 { margin-bottom: var(--space-3); color: var(--color-ink-muted); font-size: var(--text-xs); font-weight: 600; }
   p { color: var(--color-ink-muted); font-size: var(--text-sm); }
   :global(.destructive) { color: var(--danger); }
 </style>

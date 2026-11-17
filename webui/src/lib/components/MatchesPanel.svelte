@@ -281,7 +281,7 @@
   .comparison th, .comparison td { text-align: left; padding: var(--space-2) var(--space-1); border-bottom: 1px solid var(--color-edge); overflow-wrap: anywhere; vertical-align: top; }
   .comparison th { font-weight: 500; color: var(--color-ink-muted); }
   .comparison th:first-child { width: 16%; }.comparison th:last-child { width: 20%; }
-  .comparison thead th { font-size: .66rem; letter-spacing: .05em; text-transform: uppercase; }
+  .comparison thead th { font-size: var(--text-xs); }
   .verdict { font-weight: 500; }
   .verdict[data-verdict="same"] { color: var(--success); }
   .verdict[data-verdict="close"] { color: var(--warning); }

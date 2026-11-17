@@ -39,7 +39,7 @@
 </section>
 
 <style>
-  h3 { margin: 0 0 var(--space-3); color: var(--color-ink-muted); font-size: var(--text-xs); font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
+  h3 { margin: 0 0 var(--space-3); color: var(--color-ink-muted); font-size: var(--text-xs); font-weight: 600; }
   .playlist-link { display: flex; align-items: center; justify-content: space-between; min-height: 44px; border-bottom: 1px solid var(--color-edge); color: var(--color-signal-text); font-size: var(--text-sm); }
   .empty-playlists { margin: 0; color: var(--color-ink-muted); font-size: var(--text-sm); line-height: 1.5; }
 </style>

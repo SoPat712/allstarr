@@ -213,7 +213,7 @@
   .hero-artist :global(.hero-art) { flex: none; width: 96px; height: 96px; border-radius: 50%; overflow: hidden; }
   .hero-artist :global(.hero-art img) { width: 100%; height: 100%; object-fit: cover; }
   .hero-artist div { display: grid; gap: var(--space-1); min-width: 0; }
-  .hero-artist small { font-size: .7rem; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; }
+  .hero-artist small { font-size: var(--text-xs); font-weight: 600; }
   .hero-artist strong { font-size: clamp(1.5rem, 3vw, 2rem); font-weight: 600; line-height: 1.15; overflow-wrap: anywhere; }
   .hero-artist span { font-size: var(--text-sm); }
   .stats-numbers { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-2); min-width: 0; }

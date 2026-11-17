@@ -53,7 +53,7 @@
 .settings-surface .settings-card:has(> .empty-state:only-child) { border: 0; background: transparent; }
 /* Says whether a card's settings apply to everyone or only to you. */
 .settings-card-title { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
-.scope-tag { display: inline-flex; padding: 4px 7px; border-radius: 6px; background: var(--color-panel-raised); color: var(--color-ink-muted); font-size: .66rem; font-weight: 500; letter-spacing: .04em; line-height: 1; text-transform: uppercase; }
+.scope-tag { display: inline-flex; padding: 4px 7px; border-radius: 6px; background: var(--color-panel-raised); color: var(--color-ink-muted); font-size: var(--text-xs); font-weight: 500; line-height: 1; }
 .scope-tag[data-scope="you"] { background: var(--color-signal-muted); color: var(--color-signal-text); }
 
 /* Settings list-detail (Material 3): one scope chip in the page header, a section label above each rounded box,

@@ -232,7 +232,7 @@
   .panel-header-extra { grid-column: 1 / -1; min-width: 0; overflow-wrap: anywhere; color: var(--color-ink-muted); font-size: .8125rem; line-height: 1.4; }
   .panel-body { min-width: 0; min-height: 0; flex: 1 1 auto; overflow-y: auto; overscroll-behavior-y: contain; scrollbar-gutter: stable; padding: var(--space-4); }
   :global(body:has(.toaster .toast)) .panel-body { margin-bottom: max(0px, calc(var(--toast-height, 0px) + var(--toast-bottom, 24px) - var(--side-panel-footer-height, 0px) + var(--space-3))); }
-  .panel-body :global(.sec-label) { margin: 0 0 var(--space-3); color: var(--color-ink-muted); font-size: .7rem; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
+  .panel-body :global(.sec-label) { margin: 0 0 var(--space-3); color: var(--color-ink-muted); font-size: var(--text-xs); font-weight: 600; }
   .panel-footer { display: flex; flex: 0 0 auto; align-items: center; justify-content: flex-end; border-top: 1px solid var(--color-edge); padding: var(--space-3) var(--space-4) max(var(--space-3), env(safe-area-inset-bottom)); background: var(--color-panel); }
   .panel-inline-footer { padding-top: var(--space-5); }
   :global(.side-panel-overlay--docked) { display: none; }

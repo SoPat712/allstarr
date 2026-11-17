@@ -520,7 +520,7 @@ for (const { width, theme } of variants.filter(variant => variant.width === 1280
     const title = (await day.locator("h2").boundingBox())!, rows = (await day.locator(".event-log-list").boundingBox())!;
     expect(rows.y - title.y - title.height).toBeLessThanOrEqual(1);
     for (const heading of await headings.all()) {
-      await expect(heading).toHaveCSS("text-transform", "uppercase");
+      await expect(heading).toHaveCSS("text-transform", "none");
       expect(parseFloat(await heading.evaluate(element => getComputedStyle(element).fontSize))).toBeLessThan(13);
     }
     const more = (await page.locator(".event-more-filters").boundingBox())!;

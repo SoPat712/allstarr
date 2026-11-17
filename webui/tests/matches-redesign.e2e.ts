@@ -395,7 +395,7 @@ test("Matches redesign keeps desktop status, rows and panel controls compact", a
   const footer = await panel.locator(".panel-footer").boundingBox();
   await panel.locator(".panel-body").evaluate(element => element.scrollTop = element.scrollHeight);
   expect((await panel.locator(".panel-footer").boundingBox())!.y).toBe(footer!.y);
-  await expect(panel.getByRole("heading", { name: "Better choices", exact: true })).toHaveCSS("text-transform", "uppercase");
+  await expect(panel.getByRole("heading", { name: "Better choices", exact: true })).toHaveCSS("text-transform", "none");
   const more = await panel.getByRole("button", { name: "More", exact: true }).boundingBox();
   await page.mouse.click(more!.x + more!.width / 2, more!.y - 4);
   await expect(page.getByRole("menu")).toBeVisible();

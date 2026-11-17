@@ -196,7 +196,7 @@
   .added-state > span { color: var(--success); }
   .mix-footer { display: flex; width: 100%; justify-content: space-between; align-items: center; gap: var(--space-3); }
   .songs-heading { display: flex; justify-content: space-between; align-items: center; margin-top: var(--space-5); margin-bottom: var(--space-2); font-size: var(--text-xs); color: var(--color-ink-muted); }
-  h3 { font-weight: 600; text-transform: uppercase; letter-spacing: .05em; }
+  h3 { font-weight: 600; }
   /* The fold shares the divider under the apps switch. */
   :global(.recipe) { margin-top: -1px; }
   .recipe-copy { font-variant-numeric: tabular-nums; overflow-wrap: anywhere; padding-bottom: var(--space-3); }
