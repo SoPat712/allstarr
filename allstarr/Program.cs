@@ -528,6 +528,7 @@ builder.Services.AddScoped<V2BatchDispatcher>();
 builder.Services.AddScoped<V2MeEndpoints>();
 builder.Services.AddScoped<V2SearchStream>();
 builder.Services.AddScoped<V2SearchEndpoints>();
+builder.Services.AddScoped<V2ServiceLyricsSearch>();
 builder.Services.AddScoped<ClientListeningHistory>();
 builder.Services.AddSingleton<ClientLibraryAdditions>();
 builder.Services.AddScoped<ItemLyricsReader>();

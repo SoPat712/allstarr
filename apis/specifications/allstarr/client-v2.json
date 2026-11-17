@@ -3898,6 +3898,126 @@
         }
       }
     },
+    "/allstarr/v2/search/lyrics/services": {
+      "get": {
+        "tags": [
+          "Search"
+        ],
+        "description": "Asks lyrics services (NetEase, QQ Music) for songs with this lyric line and matches each to a playable song, preferring the library copy. Slower than /search/lyrics, so call both together. Supports conditional reads and batch.",
+        "operationId": "searchLyricsServicesV2",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "description": "Lyrics text, from 2 to 200 characters after trimming.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum results, from 1 to 20; defaults to 10.",
+            "schema": {
+              "maximum": 20,
+              "minimum": 1,
+              "type": "integer",
+              "format": "int32",
+              "default": 10
+            }
+          },
+          {
+            "name": "If-None-Match",
+            "in": "header",
+            "description": "The stored ETag; a matching representation returns 304 without a body.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "headers": {
+              "ETag": {
+                "description": "Representation validator, also returned by the batch entry.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V2ServiceLyricsSearchResponse"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Not Modified",
+            "headers": {
+              "ETag": {
+                "description": "Representation validator, also returned by the batch entry.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/allstarr/v2/session": {
       "get": {
         "tags": [
@@ -8551,6 +8671,105 @@
           },
           "id": {
             "type": "string"
+          }
+        }
+      },
+      "V2ServiceLyricsHit": {
+        "required": [
+          "title",
+          "artist",
+          "line",
+          "highlights",
+          "provider",
+          "track"
+        ],
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "artist": {
+            "type": "string"
+          },
+          "line": {
+            "$ref": "#/components/schemas/V2ServiceLyricsLine"
+          },
+          "highlights": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LyricsSearchHighlight"
+            },
+            "description": "Matched text as UTF-16 code-unit offsets within line.text, as in /search/lyrics."
+          },
+          "provider": {
+            "$ref": "#/components/schemas/V2Provider"
+          },
+          "track": {
+            "type": [
+              "null",
+              "object"
+            ],
+            "anyOf": [
+              {
+                "description": "The playable song, preferring a library copy, or null when none was found; then only title and artist are known.",
+                "$ref": "#/components/schemas/V2Track"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "V2ServiceLyricsLine": {
+        "required": [
+          "text"
+        ],
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string"
+          }
+        }
+      },
+      "V2ServiceLyricsProvider": {
+        "required": [
+          "id",
+          "name",
+          "state"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          }
+        }
+      },
+      "V2ServiceLyricsSearchResponse": {
+        "required": [
+          "results",
+          "providers"
+        ],
+        "type": "object",
+        "properties": {
+          "results": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/V2ServiceLyricsHit"
+            }
+          },
+          "providers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/V2ServiceLyricsProvider"
+            },
+            "description": "Each service asked: state ok, unavailable (failed or too slow) or off (turned off in Sources)."
           }
         }
       },

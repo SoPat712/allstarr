@@ -31,4 +31,15 @@ public sealed class SearchController(V2SearchEndpoints search) : ClientApiV2Cont
         [FromQuery, Description("Lyrics text, from 2 to 200 characters after trimming.")] string? q,
         [FromQuery, Range(1, 50), Description("Maximum results, from 1 to 50; defaults to 20.")] int limit = 20) =>
         Respond(await search.LyricsAsync(HttpContext, Execution, q, limit));
+
+    [HttpGet("lyrics/services")]
+    [EndpointName("searchLyricsServicesV2")]
+    [EndpointDescription("Asks lyrics services (NetEase, QQ Music) for songs with this lyric line and matches each to a playable song, preferring the library copy. Slower than /search/lyrics, so call both together. Supports conditional reads and batch.")]
+    [ProducesResponseType<V2ServiceLyricsSearchResponse>(200)]
+    [ProducesResponseType(304)]
+    public async Task<IActionResult> LyricsServices(
+        [FromServices] V2ServiceLyricsSearch services,
+        [FromQuery, Description("Lyrics text, from 2 to 200 characters after trimming.")] string? q,
+        [FromQuery, Range(1, 20), Description("Maximum results, from 1 to 20; defaults to 10.")] int limit = 10) =>
+        Respond(await services.SearchAsync(HttpContext, Execution, q, limit));
 }

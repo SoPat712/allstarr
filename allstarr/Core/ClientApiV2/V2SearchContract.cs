@@ -54,6 +54,29 @@ public sealed record V2LyricsSearchResponse(
     [property: JsonPropertyName("results")] IReadOnlyList<V2LyricsSearchHit> Results,
     [property: JsonPropertyName("truncated")] bool Truncated);
 
+/// <summary>Songs that lyrics services found for a lyric line; each is playable when Allstarr could match it.</summary>
+public sealed record V2ServiceLyricsSearchResponse(
+    [property: JsonPropertyName("results")] IReadOnlyList<V2ServiceLyricsHit> Results,
+    [property: JsonPropertyName("providers"), Description("Each service asked: state ok, unavailable (failed or too slow) or off (turned off in Sources).")]
+    IReadOnlyList<V2ServiceLyricsProvider> Providers);
+
+public sealed record V2ServiceLyricsHit(
+    [property: JsonPropertyName("title")] string Title,
+    [property: JsonPropertyName("artist")] string Artist,
+    [property: JsonPropertyName("line")] V2ServiceLyricsLine Line,
+    [property: JsonPropertyName("highlights"), Description("Matched text as UTF-16 code-unit offsets within line.text, as in /search/lyrics.")]
+    IReadOnlyList<LyricsSearchHighlight> Highlights,
+    [property: JsonPropertyName("provider")] V2Provider Provider,
+    [property: JsonPropertyName("track"), Description("The playable song, preferring a library copy, or null when none was found; then only title and artist are known.")]
+    V2Track? Track);
+
+public sealed record V2ServiceLyricsLine([property: JsonPropertyName("text")] string Text);
+
+public sealed record V2ServiceLyricsProvider(
+    [property: JsonPropertyName("id")] string Id,
+    [property: JsonPropertyName("name")] string Name,
+    [property: JsonPropertyName("state")] string State);
+
 public sealed record V2LyricsSearchHit(
     [property: JsonPropertyName("track")] V2Track Track,
     [property: JsonPropertyName("line")] LyricsSearchLine Line,
