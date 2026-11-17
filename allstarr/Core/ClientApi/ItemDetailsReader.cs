@@ -88,16 +88,28 @@ public sealed class ItemDetailsReader(
         var recordingIds = resolved.Values.OfType<CanonicalRecordingIdentity>().Select(item => item.Id).Distinct().ToArray();
         Step("recordings");
         var hashes = external.Select(item => CanonicalCatalogKeys.Hash(item.ExternalId)).Distinct().ToArray();
-        var snapshots = hashes.Length == 0 && recordingIds.Length == 0 ? [] : await db.ExternalMetadataSnapshots.AsNoTracking().Where(item => item.OwnerUserId == owner &&
+        // The snapshots behind these songs are found through their hash, their linked identity or a decision naming the
+        // recording. Each is an indexed lookup; asking all three per snapshot scanned every snapshot the listener has.
+        var linkedIdentities = recordingIds.Length == 0 ? [] : await db.ProviderTrackIdentities.AsNoTracking()
+            .Where(link => recordingIds.Contains(link.CanonicalRecordingId)).Select(link => link.Id).ToArrayAsync(token);
+        var decidedSnapshots = recordingIds.Length == 0 ? [] : await db.TrackMatches.AsNoTracking()
+            .Where(match => match.OwnerUserId == owner && match.CanonicalRecordingId.HasValue && recordingIds.Contains(match.CanonicalRecordingId.Value))
+            .Select(match => match.ExternalSnapshotId).Distinct().ToArrayAsync(token);
+        IQueryable<ExternalMetadataSnapshotRecord> Visible(IQueryable<ExternalMetadataSnapshotRecord> query) => query.Where(item => item.OwnerUserId == owner &&
             item.Protocol == protocol && item.BackendInstanceId == execution.BackendInstanceId &&
             item.BackendPrincipalId == execution.VerifiedBackendPrincipalId &&
             (item.ResourceKind == "track" || item.ResourceKind == "playback-metadata") &&
-            (hashes.Contains(item.ExternalIdHash) || db.ProviderTrackIdentities.Any(link => link.Id == item.ProviderTrackIdentityId &&
-                recordingIds.Contains(link.CanonicalRecordingId)) || db.TrackMatches.Any(match => match.OwnerUserId == owner &&
-                match.ExternalSnapshotId == item.Id && match.CanonicalRecordingId.HasValue && recordingIds.Contains(match.CanonicalRecordingId.Value))) &&
             (item.ProviderAccountId == null || db.ProviderAccounts.Any(account => account.Id == item.ProviderAccountId &&
-                account.Enabled && (account.OwnerUserId == null || account.OwnerUserId == owner))))
-            .ToArrayAsync(token);
+                account.Enabled && (account.OwnerUserId == null || account.OwnerUserId == owner))));
+        var found = new List<ExternalMetadataSnapshotRecord>();
+        if (hashes.Length > 0)
+            found.AddRange(await Visible(db.ExternalMetadataSnapshots.AsNoTracking().Where(item => hashes.Contains(item.ExternalIdHash))).ToArrayAsync(token));
+        if (linkedIdentities.Length > 0)
+            found.AddRange(await Visible(db.ExternalMetadataSnapshots.AsNoTracking()
+                .Where(item => item.ProviderTrackIdentityId.HasValue && linkedIdentities.Contains(item.ProviderTrackIdentityId.Value))).ToArrayAsync(token));
+        if (decidedSnapshots.Length > 0)
+            found.AddRange(await Visible(db.ExternalMetadataSnapshots.AsNoTracking().Where(item => decidedSnapshots.Contains(item.Id))).ToArrayAsync(token));
+        var snapshots = found.DistinctBy(item => item.Id).ToArray();
         Step("snapshots");
         var snapshotIds = snapshots.Select(item => item.Id).ToArray();
         // Facts read only these few fields; a decision's candidate list is by far its largest column.
