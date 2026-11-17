@@ -6633,6 +6633,21 @@
               "type": "string"
             },
             "description": "The older service id of an album that is not in the library, which the media-server routes accept."
+          },
+          "provider": {
+            "type": [
+              "null",
+              "object"
+            ],
+            "anyOf": [
+              {
+                "description": "The service of an album that is not in the library.",
+                "$ref": "#/components/schemas/V2Provider"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         }
       },
@@ -6965,6 +6980,21 @@
               "string"
             ],
             "description": "The media server artist when it is in the library."
+          },
+          "provider": {
+            "type": [
+              "null",
+              "object"
+            ],
+            "anyOf": [
+              {
+                "description": "The service of an artist that is not in the library.",
+                "$ref": "#/components/schemas/V2Provider"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         }
       },
@@ -8386,6 +8416,21 @@
               "type": "string"
             },
             "description": "The older service id of an artist that is not in the library, which the media-server routes accept."
+          },
+          "provider": {
+            "type": [
+              "null",
+              "object"
+            ],
+            "anyOf": [
+              {
+                "description": "The service of an artist that is not in the library.",
+                "$ref": "#/components/schemas/V2Provider"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         }
       },

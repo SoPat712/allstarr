@@ -508,6 +508,7 @@ builder.Services.AddHttpClient(LibraryBackendBrandResolver.HttpClientName, clien
 builder.Services.AddScoped<LibraryBackendBrandResolver>();
 builder.Services.AddScoped<LibraryProviderResolver>();
 builder.Services.AddScoped<ItemDetailsReader>();
+builder.Services.AddScoped<V2LibraryArtists>();
 builder.Services.AddScoped<V2TrackReader>();
 builder.Services.AddSingleton<V2EventStream>();
 builder.Services.AddHostedService(services => services.GetRequiredService<V2EventStream>());

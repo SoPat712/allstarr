@@ -20,7 +20,8 @@ public sealed class V2TrackReader(
     JellyfinProxyService jellyfin,
     ITrackIdentityService identities,
     IProviderRegistry registry,
-    ILibraryIndexService libraryIndex)
+    ILibraryIndexService libraryIndex,
+    V2LibraryArtists? libraryArtists = null)
 {
     private const string LibraryFields = "MediaSources,ProviderIds";
     private static readonly HashSet<string> LosslessCodecs = new(StringComparer.OrdinalIgnoreCase)
@@ -97,7 +98,8 @@ public sealed class V2TrackReader(
                 tracks.Add(built with { Aliases = aliases });
             }
         }
-        return (new(tracks, missing) { Albums = albums }, readFrom);
+        var linked = libraryArtists == null ? tracks : await libraryArtists.LinkAsync(http, execution, tracks);
+        return (new(linked, missing) { Albums = albums }, readFrom);
     }
 
     private static bool IsExternal(string id) => id.StartsWith("ext-", StringComparison.Ordinal);

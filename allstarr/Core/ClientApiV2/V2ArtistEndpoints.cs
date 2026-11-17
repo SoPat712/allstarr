@@ -8,7 +8,8 @@ using static allstarr.Core.ClientApiV2.V2TrackReader;
 namespace allstarr.Core.ClientApiV2;
 
 /// <summary>Native artist reads shared by the standalone route and batch dispatcher.</summary>
-public sealed class V2ArtistEndpoints(V2TrackReader tracks, IProtocolProviderGateway providers, V2AlbumEndpoints albums, ReleaseReader releases)
+public sealed class V2ArtistEndpoints(V2TrackReader tracks, IProtocolProviderGateway providers, V2AlbumEndpoints albums, ReleaseReader releases,
+    V2LibraryArtists? libraryArtists = null)
 {
     private const int AlbumLimit = 50;
     private const int TrackLimit = 20;
@@ -33,7 +34,8 @@ public sealed class V2ArtistEndpoints(V2TrackReader tracks, IProtocolProviderGat
                     await providers.GetArtistAsync(execution, parsed.provider!, parsed.externalId!);
                 if (string.IsNullOrWhiteSpace(metadata?.Name)) return null;
                 artist = new(V2Ids.Artist(source), metadata.Name, true,
-                    V2ArtworkUrls.For(source, JellyfinItemArtwork.PrimaryImageTag(source, false)), metadata.Genres, following);
+                    V2ArtworkUrls.For(source, JellyfinItemArtwork.PrimaryImageTag(source, false)), metadata.Genres, following)
+                { Provider = libraryArtists?.ServiceProvider(V2Ids.Artist(source), V2IdKind.Artist) };
                 if (included.Contains("albums"))
                     artistAlbums = (await providers.GetArtistAlbumsAsync(execution, parsed.provider!, parsed.externalId!, AlbumLimit))
                         .Where(item => V2Ids.IsValidSource(item.Id, V2IdKind.Album)).Select(item => V2AlbumEndpoints.Summary(item.Id, item))
