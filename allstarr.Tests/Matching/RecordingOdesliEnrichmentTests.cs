@@ -326,7 +326,8 @@ public sealed partial class TrackIdentityServiceTests
         Assert.NotNull(claim);
         var policies = new Mock<IEffectiveProviderPolicyResolver>();
         policies.Setup(item => item.ResolveForUserAsync(_userA, It.IsAny<CancellationToken>())).ReturnsAsync(new EffectiveProviderPolicySnapshot(
-            ImmutableDictionary<ProviderCapabilityKind, ImmutableArray<string>>.Empty.Add(ProviderCapabilityKind.Metadata, ["qobuz"]),
+            ImmutableDictionary<ProviderCapabilityKind, ImmutableArray<string>>.Empty.Add(ProviderCapabilityKind.Metadata, ["qobuz"])
+                .Add(ProviderCapabilityKind.Streaming, ["qobuz"]),
             ImmutableHashSet<string>.Empty, "Any", 0.07));
         if (outcome == "failure")
             metadata.Setup(item => item.SearchTracksAsync(It.IsAny<ProviderExecutionContext>(),

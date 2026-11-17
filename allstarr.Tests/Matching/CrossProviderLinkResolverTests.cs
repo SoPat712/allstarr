@@ -130,15 +130,61 @@ public sealed class CrossProviderLinkResolverTests
     }
 
     [Fact]
-    public async Task DisabledCrossServiceLinks_DoNotConsultMetadataOrPolicy()
+    public async Task WithOdesliOff_TheListenersServicesAreStillAskedByIsrc()
     {
-        var registry = new Mock<IProviderRegistry>(MockBehavior.Strict);
-        var policies = new Mock<IEffectiveProviderPolicyResolver>(MockBehavior.Strict);
-        var resolver = new CrossProviderLinkResolver(registry.Object, policies.Object, new(), new TestMemoryApplicationCache(),
+        var metadata = new Mock<IProviderMetadataCapability>(MockBehavior.Strict);
+        metadata.Setup(item => item.LookupByIsrcAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderIsrcLookupRequest>()))
+            .ReturnsAsync(ProviderOutcome<ProviderTrackMetadata>.Success(Track("Song", "USRC17607839")));
+        var resolver = Create(metadata.Object, ["deezer"], odesliEnabled: false);
+
+        var result = Assert.Single(await resolver.ResolveAsync(Source("USRC17607839"), [], Actor(), "fixture", default));
+
+        Assert.True(result.Verified);
+        Assert.Equal("99", result.Id.Value);
+    }
+
+    [Fact]
+    public async Task ASourceWithoutIsrc_BorrowsTheLinkedServicesIsrcForTheMissingOnes()
+    {
+        var linked = new Mock<IProviderMetadataCapability>(MockBehavior.Strict);
+        linked.Setup(item => item.GetTrackAsync(It.IsAny<ProviderExecutionContext>(),
+                It.Is<ProviderTrackLookupRequest>(request => request.Id.ProviderId == "deezer" && request.Id.Value == "7")))
+            .ReturnsAsync(ProviderOutcome<ProviderTrackMetadata>.Success(Track("Song", "USRC17607839")));
+        var missing = new Mock<IProviderMetadataCapability>(MockBehavior.Strict);
+        missing.Setup(item => item.LookupByIsrcAsync(It.IsAny<ProviderExecutionContext>(),
+                It.Is<ProviderIsrcLookupRequest>(request => request.Isrc == "USRC17607839")))
+            .ReturnsAsync(ProviderOutcome<ProviderTrackMetadata>.Success(new(new("qobuz", ProviderResourceKind.Track, "88"), "Song",
+                [new ProviderArtistCredit("Artist")], duration: TimeSpan.FromSeconds(180), isrc: "USRC17607839")));
+        IProviderMetadataCapability? deezer = linked.Object, qobuz = missing.Object;
+        var registry = new Mock<IProviderRegistry>();
+        registry.SetupGet(item => item.Providers).Returns([
+            new("deezer", "Deezer", "Fixture", ProviderOrigin.BuiltIn, "1", "1",
+                [new(ProviderCapabilityKind.Metadata, ProviderCapabilitySupportState.Supported, ProviderAccountRequirement.None, "1")], new()),
+            new("qobuz", "Qobuz", "Fixture", ProviderOrigin.BuiltIn, "1", "1",
+                [new(ProviderCapabilityKind.Metadata, ProviderCapabilitySupportState.Supported, ProviderAccountRequirement.None, "1")], new())
+        ]);
+        registry.Setup(item => item.TryGetCapability<IProviderMetadataCapability>("deezer", ProviderCapabilityKind.Metadata, out deezer)).Returns(true);
+        registry.Setup(item => item.TryGetCapability<IProviderMetadataCapability>("qobuz", ProviderCapabilityKind.Metadata, out qobuz)).Returns(true);
+        var policy = new Mock<IEffectiveProviderPolicyResolver>();
+        policy.Setup(item => item.ResolveForUserAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>())).ReturnsAsync(new EffectiveProviderPolicySnapshot(
+            ImmutableDictionary<ProviderCapabilityKind, ImmutableArray<string>>.Empty.Add(ProviderCapabilityKind.Metadata, ["deezer", "qobuz"])
+                .Add(ProviderCapabilityKind.Streaming, ["deezer", "qobuz"]), ImmutableHashSet<string>.Empty, "Any", 0.07));
+        var resolver = new CrossProviderLinkResolver(registry.Object, policy.Object, new TrackMatchDecisionEngine(), new TestMemoryApplicationCache(),
             Options.Create(new OdesliSettings { Enabled = false }), new SystemPlatformClock());
-        Assert.Empty(await resolver.ResolveAsync(Source(null), [], Actor(), "fixture", default));
-        registry.VerifyNoOtherCalls();
-        policies.VerifyNoOtherCalls();
+
+        var result = Assert.Single(await resolver.ResolveAsync(Source(null), [new("deezer", ProviderResourceKind.Track, "7")], Actor(), "fixture", default));
+
+        Assert.Equal(("qobuz", "88", true), (result.ProviderId, result.ExternalId, result.Verified));
+    }
+
+    [Fact]
+    public async Task AServiceThatCannotPlayForTheListener_IsNotLinked()
+    {
+        var metadata = new Mock<IProviderMetadataCapability>(MockBehavior.Strict);
+        var resolver = Create(metadata.Object, ["deezer"], streaming: ["tidal"]);
+
+        Assert.Empty(await resolver.ResolveAsync(Source("USRC17607839"), [], Actor(), "fixture", default));
+        metadata.VerifyNoOtherCalls();
     }
 
     [Fact]
@@ -237,7 +283,7 @@ public sealed class CrossProviderLinkResolverTests
         => Create(metadata.Object, order, disabled);
 
     internal static CrossProviderLinkResolver Create(IProviderMetadataCapability metadata, string[] order, string[]? disabled = null, OdesliService? odesli = null,
-        ImmutableDictionary<string, ProviderUseMode>? modes = null, IApplicationCache? cache = null)
+        ImmutableDictionary<string, ProviderUseMode>? modes = null, IApplicationCache? cache = null, string[]? streaming = null, bool odesliEnabled = true)
     {
         IProviderMetadataCapability? registered = metadata;
         var registry = new Mock<IProviderRegistry>();
@@ -248,12 +294,13 @@ public sealed class CrossProviderLinkResolverTests
         registry.Setup(item => item.TryGetCapability<IProviderMetadataCapability>("deezer", ProviderCapabilityKind.Metadata, out registered)).Returns(true);
         var policy = new Mock<IEffectiveProviderPolicyResolver>();
         var snapshot = new EffectiveProviderPolicySnapshot(
-            ImmutableDictionary<ProviderCapabilityKind, ImmutableArray<string>>.Empty.Add(ProviderCapabilityKind.Metadata, [.. order]),
+            ImmutableDictionary<ProviderCapabilityKind, ImmutableArray<string>>.Empty.Add(ProviderCapabilityKind.Metadata, [.. order])
+                .Add(ProviderCapabilityKind.Streaming, [.. streaming ?? order]),
             (disabled ?? []).ToImmutableHashSet(), "Any", 0.07)
         { ProviderModes = modes ?? ImmutableDictionary<string, ProviderUseMode>.Empty };
         policy.Setup(item => item.ResolveForUserAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>())).ReturnsAsync(snapshot);
         return new(registry.Object, policy.Object, new TrackMatchDecisionEngine(), cache ?? new TestMemoryApplicationCache(),
-            Options.Create(new OdesliSettings { Enabled = true }), new SystemPlatformClock(), odesli);
+            Options.Create(new OdesliSettings { Enabled = odesliEnabled }), new SystemPlatformClock(), odesli);
     }
 
     private static ProviderActorContext Actor() => new(ProviderActorKind.User, Guid.Parse("11111111-1111-1111-1111-111111111111"), new("jellyfin", "fixture", "listener"));

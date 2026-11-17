@@ -38,20 +38,29 @@ public sealed class CrossProviderLinkResolver(
         string correlationId, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        if (!settings.Value.Enabled || actor.EffectiveUserId is not { } userId) return [];
+        // Exact ISRC lookups and searches at the listener's own services need no outside help; only the Odesli step is optional.
+        if (actor.EffectiveUserId is not { } userId) return [];
         var policy = await policies.ResolveForUserAsync(userId, cancellationToken);
         if (!policy.IsAutomatic(recording.ProviderId)) return [];
         var allowMusicBrainz = policy.IsAutomatic("musicbrainz");
         var disabled = policy.DisabledProviders.Select(Core.Providers.AppleMusicKit.AppleMusicClient.NormalizeProviderId).ToHashSet(StringComparer.Ordinal);
+        // Only services that can play the song for this listener are worth a link, which keeps each lookup to a few calls.
+        var playable = policy.GetProviderOrder(ProviderCapabilityKind.Streaming)
+            .Select(Core.Providers.AppleMusicKit.AppleMusicClient.NormalizeProviderId).ToHashSet(StringComparer.Ordinal);
         var order = policy.GetProviderOrder(ProviderCapabilityKind.Metadata)
             .Select(Core.Providers.AppleMusicKit.AppleMusicClient.NormalizeProviderId)
-            .Where(id => !disabled.Contains(id) && policy.IsAutomatic(id))
+            .Where(id => !disabled.Contains(id) && policy.IsAutomatic(id) && playable.Contains(id))
             .Distinct(StringComparer.Ordinal).Take(32).ToArray();
         var known = verifiedIdentities.Select(item => Core.Providers.AppleMusicKit.AppleMusicClient.NormalizeProviderId(item.ProviderId))
             .Append(Core.Providers.AppleMusicKit.AppleMusicClient.NormalizeProviderId(recording.ProviderId)).ToHashSet(StringComparer.Ordinal);
         var results = new List<CrossProviderLinkCandidate>();
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(TimeSpan.FromSeconds(30));
+        // A source without an ISRC, such as a ListenBrainz play, borrows the one a linked service reports, so the missing
+        // services can be asked for that exact recording instead of only searched by title.
+        if (string.IsNullOrWhiteSpace(recording.Isrc) && order.Any(id => !known.Contains(id)) &&
+            await LinkedIsrcAsync(verifiedIdentities, actor, correlationId, order, timeout.Token) is { } borrowed)
+            recording = recording with { Isrc = borrowed };
         IReadOnlyDictionary<string, string>? optionalLinks = null;
         foreach (var providerId in order.Where(id => !known.Contains(id)))
         {
@@ -135,7 +144,7 @@ public sealed class CrossProviderLinkResolver(
                         if (search.IsSuccess) tracks.AddRange(search.RequireValue().Items);
                     }
                     // Optional links are candidates too: their target metadata must pass the same match rules.
-                    if (tracks.Count == 0 && odesli != null)
+                    if (tracks.Count == 0 && odesli != null && settings.Value.Enabled)
                     {
                         var url = verifiedIdentities.Select(id => OdesliService.BuildTrackUrl(id.ProviderId, id.Value)).FirstOrDefault(url => url != null);
                         if (url != null)
@@ -191,6 +200,34 @@ public sealed class CrossProviderLinkResolver(
             return new CrossProviderLinkCandidate(track.Id.ProviderId, track.Id.Value, verified, score.Confidence,
                 verified && FuzzyMatcher.IdentifiersEqual(source.Isrc, track.Isrc) ? "isrc-lookup" : "cross-service-match");
         }).ToList();
+    }
+
+    private async Task<string?> LinkedIsrcAsync(IReadOnlyList<ProviderExternalResourceId> identities, ProviderActorContext actor,
+        string correlationId, IReadOnlyList<string> order, CancellationToken token)
+    {
+        foreach (var identity in identities.Take(3))
+        {
+            var providerId = Core.Providers.AppleMusicKit.AppleMusicClient.NormalizeProviderId(identity.ProviderId);
+            var descriptor = registry.Providers.FirstOrDefault(item => item.Id == providerId)?.Capabilities
+                .FirstOrDefault(item => item.Capability == ProviderCapabilityKind.Metadata);
+            if (descriptor is not { HasUsableImplementation: true } || descriptor.AccountRequirement != ProviderAccountRequirement.None ||
+                !registry.TryGetCapability<IProviderMetadataCapability>(providerId, ProviderCapabilityKind.Metadata, out var metadata) || metadata == null)
+                continue;
+            try
+            {
+                using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
+                deadline.CancelAfter(TimeSpan.FromSeconds(10));
+                var context = new ProviderExecutionContext(actor, providerId, null,
+                    new(new(ProviderAudioQuality.Any, ProviderAudioQuality.HighResolution, true),
+                        ProviderExplicitContentPolicy.Allow, false, true, false, order),
+                    "cross-provider-evidence", correlationId, clock.UtcNow.AddSeconds(10), deadline.Token);
+                var track = await metadata.GetTrackAsync(context, new(new(providerId, ProviderResourceKind.Track, identity.Value)))
+                    .WaitAsync(deadline.Token);
+                if (track.IsSuccess && track.RequireValue().Isrc is { Length: > 0 } isrc) return isrc;
+            }
+            catch (Exception error) when (error is not OperationCanceledException || !token.IsCancellationRequested) { }
+        }
+        return null;
     }
 
     private static bool IsTransient(ProviderError? error) => error?.Kind is ProviderErrorKind.RateLimited or
