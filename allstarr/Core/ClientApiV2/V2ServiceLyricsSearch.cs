@@ -19,6 +19,8 @@ public sealed partial class V2ServiceLyricsSearch(IHttpClientFactory clients, IA
 {
     private static readonly TimeSpan ServiceBudget = TimeSpan.FromSeconds(4);
     private static readonly TimeSpan MatchBudget = TimeSpan.FromSeconds(5);
+    // One hit's search keeps the services that answered in time; waiting for the slowest would pass the whole budget.
+    private static readonly TimeSpan SongSearchBudget = TimeSpan.FromSeconds(3);
     private static readonly TimeSpan Kept = TimeSpan.FromMinutes(30);
     // An answer missing a service is kept briefly, so a repeated line is quick without hiding the service for long.
     private static readonly TimeSpan KeptPartly = TimeSpan.FromMinutes(2);
@@ -226,7 +228,7 @@ public sealed partial class V2ServiceLyricsSearch(IHttpClientFactory clients, IA
 
     private async Task<string?> ServiceCopyAsync(ProtocolExecutionContext execution, Found hit)
     {
-        var songs = await providers.SearchPlayableSongsAsync(execution, $"{hit.Title} {FirstArtist(hit.Artist)}", 5);
+        var songs = await providers.SearchPlayableSongsWithinAsync(execution, $"{hit.Title} {FirstArtist(hit.Artist)}", 5, SongSearchBudget);
         return songs.FirstOrDefault(song => Same(hit, song.Title, song.Artist))?.Id;
     }
 

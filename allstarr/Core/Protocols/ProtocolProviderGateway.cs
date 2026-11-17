@@ -65,6 +65,13 @@ public interface IProtocolProviderGateway
         string query,
         int limit);
 
+    /// <summary>Playable songs from the services that answer within the budget; slower services are left out.</summary>
+    Task<IReadOnlyList<Song>> SearchPlayableSongsWithinAsync(
+        ProtocolExecutionContext protocol,
+        string query,
+        int limit,
+        TimeSpan budget) => SearchPlayableSongsAsync(protocol, query, limit);
+
     Task<IReadOnlyList<Song>> SearchAutomaticSongsAsync(
         ProtocolExecutionContext protocol,
         string query,
@@ -686,6 +693,10 @@ public sealed partial class ProtocolProviderGateway(
         ProtocolExecutionContext protocol, string query, int limit) =>
         (await SearchSongsAsync(protocol, query, limit, ProviderRoutePurpose.ManualSelection)).Songs;
 
+    public async Task<IReadOnlyList<Song>> SearchPlayableSongsWithinAsync(
+        ProtocolExecutionContext protocol, string query, int limit, TimeSpan budget) =>
+        (await SearchSongsAsync(protocol, query, limit, ProviderRoutePurpose.ManualSelection, budget)).Songs;
+
     public async Task<IReadOnlyList<Song>> SearchAutomaticSongsAsync(
         ProtocolExecutionContext protocol, string query, int limit) =>
         (await SearchSongsAsync(protocol, query, limit, ProviderRoutePurpose.Automatic)).Songs;
@@ -695,7 +706,7 @@ public sealed partial class ProtocolProviderGateway(
         SearchSongsAsync(protocol, query, limit, ProviderRoutePurpose.Automatic);
 
     private async Task<MatchingSongSearchResult> SearchSongsAsync(
-        ProtocolExecutionContext protocol, string query, int limit, ProviderRoutePurpose purpose)
+        ProtocolExecutionContext protocol, string query, int limit, ProviderRoutePurpose purpose, TimeSpan? budget = null)
     {
         ArgumentNullException.ThrowIfNull(protocol);
         limit = Math.Clamp(limit, 1, 200);
@@ -730,7 +741,7 @@ public sealed partial class ProtocolProviderGateway(
             sourceTrackId: null,
             purpose: purpose));
         var (snapshots, incompleteProviders) = await SearchPlayableProvidersWithinBudgetAsync(
-            plan.Candidates, query, limit, protocol.CancellationToken);
+            plan.Candidates, query, limit, protocol.CancellationToken, budget);
         var songs = snapshots.SelectMany(snapshot => snapshot.Result.Songs)
             .Where(song => effectivePolicy?.Includes(song) != false)
             .Where(song => providerOrder.Contains(

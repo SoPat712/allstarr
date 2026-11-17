@@ -50,10 +50,11 @@ public sealed partial class ProtocolProviderGateway
         IReadOnlyList<ProviderRouteCandidate<IProviderMetadataCapability>> candidates,
         string query,
         int limit,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        TimeSpan? within = null)
     {
         var clock = timeProvider ?? TimeProvider.System;
-        var budget = TimeSpan.FromSeconds(9);
+        var budget = within ?? TimeSpan.FromSeconds(9);
         var settings = SearchSettings;
         var started = clock.GetTimestamp();
         var tasks = candidates.Select(async candidate =>
