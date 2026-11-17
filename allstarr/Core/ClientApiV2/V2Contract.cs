@@ -181,6 +181,28 @@ public sealed record V2ArtistResponse([property: JsonPropertyName("artist")] V2A
     public IReadOnlyList<string>? Missing { get; init; }
 }
 
+/// <summary>One track's listener facts without its title, artists, album or artwork, for apps that already show those.</summary>
+public sealed record V2TrackFacts(
+    [property: JsonPropertyName("id")] string Id,
+    [property: JsonPropertyName("aliases"), Description("Other ids this track answers to, including the ones in the request.")] IReadOnlyList<string> Aliases,
+    [property: JsonPropertyName("isExternal")] bool IsExternal,
+    [property: JsonPropertyName("libraryItemId")] string? LibraryItemId,
+    [property: JsonPropertyName("canonicalRecordingId")] string? CanonicalRecordingId,
+    [property: JsonPropertyName("provider")] V2Provider? Provider,
+    [property: JsonPropertyName("externalIds")] IReadOnlyDictionary<string, string> ExternalIds,
+    [property: JsonPropertyName("format"), Description("The stored or measured file, not what a stream will deliver.")] V2Format? Format,
+    [property: JsonPropertyName("explicit")] bool? Explicit,
+    [property: JsonPropertyName("saved")] bool Saved,
+    [property: JsonPropertyName("playCount")] long? PlayCount,
+    [property: JsonPropertyName("lastPlayedAt")] DateTimeOffset? LastPlayedAt,
+    [property: JsonPropertyName("keep")] V2Keep Keep,
+    [property: JsonPropertyName("match")] V2Match? Match,
+    [property: JsonPropertyName("lyrics")] V2LyricsAvailability Lyrics);
+
+public sealed record V2TrackFactsResponse(
+    [property: JsonPropertyName("tracks")] IReadOnlyList<V2TrackFacts> Tracks,
+    [property: JsonPropertyName("missing")] IReadOnlyList<string> Missing);
+
 public sealed record V2TracksResponse(
     [property: JsonPropertyName("tracks")] IReadOnlyList<V2Track> Tracks,
     [property: JsonPropertyName("missing")] IReadOnlyList<string> Missing)

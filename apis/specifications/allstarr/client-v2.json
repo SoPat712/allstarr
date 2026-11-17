@@ -5123,6 +5123,115 @@
         }
       }
     },
+    "/allstarr/v2/tracks/facts": {
+      "get": {
+        "tags": [
+          "Tracks"
+        ],
+        "description": "Reads only the listener facts of up to 100 tracks: ids and aliases, provider, format, explicit, saved, play count, last played, keep, match and lyrics, without title, artists, album or artwork, for lists whose rows already show those. Accepts the same id spellings as /tracks; ids that are unknown, hidden or cannot be songs are listed in \u0060missing\u0060.",
+        "operationId": "getTrackFacts",
+        "parameters": [
+          {
+            "name": "ids",
+            "in": "query",
+            "description": "Comma-separated ids, at most 100.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "If-None-Match",
+            "in": "header",
+            "description": "The stored ETag; a matching representation returns 304 without a body.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "headers": {
+              "ETag": {
+                "description": "Representation validator, also returned by the batch entry.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V2TrackFactsResponse"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Not Modified",
+            "headers": {
+              "ETag": {
+                "description": "Representation validator, also returned by the batch entry.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/allstarr/v2/tracks/{id}": {
       "get": {
         "tags": [
@@ -9474,6 +9583,152 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/V2Appearance"
+            }
+          }
+        }
+      },
+      "V2TrackFacts": {
+        "required": [
+          "id",
+          "aliases",
+          "isExternal",
+          "libraryItemId",
+          "canonicalRecordingId",
+          "provider",
+          "externalIds",
+          "format",
+          "explicit",
+          "saved",
+          "playCount",
+          "lastPlayedAt",
+          "keep",
+          "match",
+          "lyrics"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "aliases": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Other ids this track answers to, including the ones in the request."
+          },
+          "isExternal": {
+            "type": "boolean"
+          },
+          "libraryItemId": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "canonicalRecordingId": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "provider": {
+            "type": [
+              "null",
+              "object"
+            ],
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/V2Provider"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "externalIds": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "format": {
+            "type": [
+              "null",
+              "object"
+            ],
+            "anyOf": [
+              {
+                "description": "The stored or measured file, not what a stream will deliver.",
+                "$ref": "#/components/schemas/V2Format"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "explicit": {
+            "type": [
+              "null",
+              "boolean"
+            ]
+          },
+          "saved": {
+            "type": "boolean"
+          },
+          "playCount": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int64"
+          },
+          "lastPlayedAt": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "date-time"
+          },
+          "keep": {
+            "$ref": "#/components/schemas/V2Keep"
+          },
+          "match": {
+            "type": [
+              "null",
+              "object"
+            ],
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/V2Match"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "lyrics": {
+            "$ref": "#/components/schemas/V2LyricsAvailability"
+          }
+        }
+      },
+      "V2TrackFactsResponse": {
+        "required": [
+          "tracks",
+          "missing"
+        ],
+        "type": "object",
+        "properties": {
+          "tracks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/V2TrackFacts"
+            }
+          },
+          "missing": {
+            "type": "array",
+            "items": {
+              "type": "string"
             }
           }
         }

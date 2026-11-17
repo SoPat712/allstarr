@@ -104,6 +104,52 @@ public sealed class V2TrackReader(
 
     private static bool IsExternal(string id) => id.StartsWith("ext-", StringComparison.Ordinal);
 
+    /// <summary>
+    /// Only the listener's facts for each song, read the way the facts themselves are stored: no media-server metadata,
+    /// library-copy lookup or artist linking, so a list of rows costs no more than its facts.
+    /// </summary>
+    internal async Task<V2TrackFactsResponse> ReadFactsAsync(HttpContext http, ProtocolExecutionContext execution, IReadOnlyList<string> ids)
+    {
+        var requested = ids.Distinct(StringComparer.Ordinal).ToArray();
+        var sources = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var id in requested)
+            if (V2Ids.TryDecode(id, V2IdKind.Track, out var decoded))
+                sources[id] = decoded.Recording is { } recording ? CanonicalRecordingRecord.DefaultPublicId(recording) : decoded.Source!;
+        var (read, _) = await details.ReadWithSongsAsync(http, execution, sources.Values.Distinct(StringComparer.Ordinal).ToArray(), resolveServingProvider: true);
+        var facts = read.Items.ToDictionary(item => item.Id, StringComparer.Ordinal);
+        var tracks = new List<V2TrackFacts>();
+        var returned = new Dictionary<string, int>(StringComparer.Ordinal);
+        var missing = new List<string>();
+        foreach (var id in requested)
+        {
+            if (!sources.TryGetValue(id, out var source) || !facts.TryGetValue(source, out var item))
+            {
+                missing.Add(id);
+                continue;
+            }
+            var trackId = TrackId(source, item.CanonicalRecordingId);
+            var aliases = Aliases(trackId, id, source, source, item.CanonicalRecordingId);
+            if (returned.TryGetValue(trackId, out var index))
+            {
+                tracks[index] = tracks[index] with { Aliases = tracks[index].Aliases.Union(aliases, StringComparer.Ordinal).ToArray() };
+                continue;
+            }
+            var externalIds = new Dictionary<string, string>(StringComparer.Ordinal);
+            if (item.Isrc is { Length: > 0 } isrc) externalIds["isrc"] = isrc;
+            if (IsExternal(source) && LocalLibraryService.ParseExternalResource(source) is { provider: { } provider, externalId: { } external } &&
+                provider != "allstarr")
+                externalIds[provider] = external;
+            returned[trackId] = tracks.Count;
+            tracks.Add(new(trackId, aliases, item.IsExternal, IsExternal(source) ? null : source, item.CanonicalRecordingId,
+                item.Provider == null ? null : Provider(item.Provider), externalIds,
+                item.Audio is { } audio ? FormatOf(null, audio.Codec, audio.Bitrate, audio.SampleRate, audio.BitDepth, null) : null,
+                item.Explicit, item.Saved, item.PlayCount, item.LastPlayedAt, new(item.Keep.State, item.Keep.Progress),
+                item.Match == null ? null : new(item.Match.State, item.Match.Confidence, item.Match.Authority),
+                new(item.Lyrics.Available, item.Lyrics.Format, item.Lyrics.Source)));
+        }
+        return new(tracks, missing);
+    }
+
     private static string TrackId(string target, string? recording) =>
         Guid.TryParse(recording, out var parsed) ? V2Ids.Track(parsed) : V2Ids.TrackSource(target);
 

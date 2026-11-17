@@ -54,6 +54,14 @@ public sealed class V2TrackEndpoints(V2TrackReader reader, V2TrackViewReader vie
         return new(200, result with { Views = readViews, ViewStatus = statuses });
     }
 
+    public async Task<V2Result> FactsAsync(HttpContext http, ProtocolExecutionContext execution, string? ids)
+    {
+        if (!V2Query.TryIds(ids, out var requested)) return new(400, null);
+        var unreadable = requested.Where(id => !V2Ids.TryDecode(id, V2IdKind.Track, out _)).ToArray();
+        var read = await reader.ReadFactsAsync(http, execution, requested.Except(unreadable).ToArray());
+        return new(200, unreadable.Length == 0 ? read : read with { Missing = read.Missing.Concat(unreadable).ToArray() });
+    }
+
     public async Task<V2Result> GetAsync(HttpContext http, ProtocolExecutionContext execution, string id, string? include, string? view)
     {
         if (!V2Ids.TryDecode(id, V2IdKind.Track, out _)) return new(400, null);

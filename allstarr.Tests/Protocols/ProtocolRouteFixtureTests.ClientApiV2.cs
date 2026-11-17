@@ -153,6 +153,30 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.True(json.RootElement.GetProperty("albums").GetProperty(V2Ids.Album("ext-deezer-album-7")).GetProperty("isExternal").GetBoolean());
         Assert.Empty(json.RootElement.GetProperty("missing").EnumerateArray());
 
+        using (var factsResponse = await client.GetAsync($"/allstarr/v2/tracks/facts?ids=ext-deezer-song-known,{V2Ids.Track(recording)},{wrapped},ext-deezer-album-7"))
+        {
+            var factsBody = await factsResponse.Content.ReadAsStringAsync();
+            Assert.True(factsResponse.StatusCode == HttpStatusCode.OK, factsBody);
+            using var factsJson = JsonDocument.Parse(factsBody);
+            var facts = Assert.Single(factsJson.RootElement.GetProperty("tracks").EnumerateArray());
+            Assert.Equal(V2Ids.Track(recording), facts.GetProperty("id").GetString());
+            Assert.Contains("ext-deezer-song-known", facts.GetProperty("aliases").EnumerateArray().Select(value => value.GetString()));
+            Assert.Contains(wrapped, facts.GetProperty("aliases").EnumerateArray().Select(value => value.GetString()));
+            Assert.False(facts.TryGetProperty("title", out _));
+            Assert.False(facts.TryGetProperty("artists", out _));
+            Assert.True(facts.GetProperty("isExternal").GetBoolean());
+            Assert.Equal("deezer", facts.GetProperty("provider").GetProperty("id").GetString());
+            Assert.True(facts.GetProperty("saved").GetBoolean());
+            Assert.True(facts.GetProperty("explicit").GetBoolean());
+            Assert.Equal("kept", facts.GetProperty("keep").GetProperty("state").GetString());
+            Assert.Equal("pinned", facts.GetProperty("match").GetProperty("state").GetString());
+            Assert.True(facts.GetProperty("lyrics").GetProperty("available").GetBoolean());
+            Assert.Equal("known", facts.GetProperty("externalIds").GetProperty("deezer").GetString());
+            Assert.Equal("USABC1200001", facts.GetProperty("externalIds").GetProperty("isrc").GetString());
+            Assert.Equal("flac", facts.GetProperty("format").GetProperty("codec").GetString());
+            Assert.Equal(["ext-deezer-album-7"], factsJson.RootElement.GetProperty("missing").EnumerateArray().Select(value => value.GetString()!).ToArray());
+        }
+
         using var single = await client.GetAsync($"/allstarr/v2/tracks/{V2Ids.Track(recording)}");
         var singleBody = await single.Content.ReadAsStringAsync();
         Assert.True(single.StatusCode == HttpStatusCode.OK, singleBody);

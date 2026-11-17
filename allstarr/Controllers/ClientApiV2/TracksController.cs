@@ -23,6 +23,16 @@ public sealed class TracksController(V2TrackEndpoints tracks) : ClientApiV2Contr
         [FromQuery, Description("`lyrics` adds each track's lyrics view and status, keyed by returned track id.")] string? views) =>
         Respond(await tracks.ListAsync(HttpContext, Execution, ids, include, views));
 
+    [HttpGet("facts")]
+    [EndpointName("getTrackFacts")]
+    [EndpointDescription("Reads only the listener facts of up to 100 tracks: ids and aliases, provider, format, explicit, saved, play count, " +
+        "last played, keep, match and lyrics, without title, artists, album or artwork, for lists whose rows already show those. " +
+        "Accepts the same id spellings as /tracks; ids that are unknown, hidden or cannot be songs are listed in `missing`.")]
+    [ProducesResponseType<V2TrackFactsResponse>(200)]
+    [ProducesResponseType(304)]
+    public async Task<IActionResult> Facts([FromQuery, Required, Description("Comma-separated ids, at most 100.")] string ids) =>
+        Respond(await tracks.FactsAsync(HttpContext, Execution, ids));
+
     [HttpGet("{id}")]
     [EndpointName("getTrack")]
     [EndpointDescription("Reads one track by any id spelling, with any requested views.")]

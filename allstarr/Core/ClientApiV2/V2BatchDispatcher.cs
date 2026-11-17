@@ -93,6 +93,8 @@ public sealed class V2BatchDispatcher(IServiceScopeFactory scopes, ILogger<V2Bat
             ["models", "karaoke"] when Allowed(query, []) => scope.ServiceProvider.GetRequiredService<V2LibraryEndpoints>().Karaoke(),
             ["mixes"] or ["mixes", _, "tracks"] or ["releases"] or ["library", "additions"] or ["models", "karaoke"] => new(400, null),
             ["tracks"] when Allowed(query, ListKeys) => await tracks.ListAsync(http, execution, Value(query, "ids"), Value(query, "include"), Value(query, "views")),
+            ["tracks", "facts"] when Allowed(query, ["ids"]) => await tracks.FactsAsync(http, execution, Value(query, "ids")),
+            ["tracks", "facts"] => new(400, null),
             ["albums", var id] when Allowed(query, AlbumKeys) => await scope.ServiceProvider.GetRequiredService<V2AlbumEndpoints>()
                 .GetAsync(http, execution, id, Value(query, "include"), Value(query, "views")),
             ["artists", var id] when Allowed(query, ArtistKeys) => await scope.ServiceProvider.GetRequiredService<V2ArtistEndpoints>()
