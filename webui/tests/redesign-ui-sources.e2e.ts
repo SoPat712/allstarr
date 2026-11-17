@@ -164,16 +164,12 @@ for (const [width, theme] of [[1280, "light"], [1280, "dark"], [390, "light"], [
     const writes = await fixture(page);
     await page.goto("#/sources/accounts");
     await expect(page.getByRole("region", { name: "Accounts status" })).toContainText("2 accounts");
-    await expect(page.getByRole("region", { name: "Accounts status" })).toContainText("2 waiting");
+    await expect(page.getByRole("region", { name: "Accounts status" })).toContainText("2 listens waiting");
     await expect(page.locator(".grouped-row")).toHaveCount(1);
     const hearts = page.getByRole("region", { name: "Shared provider hearts", exact: true });
-    await expect(hearts.getByRole("button", { name: "Review profiles", exact: true })).toBeDisabled();
-    const jellyfinProfile = await hearts.getByRole("button", { name: "Jellyfin profile", exact: true }).boundingBox();
-    const subsonicProfile = await hearts.getByRole("button", { name: "Subsonic profile", exact: true }).boundingBox();
-    if (width > 650) {
-      expect(subsonicProfile!.x).toBeGreaterThan(jellyfinProfile!.x + jellyfinProfile!.width);
-      expect(subsonicProfile!.y).toBe(jellyfinProfile!.y);
-    } else expect(subsonicProfile!.y).toBeGreaterThan(jellyfinProfile!.y + jellyfinProfile!.height);
+    // Nobody to pair: the card says why instead of showing a form that can't be used.
+    await expect(hearts).toContainText("No eligible");
+    await expect(hearts.getByRole("button", { name: "Review profiles", exact: true })).toHaveCount(0);
     await page.getByRole("searchbox", { name: "Search accounts" }).fill("ListenBrainz");
     await expect(page.getByRole("link", { name: "Open Apple Music account" })).toBeHidden();
     await page.getByRole("searchbox", { name: "Search accounts" }).fill("");
@@ -400,7 +396,7 @@ test("Sources accounts status uses singular account and waiting counts", async (
   const status = page.getByRole("region", { name: "Accounts status" });
   await expect(status).toContainText("1 account");
   await expect(status).not.toContainText("1 accounts");
-  await expect(status).toContainText("1 waiting");
+  await expect(status).toContainText("1 listen waiting");
 });
 
 test("Sources redesign keeps a removal error in its confirmation", async ({ page }) => {
@@ -556,10 +552,10 @@ for (const counts of [{ waiting: 1, blocked: 2 }, { waiting: 0, blocked: 1 }, { 
     await expect(page.getByRole("button", { name: "Refresh delivery", exact: true })).toHaveCount(0);
     if (!counts.waiting && !counts.blocked) await expect(page.getByRole("region", { name: "Scrobble delivery", exact: true })).toBeHidden();
     const status = page.getByRole("region", { name: "Accounts status" });
-    if (counts.waiting) await expect(status).toContainText(`${counts.waiting} waiting`);
+    if (counts.waiting) await expect(status).toContainText(`${counts.waiting} ${counts.waiting === 1 ? "listen" : "listens"} waiting`);
     else await expect(status).not.toContainText("waiting");
     if (counts.blocked) {
-      const link = status.getByRole("link", { name: `${counts.blocked} can't be sent`, exact: true });
+      const link = status.getByRole("link", { name: `${counts.blocked} ${counts.blocked === 1 ? "listen" : "listens"} can't be sent`, exact: true });
       await expect(link).toHaveAttribute("href", "#/sources/accounts?section=scrobble-problems");
       await link.click();
       await expect(page.locator("#scrobble-problems")).toBeFocused();
@@ -584,7 +580,7 @@ test("Sources accounts header omits incomplete delivery totals until earlier lis
   await expect(status).not.toContainText("waiting");
   await expect(status).not.toContainText("can't be sent");
   await earlier.click();
-  await expect(status).toContainText("101 can't be sent");
+  await expect(status).toContainText("101 listens can't be sent");
   await expect(status).not.toContainText("waiting");
 });
 

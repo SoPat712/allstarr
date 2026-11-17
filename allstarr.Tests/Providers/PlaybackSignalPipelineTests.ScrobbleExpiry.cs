@@ -206,6 +206,7 @@ public sealed partial class PlaybackSignalPipelineTests
         Assert.False(item.GetProperty("canResend").GetBoolean());
         Assert.False(item.GetProperty("canConfirm").GetBoolean());
         Assert.True(item.GetProperty("canDismiss").GetBoolean());
+        Assert.Equal("missing", item.GetProperty("listenId").GetString());
         Assert.Contains("saved completed listen", item.GetProperty("unavailableReason").GetString());
         Assert.False(await repair.ResolveAsync(Guid.NewGuid(), row.Id, row.Revision, "dismiss", null, default));
         Assert.True(await repair.ResolveAsync(user, row.Id, row.Revision, "dismiss", null, default));

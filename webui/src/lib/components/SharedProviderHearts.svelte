@@ -44,6 +44,9 @@
   const pairKey = $derived(JSON.stringify([jellyfinId, jellyfin?.identityFingerprint, subsonicId, subsonic?.identityFingerprint]));
   const pairReady = $derived(Boolean(jellyfin && subsonic && eligible(jellyfin) && eligible(subsonic)));
   const active = $derived(links.filter(link => ["pending", "running", "retry_scheduled"].includes(link.union.state)));
+  // With no linked profiles and nobody to pair on one side, the form could only be disabled, so the card just says why.
+  const nothingToLink = $derived(loaded && !error && !message && !links.length && !nextLinks &&
+    (!jellyfinMembers.length && !nextJellyfin || !subsonicMembers.length && !nextSubsonic));
 
   $effect(() => {
     if (reviewedKey && (reviewedKey !== pairKey || !pairReady)) {
@@ -201,6 +204,9 @@
   {#if error}<p class="notice-error" role="alert">{error}</p>{/if}
   {#if message}<p class="notice-info" role="status">{message}</p>{/if}
   {#if !loaded && !error}<Skeleton class="skeleton-panel" aria-label="Loading shared hearts" aria-busy="true" />{:else if loaded}
+    {#if nothingToLink}
+      <p class="setting-help">{!subsonicMembers.length ? "No eligible Subsonic profile is available" : "No eligible Jellyfin profile is available"}. Profiles must have previously signed in, be enabled, and not already be linked or used for testing.</p>
+    {:else}
     <p class="setting-help">Current music protocol: {protocol(activeProtocol)}. Each profile keeps its library access, source accounts, history and settings.</p>
     {#each links as link (link.id)}
       <article class="settings-card" aria-label="Linked profiles">
@@ -237,6 +243,7 @@
         <label class="settings-row"><span>These profiles belong to the same person</span><span class="settings-toggle"><Checkbox aria-label="These profiles belong to the same person" checked={confirmed} disabled={Boolean(action)} onCheckedChange={value => confirmed = value === true} /></span></label>
         <Button disabled={!confirmed || !pairReady || Boolean(action)} onclick={() => void create()}>{action === "create" ? "Linking…" : "Share provider hearts"}</Button>
       </section>
+    {/if}
     {/if}
   {/if}
 </section>

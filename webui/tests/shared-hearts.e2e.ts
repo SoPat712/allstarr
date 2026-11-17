@@ -197,7 +197,7 @@ test("missing counterpart explains previously signed-in eligibility", async ({ p
   await page.goto("/#/integrations/accounts");
   const card = page.getByRole("region", { name: "Shared provider hearts", exact: true });
   await expect(card).toContainText("No eligible Subsonic profile is available");
-  await expect(card.getByRole("button", { name: "Review profiles", exact: true })).toBeDisabled();
+  await expect(card.getByRole("form", { name: "Link listener profiles", exact: true })).toHaveCount(0);
   await expect(card.getByRole("button", { name: "Share provider hearts", exact: true })).toHaveCount(0);
   expect(state.writes).toHaveLength(0);
 });
@@ -245,9 +245,8 @@ test("synthetic and disabled profiles cannot be selected for a new link", async 
   state.members = [{ ...jf, participation: "synthetic" }, { ...sub, participation: "disabled" }];
   await page.goto("/#/integrations/accounts");
   const card = page.getByRole("region", { name: "Shared provider hearts", exact: true });
-  await expect(card.getByRole("button", { name: "Jellyfin profile", exact: true })).toBeDisabled();
-  await expect(card.getByRole("button", { name: "Subsonic profile", exact: true })).toBeDisabled();
-  await expect(card.getByRole("button", { name: "Review profiles", exact: true })).toBeDisabled();
+  await expect(card).toContainText("No eligible");
+  await expect(card.getByRole("form", { name: "Link listener profiles", exact: true })).toHaveCount(0);
   expect(state.writes).toHaveLength(0);
 });
 

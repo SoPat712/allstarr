@@ -349,12 +349,14 @@
     if (item.useMode === "off" || state === "disabled") return "Off";
     if (item.useMode === "manualOnly") return "Manual only";
     if (state === "degraded") return "Failing";
-    if (["healthy", "configured"].includes(state)) return "Working";
+    if (state === "healthy") return "Working";
+    // Connected but not checked since the server started: nothing yet says it works.
+    if (state === "configured") return "Not checked yet";
     return sourceStatusLabel(state);
   }
   function sourceTone(item: ProviderDefinition): "ok" | "stop" | "warn" | "neutral" {
     const label = sourceLabel(item);
-    return label === "Working" ? "ok" : label === "Failing" ? "stop" : ["Off", "Manual only", "Available"].includes(label) ? "neutral" : "warn";
+    return label === "Working" ? "ok" : label === "Failing" ? "stop" : ["Off", "Manual only", "Available", "Not checked yet"].includes(label) ? "neutral" : "warn";
   }
   const deliveriesFor = (account: ProviderAccount) =>
     deliveries.filter(item => item.destinationAccountId === account.id || !item.destinationAccountId && item.suggestedDestinationAccountId === account.id);
@@ -969,7 +971,7 @@
     <header class="sources-heading">
       <h2 class="sr-only">{accountsPage ? "Accounts" : "Services"}</h2>
       <PageStatus separated={accountsPage} label={accountsPage ? "Accounts status" : "Services status"} items={accountsPage
-        ? [{ label: countLabel(accounts.length, "account") }, ...(deliverySummary.waiting ? [{ label: `${deliverySummary.waiting.toLocaleString()} waiting`, tone: "warn" as const }] : []), ...(deliverySummary.unsendable ? [{ label: `${deliverySummary.unsendable.toLocaleString()} can't be sent`, tone: "stop" as const, href: "#/sources/accounts?section=scrobble-problems" }] : [])]
+        ? [{ label: countLabel(accounts.length, "account") }, ...(deliverySummary.waiting ? [{ label: `${countLabel(deliverySummary.waiting, "listen")} waiting`, tone: "warn" as const }] : []), ...(deliverySummary.unsendable ? [{ label: `${countLabel(deliverySummary.unsendable, "listen")} can't be sent`, tone: "stop" as const, href: "#/sources/accounts?section=scrobble-problems" }] : [])]
         : [{ label: `${mySources.length - needsSetup.length} working` }, { label: `${countLabel(needsSetup.length, "needs", "need")} attention`, tone: needsSetup.length ? "stop" : "neutral" }, { label: `${mySources.length} in use of ${providers.length}` }]} />
       <div class="sources-heading-actions"><RefreshButton onrefresh={async () => { await refresh(); if (accountsPage) deliveryRefresh++; }} />
         {#if accountsPage}{#if canConnectAccounts}<Button onclick={() => { connectProviderId = ""; connectOpen = true; }}><Plus size={16} aria-hidden="true" />Connect account</Button>{/if}

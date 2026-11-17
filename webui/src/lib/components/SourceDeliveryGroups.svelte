@@ -4,7 +4,7 @@
   import { countLabel } from "$lib/count-label";
   import { untrack } from "svelte";
   import { scrobbling, type ScrobbleDelivery, type ProviderAccount } from "$lib/api";
-  import { canResend, deliveryReasonLabel, groupDeliveries, visibleDeliveries } from "$lib/source-deliveries";
+  import { canResend, deliveryGroupReason, deliveryReasonLabel, groupDeliveries, listenCount, visibleDeliveries } from "$lib/source-deliveries";
   import GroupedRow from "$lib/components/patterns/GroupedRow.svelte";
   import EmptyState from "$lib/components/patterns/EmptyState.svelte";
   import ErrorState from "$lib/components/patterns/ErrorState.svelte";
@@ -27,12 +27,16 @@
   let hasMore = $state(false), before = $state<string>();
   let selectedDestinations = $state<Record<string, string>>({});
   let confirmation = $state(false), chosen = $state<ScrobbleDelivery[]>([]);
-  let chosenAction = $state<"retry" | "confirm-delivered">("retry");
+  let chosenAction = $state<"retry" | "confirm-delivered" | "dismiss">("retry");
   const destination = (item: ScrobbleDelivery) => accounts.find(account => account.id === (item.destinationAccountId ?? selectedDestinations[item.id] ?? item.suggestedDestinationAccountId));
   const uncertain = (item: ScrobbleDelivery) => ["ambiguous", "destination-unbound"].includes(item.providerCode ?? "") || Boolean(item.attemptStartedAt);
   const visible = $derived(visibleDeliveries(items).filter(item => (!targetId || item.targetId === targetId) && (!accountId || destination(item)?.id === accountId)));
   const groups = $derived(groupDeliveries(visible));
   const targetName = (id: string) => ({ lastfm: "Last.fm", listenbrainz: "ListenBrainz", "multi-scrobbler": "multi-scrobbler", koito: "Koito" })[id] ?? id;
+  const targetNames = (items: ScrobbleDelivery[]) => {
+    const names = [...new Set(items.map(item => targetName(item.targetId)))];
+    return names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names.at(-1)}` : names[0] ?? "";
+  };
   const canRetry = (item: ScrobbleDelivery) => canResend(item) && Boolean(destination(item)?.enabled && destination(item)?.secret.configured && !destination(item)?.secret.revoked);
   const needsAction = (item: ScrobbleDelivery) => item.state === "permanentfailure" || uncertain(item);
 
@@ -51,7 +55,7 @@
   }
   $effect(() => { void refreshKey; void targetId; untrack(() => void load()); });
 
-  function choose(listens: ScrobbleDelivery[], action: "retry" | "confirm-delivered") {
+  function choose(listens: ScrobbleDelivery[], action: "retry" | "confirm-delivered" | "dismiss") {
     chosen = listens; chosenAction = action; error = ""; confirmation = true;
   }
   async function resolve() {
@@ -60,11 +64,13 @@
     let completed = 0;
     try {
       for (const item of chosen) {
-        await scrobbling.resolve(item, chosenAction, destination(item)?.revision, destination(item)?.id);
+        if (chosenAction === "dismiss") await scrobbling.resolve(item, "dismiss");
+        else await scrobbling.resolve(item, chosenAction, destination(item)?.revision, destination(item)?.id);
         completed++;
       }
       confirmation = false;
-      toast.success(chosenAction === "retry" ? `${countLabel(completed, "listen")} queued for the saved destination.` : "Delivery confirmed without sending again.");
+      toast.success(chosenAction === "retry" ? `${countLabel(completed, "listen")} queued for the saved destination.`
+        : chosenAction === "dismiss" ? `${countLabel(listenCount(chosen), "listen")} dismissed.` : "Delivery confirmed without sending again.");
     } catch (cause) {
       confirmation = false;
       toast.error(`${completed ? `${completed} queued. ` : ""}${cause instanceof Error ? cause.message : "The listens could not be updated."} Refresh before trying again.`);
@@ -94,12 +100,14 @@
     {#each groups as group (group.key)}
       {@const first = group.items[0]}
       {@const name = targetName(first.targetId)}
-      {@const reason = first.unavailableReason || (first.providerCode === "destination-unbound" ? "The destination needs confirming" : first.requiresReauthentication ? "Reconnect the saved account" : first.safeMessage || "Waiting to retry")}
+      {@const listens = listenCount(group.items)}
+      {@const reason = deliveryGroupReason(first, listens)}
       <div class="delivery-group">
-        {#if accountId}<p class="delivery-reason"><strong>{group.items.length} {deliveryReasonLabel(first)}.</strong> {reason}</p>{/if}
-        <GroupedRow count={group.items.length} summary={`${deliveryReasonLabel(first)} · ${name}`} {reason} expanded={Boolean(accountId)}>
+        {#if accountId}<p class="delivery-reason"><strong>{listens} {deliveryReasonLabel(first)}.</strong> {reason}</p>{/if}
+        <GroupedRow count={listens} summary={`${deliveryReasonLabel(first)} · ${targetNames(group.items)}`} {reason} expanded={Boolean(accountId)}>
           {#snippet action()}
             <div class="delivery-actions">
+              {#if group.items.length > 1 && group.items.every(item => item.canDismiss)}<Button variant="outline" size="sm" disabled={busy} onclick={() => choose(group.items, "dismiss")}>Dismiss all</Button>{/if}
               {#if canResend(first)}
                 {#if first.requiresReauthentication && destination(first)?.canManage}<Button variant="outline" size="sm" disabled={busy} onclick={() => onConfigure(destination(first)!)}>Reconnect saved account</Button>
                 {:else if needsAction(first)}<Button variant="outline" size="sm" disabled={busy || !group.items.every(canRetry)} onclick={() => choose(group.items, "retry")}>{first.providerCode === "destination-unbound" ? "Confirm destination" : "Retry all"}</Button>{/if}
@@ -114,7 +122,7 @@
                 <span class="listen-icon" aria-hidden="true"><Music2 size={18} /></span>
                 <div class="listen-copy"><strong>{item.submission?.title ?? "Saved listen"}</strong>
                   <small>{item.submission?.artist ?? name} · {formatLocalDateTime(item.submission?.occurredAt ?? item.updatedAt, "Invalid Date")}</small>
-                  <small>{item.destinationAccountId ? "Saved account" : "Destination to confirm"}: {account?.displayName ?? "Connect the intended account"}</small>
+                  <small>{targetName(item.targetId)} · {item.destinationAccountId ? "Saved account" : "Destination to confirm"}: {account?.displayName ?? "Connect the intended account"}</small>
                   {#if canResend(item) && !item.destinationAccountId && item.availableDestinationAccountIds?.length}
                     <SelectField label="Destination account for older listen" value={account?.id ?? ""} options={accounts.filter(a => item.availableDestinationAccountIds?.includes(a.id)).map(a => ({ value: a.id, label: `${a.displayName} (${a.scope})` }))} disabled={busy} onchange={value => selectedDestinations[item.id] = value} />
                   {/if}
@@ -140,11 +148,12 @@
 </section>
 
 <ConfirmDialog bind:open={confirmation}
-  title={chosenAction === "confirm-delivered" ? "Confirm delivery from its history?" : chosen.some(item => item.providerCode === "destination-unbound") ? "Confirm destination?" : `Retry ${chosen.length === 1 ? "this saved listen" : `all ${countLabel(chosen.length, "listen")}`}?`}
-  description={chosenAction === "confirm-delivered" ? "Only confirm listens you found in the destination's history. They will be marked delivered without sending again."
+  title={chosenAction === "dismiss" ? `Dismiss ${countLabel(listenCount(chosen), "listen")}?` : chosenAction === "confirm-delivered" ? "Confirm delivery from its history?" : chosen.some(item => item.providerCode === "destination-unbound") ? "Confirm destination?" : `Retry ${chosen.length === 1 ? "this saved listen" : `all ${countLabel(chosen.length, "listen")}`}?`}
+  description={chosenAction === "dismiss" ? `They won't be sent to ${targetNames(chosen)}, and they leave this list.`
+    : chosenAction === "confirm-delivered" ? "Only confirm listens you found in the destination's history. They will be marked delivered without sending again."
     : chosen.some(uncertain) ? `Confirm the destination: ${[...new Set(chosen.map(item => { const account = destination(item); return account ? `${account.displayName} · ${account.scope === "Shared" ? "shared with everyone" : account.ownerDisplayName || "personal account"}` : "No account selected"; }))].join(", ")}. Check the destination's history first. Only missing listens should be sent again; another send could create duplicates. The saved account's current sign-in is used.`
     : "These listens will be queued for the same saved destination account using its current sign-in."}
-  confirmLabel={chosenAction === "retry" ? "Retry to saved account" : "Confirm already delivered"} confirmVariant="default" disabled={busy} closeOnConfirm={false} onConfirm={resolve} />
+  confirmLabel={chosenAction === "retry" ? "Retry to saved account" : chosenAction === "dismiss" ? "Dismiss" : "Confirm already delivered"} confirmVariant="default" disabled={busy} closeOnConfirm={false} onConfirm={resolve} />
 
 <style>
   .delivery-groups, .delivery-group { display: grid; min-width: 0; gap: var(--space-3); }

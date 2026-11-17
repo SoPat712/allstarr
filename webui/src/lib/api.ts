@@ -1819,6 +1819,7 @@ export type ScrobbleDelivery = {
   id: string;
   revision: number;
   targetId: string;
+  listenId?: string;
   kind?: "completed" | "nowplaying";
   canResend?: boolean;
   canConfirm?: boolean;

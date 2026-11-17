@@ -114,7 +114,7 @@ for (const width of [1280, 390]) {
     await expect(table.locator('[data-label="Account"]').first()).toHaveText("Evening account, Family account");
     await expect(table).not.toContainText("Not provided");
     await expect(table.locator("tbody tr").filter({ hasText: "Qobuz" })).not.toContainText("Evening account");
-    await expect(page.getByRole("form", { name: "Link listener profiles", exact: true })).toBeVisible();
+    await expect(page.getByRole("region", { name: "Shared provider hearts", exact: true })).toContainText("No eligible");
     await capture(page, "accounts", width);
     if (width === 390) await expectContainedMobileGeometry(page);
   });

@@ -6,18 +6,39 @@ export const canResend = (item: ScrobbleDelivery) => item.kind !== "nowplaying" 
 export const visibleDeliveries = (items: ScrobbleDelivery[]) => items.filter(item => item.kind !== "nowplaying" &&
   (item.state === "permanentfailure" || item.state === "retrying"));
 
+// One listen sent to two services is two deliveries; people count listens.
+const listenKey = (item: ScrobbleDelivery) => item.listenId || (item.submission?.occurredAt
+  ? JSON.stringify([item.submission.title, item.submission.artist, item.submission.occurredAt]) : item.id);
+export const listenCount = (items: ScrobbleDelivery[]) => new Set(items.map(listenKey)).size;
+
 export function deliveryCounts(items: ScrobbleDelivery[]) {
   const visible = visibleDeliveries(items);
-  const waiting = visible.filter(canResend).length;
-  return { waiting, unsendable: visible.length - waiting };
+  // Listens still being retried, like ones waiting for song details, are waiting, not lost.
+  const waiting = visible.filter(item => canResend(item) || item.state === "retrying");
+  const waitingKeys = new Set(waiting.map(listenKey));
+  return { waiting: waitingKeys.size, unsendable: listenCount(visible.filter(item => !waitingKeys.has(listenKey(item)))) };
 }
+
+// What a group says under its title; the server's own message speaks about a single listen.
+export function deliveryGroupReason(item: ScrobbleDelivery, listens: number) {
+  if (item.providerCode === "song-unidentified")
+    return `Allstarr couldn't identify ${listens === 1 ? "this song within seven days, so it" : "these songs within seven days, so they"} can't be sent.`;
+  if (item.providerCode === "metadata-unavailable") return "Song details aren't available yet. Allstarr keeps checking for up to seven days.";
+  return item.unavailableReason || (item.providerCode === "destination-unbound" ? "The destination needs confirming"
+    : item.requiresReauthentication ? "Reconnect the saved account" : item.safeMessage || "Waiting to retry");
+}
+
+const serviceFree = (item: ScrobbleDelivery) => ["metadata-unavailable", "song-unidentified"].includes(item.providerCode ?? "") && !canResend(item);
 
 export function groupDeliveries(items: ScrobbleDelivery[]) {
   const groups = new Map<string, { key: string; items: ScrobbleDelivery[] }>();
   for (const item of items) {
-    const key = JSON.stringify([item.targetId, item.state, item.providerCode, item.safeMessage, item.requiresReauthentication,
-      item.destinationAccountId, item.suggestedDestinationAccountId, [...(item.availableDestinationAccountIds ?? [])].sort(), Boolean(item.attemptStartedAt),
-      item.canResend, item.canConfirm, item.canDismiss, item.unavailableReason]);
+    // Waiting for song details and unidentified songs have nothing to fix at the service, so one reason across
+    // Last.fm and ListenBrainz is one row.
+    const key = JSON.stringify(serviceFree(item) ? [item.state, item.providerCode, item.canResend, item.canDismiss, item.unavailableReason]
+      : [item.targetId, item.state, item.providerCode, item.safeMessage, item.requiresReauthentication,
+        item.destinationAccountId, item.suggestedDestinationAccountId, [...(item.availableDestinationAccountIds ?? [])].sort(), Boolean(item.attemptStartedAt),
+        item.canResend, item.canConfirm, item.canDismiss, item.unavailableReason]);
     const group = groups.get(key) ?? { key, items: [] };
     group.items.push(item);
     groups.set(key, group);

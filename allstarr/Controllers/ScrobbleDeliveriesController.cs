@@ -34,6 +34,8 @@ public sealed class ScrobbleDeliveriesController(IDbContextFactory<AllstarrDbCon
             x.Id,
             x.Revision,
             x.TargetId,
+            // One listen sent to several services shares this, so the page can count listens rather than deliveries.
+            listenId = x.SignalKey,
             kind = x.Kind.ToString().ToLowerInvariant(),
             state = x.State.ToString().ToLowerInvariant(),
             canResend = x.State is ScopedPlaybackScrobbleOutcome.PermanentFailure or ScopedPlaybackScrobbleOutcome.Retrying && PlaybackScrobbleRepair.HasSavedCompletedListen(x),
