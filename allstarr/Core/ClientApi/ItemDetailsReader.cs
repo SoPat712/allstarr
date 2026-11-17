@@ -98,7 +98,20 @@ public sealed class ItemDetailsReader(
                 account.Enabled && (account.OwnerUserId == null || account.OwnerUserId == owner))))
             .ToArrayAsync(token);
         var snapshotIds = snapshots.Select(item => item.Id).ToArray();
+        // Facts read only these few fields; a decision's candidate list is by far its largest column.
         var decisions = snapshotIds.Length == 0 ? [] : await db.TrackMatches.AsNoTracking().Where(item => item.OwnerUserId == owner && snapshotIds.Contains(item.ExternalSnapshotId))
+            .Select(item => new TrackMatchRecord
+            {
+                Id = item.Id,
+                OwnerUserId = item.OwnerUserId,
+                ExternalSnapshotId = item.ExternalSnapshotId,
+                CanonicalRecordingId = item.CanonicalRecordingId,
+                LibraryTrackId = item.LibraryTrackId,
+                State = item.State,
+                Confidence = item.Confidence,
+                DecisionVersion = item.DecisionVersion,
+                DecidedAt = item.DecidedAt
+            })
             .ToArrayAsync(token);
         recordingIds = recordingIds.Concat(decisions.Where(item => item.CanonicalRecordingId.HasValue)
             .Select(item => item.CanonicalRecordingId!.Value)).Distinct().ToArray();
