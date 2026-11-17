@@ -47,13 +47,13 @@ public sealed class RequestTiming : IDisposable
     public StageScope Stage(string name)
     {
         if (name is not ("lock" or "build" or "render" or "match" or "merge" or "serialize" or "queue" or
-            "library" or "sources" or "saved" or "owned" or "resolve" or "fetch" or "store")) return default;
+            "library" or "sources" or "saved" or "owned" or "resolve" or "fetch" or "store" or "linked" or "prepared")) return default;
         lock (stageLock)
         {
             stages ??= new(StringComparer.Ordinal);
             if (!stages.ContainsKey(name))
             {
-                if (stages.Count == 8) return default;
+                if (stages.Count == 12) return default;
                 stages.Add(name, 0);
             }
         }

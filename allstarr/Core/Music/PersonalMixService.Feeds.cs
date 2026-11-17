@@ -157,10 +157,13 @@ public sealed partial class PersonalMixService
         var cards = await ServiceFeedCardsAsync(user, token, refresh: !background && !coverOnly && id == null,
             queuePreparation: !background && !coverOnly);
         if (!coverOnly) await RepairExternalAppsAsync(await ContextAsync(user, token), token, cards);
-        var linked = await ExternalMixesAsync(user, token, id, cardsOnly, cards, projection);
+        IReadOnlyList<PersonalMix> linked;
+        // Linked playlists and prepared service feeds are timed apart inside "sources".
+        using (RequestTiming.Current?.Stage("linked")) linked = await ExternalMixesAsync(user, token, id, cardsOnly, cards, projection);
         await using var db = await factory.CreateDbContextAsync(token);
         var links = await ExternalLinks(db, user, availableOnly: false).AsNoTracking().OrderByDescending(link => link.Enabled).ThenBy(link => link.CreatedAt).ToArrayAsync(token);
         var result = linked.ToList();
+        using var preparing = RequestTiming.Current?.Stage("prepared");
         var prepared = id.HasValue ? null : await PreparedServiceFeedsAsync(user, cards.Where(card =>
         {
             var link = links.FirstOrDefault(link => (link.ProviderAccountId == card.ProviderAccountId || link.ProviderAccountId == null) &&

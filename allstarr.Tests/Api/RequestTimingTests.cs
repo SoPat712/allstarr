@@ -74,31 +74,29 @@ public sealed class RequestTimingTests
     }
 
     [Fact]
-    public void NamedStagesRejectPrivateValuesAndStopAtEightDistinctNames()
+    public void NamedStagesRejectPrivateValuesAndStopAtTwelveDistinctNames()
     {
         using var timing = RequestTiming.Begin();
         string[] rejected = ["private-user-id", "https://private.test/path?token=private", "build;desc=\"private\"", "Build", ""];
         foreach (var name in rejected)
             using (timing.Stage(name)) { }
         using (timing.Stage(null!)) { }
-        string[] accepted = ["lock", "build", "render", "match", "merge", "serialize", "queue", "library"];
+        string[] accepted = ["lock", "build", "render", "match", "merge", "serialize", "queue", "library", "sources", "saved", "owned", "resolve"];
         foreach (var name in accepted)
             using (timing.Stage(name)) { }
-        string[] remaining = ["sources", "saved", "owned", "resolve", "fetch", "store"];
+        string[] remaining = ["fetch", "store", "linked", "prepared"];
         foreach (var name in remaining)
             using (timing.Stage(name)) { }
         using (timing.Stage("lock")) { }
 
         var result = timing.Snapshot("stats");
         Assert.Equal(accepted.Order(), result.Stages.Keys.Order());
-        Assert.Equal(16, result.Header.Split(", ").Length);
+        Assert.Equal(20, result.Header.Split(", ").Length);
         Assert.DoesNotContain("private", result.Header);
-        Assert.DoesNotContain("sources;", result.Header);
-        Assert.DoesNotContain("saved;", result.Header);
-        Assert.DoesNotContain("owned;", result.Header);
-        Assert.DoesNotContain("resolve;", result.Header);
         Assert.DoesNotContain("fetch;", result.Header);
         Assert.DoesNotContain("store;", result.Header);
+        Assert.DoesNotContain("linked;", result.Header);
+        Assert.DoesNotContain("prepared;", result.Header);
 
         using var other = RequestTiming.Begin();
         foreach (var name in remaining)
