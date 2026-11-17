@@ -86,6 +86,7 @@ public sealed class ItemDetailsReader(
         if (remaining.Length > 0)
             foreach (var item in await identities.ResolveRecordingsAsync(execution.RequireActor(), remaining, token)) resolved[item.Key] = item.Value;
         var recordingIds = resolved.Values.OfType<CanonicalRecordingIdentity>().Select(item => item.Id).Distinct().ToArray();
+        Step("recordings");
         var hashes = external.Select(item => CanonicalCatalogKeys.Hash(item.ExternalId)).Distinct().ToArray();
         var snapshots = hashes.Length == 0 && recordingIds.Length == 0 ? [] : await db.ExternalMetadataSnapshots.AsNoTracking().Where(item => item.OwnerUserId == owner &&
             item.Protocol == protocol && item.BackendInstanceId == execution.BackendInstanceId &&
@@ -97,6 +98,7 @@ public sealed class ItemDetailsReader(
             (item.ProviderAccountId == null || db.ProviderAccounts.Any(account => account.Id == item.ProviderAccountId &&
                 account.Enabled && (account.OwnerUserId == null || account.OwnerUserId == owner))))
             .ToArrayAsync(token);
+        Step("snapshots");
         var snapshotIds = snapshots.Select(item => item.Id).ToArray();
         // Facts read only these few fields; a decision's candidate list is by far its largest column.
         var decisions = snapshotIds.Length == 0 ? [] : await db.TrackMatches.AsNoTracking().Where(item => item.OwnerUserId == owner && snapshotIds.Contains(item.ExternalSnapshotId))
@@ -115,6 +117,7 @@ public sealed class ItemDetailsReader(
             .ToArrayAsync(token);
         recordingIds = recordingIds.Concat(decisions.Where(item => item.CanonicalRecordingId.HasValue)
             .Select(item => item.CanonicalRecordingId!.Value)).Distinct().ToArray();
+        Step("decisions");
         var libraryTrackIds = library.Select(item => item.Id).ToArray();
         var playQuery = ListeningStatsService.CountedPlays(db, new(owner, protocol, execution.BackendInstanceId));
         var playCounts = await playQuery.Where(item =>
@@ -124,6 +127,7 @@ public sealed class ItemDetailsReader(
             .GroupBy(item => new { item.CanonicalRecordingId, item.LibraryTrackId, item.TrackReference })
             .Select(group => new { group.Key, Count = group.LongCount(), Last = group.Max(item => item.ListenedAt ?? item.StartedAt) })
             .ToArrayAsync(token);
+        Step("plays");
         var links = recordingIds.Length == 0 ? [] : await db.ProviderTrackIdentities.AsNoTracking().Where(item => recordingIds.Contains(item.CanonicalRecordingId) &&
             item.ResourceKind == ProviderResourceKind.Track && item.Verification == ProviderIdentityVerification.Verified &&
             item.VerificationMethod != "automatic-suggestion" && item.VerificationMethod != "source-snapshot-hash" &&
@@ -133,6 +137,7 @@ public sealed class ItemDetailsReader(
             (item.Scope == ProviderIdentityScope.Catalog || db.ProviderAccounts.Any(account => account.Id == item.ProviderAccountId &&
                 account.Enabled && (account.OwnerUserId == null || account.OwnerUserId == owner))))
             .ToArrayAsync(token);
+        Step("links");
         var layers = ManualTrackOverrides.Index(snapshots, await ManualTrackOverrides.LoadAsync(db, owner, snapshots, token), owner);
         var recordings = recordingIds.Length == 0 ? new Dictionary<Guid, CanonicalRecordingRecord>() :
             await db.CanonicalRecordings.AsNoTracking().Where(item => recordingIds.Contains(item.Id)).ToDictionaryAsync(item => item.Id, token);
