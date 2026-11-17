@@ -79,10 +79,18 @@ public sealed partial class ProtocolRouteFixtureTests
         var mix = (await V2FrameAsync(stream, "mix.updated")).Data;
         Assert.Equal(V2Ids.Mix(mixId), mix.GetProperty("mixId").GetString());
         Assert.StartsWith("pl_", mix.GetProperty("playlistId").GetString());
+        Assert.Equal(allstarr.Core.Playlists.PlaylistVirtualizationService.CreateProtocolId(mixId), mix.GetProperty("playlistLibraryId").GetString());
         var row = new ClientLibraryAddition(Guid.NewGuid(), "ext-deezer-song-known", "track", "done", "");
         hub.Publish(principal.UserId, ClientEvent.LibraryAddition(row));
         Assert.Equal(JsonSerializer.Serialize(row, ClientApiContract.JsonOptions),
             (await V2FrameAsync(stream, "libraryAddition.updated")).Data.GetProperty("row").GetRawText());
+        hub.Publish(principal.UserId, ClientEvent.LibraryRequest(row));
+        Assert.Equal(JsonSerializer.Serialize(row, ClientApiContract.JsonOptions),
+            (await V2FrameAsync(stream, "libraryRequest.updated")).Data.GetProperty("row").GetRawText());
+        hub.Publish(principal.UserId, ClientEvent.Playback("ext-deezer-song-known"), "phone");
+        var playback = (await V2FrameAsync(stream, "playback.updated")).Data;
+        Assert.Equal(V2Ids.Track(recording), playback.GetProperty("trackId").GetString());
+        Assert.Equal(["ext-deezer-song-known"], playback.GetProperty("aliases").EnumerateArray().Select(alias => alias.GetString()!).ToArray());
         var identities = factory.Services.GetRequiredService<ITrackIdentityService>();
         var actor = new ProviderActorContext(ProviderActorKind.User, principal.UserId, new("jellyfin", "primary", "listener"));
         var other = (await identities.CreateRecordingAsync(actor, "rename")).Recording;

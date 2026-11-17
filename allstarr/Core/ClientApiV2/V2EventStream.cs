@@ -135,7 +135,7 @@ public sealed class V2EventStream : BackgroundService
     private void Queue(Guid owner, ClientEvent value)
     {
         if (value.Type is not ("keep.updated" or "match.updated" or "lyrics.updated" or "mix.updated" or "releases.updated" or
-            "libraryAddition.updated" or "preferences.updated")) return;
+            "libraryAddition.updated" or "libraryRequest.updated" or "playback.updated" or "preferences.updated")) return;
         lock (gate)
             if (listeners.TryGetValue(owner, out var listener) && !pending.Writer.TryWrite((owner, listener, listener.Generation, value)))
             {
@@ -229,14 +229,16 @@ public sealed class V2EventStream : BackgroundService
                     : ClientEvent.Create(value.Type, track.Id, new { trackId = track.Id, aliases = track.Aliases, state = data.GetProperty("state").GetString() })
             ];
         }
-        else if (value.Type == "lyrics.updated")
+        else if (value.Type is "lyrics.updated" or "playback.updated")
         {
             var recording = await http.RequestServices.GetRequiredService<ITrackIdentityService>()
                 .ResolveRecordingAsync(execution.RequireActor(), value.Key, execution.CancellationToken);
             var trackId = recording == null ? V2Ids.TrackSource(value.Key) : V2Ids.Track(recording.Id);
             // The item the lyrics changed for, in the spelling apps already hold.
             string[] aliases = value.Key == trackId ? [] : [value.Key];
-            return [ClientEvent.Create(value.Type, trackId, new { trackId, aliases, revision = data.GetProperty("revision") })];
+            return value.Type == "playback.updated"
+                ? [ClientEvent.Create(value.Type, trackId, new { trackId, aliases })]
+                : [ClientEvent.Create(value.Type, trackId, new { trackId, aliases, revision = data.GetProperty("revision") })];
         }
         else if (value.Type == "mix.updated")
             return
@@ -244,10 +246,12 @@ public sealed class V2EventStream : BackgroundService
                 ClientEvent.Create(value.Type, value.Key, new
                 {
                     mixId = V2Ids.Mix(data.GetProperty("mixId").GetGuid()),
-                    playlistId = V2Ids.Playlist(data.GetProperty("playlistId").GetString()!)
+                    playlistId = V2Ids.Playlist(data.GetProperty("playlistId").GetString()!),
+                    // The media server's id for the mix's playlist, which /Playlists routes take.
+                    playlistLibraryId = data.GetProperty("playlistId").GetString()
                 })
             ];
-        else if (value.Type == "libraryAddition.updated") return [ClientEvent.Create(value.Type, value.Key, new { row = data })];
+        else if (value.Type is "libraryAddition.updated" or "libraryRequest.updated") return [ClientEvent.Create(value.Type, value.Key, new { row = data })];
         else if (value.Type == "preferences.updated") return [ClientEvent.Create(value.Type, value.Key, new { field = data.GetProperty("field").GetString() })];
         else return [ClientEvent.Create(value.Type, value.Key, new { count = data.GetProperty("count").GetInt32() })];
     }
