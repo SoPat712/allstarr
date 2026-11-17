@@ -140,4 +140,53 @@ public sealed partial class TrackRematchAllIntegrationTests
         Assert.Equal(TrackMatchState.Ambiguous, kept.State);
         Assert.Equal(.992, kept.Confidence);
     }
+
+    [Fact]
+    [Trait("Category", "Sqlite")]
+    public async Task ASongPinnedToAServiceCopyIsLeftAsItIs()
+    {
+        await using var database = await SqliteTestDatabase.CreateAsync();
+        var factory = new DbFactory(database.Options);
+        var now = DateTimeOffset.UtcNow;
+        var clock = new Clock(now);
+        var owner = Guid.CreateVersion7();
+        var account = Guid.NewGuid();
+        var snapshot = Guid.NewGuid();
+        await using (var setup = factory.CreateDbContext())
+        {
+            setup.Users.Add(User(owner, "Owner", now));
+            setup.ProviderAccounts.Add(Account(account, owner, now));
+            setup.ExternalMetadataSnapshots.Add(Snapshot(snapshot, account, owner, "Track", Hash(1002), now));
+            var tied = Decision(snapshot, owner, null, null, TrackMatchState.Ambiguous, now);
+            tied.Confidence = .992;
+            setup.TrackMatches.Add(tied);
+            setup.ManualTrackOverrides.Add(new ManualTrackOverrideRecord
+            {
+                Id = Guid.CreateVersion7(),
+                OwnerUserId = null,
+                ExternalSnapshotId = snapshot,
+                SourceProviderId = "spotify",
+                SourceExternalIdHash = Hash(1002),
+                TargetProviderId = "deezer",
+                TargetExternalId = "chosen",
+                Decision = ManualOverrideDecision.Pin,
+                Reason = "Selected after comparing recording details",
+                DecisionVersion = 1,
+                MatcherVersion = TrackMatchDecisionEngine.AlgorithmVersion,
+                CreatedAt = now
+            });
+            await setup.SaveChangesAsync();
+        }
+        var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        var commands = new TrackMatchCommandService(factory, new(), new ProviderAccountResolver(factory), clock,
+            new TestBackendLibraryAccess(factory, "music"),
+            new TrackMatchPlayableSearch(gateway.Object, new(), NullLogger<TrackMatchPlayableSearch>.Instance));
+
+        var result = await commands.RematchSnapshotAsync(new TrackMatchActor(owner, true), snapshot, "pinned");
+
+        Assert.True(result.Succeeded, result.Error);
+        Assert.Equal("pinned", result.State);
+        await using var saved = factory.CreateDbContext();
+        Assert.Equal(.992, Assert.Single(await saved.TrackMatches.ToArrayAsync()).Confidence);
+    }
 }

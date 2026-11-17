@@ -148,6 +148,9 @@ public sealed partial class TrackMatchCommandService
                 TrackMatchCommandFailure.Conflict,
                 "A manual match became authoritative while the full rematch was running")
             { Lasting = true };
+        // A pin to a service copy decides the song, and a decision row can only name a library copy, so leave it.
+        if (manual is { Decision: ManualOverrideDecision.Pin, LibraryTrackId: null })
+            return new(true, State: "pinned", Confidence: latestDecision?.Confidence ?? 0, DecisionVersion: latestVersion);
         BackendLibraryAccessContext access;
         try
         {
