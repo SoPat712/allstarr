@@ -40,6 +40,7 @@ public sealed class SearchController(V2SearchEndpoints search) : ClientApiV2Cont
     public async Task<IActionResult> LyricsServices(
         [FromServices] V2ServiceLyricsSearch services,
         [FromQuery, Description("Lyrics text, from 2 to 200 characters after trimming.")] string? q,
-        [FromQuery, Range(1, 20), Description("Maximum results, from 1 to 20; defaults to 10.")] int limit = 10) =>
-        Respond(await services.SearchAsync(HttpContext, Execution, q, limit));
+        [FromQuery, Range(1, 20), Description("Maximum results, from 1 to 20; defaults to 10.")] int limit = 10,
+        [FromQuery, Description("False returns the services' hits at once without tracks; defaults to true.")] bool resolve = true) =>
+        Respond(await services.SearchAsync(HttpContext, Execution, q, limit, resolve));
 }

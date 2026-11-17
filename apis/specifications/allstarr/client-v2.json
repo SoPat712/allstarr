@@ -3927,6 +3927,15 @@
             }
           },
           {
+            "name": "resolve",
+            "in": "query",
+            "description": "False returns the services\u0027 hits at once without tracks; defaults to true.",
+            "schema": {
+              "type": "boolean",
+              "default": true
+            }
+          },
+          {
             "name": "If-None-Match",
             "in": "header",
             "description": "The stored ETag; a matching representation returns 304 without a body.",
@@ -8798,6 +8807,10 @@
               "$ref": "#/components/schemas/V2ServiceLyricsProvider"
             },
             "description": "Each service asked: state ok, unavailable (failed or too slow) or off (turned off in Sources)."
+          },
+          "resolved": {
+            "type": "boolean",
+            "description": "False when asked with resolve=false: every track is null and the same request without it returns them."
           }
         }
       },

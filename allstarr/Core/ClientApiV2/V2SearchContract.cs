@@ -58,7 +58,11 @@ public sealed record V2LyricsSearchResponse(
 public sealed record V2ServiceLyricsSearchResponse(
     [property: JsonPropertyName("results")] IReadOnlyList<V2ServiceLyricsHit> Results,
     [property: JsonPropertyName("providers"), Description("Each service asked: state ok, unavailable (failed or too slow) or off (turned off in Sources).")]
-    IReadOnlyList<V2ServiceLyricsProvider> Providers);
+    IReadOnlyList<V2ServiceLyricsProvider> Providers)
+{
+    [JsonPropertyName("resolved"), Description("False when asked with resolve=false: every track is null and the same request without it returns them.")]
+    public bool Resolved { get; init; } = true;
+}
 
 public sealed record V2ServiceLyricsHit(
     [property: JsonPropertyName("title")] string Title,

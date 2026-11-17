@@ -22,6 +22,27 @@ public sealed class LyricsSearchMatcherTests
         Assert.Equal(expected, LyricsSearchMatcher.Score(line, next, query), precision: 10);
     }
 
+    [Theory]
+    [InlineData("walk walk walk", "something you walk", 0.2 + 0.5 / 1.4)]
+    [InlineData("you can walk with me", "something you walk", 0.2 + 0.5 * 1.2 / 1.4)]
+    [InlineData("there's something about you", "something you walk", 0)]
+    [InlineData("I just want to", "I just want to dance", 0.2 + 0.5 * 1.6 / 2.6)]
+    [InlineData("I want to dance", "I just want to dance", 0.2 + 0.5 * 2.4 / 2.6)]
+    public void LyricsSearch_FillerWordsCountLessAndCannotMatchAlone(string line, string query, double expected)
+    {
+        Assert.Equal(expected, LyricsSearchMatcher.Score(LyricsSearchMatcher.Normalize(line), null, LyricsSearchMatcher.Normalize(query)), precision: 10);
+    }
+
+    [Theory]
+    [InlineData("Walk", 0.15)]
+    [InlineData("Walk (In The Room)", 0)]
+    [InlineData("You", 0)]
+    [InlineData(null, 0)]
+    public void LyricsSearch_TitleTheSearchNamesRanksHigher(string? title, double expected)
+    {
+        Assert.Equal(expected, new LyricsSearchMatcher.PreparedQuery(LyricsSearchMatcher.Normalize("something you walk")).TitleBoost(title));
+    }
+
     [Fact]
     public void LyricsSearch_PhrasePreservesUtf16OffsetsAndCombiningAccents()
     {

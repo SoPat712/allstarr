@@ -113,9 +113,10 @@ public sealed class V2BatchDispatcher(IServiceScopeFactory scopes, ILogger<V2Bat
             ["search", "lyrics"] when Allowed(query, ["q", "limit"]) && int.TryParse(Value(query, "limit") ?? "20",
                 System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var lyricsLimit) =>
                 await scope.ServiceProvider.GetRequiredService<V2SearchEndpoints>().LyricsAsync(http, execution, Value(query, "q"), lyricsLimit),
-            ["search", "lyrics", "services"] when Allowed(query, ["q", "limit"]) && int.TryParse(Value(query, "limit") ?? "10",
-                System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var servicesLimit) =>
-                await scope.ServiceProvider.GetRequiredService<V2ServiceLyricsSearch>().SearchAsync(http, execution, Value(query, "q"), servicesLimit),
+            ["search", "lyrics", "services"] when Allowed(query, ["q", "limit", "resolve"]) && int.TryParse(Value(query, "limit") ?? "10",
+                System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var servicesLimit) &&
+                bool.TryParse(Value(query, "resolve") ?? "true", out var resolveServices) =>
+                await scope.ServiceProvider.GetRequiredService<V2ServiceLyricsSearch>().SearchAsync(http, execution, Value(query, "q"), servicesLimit, resolveServices),
             ["me", "history"] or ["me", "history", "imports"] or ["me", "history", "imports", "recheck"] or
                 ["me", "stats" or "sound" or "taste" or "preferences"] or ["search", "lyrics"] or ["search", "lyrics", "services"] => new(400, null),
             ["tracks"] or ["tracks", _] or ["albums", _] => new(400, null),

@@ -206,6 +206,8 @@ public sealed class LyricsSearchIndex(StorageOptions options, IProviderRouter? r
                 return scorer.Score(split < 0 ? text.AsSpan() : text.AsSpan(0, split),
                     split < 0 ? default : text.AsSpan(split + 1));
             }, isDeterministic: true);
+            _connection.CreateFunction<long, double>("title_boost", doc =>
+                _documents.TryGetValue(doc, out var document) ? scorer.TitleBoost(document.Song.Title) : 0, isDeterministic: true);
             using (var transaction = _connection!.BeginTransaction())
             {
                 _transaction = transaction;
@@ -245,7 +247,7 @@ public sealed class LyricsSearchIndex(StorageOptions options, IProviderRouter? r
                     SELECT doc, ordinal, max(lyrics_score(text)) AS score
                     FROM lines JOIN eligible ON eligible.id=lines.doc
                     WHERE lines MATCH $fts GROUP BY doc HAVING score>0
-                    ORDER BY score DESC, doc LIMIT $take
+                    ORDER BY score + title_boost(doc) DESC, doc LIMIT $take
                     """, ("$fts", fts), ("$take", limit + 1));
                 using var reader = search.ExecuteReader();
                 while (reader.Read()) matches.Add((reader.GetInt64(0), reader.GetInt32(1)));
@@ -284,6 +286,8 @@ public sealed class LyricsSearchIndex(StorageOptions options, IProviderRouter? r
                 var after = index + 1 < rich.Lines.Count ? rich.Lines[index + 1].Text : null;
                 var found = LyricsSearchMatcher.Match(line.Text, after, query);
                 var song = document.Song;
+                // A line that is not the whole phrase gains from a title the search names, without passing for one.
+                if (found.Score is > 0 and < 1) found = found with { Score = Math.Min(0.95, found.Score + scorer.TitleBoost(song.Title)) };
                 var albumId = song.AlbumId;
                 if (!song.IsLocal && !string.IsNullOrWhiteSpace(albumId) && !albumId.StartsWith("ext-", StringComparison.Ordinal))
                     albumId = $"ext-{song.ExternalProvider}-album-{albumId}";

@@ -48,9 +48,28 @@ public static class LyricsSearchMatcher
 
     internal static double Score(string line, string? next, string query) => new PreparedQuery(query).Score(line, next);
 
+    // Words almost every lyric has; they count a fifth of a word, and a line holding only these is not a match.
+    private static readonly HashSet<string> Filler = new(StringComparer.Ordinal)
+    {
+        "a", "an", "the", "and", "or", "but", "so", "to", "of", "in", "on", "at", "for", "with", "from", "by", "up", "down", "out",
+        "i", "im", "me", "my", "you", "youre", "your", "we", "us", "our", "he", "she", "it", "its", "they", "them", "his", "her",
+        "is", "am", "are", "was", "were", "be", "been", "do", "dont", "did", "have", "has", "had", "will", "would", "can", "could",
+        "just", "like", "oh", "ooh", "yeah", "hey", "la", "na", "no", "not", "all", "that", "this", "what", "when", "where", "how",
+        "if", "then", "there", "now", "one", "some", "something", "s", "t", "m", "ll", "re", "ve", "d"
+    };
+
+    private static double Weight(string word) => Filler.Contains(word) ? 0.2 : 1;
+
     internal sealed class PreparedQuery(string query)
     {
         private readonly string[] words = query.Split(' ', StringSplitOptions.RemoveEmptyEntries).Distinct(StringComparer.Ordinal).ToArray();
+
+        /// <summary>A song whose title words all appear in the search, such as "Walk" for "something you walk", ranks higher.</summary>
+        public double TitleBoost(string? title)
+        {
+            var named = Normalize(title ?? "").Split(' ', StringSplitOptions.RemoveEmptyEntries).Where(word => !Filler.Contains(word)).ToArray();
+            return named.Length > 0 && named.All(word => words.Contains(word, StringComparer.Ordinal)) ? 0.15 : 0;
+        }
 
         public double Score(ReadOnlySpan<char> line, ReadOnlySpan<char> next)
         {
@@ -76,7 +95,8 @@ public static class LyricsSearchMatcher
                 }
             }
             var whole = 0;
-            var partial = 0;
+            var partial = 0d;
+            var content = false;
             foreach (var word in words)
             {
                 var prefix = false;
@@ -94,10 +114,14 @@ public static class LyricsSearchMatcher
                         break;
                     }
                 }
-                if (prefix) partial++;
+                if (!prefix) continue;
+                partial += Weight(word);
+                content |= !Filler.Contains(word);
             }
             if (whole == words.Length) return 0.8;
-            return partial == 0 ? 0 : 0.2 + 0.5 * partial / words.Length;
+            var total = words.Sum(Weight);
+            var anyContent = words.Any(word => !Filler.Contains(word));
+            return partial == 0 || anyContent && !content ? 0 : 0.2 + 0.5 * partial / total;
         }
     }
 

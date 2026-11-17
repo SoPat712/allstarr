@@ -44,7 +44,8 @@ public sealed class V2SessionReader(IDurableRuntimeSettings settings)
                 ["myLibraries"] = true,
                 ["search"] = true,
                 ["lyricsSearch"] = true,
-                ["lyricsSearchServices"] = true
+                ["lyricsSearchServices"] = true,
+                ["lyricsSearchServicesResolve"] = true
             }, string.IsNullOrEmpty(address) ? null : new(address)));
     }
 }

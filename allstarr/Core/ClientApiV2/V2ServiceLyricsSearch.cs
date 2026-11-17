@@ -19,6 +19,9 @@ public sealed partial class V2ServiceLyricsSearch(IHttpClientFactory clients, IA
 {
     private static readonly TimeSpan ServiceBudget = TimeSpan.FromSeconds(4);
     private static readonly TimeSpan MatchBudget = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan Kept = TimeSpan.FromMinutes(30);
+    // An answer missing a service is kept briefly, so a repeated line is quick without hiding the service for long.
+    private static readonly TimeSpan KeptPartly = TimeSpan.FromMinutes(2);
     private static readonly (string Id, string Name, string Client)[] Services =
     [
         ("neteaselyrics", "NetEase", NetEaseWordLyricsCapabilityAdapter.HttpClientName),
@@ -27,27 +30,44 @@ public sealed partial class V2ServiceLyricsSearch(IHttpClientFactory clients, IA
 
     internal sealed record Found(string Title, string Artist, string Line, IReadOnlyList<LyricsSearchHighlight> Highlights, string ProviderId);
 
-    public async Task<V2Result> SearchAsync(HttpContext http, ProtocolExecutionContext execution, string? q, int limit)
+    internal sealed record Asked(Found[] Hits, V2ServiceLyricsProvider[] Providers);
+
+    /// <summary>
+    /// With resolve false the services' hits come back at once without tracks; the same request again returns them,
+    /// in the same order, with their playable songs, reusing the services' answer.
+    /// </summary>
+    public async Task<V2Result> SearchAsync(HttpContext http, ProtocolExecutionContext execution, string? q, int limit, bool resolve = true)
     {
         var query = q?.Trim() ?? "";
         if (query.Length is < 2 or > 200 || limit is < 1 or > 20 ||
-            new[] { "q", "limit" }.Any(key => http.Request.Query[key].Count > 1)) return new(400, null);
+            new[] { "q", "limit", "resolve" }.Any(key => http.Request.Query[key].Count > 1)) return new(400, null);
         var owner = execution.Actor?.EffectiveUserId ?? execution.Principal?.UserId;
-        var key = $"lyrics:services:v1:{owner}:{limit}:{CanonicalCatalogKeys.Hash(query.ToLowerInvariant())}";
-        if (await cache.GetAsync<V2ServiceLyricsSearchResponse>(key) is { } cached) return new(200, cached);
-        var token = execution.CancellationToken;
+        var hash = CanonicalCatalogKeys.Hash(query.ToLowerInvariant());
+        var key = $"lyrics:services:v2:{owner}:{limit}:{hash}";
+        if (resolve && await cache.GetAsync<V2ServiceLyricsSearchResponse>(key) is { } cached) return new(200, cached);
+        var asked = await AskAllAsync(execution, query, limit, $"lyrics:services:hits:v1:{owner}:{limit}:{hash}");
+        var matched = resolve ? await MatchAsync(http, execution, asked.Hits) : new V2Track?[asked.Hits.Length];
+        var response = new V2ServiceLyricsSearchResponse(asked.Hits.Select((hit, index) => new V2ServiceLyricsHit(hit.Title, hit.Artist,
+            new(hit.Line), hit.Highlights, Provider(hit.ProviderId), matched[index])).ToArray(), asked.Providers)
+        { Resolved = resolve };
+        if (resolve) await cache.SetAsync(key, response, Complete(asked) ? Kept : KeptPartly);
+        return new(200, response);
+    }
+
+    private async Task<Asked> AskAllAsync(ProtocolExecutionContext execution, string query, int limit, string key)
+    {
+        if (await cache.GetAsync<Asked>(key) is { } cached) return cached;
         var asked = Services.Where(service => execution.Policy?.IsEnabled(service.Id) != false).ToArray();
-        var answers = await Task.WhenAll(asked.Select(async service => (Service: service, Hits: await AskAsync(service, query, token))));
+        var answers = await Task.WhenAll(asked.Select(async service => (Service: service, Hits: await AskAsync(service, query, execution.CancellationToken))));
         var states = Services.Select(service => answers.FirstOrDefault(answer => answer.Service.Id == service.Id) is { Service.Id: not null } answer
             ? new V2ServiceLyricsProvider(service.Id, service.Name, answer.Hits == null ? "unavailable" : "ok")
             : new V2ServiceLyricsProvider(service.Id, service.Name, "off")).ToArray();
-        var found = Rank(answers.SelectMany(answer => answer.Hits ?? []), query).Take(limit).ToArray();
-        var matched = await MatchAsync(http, execution, found);
-        var response = new V2ServiceLyricsSearchResponse(found.Select((hit, index) => new V2ServiceLyricsHit(hit.Title, hit.Artist,
-            new(hit.Line), hit.Highlights, Provider(hit.ProviderId), matched[index])).ToArray(), states);
-        if (states.All(state => state.State != "unavailable")) await cache.SetAsync(key, response, TimeSpan.FromMinutes(30));
-        return new(200, response);
+        var result = new Asked(Rank(answers.SelectMany(answer => answer.Hits ?? []), query).Take(limit).ToArray(), states);
+        await cache.SetAsync(key, result, Complete(result) ? Kept : KeptPartly);
+        return result;
     }
+
+    private static bool Complete(Asked asked) => asked.Providers.All(state => state.State != "unavailable");
 
     private static V2Provider Provider(string id)
     {
@@ -142,7 +162,8 @@ public sealed partial class V2ServiceLyricsSearch(IHttpClientFactory clients, IA
             await Task.WhenAll(hits.Select(async (hit, index) =>
             {
                 await gate.WaitAsync(deadline.Token);
-                try { ids[index] = await LibraryCopyAsync(execution, access, hit, deadline.Token) ?? await ServiceCopyAsync(execution, hit); }
+                // A service search still running at the deadline is left to finish on its own; the answer doesn't wait.
+                try { ids[index] = await LibraryCopyAsync(execution, access, hit, deadline.Token) ?? await ServiceCopyAsync(execution, hit).WaitAsync(deadline.Token); }
                 // A song that can't be matched in time stays title and artist only.
                 catch (Exception error) when (error is HttpRequestException or InvalidOperationException ||
                     error is OperationCanceledException && !execution.CancellationToken.IsCancellationRequested)
