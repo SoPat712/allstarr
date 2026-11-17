@@ -88,6 +88,30 @@ public sealed partial class PlaylistOrchestrationIntegrationTests
     }
 
     [Fact]
+    public async Task BulkPlaylistReadsStillHonorARejectedTopCandidate()
+    {
+        _source.Snapshot = Snapshot("rejected-pick", Entry(0, "one", "source-1", "One"));
+        await _service.RunAsync(Context(), new(_link, 1));
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var match = await db.TrackMatches.OrderByDescending(item => item.DecisionVersion).FirstAsync();
+            match.State = TrackMatchState.Suggested;
+            match.LibraryTrackId = null;
+            match.CanonicalRecordingId = _canonical;
+            match.CandidateResultsJson = System.Text.Json.JsonSerializer.Serialize(new[] { new { LibraryTrackId = _trackOne, IsLocal = true } });
+            db.ManualTrackOverrides.Add(Override(match.ExternalSnapshotId, ManualOverrideDecision.Reject, _trackOne));
+            await db.SaveChangesAsync();
+        }
+        var reader = new DurablePlaylistProjectionReader(_factory, new TestBackendLibraryAccess(_factory, "music"));
+
+        var detail = Assert.Single(Assert.IsType<DurablePlaylistProjection>(await reader.ReadByLinkIdAsync(_user, _link)).Entries);
+        var bulk = Assert.Single((await reader.ReadByLinkIdsAsync(_user, [_link]))[_link].Entries);
+
+        Assert.NotEqual("local-1", detail.BackendItemId);
+        Assert.Equal((detail.RouteKind, detail.BackendItemId), (bulk.RouteKind, bulk.BackendItemId));
+    }
+
+    [Fact]
     public async Task PublishedPlaylistReadersPreferUnlinkedLibraryCopiesOverAnAutomaticProviderRoute()
     {
         _source.Snapshot = Snapshot("library-copies", Entry(0, "one", "source-1", "One"));
