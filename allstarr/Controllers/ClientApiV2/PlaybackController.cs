@@ -5,15 +5,16 @@ using Microsoft.AspNetCore.Mvc;
 namespace allstarr.Controllers.ClientApiV2;
 
 [Route("allstarr/v2/playback")]
-public sealed class PlaybackController(V2PlaybackReader playback, V2ServingStreams serving) : ClientApiV2ControllerBase
+public sealed class PlaybackController(V2PlaybackReader playback, V2PlaybackStatusReader status) : ClientApiV2ControllerBase
 {
     [HttpGet("{playbackId}")]
     [EndpointName("getPlaybackStatus")]
-    [EndpointDescription("Reads a playback created by resolve: its actual delivered format and live serving facts, both null until the stream opens and after it closes. " +
-        "Never opens audio, issues a stream link or prepares a source. Another listener's playback returns 404. Retained in memory for up to twelve hours. Can also be read inside a batch.")]
+    [EndpointDescription("Reads a playback created by resolve: its actual delivered format and live serving facts, both null until the stream opens and after it closes; retained in memory for up to twelve hours. " +
+        "Also reads a media-server stream by the X-Allstarr-Playback-Request id its response carried: delivered format, provider, cached and routeReason, kept after the stream closes. " +
+        "Never opens audio, issues a stream link or prepares a source. Another listener's playback returns 404. Can also be read inside a batch.")]
     [ProducesResponseType<V2PlaybackStatus>(200)]
     [ProducesResponseType(304)]
-    public IActionResult Get(string playbackId) => Respond(serving.Status(Execution, playbackId));
+    public async Task<IActionResult> Get(string playbackId) => Respond(await status.ReadAsync(HttpContext, Execution, playbackId));
 
     [HttpPost("resolve")]
     [EndpointName("resolvePlayback")]

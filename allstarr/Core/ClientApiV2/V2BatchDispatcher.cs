@@ -82,7 +82,7 @@ public sealed class V2BatchDispatcher(IServiceScopeFactory scopes, ILogger<V2Bat
                 await scope.ServiceProvider.GetRequiredService<V2AlbumEndpoints>().SimilarAsync(http, execution, id, similarLimit),
             ["albums", _, "similar"] => new(400, null),
             ["playback", "resolve"] => new(404, null),
-            ["playback", var id] when Allowed(query, []) => scope.ServiceProvider.GetRequiredService<V2ServingStreams>().Status(execution, id),
+            ["playback", var id] when Allowed(query, []) => await scope.ServiceProvider.GetRequiredService<V2PlaybackStatusReader>().ReadAsync(http, execution, id),
             ["playback", _] => new(400, null),
             ["mixes"] when Allowed(query, ["timeZoneId"]) => await scope.ServiceProvider.GetRequiredService<V2LibraryEndpoints>()
                 .MixesAsync(http, execution, Value(query, "timeZoneId")),

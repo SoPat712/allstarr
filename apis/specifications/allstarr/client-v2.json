@@ -2921,7 +2921,7 @@
         "tags": [
           "Playback"
         ],
-        "description": "Reads a playback created by resolve: its actual delivered format and live serving facts, both null until the stream opens and after it closes. Never opens audio, issues a stream link or prepares a source. Another listener\u0027s playback returns 404. Retained in memory for up to twelve hours. Can also be read inside a batch.",
+        "description": "Reads a playback created by resolve: its actual delivered format and live serving facts, both null until the stream opens and after it closes; retained in memory for up to twelve hours. Also reads a media-server stream by the X-Allstarr-Playback-Request id its response carried: delivered format, provider, cached and routeReason, kept after the stream closes. Never opens audio, issues a stream link or prepares a source. Another listener\u0027s playback returns 404. Can also be read inside a batch.",
         "operationId": "getPlaybackStatus",
         "parameters": [
           {
@@ -8251,6 +8251,47 @@
                 "type": "null"
               }
             ]
+          },
+          "provider": {
+            "type": [
+              "null",
+              "object"
+            ],
+            "anyOf": [
+              {
+                "description": "The service that served a media-server stream; set when read by its X-Allstarr-Playback-Request id.",
+                "$ref": "#/components/schemas/V2Provider"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "cached": {
+            "type": [
+              "null",
+              "boolean"
+            ]
+          },
+          "routeReason": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "trackId": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "description": "The id the stream was requested by."
+          },
+          "startedAt": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "date-time"
           }
         }
       },
@@ -8755,6 +8796,10 @@
                 "type": "null"
               }
             ]
+          },
+          "matchState": {
+            "type": "string",
+            "description": "matched (track set), none (looked up, no playable song) or pending (not looked up yet, or cut off by the time limit; ask again)."
           }
         }
       },

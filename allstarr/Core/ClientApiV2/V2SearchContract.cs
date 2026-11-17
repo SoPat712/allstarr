@@ -72,7 +72,11 @@ public sealed record V2ServiceLyricsHit(
     IReadOnlyList<LyricsSearchHighlight> Highlights,
     [property: JsonPropertyName("provider")] V2Provider Provider,
     [property: JsonPropertyName("track"), Description("The playable song, preferring a library copy, or null when none was found; then only title and artist are known.")]
-    V2Track? Track);
+    V2Track? Track)
+{
+    [JsonPropertyName("matchState"), Description("matched (track set), none (looked up, no playable song) or pending (not looked up yet, or cut off by the time limit; ask again).")]
+    public string MatchState { get; init; } = "pending";
+}
 
 public sealed record V2ServiceLyricsLine([property: JsonPropertyName("text")] string Text);
 

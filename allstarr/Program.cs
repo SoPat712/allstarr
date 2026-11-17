@@ -522,6 +522,7 @@ builder.Services.AddScoped<V2AlbumEndpoints>();
 builder.Services.AddScoped<V2ArtistEndpoints>();
 builder.Services.AddScoped<V2LibraryEndpoints>();
 builder.Services.AddSingleton<V2ServingStreams>();
+builder.Services.AddScoped<V2PlaybackStatusReader>();
 builder.Services.AddScoped<LyricsTranslation>();
 builder.Services.AddScoped<V2ArtistLinkEndpoints>();
 builder.Services.AddScoped<V2BatchDispatcher>();

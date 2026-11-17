@@ -81,6 +81,22 @@ public sealed partial class ProtocolRouteFixtureTests
             if (payload != null) Assert.Equal(payload, body);
             payload = body;
         }
+        using (var v2Request = ClientPlaybackRequest($"/allstarr/v2/playback/{requestId}"))
+        using (var v2 = await client.SendAsync(v2Request))
+        {
+            var text = await v2.Content.ReadAsStringAsync();
+            Assert.True(v2.StatusCode == HttpStatusCode.OK, text);
+            using var json = JsonDocument.Parse(text);
+            var root = json.RootElement;
+            Assert.Equal(requestId, root.GetProperty("playbackId").GetString());
+            Assert.Equal("flac", root.GetProperty("delivered").GetProperty("codec").GetString());
+            Assert.True(root.GetProperty("delivered").GetProperty("isLossless").GetBoolean());
+            Assert.Equal(JsonValueKind.Null, root.GetProperty("serving").ValueKind);
+            Assert.Equal(("deezer", "Deezer"), (root.GetProperty("provider").GetProperty("id").GetString(), root.GetProperty("provider").GetProperty("name").GetString()));
+            Assert.Equal(cached, root.GetProperty("cached").GetBoolean());
+            Assert.Equal("provider-priority", root.GetProperty("routeReason").GetString());
+            Assert.Equal("ext-deezer-song-42", root.GetProperty("trackId").GetString());
+        }
         foreach (var path in new[] { $"/allstarr/v1/playback/{requestId}", "/allstarr/v1/playback/current" })
             foreach (var (user, device) in new[] { ("other", "phone"), ("listener", "tablet"), ("listener", (string?)null) })
             {

@@ -85,6 +85,7 @@ public sealed class ServiceLyricsSearchTests
         var hit = Assert.Single(body.Results);
         Assert.Equal(("Walk", "Griff"), (hit.Title, hit.Artist));
         Assert.Null(hit.Track);
+        Assert.Equal("pending", hit.MatchState);
         Assert.Equal(["ok", "ok"], body.Providers.Select(provider => provider.State));
         Assert.Equal(200, again.Status);
         Assert.Equal(2, asked);

@@ -32,6 +32,11 @@ public sealed partial class V2ServiceLyricsSearch(IHttpClientFactory clients, IA
 
     internal sealed record Asked(Found[] Hits, V2ServiceLyricsProvider[] Providers);
 
+    internal const string Matched = "matched", Unmatched = "none", Pending = "pending";
+
+    /// <summary>Each hit's song id and whether its lookup finished; a lookup cut off by the deadline stays pending.</summary>
+    internal sealed record Matching(string?[] Ids, string[] States);
+
     /// <summary>
     /// With resolve false the services' hits come back at once without tracks; the same request again returns them,
     /// in the same order, with their playable songs, reusing the services' answer.
@@ -43,14 +48,13 @@ public sealed partial class V2ServiceLyricsSearch(IHttpClientFactory clients, IA
             new[] { "q", "limit", "resolve" }.Any(key => http.Request.Query[key].Count > 1)) return new(400, null);
         var owner = execution.Actor?.EffectiveUserId ?? execution.Principal?.UserId;
         var hash = CanonicalCatalogKeys.Hash(query.ToLowerInvariant());
-        var key = $"lyrics:services:v2:{owner}:{limit}:{hash}";
-        if (resolve && await cache.GetAsync<V2ServiceLyricsSearchResponse>(key) is { } cached) return new(200, cached);
         var asked = await AskAllAsync(execution, query, limit, $"lyrics:services:hits:v1:{owner}:{limit}:{hash}");
-        var matched = resolve ? await MatchAsync(http, execution, asked.Hits) : new V2Track?[asked.Hits.Length];
-        var response = new V2ServiceLyricsSearchResponse(asked.Hits.Select((hit, index) => new V2ServiceLyricsHit(hit.Title, hit.Artist,
-            new(hit.Line), hit.Highlights, Provider(hit.ProviderId), matched[index])).ToArray(), asked.Providers)
-        { Resolved = resolve };
-        if (resolve) await cache.SetAsync(key, response, Complete(asked) ? Kept : KeptPartly);
+        var (matched, states) = resolve ? await MatchAsync(http, execution, asked, $"lyrics:services:songs:v2:{owner}:{limit}:{hash}")
+            : (new V2Track?[asked.Hits.Length], Enumerable.Repeat(Pending, asked.Hits.Length).ToArray());
+        var results = asked.Hits.Select((hit, index) => new V2ServiceLyricsHit(hit.Title, hit.Artist,
+            new(hit.Line), hit.Highlights, Provider(hit.ProviderId), matched[index])
+        { MatchState = states[index] }).ToArray();
+        var response = new V2ServiceLyricsSearchResponse(results, asked.Providers) { Resolved = resolve };
         return new(200, response);
     }
 
@@ -150,21 +154,53 @@ public sealed partial class V2ServiceLyricsSearch(IHttpClientFactory clients, IA
         return hits;
     }
 
-    private async Task<V2Track?[]> MatchAsync(HttpContext http, ProtocolExecutionContext execution, IReadOnlyList<Found> hits)
+    // Only the songs' ids are kept, so a repeated line reads its tracks fresh; lookups the deadline cut off are tried again.
+    private async Task<(V2Track?[] Tracks, string[] States)> MatchAsync(HttpContext http, ProtocolExecutionContext execution, Asked asked, string key)
     {
-        var ids = new string?[hits.Count];
+        var hits = asked.Hits;
+        var kept = await cache.GetAsync<Matching>(key) is { } saved && saved.Ids.Length == hits.Length && saved.States.Length == hits.Length ? saved : null;
+        var ids = kept?.Ids.ToArray() ?? new string?[hits.Length];
+        var states = kept?.States.ToArray() ?? Enumerable.Repeat(Pending, hits.Length).ToArray();
+        var open = Enumerable.Range(0, hits.Length).Where(index => states[index] == Pending).ToArray();
+        if (open.Length > 0)
+        {
+            await FindAsync(execution, hits, open, ids, states);
+            await cache.SetAsync(key, new Matching(ids, states), states.Contains(Pending) || !Complete(asked) ? KeptPartly : Kept);
+        }
+        var wanted = ids.OfType<string>().Distinct(StringComparer.Ordinal).ToArray();
+        if (wanted.Length == 0) return (new V2Track?[hits.Length], states);
+        var read = await tracks.ReadAsync(http, execution, wanted, false);
+        var byId = read.Tracks.SelectMany(track => track.Aliases.Prepend(track.Id).Select(id => (Id: id, Track: track)))
+            .GroupBy(item => item.Id, StringComparer.Ordinal).ToDictionary(group => group.Key, group => group.First().Track, StringComparer.Ordinal);
+        var found = ids.Select(id => id != null && byId.TryGetValue(id, out var track) ? track : null).ToArray();
+        return (found, states.Select((state, index) => state == Matched && found[index] == null ? Unmatched : state).ToArray());
+    }
+
+    private async Task FindAsync(ProtocolExecutionContext execution, IReadOnlyList<Found> hits, int[] open, string?[] ids, string[] states)
+    {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(execution.CancellationToken);
         deadline.CancelAfter(MatchBudget);
         using var gate = new SemaphoreSlim(4);
         try
         {
-            var access = await libraries.ResolveAsync(execution, deadline.Token);
-            await Task.WhenAll(hits.Select(async (hit, index) =>
+            // The library is read first and once, so a library copy never waits behind slow service searches.
+            var library = await LibraryCopiesAsync(execution, open.Select(index => hits[index]).ToArray(), deadline.Token);
+            await Task.WhenAll(open.Select(async index =>
             {
+                var hit = hits[index];
+                if (library.FirstOrDefault(track => Same(hit, track.Title, track.Artist)) is { } local)
+                {
+                    (ids[index], states[index]) = (local.BackendItemId, Matched);
+                    return;
+                }
                 await gate.WaitAsync(deadline.Token);
                 // A service search still running at the deadline is left to finish on its own; the answer doesn't wait.
-                try { ids[index] = await LibraryCopyAsync(execution, access, hit, deadline.Token) ?? await ServiceCopyAsync(execution, hit).WaitAsync(deadline.Token); }
-                // A song that can't be matched in time stays title and artist only.
+                try
+                {
+                    ids[index] = await ServiceCopyAsync(execution, hit).WaitAsync(deadline.Token);
+                    states[index] = ids[index] == null ? Unmatched : Matched;
+                }
+                // A song that can't be matched in time stays pending for the next request.
                 catch (Exception error) when (error is HttpRequestException or InvalidOperationException ||
                     error is OperationCanceledException && !execution.CancellationToken.IsCancellationRequested)
                 { }
@@ -172,21 +208,20 @@ public sealed partial class V2ServiceLyricsSearch(IHttpClientFactory clients, IA
             }));
         }
         catch (OperationCanceledException) when (!execution.CancellationToken.IsCancellationRequested) { }
-        var wanted = ids.OfType<string>().Distinct(StringComparer.Ordinal).ToArray();
-        if (wanted.Length == 0) return new V2Track?[hits.Count];
-        var read = await tracks.ReadAsync(http, execution, wanted, false);
-        var byId = read.Tracks.SelectMany(track => track.Aliases.Prepend(track.Id).Select(id => (Id: id, Track: track)))
-            .GroupBy(item => item.Id, StringComparer.Ordinal).ToDictionary(group => group.Key, group => group.First().Track, StringComparer.Ordinal);
-        return ids.Select(id => id != null && byId.TryGetValue(id, out var track) ? track : null).ToArray();
     }
 
-    private async Task<string?> LibraryCopyAsync(ProtocolExecutionContext execution, BackendLibraryAccess access, Found hit, CancellationToken token)
+    private sealed record LibraryCopy(string BackendItemId, string Title, string Artist);
+
+    // One read of the listener's library titles serves every hit.
+    private async Task<IReadOnlyList<LibraryCopy>> LibraryCopiesAsync(ProtocolExecutionContext execution, IReadOnlyList<Found> hits, CancellationToken token)
     {
+        if (hits.Count == 0) return [];
+        var access = await libraries.ResolveAsync(execution, token);
+        var keys = hits.Select(hit => SongKey(hit.Title)).ToHashSet(StringComparer.Ordinal);
         await using var db = await factory.CreateDbContextAsync(token);
-        var start = hit.Title.Length > 3 ? hit.Title[..3].ToLowerInvariant() : hit.Title.ToLowerInvariant();
-        var candidates = await LibraryTrackAccess.Query(db, execution, access).Where(track => track.Title.ToLower().StartsWith(start))
-            .Select(track => new { track.BackendItemId, track.Title, track.Artist }).Take(200).ToArrayAsync(token);
-        return candidates.FirstOrDefault(track => Same(hit, track.Title, track.Artist))?.BackendItemId;
+        var titles = await LibraryTrackAccess.Query(db, execution, access)
+            .Select(track => new LibraryCopy(track.BackendItemId, track.Title, track.Artist)).ToArrayAsync(token);
+        return titles.Where(track => keys.Contains(SongKey(track.Title))).ToArray();
     }
 
     private async Task<string?> ServiceCopyAsync(ProtocolExecutionContext execution, Found hit)
