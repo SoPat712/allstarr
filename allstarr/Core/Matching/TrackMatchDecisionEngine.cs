@@ -781,8 +781,8 @@ public sealed class TrackMatchDecisionEngine
 
     private static string MatchingTitle(string title, string? album, string? counterpartAlbum)
     {
-        var stripped = FuzzyMatcher.WithoutSoundtrackAlbumAnnotation(title, album);
-        return stripped == FuzzyMatcher.WithoutSoundtrackAlbumAnnotation(title, counterpartAlbum) ? stripped : title;
+        var stripped = FuzzyMatcher.WithoutAlbumAnnotation(title, album);
+        return stripped == FuzzyMatcher.WithoutAlbumAnnotation(title, counterpartAlbum, ownAlbum: false) ? stripped : title;
     }
 
     internal static bool SameLibraryRecording(LocalTrackMatchCandidate left, LocalTrackMatchCandidate right)

@@ -12,11 +12,30 @@ public class FuzzyMatcherTests
     {
         var album = SelfLoveMatchFixture.LibraryAlbum.Replace('\u2010', hyphen);
         Assert.Equal("Self Love (Metro Boomin & Coi Leray)",
-            FuzzyMatcher.WithoutSoundtrackAlbumAnnotation(SelfLoveMatchFixture.Title, album));
+            FuzzyMatcher.WithoutAlbumAnnotation(SelfLoveMatchFixture.Title, album));
         Assert.Equal("Self Love (Another Film)",
-            FuzzyMatcher.WithoutSoundtrackAlbumAnnotation("Self Love (Another Film)", album));
+            FuzzyMatcher.WithoutAlbumAnnotation("Self Love (Another Film)", album));
         Assert.Equal("Self Love (Instrumental)",
-            FuzzyMatcher.WithoutSoundtrackAlbumAnnotation("Self Love (Instrumental)", album));
+            FuzzyMatcher.WithoutAlbumAnnotation("Self Love (Instrumental)", album));
+    }
+
+    [Theory]
+    [InlineData("Sunflower - Spider-Man: Into the Spider-Verse", "Spider-Man: Into the Spider-Verse (Soundtrack From & Inspired by the Motion Picture)", "Sunflower")]
+    [InlineData("REBOUND! (feat. DATPIFFMAFIA) (OFFLINE)", "OFFLINE!", "REBOUND! (feat. DATPIFFMAFIA)")]
+    [InlineData("Love Story (Taylor's Version)", "Fearless (Taylor's Version)", "Love Story (Taylor's Version)")]
+    [InlineData("Song (Acoustic)", "Acoustic", "Song (Acoustic)")]
+    [InlineData("Song - Remix", "Remix Soundtrack", "Song - Remix")]
+    public void AlbumNotesInTitlesAreDropped(string title, string album, string expected)
+    {
+        Assert.Equal(expected, FuzzyMatcher.WithoutAlbumAnnotation(title, album));
+    }
+
+    [Theory]
+    [InlineData("REBOUND! (OFFLINE)", "LP! OFFLINE", "REBOUND!")]
+    [InlineData("Song (MTV Unplugged)", "Greatest Hits", "Song (MTV Unplugged)")]
+    public void TheOtherCopysAlbumOnlyHasToNameTheNote(string title, string counterpartAlbum, string expected)
+    {
+        Assert.Equal(expected, FuzzyMatcher.WithoutAlbumAnnotation(title, counterpartAlbum, ownAlbum: false));
     }
 
     [Theory]
@@ -27,8 +46,8 @@ public class FuzzyMatcherTests
     public void SoundtrackAlbumAnnotationsDoNotChangeTheRecordingVersion(string title, string expected)
     {
         const string album = "Metro Boomin Presents Spider-Man: Across the Spider-Verse (Soundtrack From and Inspired by the Motion Picture)";
-        Assert.Equal(expected, FuzzyMatcher.WithoutSoundtrackAlbumAnnotation(title, album));
-        Assert.Equal(title, FuzzyMatcher.WithoutSoundtrackAlbumAnnotation(title, "Another album"));
+        Assert.Equal(expected, FuzzyMatcher.WithoutAlbumAnnotation(title, album));
+        Assert.Equal(title, FuzzyMatcher.WithoutAlbumAnnotation(title, "Another album"));
     }
 
     [Theory]

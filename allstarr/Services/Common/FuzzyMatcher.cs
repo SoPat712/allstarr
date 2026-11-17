@@ -253,17 +253,22 @@ public static partial class FuzzyMatcher
         return cleaned.Trim();
     }
 
-    internal static string WithoutSoundtrackAlbumAnnotation(string title, string? album)
+    // A title note that only repeats the album: the film on a soundtrack ("Sunflower - Spider-Man: Into the Spider-Verse")
+    // or the album's own name ("REBOUND! (OFFLINE)" on "OFFLINE!"). On the other copy's album the name only has to appear.
+    internal static string WithoutAlbumAnnotation(string title, string? album, bool ownAlbum = true)
     {
         var normalizedAlbum = " " + NormalizeForMatching(album ?? "") + " ";
-        if (!normalizedAlbum.Contains(" soundtrack ", StringComparison.Ordinal)) return title;
-        return WhitespaceRegex().Replace(BracketedTitlePartRegex().Replace(title, match =>
+        var soundtrack = normalizedAlbum.Contains(" soundtrack ", StringComparison.Ordinal);
+        bool Repeats(string annotation, bool bracketed)
         {
-            var annotation = match.Groups[1].Value;
             var normalized = NormalizeForMatching(annotation);
-            return normalized.Length > 0 && RecordingVersionTags(annotation).Count == 0 &&
-                   normalizedAlbum.Contains(" " + normalized + " ", StringComparison.Ordinal) ? " " : match.Value;
-        }), " ").Trim();
+            if (normalized.Length == 0 || RecordingVersionTags(annotation).Count > 0) return false;
+            var named = normalizedAlbum.Contains(" " + normalized + " ", StringComparison.Ordinal);
+            return soundtrack && named || bracketed && (ownAlbum ? normalizedAlbum.Trim() == normalized : named);
+        }
+        var cleaned = BracketedTitlePartRegex().Replace(title, match => Repeats(match.Groups[1].Value, true) ? " " : match.Value);
+        if (soundtrack) cleaned = DashTitlePartRegex().Replace(cleaned, match => Repeats(match.Groups[1].Value, false) ? " " : match.Value);
+        return WhitespaceRegex().Replace(cleaned, " ").Trim();
     }
 
     public static string NormalizeTitleForMatching(

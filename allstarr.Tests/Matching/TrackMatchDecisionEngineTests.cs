@@ -2255,6 +2255,53 @@ public sealed class TrackMatchDecisionEngineTests(ITestOutputHelper output)
         Assert.Equal(studio.LibraryTrackId, decision.SelectedLibraryTrackId);
     }
 
+    [Fact]
+    public void ASoundtrackNoteAfterADashMatchesTheSameNoteInBrackets()
+    {
+        var scope = Scope();
+        var source = Source() with
+        {
+            Title = "Sunflower - Spider-Man: Into the Spider-Verse",
+            Artist = "Post Malone, Swae Lee",
+            Album = "Spider-Man: Into the Spider-Verse (Soundtrack From & Inspired by the Motion Picture)",
+            AlbumArtist = "Various Artists",
+            DurationMilliseconds = 158_040,
+            IsExplicit = null
+        };
+        var local = Candidate(scope) with
+        {
+            CanonicalRecordingId = null,
+            Title = "Sunflower (Spider‐Man: Into the Spider‐Verse)",
+            Artist = "Post Malone, Swae Lee",
+            Album = "Spider‐Man: Into the Spider‐Verse (Soundtrack From & Inspired by the Motion Picture)",
+            AlbumArtist = "Various Artists",
+            DurationMilliseconds = 158_040,
+            IsExplicit = null
+        };
+        var decision = new TrackMatchDecisionEngine().Decide(scope, source, [local]);
+        Assert.Equal(TrackMatchReviewState.Accepted, decision.State);
+    }
+
+    [Fact]
+    public void ATitleNoteThatNamesTheAlbumDoesNotHoldTheMatch()
+    {
+        var scope = Scope();
+        var source = Source() with
+        {
+            ProviderId = "listenbrainz",
+            Title = "REBOUND!",
+            Artist = "JPEGMAFIA ft. DATPIFFMAFIA",
+            Album = "LP! OFFLINE",
+            AlbumArtist = "JPEGMAFIA",
+            DurationMilliseconds = 215_000,
+            IsExplicit = null
+        };
+        var copy = ServiceCopy(scope, "spotiflac-deezer", "REBOUND! (feat. DATPIFFMAFIA) (OFFLINE)", "JPEGMAFIA", "OFFLINE!", 215_000, "QZFZ42199186");
+        var decision = new TrackMatchDecisionEngine().Decide(scope, source, [copy], providerPriority: ["spotiflac-deezer"]);
+        Assert.Equal(TrackMatchReviewState.Accepted, decision.State);
+        Assert.Equal(copy.LibraryTrackId, decision.SelectedLibraryTrackId);
+    }
+
     private static LocalTrackMatchCandidate ServiceCopy(TrackMatchScope scope, string provider, string title, string artist,
         string album, long durationMilliseconds, string isrc) => ProviderCandidate(scope, provider, durationMilliseconds) with
         {
