@@ -64,6 +64,7 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.Equal(V2Ids.Track(recording), keep.GetProperty("trackId").GetString());
         Assert.Equal("inProgress", keep.GetProperty("state").GetString());
         Assert.Equal(.5, keep.GetProperty("progress").GetDouble());
+        Assert.Contains("ext-deezer-song-known", keep.GetProperty("aliases").EnumerateArray().Select(alias => alias.GetString()));
         Assert.False(keep.TryGetProperty("itemId", out _));
         hub.Publish(principal.UserId, ClientEvent.Match("ext-deezer-song-known", "accepted"));
         await V2FrameAsync(stream, "track.updated");
@@ -71,7 +72,8 @@ public sealed partial class ProtocolRouteFixtureTests
         hub.Publish(principal.UserId, ClientEvent.Lyrics("ext-deezer-song-known", "revision"));
         var lyrics = (await V2FrameAsync(stream, "lyrics.updated")).Data;
         Assert.Equal(V2Ids.Track(recording), lyrics.GetProperty("trackId").GetString());
-        Assert.Equal(["trackId", "revision"], lyrics.EnumerateObject().Select(property => property.Name).ToArray());
+        Assert.Equal(["trackId", "aliases", "revision"], lyrics.EnumerateObject().Select(property => property.Name).ToArray());
+        Assert.Equal(["ext-deezer-song-known"], lyrics.GetProperty("aliases").EnumerateArray().Select(alias => alias.GetString()!).ToArray());
         var mixId = Guid.NewGuid();
         hub.Publish(principal.UserId, ClientEvent.Mix(mixId));
         var mix = (await V2FrameAsync(stream, "mix.updated")).Data;

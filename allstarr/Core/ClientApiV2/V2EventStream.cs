@@ -222,10 +222,11 @@ public sealed class V2EventStream : BackgroundService
                     ? ClientEvent.Create(value.Type, track.Id, new
                     {
                         trackId = track.Id,
+                        aliases = track.Aliases,
                         state = data.GetProperty("state").GetString(),
                         progress = data.TryGetProperty("progress", out var progress) ? progress.GetDouble() : (double?)null
                     })
-                    : ClientEvent.Create(value.Type, track.Id, new { trackId = track.Id, state = data.GetProperty("state").GetString() })
+                    : ClientEvent.Create(value.Type, track.Id, new { trackId = track.Id, aliases = track.Aliases, state = data.GetProperty("state").GetString() })
             ];
         }
         else if (value.Type == "lyrics.updated")
@@ -233,7 +234,9 @@ public sealed class V2EventStream : BackgroundService
             var recording = await http.RequestServices.GetRequiredService<ITrackIdentityService>()
                 .ResolveRecordingAsync(execution.RequireActor(), value.Key, execution.CancellationToken);
             var trackId = recording == null ? V2Ids.TrackSource(value.Key) : V2Ids.Track(recording.Id);
-            return [ClientEvent.Create(value.Type, trackId, new { trackId, revision = data.GetProperty("revision") })];
+            // The item the lyrics changed for, in the spelling apps already hold.
+            string[] aliases = value.Key == trackId ? [] : [value.Key];
+            return [ClientEvent.Create(value.Type, trackId, new { trackId, aliases, revision = data.GetProperty("revision") })];
         }
         else if (value.Type == "mix.updated")
             return
