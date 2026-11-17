@@ -23,7 +23,7 @@ public sealed class EventsController(V2EventStream events, ClientEventOptions op
         "Comments ping every 25 seconds. Connections are limited to 8 per listener, 256 total; excess returns 503. " +
         "Payloads: track.updated {track: V2Track}, lyrics.updated {trackId, revision} (read views=lyrics), " +
         "match.updated {trackId, state}, keep.updated {trackId, state, progress}, mix.updated {mixId, playlistId}, " +
-        "releases.updated {count}, libraryAddition.updated {row}, track.renamed {old, new}. " +
+        "releases.updated {count}, libraryAddition.updated {row}, preferences.updated {field}, track.renamed {old, new}. " +
         "Renames reach currently connected v2 listeners. Requires a Bearer token.")]
     [ProducesResponseType<string>(200, "text/event-stream")]
     public async Task<IActionResult> Get(

@@ -30,7 +30,8 @@ public sealed class ListeningPreferencesController(IDurableRuntimeSettings setti
         try
         {
             var choice = await action(await contexts.CreateAsync(session, HttpContext.TraceIdentifier, cancellationToken), cancellationToken);
-            return choice == null ? StatusCode(503, new { error = "Your music libraries can't be read right now. Try again shortly." }) : Ok(choice);
+            return choice == null ? StatusCode(503, new { error = "Your music libraries can't be read right now. Try again shortly." })
+                : Ok(new { selected = choice.Selected, available = choice.Available.Select(library => new { id = library.Id, name = library.Name }) });
         }
         catch (UnauthorizedAccessException) { return StatusCode(403, new { error = "A linked backend user is required." }); }
         catch (RuntimeSettingConflictException) { return Conflict(new { error = "Your libraries changed. Reload them and try again." }); }

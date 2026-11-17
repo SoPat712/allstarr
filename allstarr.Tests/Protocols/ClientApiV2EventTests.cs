@@ -42,6 +42,18 @@ public sealed class ClientApiV2EventTests
     }
 
     [Fact]
+    public async Task ClientApiV2_PreferenceChangesReachTheListenersApps()
+    {
+        using var fixture = new EventsFixture();
+        var owner = Guid.NewGuid();
+        using var stream = fixture.Subscribe(owner);
+        fixture.Events.Publish(owner, ClientEvent.Preferences("libraries"));
+        var received = await Read(stream);
+        Assert.Equal("preferences.updated", received.Value.Type);
+        Assert.Contains("\"field\":\"libraries\"", received.Value.Json);
+    }
+
+    [Fact]
     public async Task ClientApiV2_EventsBoundReplayByCountAndAgeAndExpireIdleListeners()
     {
         using var fixture = new EventsFixture();

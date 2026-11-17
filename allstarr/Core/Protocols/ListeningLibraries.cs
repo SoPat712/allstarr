@@ -22,7 +22,8 @@ public sealed class ListeningLibraries(
     IHttpClientFactory clients,
     IConfiguration configuration,
     TimeProvider clock,
-    ILogger<ListeningLibraries>? logger = null) : IBackendLibraryAccessResolver
+    ILogger<ListeningLibraries>? logger = null,
+    allstarr.Core.ClientEvents.IClientEventPublisher? events = null) : IBackendLibraryAccessResolver
 {
     public const string Key = "listening";
     private static readonly TimeSpan Remembered = TimeSpan.FromSeconds(30);
@@ -83,6 +84,8 @@ public sealed class ListeningLibraries(
         var stored = selected == null || available.All(library => selected.Contains(library.Id, StringComparer.Ordinal)) ? null : selected;
         await settings.UpdateMyLibrariesAsync(owner, stored, cancellationToken);
         chosen.TryRemove(owner, out _);
+        // Every app of this listener re-reads the choice, wherever it was changed.
+        events?.Publish(owner, allstarr.Core.ClientEvents.ClientEvent.Preferences("libraries"));
         return new(stored, available);
     }
 

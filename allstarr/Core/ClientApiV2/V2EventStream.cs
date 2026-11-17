@@ -134,7 +134,8 @@ public sealed class V2EventStream : BackgroundService
 
     private void Queue(Guid owner, ClientEvent value)
     {
-        if (value.Type is not ("keep.updated" or "match.updated" or "lyrics.updated" or "mix.updated" or "releases.updated" or "libraryAddition.updated")) return;
+        if (value.Type is not ("keep.updated" or "match.updated" or "lyrics.updated" or "mix.updated" or "releases.updated" or
+            "libraryAddition.updated" or "preferences.updated")) return;
         lock (gate)
             if (listeners.TryGetValue(owner, out var listener) && !pending.Writer.TryWrite((owner, listener, listener.Generation, value)))
             {
@@ -244,6 +245,7 @@ public sealed class V2EventStream : BackgroundService
                 })
             ];
         else if (value.Type == "libraryAddition.updated") return [ClientEvent.Create(value.Type, value.Key, new { row = data })];
+        else if (value.Type == "preferences.updated") return [ClientEvent.Create(value.Type, value.Key, new { field = data.GetProperty("field").GetString() })];
         else return [ClientEvent.Create(value.Type, value.Key, new { count = data.GetProperty("count").GetInt32() })];
     }
 
