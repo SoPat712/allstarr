@@ -23,6 +23,8 @@ describe("Home recent activity", () => {
     const passed = { ...check("4"), id: "passed", correlationId: "run" } as ActivityItem;
     const other = { ...check("2", "The Health check started."), id: "other", state: "running", correlationId: "later" } as ActivityItem;
     expect(recentHomeActivity([started, passed, other]).map(item => item.id)).toEqual(["passed", "other"]);
+    const byJob = { ...started, id: "by-job", correlationId: "", jobId: "job-1" } as ActivityItem;
+    expect(recentHomeActivity([byJob, { ...passed, jobId: "job-1" } as ActivityItem]).map(item => item.id)).toEqual(["passed"]);
   });
 
   it("shows a failure logged by its job and by its source once", () => {
