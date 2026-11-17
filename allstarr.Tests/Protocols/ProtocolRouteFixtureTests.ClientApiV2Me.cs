@@ -1,6 +1,8 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using System.Text.Json.Nodes;
+using Microsoft.Extensions.Logging;
 using allstarr.Core.Artwork;
 using allstarr.Core.Capabilities;
 using allstarr.Core.ClientApiV2;
@@ -319,6 +321,47 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.Equal("keep", otherBody.RootElement.GetProperty("heartAction").GetString());
     }
 
+    [Fact]
+    public async Task ClientApiV2_PreferencesChooseTheListenersOwnMusicLibraries()
+    {
+        var log = new LibraryLog();
+        using var factory = ClientApiFactory(request => request.RequestUri!.AbsolutePath switch
+        {
+            "/Users/Me" => Json(200, request.Headers.ToString().Contains("other-token", StringComparison.Ordinal)
+                ? """{"Id":"other"}""" : """{"Id":"listener"}"""),
+            "/UserViews" => Json(200, """{"Items":[{"Id":"mine","Name":"My music","CollectionType":"music"},{"Id":"kids","Name":"Kids","CollectionType":"music"},{"Id":"films","Name":"Films","CollectionType":"movies"}]}"""),
+            _ => throw new InvalidOperationException("Unexpected upstream request " + request.RequestUri.PathAndQuery)
+        }, services => services.AddSingleton<ILogger<ListeningLibraries>>(log));
+        using var client = CreateClientApiClient(factory);
+        client.DefaultRequestHeaders.Authorization = new("Bearer", "listener-token");
+        using (var initial = await client.GetAsync("/allstarr/v2/me/preferences"))
+        {
+            var body = JsonNode.Parse(await initial.Content.ReadAsStringAsync())!;
+            Assert.Null(body["libraries"]!["selected"]);
+            Assert.Equal(["kids:Kids", "mine:My music"], body["libraries"]!["available"]!.AsArray()
+                .Select(item => $"{item!["id"]}:{item["name"]}").ToArray());
+        }
+        using (var chosen = await client.PatchAsJsonAsync("/allstarr/v2/me/preferences", new { libraries = new { selected = new[] { "mine" } } }))
+        {
+            var text = await chosen.Content.ReadAsStringAsync();
+            Assert.True(chosen.StatusCode == HttpStatusCode.OK, $"{chosen.StatusCode}: {text} {log.Last}");
+            var body = JsonNode.Parse(text)!;
+            Assert.Equal("mine", Assert.Single(body["libraries"]!["selected"]!.AsArray())!.GetValue<string>());
+            Assert.Equal("keep", body["heartAction"]!.GetValue<string>());
+        }
+        foreach (var request in new object[] { new { libraries = new { selected = new[] { "films" } } }, new { libraries = new { selected = Array.Empty<string>() } } })
+        {
+            using var invalid = await client.PatchAsJsonAsync("/allstarr/v2/me/preferences", request);
+            Assert.Equal(HttpStatusCode.BadRequest, invalid.StatusCode);
+        }
+        using (var all = await client.PatchAsJsonAsync("/allstarr/v2/me/preferences", new { libraries = new { selected = new[] { "kids", "mine" } } }))
+            Assert.Null(JsonNode.Parse(await all.Content.ReadAsStringAsync())!["libraries"]!["selected"]);
+        await client.PatchAsJsonAsync("/allstarr/v2/me/preferences", new { libraries = new { selected = new[] { "kids" } } });
+        client.DefaultRequestHeaders.Authorization = new("Bearer", "other-token");
+        using var other = await client.GetAsync("/allstarr/v2/me/preferences");
+        Assert.Null(JsonNode.Parse(await other.Content.ReadAsStringAsync())!["libraries"]!["selected"]);
+    }
+
     [Theory]
     [InlineData("history?limit=0")]
     [InlineData("history?limit=201")]
@@ -376,5 +419,14 @@ public sealed partial class ProtocolRouteFixtureTests
         client.DefaultRequestHeaders.Authorization = new("Bearer", "listener-token");
         using var hidden = await client.GetAsync("/allstarr/v2/me/stats/art?artist=Artist&libraryArtistId=" + V2Ids.Artist("private-artist"));
         await AssertClientApiError(hidden, 404, "not_found");
+    }
+
+    private sealed class LibraryLog : ILogger<ListeningLibraries>
+    {
+        internal string? Last { get; private set; }
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel level) => true;
+        public void Log<TState>(LogLevel level, EventId id, TState state, Exception? exception, Func<TState, Exception?, string> formatter) =>
+            Last = formatter(state, exception) + " " + exception;
     }
 }

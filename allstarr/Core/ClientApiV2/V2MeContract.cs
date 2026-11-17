@@ -87,5 +87,15 @@ public sealed record V2TasteProfile(ClientTasteLayer Lately, ClientTasteLayer Us
     bool Paused, bool UseImportedHistory, IReadOnlyList<TasteNudge> Nudges);
 
 public sealed record V2Preferences(
-    [Required, RegularExpression("^(heart|keep|addToLibrary)$")]
-    [property: JsonPropertyName("heartAction"), Description("The heart button action: heart, keep or addToLibrary.")] string HeartAction);
+    [RegularExpression("^(heart|keep|addToLibrary)$")]
+    [property: JsonPropertyName("heartAction"), Description("The heart button action: heart, keep or addToLibrary.")] string? HeartAction,
+    [property: JsonPropertyName("libraries"), Description("The music libraries songs are picked from for this listener: mixes, Made for you and autoplay.")]
+    V2LibraryChoice? Libraries = null);
+
+public sealed record V2LibraryChoice(
+    [property: JsonPropertyName("selected"), Description("The chosen library ids, or null for every library this listener can open.")] IReadOnlyList<string>? Selected,
+    [property: JsonPropertyName("available"), Description("Every music library this listener can choose. Read only.")] IReadOnlyList<V2MusicLibrary>? Available = null);
+
+public sealed record V2MusicLibrary(
+    [property: JsonPropertyName("id")] string Id,
+    [property: JsonPropertyName("name")] string Name);

@@ -14,6 +14,7 @@ public sealed class V2SessionReader(IDurableRuntimeSettings settings)
             {
                 ["tracks"] = true,
                 ["albums"] = true,
+                ["artists"] = true,
                 ["batch"] = true,
                 ["playback"] = true,
                 ["events"] = true,
@@ -40,6 +41,7 @@ public sealed class V2SessionReader(IDurableRuntimeSettings settings)
                 ["sound"] = true,
                 ["taste"] = true,
                 ["preferences"] = true,
+                ["myLibraries"] = true,
                 ["search"] = true,
                 ["lyricsSearch"] = true
             }, string.IsNullOrEmpty(address) ? null : new(address)));

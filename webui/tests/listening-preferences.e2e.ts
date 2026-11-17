@@ -102,6 +102,34 @@ async function mockShell(page: Page, administrator: boolean, preferences: (route
   });
 }
 
+test("a listener picks their own music libraries and keeps at least one", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  const available = [{ id: "kids", name: "Kids" }, { id: "mine", name: "Josh's music" }];
+  const writes: unknown[] = [];
+  await mockShell(page, true, route => fulfillJson(route, response({ explicitFilter: "All", showExternalLabel: true,
+    showExplicitLabel: true, revision: "current", usesHouseholdDefaults: true })));
+  let selected: string[] | null = null;
+  await page.route("**/api/admin/preferences/libraries", async route => {
+    if (route.request().method() === "PUT") {
+      selected = route.request().postDataJSON().selected;
+      writes.push(selected);
+    }
+    return fulfillJson(route, { selected, available });
+  });
+  await page.goto("/#/preferences");
+  const card = page.getByRole("region", { name: "Your music libraries", exact: true });
+  const kids = card.getByRole("switch", { name: "Use Kids", exact: true });
+  const mine = card.getByRole("switch", { name: "Use Josh's music", exact: true });
+  await expect(kids).toBeChecked();
+  await expect(mine).toBeChecked();
+  await kids.click();
+  await expect(kids).not.toBeChecked();
+  await expect(mine).toBeDisabled();
+  await kids.click();
+  await expect(mine).toBeEnabled();
+  expect(writes).toEqual([["mine"], null]);
+});
+
 test("listener autosaves each change and resets with the latest returned revision", async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 844 });
   await page.emulateMedia({ colorScheme: "dark", reducedMotion: "reduce" });

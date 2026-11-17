@@ -10,7 +10,7 @@ namespace allstarr.Core.ClientApiV2;
 
 public sealed class V2MeEndpoints(ClientListeningHistory history, ListeningHistoryImportService imports,
     ListeningHistoryResolution resolution, ListeningStatsService stats, TasteService taste, SoundProfileService sound,
-    IDurableRuntimeSettings settings, V2TrackReader tracks)
+    IDurableRuntimeSettings settings, V2TrackReader tracks, ListeningLibraries libraries)
 {
     internal async Task<V2Result> ReadAsync(HttpContext http, ProtocolExecutionContext execution, string resource)
     {
@@ -66,7 +66,7 @@ public sealed class V2MeEndpoints(ClientListeningHistory history, ListeningHisto
                     return new(200, new V2TasteProfile(ClientTasteLayer.From(tasteProfile.Lately), ClientTasteLayer.From(tasteProfile.Usually),
                         tasteProfile.LatelyWeight, tasteProfile.Paused, tasteProfile.UseImportedHistory, tasteProfile.Nudges));
                 case "preferences":
-                    return new(200, new V2Preferences((await settings.GetPreferencesAsync(owner, token)).Values.HeartAction ?? "keep"));
+                    return new(200, await PreferencesAsync(execution));
                 default:
                     return new(404, null);
             }
@@ -75,15 +75,33 @@ public sealed class V2MeEndpoints(ClientListeningHistory history, ListeningHisto
         catch (UnauthorizedAccessException) { return new(404, null); }
     }
 
+    /// <summary>Changes only the fields sent: the heart action, the chosen libraries, or both.</summary>
     public async Task<V2Result> UpdatePreferencesAsync(ProtocolExecutionContext execution, V2Preferences request)
     {
-        if (request.HeartAction is not ("heart" or "keep" or "addToLibrary")) return new(400, null);
+        if (request.HeartAction == null && request.Libraries == null ||
+            request.HeartAction is not (null or "heart" or "keep" or "addToLibrary")) return new(400, null);
         try
         {
-            await settings.UpdateHeartActionAsync(execution.Principal!.UserId, request.HeartAction, execution.CancellationToken);
-            return new(200, request);
+            if (request.HeartAction != null)
+                await settings.UpdateHeartActionAsync(execution.Principal!.UserId, request.HeartAction, execution.CancellationToken);
+            if (request.Libraries != null && await libraries.UpdateAsync(execution, request.Libraries.Selected, execution.CancellationToken) == null)
+                return new(503, null);
+            return new(200, await PreferencesAsync(execution));
         }
         catch (RuntimeSettingConflictException) { return new(409, null); }
+        catch (ArgumentException) { return new(400, null); }
+        catch (HttpRequestException) { return new(503, null); }
+    }
+
+    private async Task<V2Preferences> PreferencesAsync(ProtocolExecutionContext execution)
+    {
+        var token = execution.CancellationToken;
+        var heart = (await settings.GetPreferencesAsync(execution.Principal!.UserId, token)).Values.HeartAction ?? "keep";
+        ListeningLibraryChoice? choice;
+        try { choice = await libraries.ReadAsync(execution, token); }
+        catch (HttpRequestException) { choice = null; }
+        return new(heart, choice == null ? null
+            : new(choice.Selected, choice.Available.Select(library => new V2MusicLibrary(library.Id, library.Name)).ToArray()));
     }
 
     private async Task<Dictionary<string, V2Track>> TrackMapAsync(HttpContext http, ProtocolExecutionContext execution, IEnumerable<string?> ids)

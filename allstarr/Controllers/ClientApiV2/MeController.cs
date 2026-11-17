@@ -63,16 +63,17 @@ public sealed class MeController(V2MeEndpoints me, RecapArtworkReader artwork, J
 
     [HttpGet("preferences")]
     [EndpointName("getPreferencesV2")]
-    [EndpointDescription("Reads this listener's heart button action; defaults to keep. Can be batched.")]
+    [EndpointDescription("Reads this listener's heart button action, which defaults to keep, and the music libraries their songs are picked from. Can be batched.")]
     [ProducesResponseType<V2Preferences>(200)]
     [ProducesResponseType(304)]
     public async Task<IActionResult> Preferences() => Respond(await me.ReadAsync(HttpContext, Execution, "preferences"));
 
     [HttpPatch("preferences")]
     [EndpointName("updatePreferencesV2")]
-    [EndpointDescription("Changes only this listener's heart button action: heart, keep or addToLibrary.")]
+    [EndpointDescription("Changes this listener's heart button action (heart, keep or addToLibrary), their chosen music libraries, or both; fields left out stay as they are.")]
     [ProducesResponseType<V2Preferences>(200)]
     [ProducesResponseType(409)]
+    [ProducesResponseType(503)]
     [RequestSizeLimit(1024)]
     public async Task<IActionResult> UpdatePreferences([FromBody] V2Preferences request) =>
         Respond(await me.UpdatePreferencesAsync(Execution, request));

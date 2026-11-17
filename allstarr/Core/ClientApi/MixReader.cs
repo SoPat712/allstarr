@@ -17,7 +17,7 @@ using Microsoft.EntityFrameworkCore;
 namespace allstarr.Core.ClientApi;
 
 public sealed class MixReader(PersonalMixService mixes, IDbContextFactory<AllstarrDbContext> factory,
-    IBackendLibraryAccessResolver libraryAccess, IDurableRuntimeSettings settings, IProviderRegistry registry,
+    [FromKeyedServices(ListeningLibraries.Key)] IBackendLibraryAccessResolver libraryAccess, IDurableRuntimeSettings settings, IProviderRegistry registry,
     IProtocolProviderGateway providers, JellyfinProxyService jellyfin, LibraryProviderResolver libraryProvider,
     IApplicationCache cache, ApplicationCacheRequestCoalescer readCoalescer, IPlatformClock clock)
 {

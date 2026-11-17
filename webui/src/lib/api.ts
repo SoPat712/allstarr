@@ -2180,8 +2180,14 @@ export const providerUse = {
     }),
 };
 
+export type MyLibraries = { selected: string[] | null; available: { id: string; name: string }[] };
+
 export const listeningPreferences = {
   get: () => json<PersonalListeningPreferences>("/api/admin/preferences"),
+  libraries: () => json<MyLibraries>("/api/admin/preferences/libraries"),
+  saveLibraries: (selected: string[] | null) => json<MyLibraries>("/api/admin/preferences/libraries", {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ selected }),
+  }),
   lock: (userId: string) => json<PersonalListeningPreferences>(`/api/admin/preferences/users/${encodeURIComponent(userId)}/clean-only-lock`),
   saveLock: (userId: string, locked: boolean, expectedRevision: string) =>
     json<PersonalListeningPreferences>(`/api/admin/preferences/users/${encodeURIComponent(userId)}/clean-only-lock`, {

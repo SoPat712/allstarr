@@ -40,7 +40,12 @@ internal static class ListeningPreferenceKeys
     internal const string PlaybackStart = "Playback:StartPreference";
     internal const string QualityLimit = "Audio:PersonalLimit";
     internal const string HeartAction = "Library:HeartAction";
+    // Personal only, and not reset with the household defaults: the music libraries a listener's songs are picked from.
+    internal const string MyLibraries = "Library:MyLibraries";
 
     internal static readonly string[] All =
         [ExplicitFilter, ShowExternalLabel, ShowExplicitLabel, LyricsOrder, ProviderUsePolicy.SettingKey, PlaybackStart, QualityLimit, HeartAction];
+
+    // Every key a listener may set for themselves; the library choice stays out of All so a reset to household defaults keeps it.
+    internal static readonly string[] Personal = [.. All, MyLibraries];
 }

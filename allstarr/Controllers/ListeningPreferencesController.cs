@@ -1,3 +1,4 @@
+using allstarr.Core.Protocols;
 using allstarr.Core.Settings;
 using allstarr.Filters;
 using allstarr.Services.Admin;
@@ -8,8 +9,35 @@ namespace allstarr.Controllers;
 [ApiController]
 [Route("api/admin/preferences")]
 [ServiceFilter(typeof(AdminPortFilter))]
-public sealed class ListeningPreferencesController(IDurableRuntimeSettings settings) : ControllerBase
+public sealed class ListeningPreferencesController(IDurableRuntimeSettings settings,
+    AdminProtocolExecutionContextFactory? contexts = null, ListeningLibraries? libraries = null) : ControllerBase
 {
+    [HttpGet("libraries")]
+    public Task<IActionResult> GetLibraries(CancellationToken cancellationToken) =>
+        LibrariesAsync((context, token) => libraries!.ReadAsync(context, token), cancellationToken);
+
+    /// <summary>Sets the music libraries this listener's songs are picked from; null means every library they can open.</summary>
+    [HttpPut("libraries")]
+    public Task<IActionResult> UpdateLibraries([FromBody] UpdateMyLibrariesRequest request, CancellationToken cancellationToken) =>
+        LibrariesAsync((context, token) => libraries!.UpdateAsync(context, request.Selected, token), cancellationToken);
+
+    private async Task<IActionResult> LibrariesAsync(Func<ProtocolExecutionContext, CancellationToken, Task<ListeningLibraryChoice?>> action,
+        CancellationToken cancellationToken)
+    {
+        Response.Headers.CacheControl = "private, no-store";
+        if (HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] is not AdminAuthSession session) return Unauthorized();
+        if (contexts == null || libraries == null) return StatusCode(503, new { error = "Music libraries can't be read right now." });
+        try
+        {
+            var choice = await action(await contexts.CreateAsync(session, HttpContext.TraceIdentifier, cancellationToken), cancellationToken);
+            return choice == null ? StatusCode(503, new { error = "Your music libraries can't be read right now. Try again shortly." }) : Ok(choice);
+        }
+        catch (UnauthorizedAccessException) { return StatusCode(403, new { error = "A linked backend user is required." }); }
+        catch (RuntimeSettingConflictException) { return Conflict(new { error = "Your libraries changed. Reload them and try again." }); }
+        catch (ArgumentException) { return BadRequest(new { error = "Choose one or more of your music libraries." }); }
+        catch (HttpRequestException) { return StatusCode(503, new { error = "Your music libraries can't be read right now. Try again shortly." }); }
+    }
+
     [HttpGet]
     public Task<IActionResult> Get(CancellationToken cancellationToken) => ExecuteAsync(
         userId => settings.GetPreferencesAsync(userId, cancellationToken));
@@ -56,3 +84,4 @@ public sealed record UpdateListeningPreferencesRequest(
     string? PlaybackStart = null, string? QualityLimit = null);
 public sealed record ResetListeningPreferencesRequest(string ExpectedRevision);
 public sealed record UpdateCleanOnlyLockRequest(bool Locked, string ExpectedRevision);
+public sealed record UpdateMyLibrariesRequest(IReadOnlyList<string>? Selected);

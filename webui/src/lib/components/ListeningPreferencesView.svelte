@@ -17,6 +17,7 @@
   import ThreeDetentSwitch from "$lib/components/ThreeDetentSwitch.svelte";
   import { audioQualityOptions, playbackStartLabel, playbackStartOptions } from "$lib/settings";
   import SelectField from "$lib/components/SelectField.svelte";
+  import MyLibrariesCard from "$lib/components/MyLibrariesCard.svelte";
 
   // Settings passes the household's status so the page has one status line.
   let { administrator = false, householdStatus = [] }: { administrator?: boolean; householdStatus?: { label: string }[] } = $props();
@@ -227,6 +228,8 @@
       <div class="settings-row playback-row"><div><strong>Playback start</strong><small>Balanced favors quality when starts stay under 3 seconds.</small></div><ThreeDetentSwitch label="Playback start" value={playbackStart} options={playbackStartOptions} disabled={controlsDisabled || !selectedFilter} onchange={value => void changePreference("playbackStart", value)} /></div>
       <div class="settings-row"><div><strong>Quality limit</strong><small>You can choose less than the household’s limit, not more.</small></div><SelectField value={qualityLimit} label="Quality limit" options={qualityChoices} disabled={controlsDisabled || !selectedFilter} onchange={value => void changePreference("qualityLimit", value)} /></div>
     </section>
+
+    <MyLibrariesCard {administrator} />
 
     <div class="settings-card preferences-panel elsewhere-panel">
       <header class="panel-heading"><h3>Elsewhere</h3></header>

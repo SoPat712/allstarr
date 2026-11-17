@@ -58,7 +58,7 @@ internal sealed record MixFillSong(Song Song, DateTimeOffset ReadAt, string Sour
 public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbContext> factory, IPlatformClock clock,
     SharedTagStore tags, TasteService taste, MusicMixService radio, IProtocolProviderGateway providers,
     NewReleasesService releases, IDurableRuntimeSettings settings, IEffectiveProviderPolicyResolver policies,
-    IBackendLibraryAccessResolver libraryAccess, AudioMuseDiscovery? audioMuse = null, SharedTagSources? tagSources = null, IProviderRegistry? registry = null, LastFmSimilarTracks? similarTracks = null,
+    [FromKeyedServices(ListeningLibraries.Key)] IBackendLibraryAccessResolver libraryAccess, AudioMuseDiscovery? audioMuse = null, SharedTagSources? tagSources = null, IProviderRegistry? registry = null, LastFmSimilarTracks? similarTracks = null,
     ILogger<PersonalMixService>? logger = null, IClientEventPublisher? events = null,
     ILibraryIndexService? libraryIndex = null, ITrackIdentityService? identities = null, PublicArtworkWarmer? artwork = null,
     IPlaylistPersistenceService? playlistStore = null, DurableJobQueue? jobQueue = null, IPlaylistOrchestrationService? playlistSync = null, TrackMatchDecisionEngine? feedMatcher = null, MixCoverImageService? coverImages = null,

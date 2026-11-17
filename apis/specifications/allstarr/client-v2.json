@@ -2243,7 +2243,7 @@
         "tags": [
           "Me"
         ],
-        "description": "Reads this listener\u0027s heart button action; defaults to keep. Can be batched.",
+        "description": "Reads this listener\u0027s heart button action, which defaults to keep, and the music libraries their songs are picked from. Can be batched.",
         "operationId": "getPreferencesV2",
         "parameters": [
           {
@@ -2341,7 +2341,7 @@
         "tags": [
           "Me"
         ],
-        "description": "Changes only this listener\u0027s heart button action: heart, keep or addToLibrary.",
+        "description": "Changes this listener\u0027s heart button action (heart, keep or addToLibrary), their chosen music libraries, or both; fields left out stay as they are.",
         "operationId": "updatePreferencesV2",
         "requestBody": {
           "content": {
@@ -2407,11 +2407,7 @@
           "503": {
             "description": "Service Unavailable",
             "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ClientApiError"
-                }
-              }
+              "application/json": {}
             }
           },
           "200": {
@@ -7355,6 +7351,34 @@
           }
         }
       },
+      "V2LibraryChoice": {
+        "required": [
+          "selected"
+        ],
+        "type": "object",
+        "properties": {
+          "selected": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "The chosen library ids, or null for every library this listener can open."
+          },
+          "available": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/V2MusicLibrary"
+            },
+            "description": "Every music library this listener can choose. Read only."
+          }
+        }
+      },
       "V2Listener": {
         "required": [
           "id",
@@ -7795,6 +7819,21 @@
           }
         }
       },
+      "V2MusicLibrary": {
+        "required": [
+          "id",
+          "name"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
       "V2PlaybackClient": {
         "required": [
           "codecs"
@@ -8075,8 +8114,26 @@
         "type": "object",
         "properties": {
           "heartAction": {
-            "type": "string",
+            "type": [
+              "null",
+              "string"
+            ],
             "description": "The heart button action: heart, keep or addToLibrary."
+          },
+          "libraries": {
+            "type": [
+              "null",
+              "object"
+            ],
+            "anyOf": [
+              {
+                "description": "The music libraries songs are picked from for this listener: mixes, Made for you and autoplay.",
+                "$ref": "#/components/schemas/V2LibraryChoice"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         }
       },

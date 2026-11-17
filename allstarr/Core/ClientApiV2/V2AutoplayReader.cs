@@ -13,7 +13,8 @@ namespace allstarr.Core.ClientApiV2;
 
 /// <summary>Continues a track through the existing mix sources, retaining the page when a later source times out.</summary>
 public sealed class V2AutoplayReader(V2TrackReader tracks, MusicMixService mixes, IProtocolProviderGateway providers,
-    JellyfinProxyService jellyfin, IEffectiveProviderPolicyResolver policies, TimeProvider clock, ILogger<V2AutoplayReader> logger)
+    JellyfinProxyService jellyfin, IEffectiveProviderPolicyResolver policies, TimeProvider clock, ILogger<V2AutoplayReader> logger,
+    ListeningLibraries? libraries = null)
 {
     private const int SourceLimit = 200;
     private const int MaximumSeen = 200;
@@ -123,7 +124,14 @@ public sealed class V2AutoplayReader(V2TrackReader tracks, MusicMixService mixes
         return (new(result, next), partial);
     }
 
+    // Library songs come only from the libraries this listener chose; service songs are unaffected.
     private async Task<IReadOnlyList<string>> SourceAsync(HttpContext http, ProtocolExecutionContext context, V2Track seed, string source, int stage)
+    {
+        var ids = await AnyLibrarySourceAsync(http, context, seed, source, stage);
+        return libraries == null ? ids : await libraries.KeepChosenAsync(context, ids, context.CancellationToken);
+    }
+
+    private async Task<IReadOnlyList<string>> AnyLibrarySourceAsync(HttpContext http, ProtocolExecutionContext context, V2Track seed, string source, int stage)
     {
         var parsed = LocalLibraryService.ParseExternalResource(source);
         if (parsed.provider == "allstarr")
