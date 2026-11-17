@@ -24,6 +24,7 @@
   import PlaylistRemovalDialog from "$lib/components/PlaylistRemovalDialog.svelte";
 
   import MediaArtwork from "$lib/components/MediaArtwork.svelte";
+  import MixCover from "$lib/components/MixCover.svelte";
   import ProviderMark from "$lib/components/ProviderMark.svelte";
   import SearchField from "$lib/components/SearchField.svelte";
   import SelectField from "$lib/components/SelectField.svelte";
@@ -689,7 +690,7 @@
           <div class="playlist-row">
           {#if isPlaylistMix(playlist)}
             <ItemRow title={playlist.name} subtitle={`Mix · in your apps · ${playlist.trackCount ?? "?"} ${playlist.trackCount === 1 ? "song" : "songs"}`} href={`#/for-you?mix=${encodeURIComponent(playlist.id)}`} actionLabel={`Open ${playlist.name} mix`} attention={needsLook(playlist)}>
-              {#snippet leading()}<MediaArtwork class="playlist-art" url={`/api/admin/mixes/${encodeURIComponent(playlist.id)}/cover?v=${encodeURIComponent(playlist.updatedAt ?? playlist.recipeVersion ?? "")}`} />{/snippet}
+              {#snippet leading()}<span class="playlist-art"><MixCover mix={playlist} /></span>{/snippet}
               {#snippet pill()}{#if rowState(playlist) !== "Healthy"}<StatePill tone={needsLook(playlist) ? "warn" : playlist.publication?.status === "updating" ? "info" : "ok"} text={rowState(playlist)} />{/if}{/snippet}
               {#snippet menu()}<DropdownMenu.Root><DropdownMenu.Trigger class={buttonVariants({ variant: "text", size: "icon" })} aria-label={`More options for ${playlist.name}`}><MoreHorizontal size={18} /></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content preventScroll={false} class="bits-menu" align="end"><DropdownMenu.Item class="bits-menu-item library-danger" onSelect={() => { removeError = ""; removingMix = playlist; }}>Remove from apps</DropdownMenu.Item></DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root>{/snippet}
             </ItemRow>
