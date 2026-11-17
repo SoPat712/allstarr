@@ -43,6 +43,46 @@ public sealed class LyricsTranslationTests
     }
 
     [Fact]
+    public async Task RomanizedLyricsAreWrittenInTheirOwnScriptBeforeTheyAreTranslated()
+    {
+        string[] source = ["Mann mast magan", "Bas tera naam dohraaye", "Mann mast magan"];
+        var transliterated = new List<string>();
+        var service = Service(request =>
+        {
+            var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(request.RequestUri!.Query);
+            if (request.RequestUri.Host == "inputtools.google.com")
+            {
+                Assert.Equal("hi-t-i0-und", query["itc"].ToString());
+                transliterated.Add(query["text"].ToString());
+                var written = query["text"].ToString() == "Mann mast magan" ? "मन मस्त मगन" : "बस तेरा नाम दोहराए";
+                return Json(JsonSerializer.Serialize(new object[] { "SUCCESS", new object[] { new object[] { query["text"].ToString(), new[] { written } } } }));
+            }
+            return query["q"].ToString().StartsWith("Mann", StringComparison.Ordinal)
+                ? Google("Mann mast magan\nJust repeat your name\nMann mast magan", "hi")
+                : Google("happy mind\njust repeat your name\nhappy mind", "hi");
+        });
+
+        var result = await service.TranslateAsync("trk_romanized", source, "en", default);
+
+        Assert.Equal(["Bas tera naam dohraaye", "Mann mast magan"], transliterated.Order(StringComparer.Ordinal).ToArray());
+        Assert.Equal(["happy mind", "just repeat your name", "happy mind"], result.Lines.Select(line => line.Text));
+        Assert.All(result.Lines, line => Assert.Equal("hi", line.From));
+    }
+
+    [Fact]
+    public async Task AFailedTransliterationKeepsTheFirstTranslation()
+    {
+        var service = Service(request => request.RequestUri!.Host == "inputtools.google.com"
+            ? new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
+            : Google("Mann mast magan\nJust repeat your name", "hi"));
+
+        var result = await service.TranslateAsync("trk_romanized", ["Mann mast magan", "Bas tera naam dohraaye"], "en", default);
+
+        Assert.Null(result.Lines[0].Text);
+        Assert.Equal("Just repeat your name", result.Lines[1].Text);
+    }
+
+    [Fact]
     public async Task UnchangedAndSpellingTweaksAreDroppedButShortTranslationsRemain()
     {
         var service = Service(_ => Google("CAFE, AMOR!\nuno dos tres amour\nOne", "es"));
@@ -191,7 +231,7 @@ public sealed class LyricsTranslationTests
         await service.TranslateAsync("trk_song", ["Uno"], "pt-BR", default);
         Assert.Equal(3, calls);
         Assert.Equal(3, stored.Count);
-        Assert.All(stored.Keys, key => Assert.StartsWith("lyrics:translation:v2:", key));
+        Assert.All(stored.Keys, key => Assert.StartsWith("lyrics:translation:v3:", key));
     }
 
     private static LyricsTranslation Service(Func<HttpRequestMessage, HttpResponseMessage> respond, string libre = "", IApplicationCache? cache = null)

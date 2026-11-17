@@ -13,6 +13,9 @@ public sealed class LyricsTranslation(IHttpClientFactory clients, IApplicationCa
     ApplicationCacheRequestCoalescer requests)
 {
     public const string HttpClientName = "LyricsTranslation";
+    // Languages normally written in their own script; Google's transliteration restores that script from Latin letters.
+    private static readonly HashSet<string> Transliterable = new(StringComparer.Ordinal)
+        { "hi", "bn", "gu", "kn", "ml", "mr", "ne", "pa", "ta", "te", "ur", "ar", "fa", "el", "ru", "sr" };
     private static readonly IReadOnlyDictionary<string, HashSet<string>> LanguageWords = new Dictionary<string, string>
     {
         ["en"] = "i you he she we they the a an and or but my your our their this that these those is are was were be been have has do does don't can will would in on at with for from of to it it's me i'm all go get",
@@ -46,7 +49,7 @@ public sealed class LyricsTranslation(IHttpClientFactory clients, IApplicationCa
 
     public async Task<V2LyricsTranslationResponse> TranslateAsync(string trackId, IReadOnlyList<string> lines, string to, CancellationToken token)
     {
-        var key = $"lyrics:translation:v2:{trackId}:{CanonicalCatalogKeys.Hash(JsonSerializer.Serialize(lines))}:{to}";
+        var key = $"lyrics:translation:v3:{trackId}:{CanonicalCatalogKeys.Hash(JsonSerializer.Serialize(lines))}:{to}";
         return await requests.RunAsync(key, async () =>
         {
             if (await cache.GetAsync<V2LyricsTranslationResponse>(key) is { } cached) return cached;
@@ -114,6 +117,10 @@ public sealed class LyricsTranslation(IHttpClientFactory clients, IApplicationCa
         {
             var song = await SendAsync(string.Join('\n', lines));
             if (song == null) return null;
+            // Romanized lyrics, such as Hindi in Latin letters, come back largely untranslated; in their own script they translate well.
+            if (provider == "google" && song.From is { } from && Transliterable.Contains(from) && IsRomanized(lines) &&
+                await TransliterateAsync(client, lines, from, token) is { } written && await SendAsync(string.Join('\n', written)) is { } better)
+                song = better with { From = from };
             var split = song.Text.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n').Split('\n');
             if (split.Length == lines.Length) return split.Select(text => new Translation(text, song.From)).ToArray();
         }
@@ -167,6 +174,49 @@ public sealed class LyricsTranslation(IHttpClientFactory clients, IApplicationCa
                     language.ValueKind == JsonValueKind.Object && language.TryGetProperty("language", out var name) &&
                     name.ValueKind == JsonValueKind.String ? name.GetString() : null;
             return new(translated.GetString()!, detected);
+        }
+    }
+
+    private static bool IsRomanized(IEnumerable<string> lines) =>
+        lines.SelectMany(line => line).Where(char.IsLetter).All(char.IsAsciiLetter);
+
+    /// <summary>Writes each distinct line in the language's own script, or returns null so the first translation stands.</summary>
+    private static async Task<string[]?> TransliterateAsync(HttpClient client, string[] lines, string language, CancellationToken token)
+    {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
+        deadline.CancelAfter(TimeSpan.FromSeconds(2));
+        using var gate = new SemaphoreSlim(8);
+        var distinct = lines.Distinct(StringComparer.Ordinal).ToArray();
+        try
+        {
+            var written = await Task.WhenAll(distinct.Select(async line =>
+            {
+                if (string.IsNullOrWhiteSpace(line)) return line;
+                await gate.WaitAsync(deadline.Token);
+                try
+                {
+                    using var response = await client.GetAsync("https://inputtools.google.com/request?itc=" + language +
+                        "-t-i0-und&num=1&text=" + Uri.EscapeDataString(line), deadline.Token);
+                    if (!response.IsSuccessStatusCode) return null;
+                    using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync(deadline.Token));
+                    var root = json.RootElement;
+                    if (root.ValueKind != JsonValueKind.Array || root.GetArrayLength() < 2 || root[0].ValueKind != JsonValueKind.String ||
+                        root[0].GetString() != "SUCCESS" || root[1].ValueKind != JsonValueKind.Array) return null;
+                    var parts = root[1].EnumerateArray().Select(segment => segment.ValueKind == JsonValueKind.Array && segment.GetArrayLength() > 1 &&
+                        segment[1].ValueKind == JsonValueKind.Array && segment[1].GetArrayLength() > 0 && segment[1][0].ValueKind == JsonValueKind.String
+                            ? segment[1][0].GetString() : null).ToArray();
+                    return parts.Length == 0 || parts.Any(part => part == null) ? null : string.Join(' ', parts);
+                }
+                finally { gate.Release(); }
+            }));
+            if (written.Any(text => text == null)) return null;
+            var lookup = distinct.Zip(written).ToDictionary(pair => pair.First, pair => pair.Second!, StringComparer.Ordinal);
+            return lines.Select(line => lookup[line]).ToArray();
+        }
+        catch (Exception error) when (error is HttpRequestException or JsonException ||
+            error is OperationCanceledException && !token.IsCancellationRequested)
+        {
+            return null;
         }
     }
 
