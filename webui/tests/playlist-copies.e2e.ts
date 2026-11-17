@@ -158,10 +158,10 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     await expect(row.getByText(/Mix · in your apps/)).toBeVisible();
     await expect(row.getByText(/1 song/)).toBeVisible();
     await expect(row).not.toContainText("confirmed");
-    const cover = row.locator(".playlist-art img");
-    await expect(cover).toHaveAttribute("src", `/api/admin/mixes/${keptMix.id}/cover?v=${encodeURIComponent(keptMix.updatedAt!)}`);
-    await expect(cover).toHaveAttribute("loading", "lazy");
-    await expect.poll(() => cover.evaluate(image => (image as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
+    // The same cover as For you: the mix's colours until its songs give it pictures.
+    const cover = row.locator(".playlist-art .mix-artwork");
+    await expect(cover).toBeVisible();
+    await expect(cover).toHaveCSS("background-image", /linear-gradient/);
     if (width === 390) {
       await expectContainedMobileGeometry(page);
       await expect(row.getByText(/Mix · in your apps · 1 song/)).toBeVisible();
