@@ -6375,6 +6375,13 @@
               "null",
               "string"
             ]
+          },
+          "libraryId": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "description": "The media server album when it is in the library."
           }
         }
       },
@@ -7907,6 +7914,13 @@
           },
           "name": {
             "type": "string"
+          },
+          "libraryId": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "description": "The media server artist when it is in the library."
           }
         }
       },

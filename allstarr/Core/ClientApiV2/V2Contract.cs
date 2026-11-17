@@ -51,13 +51,20 @@ public sealed record V2Track(
 /// <summary>A named reference; <c>id</c> is null when the source names something it can't identify.</summary>
 public sealed record V2Ref(
     [property: JsonPropertyName("id")] string? Id,
-    [property: JsonPropertyName("name")] string Name);
+    [property: JsonPropertyName("name")] string Name)
+{
+    [JsonPropertyName("libraryId"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull), Description("The media server artist when it is in the library.")]
+    public string? LibraryId => V2Ids.LibrarySource(Id, V2IdKind.Artist);
+}
 
 public sealed record V2AlbumRef(
     [property: JsonPropertyName("id")] string? Id,
     [property: JsonPropertyName("name")] string Name)
 {
     [JsonPropertyName("title")] public string Title => Name;
+
+    [JsonPropertyName("libraryId"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull), Description("The media server album when it is in the library.")]
+    public string? LibraryId => V2Ids.LibrarySource(Id, V2IdKind.Album);
 }
 
 public sealed record V2Provider(

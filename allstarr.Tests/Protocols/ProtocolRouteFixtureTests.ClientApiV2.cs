@@ -55,8 +55,10 @@ public sealed partial class ProtocolRouteFixtureTests
         var artist = Assert.Single(track.GetProperty("artists").EnumerateArray());
         Assert.Equal(V2Ids.Artist("artist1"), artist.GetProperty("id").GetString());
         Assert.Equal("Library artist", artist.GetProperty("name").GetString());
+        Assert.Equal("artist1", artist.GetProperty("libraryId").GetString());
         Assert.Empty(track.GetProperty("featuring").EnumerateArray());
         Assert.Equal(V2Ids.Album("album1"), track.GetProperty("album").GetProperty("id").GetString());
+        Assert.Equal("album1", track.GetProperty("album").GetProperty("libraryId").GetString());
         Assert.Equal(1, track.GetProperty("disc").GetInt32());
         Assert.Equal(3, track.GetProperty("track").GetInt32());
         Assert.Equal(200000, track.GetProperty("durationMs").GetInt64());
@@ -135,6 +137,8 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.Equal(V2Ids.Artist("ext-deezer-artist-10"), featured.GetProperty("id").GetString());
         Assert.Equal("Guest", featured.GetProperty("name").GetString());
         Assert.Equal(V2Ids.Album("ext-deezer-album-7"), track.GetProperty("album").GetProperty("id").GetString());
+        Assert.False(track.GetProperty("album").TryGetProperty("libraryId", out _));
+        Assert.False(featured.TryGetProperty("libraryId", out _));
         Assert.Equal(200000, track.GetProperty("durationMs").GetInt64());
         Assert.Equal(-6.25, track.GetProperty("trackGainDb").GetDouble());
         Assert.True(track.GetProperty("explicit").GetBoolean());

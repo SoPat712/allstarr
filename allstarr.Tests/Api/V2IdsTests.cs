@@ -25,6 +25,17 @@ public sealed class V2IdsTests
         Assert.Equal(source, plain.Source);
     }
 
+    [Fact]
+    public void LibraryReferencesNameTheirMediaServerItem()
+    {
+        Assert.Equal("71b3635b478019646b6d9ac19e9d2327", V2Ids.LibrarySource(V2Ids.Album("71b3635b478019646b6d9ac19e9d2327"), V2IdKind.Album));
+        Assert.Equal("ec9e9fcb79a05f57d2a9b711cba869db", V2Ids.LibrarySource(V2Ids.Artist("ec9e9fcb79a05f57d2a9b711cba869db"), V2IdKind.Artist));
+        Assert.Null(V2Ids.LibrarySource(V2Ids.Album("ext-deezer-album-1"), V2IdKind.Album));
+        Assert.Null(V2Ids.LibrarySource(V2Ids.Artist("ec9e9fcb79a05f57d2a9b711cba869db"), V2IdKind.Album));
+        Assert.Null(V2Ids.LibrarySource(null, V2IdKind.Artist));
+        Assert.Null(V2Ids.LibrarySource(V2Ids.Track(Guid.NewGuid()), V2IdKind.Track));
+    }
+
     [Theory]
     [InlineData("alb_ZXh0LWRlZXplci1hbGJ1bS0x")]
     [InlineData("ext-deezer-album-1")]

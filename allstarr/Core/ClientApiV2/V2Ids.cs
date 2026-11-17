@@ -35,6 +35,11 @@ public static class V2Ids
 
     public static string Mix(Guid mixId) => "mix_" + mixId.ToString("N");
 
+    /// <summary>The media server id inside a v2 id of this kind, or null when it names a service item or nothing.</summary>
+    public static string? LibrarySource(string? value, V2IdKind kind) =>
+        TryDecode(value, kind, out var id) && id.Recording == null && id.Source is { } source &&
+        !source.StartsWith("ext-", StringComparison.Ordinal) ? source : null;
+
     /// <summary>Decodes a v2 id of the expected kind, or accepts an older library or service id; returns false for anything else.</summary>
     public static bool TryDecode(string? value, V2IdKind expected, out V2IdRef id)
     {
