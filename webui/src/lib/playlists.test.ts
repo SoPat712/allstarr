@@ -16,7 +16,8 @@ import {
   playlistBehaviorSummary,
   playlistOutcomeLabel,
   jellyfinPlaylistWarning,
-  canRebuildInJellyfin,
+  canFixOrderWithNewCopy,
+  syncsToJellyfin,
   providerColor,
   runBounded,
   mediaServerName,
@@ -85,9 +86,12 @@ describe("playlist presentation", () => {
   });
 
   it("offers rebuilding only for linked Jellyfin playlists", () => {
-    expect(canRebuildInJellyfin(playlist({ targetProtocol: "Jellyfin" }))).toBe(true);
-    expect(canRebuildInJellyfin(playlist({ targetProtocol: "jellyfin", importMode: "oneTime" }))).toBe(false);
-    expect(canRebuildInJellyfin(playlist({ targetProtocol: "subsonic" }))).toBe(false);
+    expect(syncsToJellyfin(playlist({ targetProtocol: "Jellyfin" }))).toBe(true);
+    expect(syncsToJellyfin(playlist({ targetProtocol: "jellyfin", importMode: "oneTime" }))).toBe(false);
+    expect(syncsToJellyfin(playlist({ targetProtocol: "subsonic" }))).toBe(false);
+    expect(canFixOrderWithNewCopy(playlist({ targetProtocol: "jellyfin", mode: "materialized", targetPlaylistId: "saved" }))).toBe(true);
+    expect(canFixOrderWithNewCopy(playlist({ targetProtocol: "jellyfin", mode: "virtual", targetPlaylistId: "saved" }))).toBe(false);
+    expect(canFixOrderWithNewCopy(playlist({ targetProtocol: "jellyfin", mode: "materialized", targetPlaylistId: null }))).toBe(false);
   });
 
   it("offers linked removal only when the server permits it", () => {

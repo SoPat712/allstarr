@@ -17,7 +17,7 @@ for (const width of [1280, 390]) for (const theme of ["dark", "light"] as const)
       item.publication = {
         status: item.id === "on-repeat" ? "healthy" : item.id === "daily-1" ? "updating" : "needsLook",
         lastPublishedAt: "2026-11-09T05:00:00Z",
-        reason: item.id === "workout" ? "Served by Allstarr. This mix is past its refresh time. Try refreshing it again." : null,
+        reason: item.id === "workout" ? "Served by Allstarr. This mix missed its scheduled update. Choose Update now to catch up." : null,
       };
     }
     await page.route("**/api/admin/playlist-links", route => route.fulfill({ json: { playlistLinks: [{

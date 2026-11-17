@@ -64,7 +64,7 @@ for (const [width, theme] of [[1280, "light"], [1280, "dark"], [390, "light"]] a
     await page.getByRole("button", { name: "Open Evening mix playlist details" }).click();
     const panel = page.getByRole("dialog", { name: "Evening mix", exact: true });
     await expect(panel.getByRole("heading", { name: "Evening mix", exact: true })).toBeVisible();
-    await expect(panel.getByRole("button", { name: "Sync now", exact: true })).toBeVisible();
+    await expect(panel.getByRole("button", { name: "Update now", exact: true })).toBeVisible();
     const selected = page.locator(".library-rows .item-row.selected");
     await expectSubtleSelection(selected, selected.locator("h3"));
     await expectSingleRowFooter(panel);

@@ -14,10 +14,10 @@ const playlist = {
   metrics: { total: 3, matched: 3, unresolved: 0, review: 0, rejected: 0, playable: 3, materialized: 3 },
 };
 
-async function mockJellyfin(page: Page, options: { granted?: boolean; needsSignIn?: boolean; lastRunCode?: string | null; importMode?: string; rebuildError?: boolean; queuedSyncs?: number } = {}) {
+async function mockJellyfin(page: Page, options: { granted?: boolean; needsSignIn?: boolean; lastRunCode?: string | null; importMode?: string; mode?: string; rebuildError?: boolean; queuedSyncs?: number } = {}) {
   let granted = options.granted ?? false;
   let needsSignIn = options.needsSignIn ?? false;
-  let link = { ...playlist, lastRunCode: options.lastRunCode === undefined ? playlist.lastRunCode : options.lastRunCode, importMode: options.importMode ?? "linked" };
+  let link = { ...playlist, lastRunCode: options.lastRunCode === undefined ? playlist.lastRunCode : options.lastRunCode, importMode: options.importMode ?? "linked", mode: options.mode ?? playlist.mode };
   const writes: Array<{ method: string; path: string; body?: unknown }> = [];
   let listReads = 0, consentReads = 0;
   await page.route("**/*", async route => {
@@ -71,7 +71,7 @@ async function openPanel(page: Page) {
   return panel;
 }
 async function openRebuild(page: Page) {
-  await (await openPanel(page)).getByRole("button", { name: "Rebuild…", exact: true }).click();
+  await (await openPanel(page)).getByRole("button", { name: "Fix with a new copy…", exact: true }).click();
 }
 
 async function screenshot(page: Page, name: string) {
@@ -129,16 +129,16 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     await expect(row.getByRole("button", { name: "Rebuild", exact: true })).toHaveCount(0);
     await openRebuild(page);
     const dialog = page.getByRole("alertdialog");
-    await expect(dialog.getByRole("heading", { name: "Rebuild this playlist in Jellyfin?" })).toBeVisible();
-    await expect(dialog).toContainText("Allstarr makes the playlist again in the right order and removes the old copy. Apps see it as a new playlist, so pins, favourites and shortcuts to the old one stop working.");
+    await expect(dialog.getByRole("heading", { name: "Fix the order with a new copy?" })).toBeVisible();
+    await expect(dialog).toContainText("Apps see a new playlist, so pins, favourites and shortcuts to the old one stop working.");
     expect(fixture.writes).toEqual([]);
     await screenshot(page, `playlist-rebuild-${width}-${theme}`);
     await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
     expect(fixture.writes).toEqual([]);
     await openRebuild(page);
-    await dialog.getByRole("button", { name: "Rebuild", exact: true }).click();
+    await dialog.getByRole("button", { name: "Make a new copy", exact: true }).click();
     await expect(dialog).toHaveCount(0);
-    await expect(page.getByRole("status").filter({ hasText: "Playlist rebuilt in Jellyfin." })).toBeVisible();
+    await expect(page.getByRole("status").filter({ hasText: "Playlist order fixed in Jellyfin." })).toBeVisible();
     await expect(row.getByText("Order in Jellyfin differs from Spotify", { exact: true })).toHaveCount(0);
     expect(fixture.writes).toEqual([{ method: "POST", path: `/api/admin/playlist-links/${playlist.id}/rebuild` }]);
     expect(fixture.listReads()).toBeGreaterThan(1);
@@ -193,26 +193,25 @@ test("Expired saved Jellyfin sign-in can be removed without signing in again", a
   expect(fixture.writes).toEqual([{ method: "DELETE", path: "/api/admin/auth/playlist-consent" }]);
 });
 
-test("Linked Jellyfin playlists can rebuild without an order warning", async ({ page }) => {
+test("A playlist in the right order offers only Update now", async ({ page }) => {
   await mockJellyfin(page, { lastRunCode: null });
   await page.goto("/#/library/playlists");
+  const panel = await openPanel(page);
   await expect(page.getByRole("link", { name: "Allow editing" })).toHaveCount(0);
-  await expect((await openPanel(page)).getByRole("button", { name: "Rebuild…", exact: true })).toBeVisible();
+  await expect(panel.getByRole("button", { name: "Fix with a new copy…", exact: true })).toHaveCount(0);
+  await expect(panel.getByRole("button", { name: "Update now", exact: true })).toBeVisible();
+  await panel.getByRole("button", { name: "Actions", exact: true }).click();
+  await expect(page.getByRole("menuitem", { name: "Update now", exact: true })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: /Rebuild/ })).toHaveCount(0);
 });
 
-test("Jellyfin playlist details offer rebuilding with confirmation", async ({ page }) => {
-  const fixture = await mockJellyfin(page, { lastRunCode: null });
+test("A playlist Allstarr serves to apps has no copy to make again", async ({ page }) => {
+  await mockJellyfin(page, { mode: "virtual" });
   await page.goto("/#/library/playlists");
-  await page.getByRole("button", { name: "Open Evening mix playlist details" }).click();
-  await page.getByRole("button", { name: "Actions", exact: true }).click();
-  await page.getByRole("menuitem", { name: "Rebuild in Jellyfin" }).click();
-  const confirmation = page.getByRole("alertdialog");
-  await expect(confirmation.getByRole("heading", { name: "Rebuild this playlist in Jellyfin?" })).toBeVisible();
-  expect(fixture.writes).toEqual([]);
-  await confirmation.getByRole("button", { name: "Rebuild", exact: true }).click();
-  await expect(confirmation).toHaveCount(0);
-  await expect(page.getByRole("dialog")).toBeVisible();
-  await expect(page.getByRole("status").filter({ hasText: "Playlist rebuilt in Jellyfin." })).toBeVisible();
+  const panel = await openPanel(page);
+  await expect(panel).toContainText("Order in Jellyfin differs from Spotify");
+  await expect(panel.getByRole("link", { name: "Allow editing" })).toBeVisible();
+  await expect(panel.getByRole("button", { name: "Fix with a new copy…", exact: true })).toHaveCount(0);
 });
 
 for (const code of ["order,removal", "credential_expired"]) {
@@ -225,7 +224,7 @@ for (const code of ["order,removal", "credential_expired"]) {
     await expect(page.getByText(/Order in Jellyfin differs|Saved Jellyfin sign-in expired/)).toHaveCount(0);
     await page.getByRole("button", { name: "Open Evening mix playlist details" }).click();
     await page.getByRole("button", { name: "Actions", exact: true }).click();
-    await expect(page.getByRole("menuitem", { name: "Rebuild in Jellyfin" })).toHaveCount(0);
+    await expect(page.getByRole("menuitem", { name: /Rebuild/ })).toHaveCount(0);
   });
 }
 
@@ -234,9 +233,9 @@ test("Rebuild failure leaves its confirmation available for retry", async ({ pag
   await page.goto("/#/library/playlists");
   await openRebuild(page);
   const dialog = page.getByRole("alertdialog");
-  await dialog.getByRole("button", { name: "Rebuild", exact: true }).click();
+  await dialog.getByRole("button", { name: "Make a new copy", exact: true }).click();
   await expect(dialog.getByRole("alert")).toContainText("Jellyfin is unavailable. Try again.");
-  await expect(dialog.getByRole("button", { name: "Rebuild", exact: true })).toBeEnabled();
+  await expect(dialog.getByRole("button", { name: "Make a new copy", exact: true })).toBeEnabled();
 });
 
 for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const) {
@@ -249,13 +248,13 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     const row = page.locator(".playlist-row").filter({ hasText: playlist.name });
     await expect(row.getByText("Order fixing", { exact: true })).toBeVisible();
     const panel = await openPanel(page);
-    await expect(panel).toContainText("Fixing order on the next sync");
+    await expect(panel).toContainText("Fixing order at the next update");
     await expect(row.getByRole("link", { name: "Allow editing" })).toHaveCount(0);
     await expect(row.getByRole("button", { name: "Rebuild", exact: true })).toHaveCount(0);
     await expect(panel).toContainText("Nothing is missing; only the order is off.");
     await screenshot(page, `playlist-fixing-${width}-${theme}`);
     await panel.getByRole("button", { name: "Fix now", exact: true }).click();
-    await expect(row.getByText("Fixing order on the next sync", { exact: true })).toHaveCount(0);
+    await expect(row.getByText("Fixing order at the next update", { exact: true })).toHaveCount(0);
     expect(fixture.writes).toEqual([{ method: "POST", path: `/api/admin/playlist-links/${playlist.id}/run`, body: {} }]);
     expect(fixture.listReads()).toBeGreaterThan(1);
     expect(fixture.consentReads()).toBe(1);
@@ -267,14 +266,14 @@ test("An expired grant keeps the expired sign-in warning even with an order code
   await page.goto("/#/library/playlists");
   await expect(await openPanel(page)).toContainText("Saved Jellyfin sign-in expired");
   await expect(page.getByRole("link", { name: "Allow editing" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Sync now", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Update now", exact: true })).toBeVisible();
 });
 
 test("Playlist order status accepts spaced outcome codes", async ({ page }) => {
   await mockJellyfin(page, { granted: true, lastRunCode: " order , removal " });
   await page.goto("/#/library/playlists");
   await expect(page.locator(".playlist-row").getByText("Order fixing", { exact: true })).toBeVisible();
-  await expect(await openPanel(page)).toContainText("Fixing order on the next sync");
+  await expect(await openPanel(page)).toContainText("Fixing order at the next update");
 });
 
 test("Opening a panel menu keeps the page scrollable and the panel width", async ({ page }) => {

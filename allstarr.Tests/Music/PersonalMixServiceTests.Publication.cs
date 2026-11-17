@@ -52,7 +52,7 @@ public sealed partial class PersonalMixServiceTests
         await PublicationJob(mix.Id, DurableJobState.Failed);
         var publication = await Publication(mix.Id);
         Assert.Equal("needsLook", publication.GetProperty("status").GetString());
-        Assert.Contains("couldn't be refreshed", publication.GetProperty("reason").GetString());
+        Assert.Contains("couldn't be updated", publication.GetProperty("reason").GetString());
         Assert.DoesNotContain("private error", publication.GetProperty("reason").GetString());
         clock.UtcNow = clock.UtcNow.AddMinutes(1);
         await service.GenerateAsync(owner, mix.Id);
@@ -94,7 +94,7 @@ public sealed partial class PersonalMixServiceTests
         clock.UtcNow = clock.UtcNow.AddSeconds(1);
         var publication = await Publication(mix.Id);
         Assert.Equal("needsLook", publication.GetProperty("status").GetString());
-        Assert.Contains("refresh time", publication.GetProperty("reason").GetString());
+        Assert.Contains("missed its scheduled update", publication.GetProperty("reason").GetString());
         await PublicationJob(Guid.Empty, DurableJobState.Pending);
         Assert.Equal("updating", (await Publication(mix.Id)).GetProperty("status").GetString());
     }
@@ -197,7 +197,7 @@ public sealed partial class PersonalMixServiceTests
         await db.SaveChangesAsync();
         status = (await service.PublicationStatusAsync(user, [card], true, default))[link.Id];
         Assert.Equal(served ? "healthy" : "needsLook", status.Status);
-        if (!served) Assert.Contains("isn't available", status.Reason);
+        if (!served) Assert.Contains("isn't in your apps yet", status.Reason);
         db.Jobs.Add(new()
         {
             Id = Guid.NewGuid(),

@@ -356,7 +356,7 @@ test("Playlist details use a responsive dialog and track rows open mapping revie
   await expect(dialog.getByRole("button", { name: "Track route" })).toContainText("All routes");
   await expect(dialog.getByRole("button", { name: "Actions" })).toBeInViewport();
   await dialog.getByRole("button", { name: "Actions" }).click();
-  await expect(page.getByRole("menuitem", { name: "Update playlist now" })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: "Update now" })).toBeVisible();
   await expect(page.getByRole("menuitem", { name: "Review account rematch" })).toBeVisible();
   await expect(page.getByRole("menuitem", { name: "Refresh source" })).toBeVisible();
   await page.keyboard.press("Escape");
@@ -437,7 +437,7 @@ test("Playlist dialog keeps Actions and close controls independent at desktop an
     await close.focus();
     await expect(close).toBeFocused();
     await actions.click();
-    await expect(page.getByRole("menuitem", { name: "Update playlist now" })).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: "Update now" })).toBeVisible();
     await expect(close).toBeVisible();
     await page.keyboard.press("Escape");
     await close.click();
@@ -605,7 +605,7 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 
     await filter.focus();
     const before = await scroll.evaluate((element) => element.scrollTop);
     await dialog.getByRole("button", { name: "Actions" }).click();
-    await page.getByRole("menuitem", { name: "Update playlist now" }).click();
+    await page.getByRole("menuitem", { name: "Update now" }).click();
     await filter.focus();
     await expect.poll(() => detailRequests).toBe(2);
 
@@ -667,7 +667,7 @@ test("Playlist operations show durable progress and confirm cancellation", async
     item.method() === "POST" && item.url().endsWith("/api/admin/playlist-links/playlist-link/run") &&
     item.postDataJSON().snapshotId === "playlist-snapshot");
   await dialog.getByRole("button", { name: "Actions" }).click();
-  await page.getByRole("menuitem", { name: "Update playlist now" }).click();
+  await page.getByRole("menuitem", { name: "Update now" }).click();
   await update;
   await expect(page.getByRole("status").filter({ hasText: "Playlist update queued." })).toBeVisible();
   await dialog.getByRole("button", { name: /Operation details:/ }).click();
@@ -751,7 +751,7 @@ test("playlist projections, operations, and cancellation keep the selected playl
   await cancel.getByRole("button", { name: "Keep running" }).click();
 
   await details.getByRole("button", { name: "Actions" }).click();
-  await page.getByRole("menuitem", { name: "Update playlist now" }).click();
+  await page.getByRole("menuitem", { name: "Update now" }).click();
   await expect(details.getByRole("button", { name: /Operation details:/ })).toBeVisible();
   await details.getByRole("button", { name: "Close" }).click();
 

@@ -398,7 +398,7 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
             var requested = mixId == null ? null : captured.Mixes.Values.SingleOrDefault(item => item.Id == mixId) ?? throw new KeyNotFoundException();
             if (requested?.Kind == "custom") throw new ArgumentException("Saved mixes do not refresh.");
             if (!scheduled && allowProviderReads && requested?.UpdatedAt > clock.UtcNow.AddMinutes(-PersonalMixRules.RefreshMinutes))
-                throw new InvalidOperationException("Wait 15 minutes before refreshing this mix again.");
+                throw new InvalidOperationException("Wait 15 minutes before updating this mix again.");
             if (!dryRun && timeZoneId != null) await SnapshotAsync(owner, token, timeZoneId);
             await using var db = await factory.CreateDbContextAsync(token);
             ListeningEventRecord[] events;

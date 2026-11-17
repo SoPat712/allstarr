@@ -36,7 +36,7 @@ for (const admin of [false, true]) test(`Household availability gates adding for
   await page.goto("/#/for-you?mix=daily-1");
   await expect(page.getByRole("dialog").getByRole("switch", { name: "Show in my apps", exact: true })).toBeDisabled();
   await expect(page.getByRole("dialog").getByText("Your admin hasn't allowed adding mixes.", { exact: true })).toBeVisible();
-  state.publish = true; await page.getByRole("button", { name: "Refresh mix", exact: true }).click();
+  state.publish = true; await page.getByRole("button", { name: "Update now", exact: true }).click();
   await expect(page.getByRole("dialog").getByRole("switch", { name: "Show in my apps", exact: true })).toBeEnabled();
   expect(state.calls.some(call => call.path === "/api/admin/mixes/publish-setting")).toBe(false);
 });
@@ -78,7 +78,7 @@ test("Not-ready mix artwork keeps its colour and explanation", async ({ page }) 
 });
 test("Refresh throttle stays in effect after a rejected request", async ({ page }) => {
   await mockForYou(page); await page.goto("/#/for-you?mix=daily-1");
-  await page.getByRole("button", { name: "Refresh mix", exact: true }).click(); await expect(page.getByRole("button", { name: "Refresh mix", exact: true })).toBeDisabled();
+  await page.getByRole("button", { name: "Update now", exact: true }).click(); await expect(page.getByRole("button", { name: "Update now", exact: true })).toBeDisabled();
 });
 test("Undo preserves other and subsequently edited preferences", async ({ page }) => {
   const state = await mockForYou(page); await page.goto("/#/for-you?mix=daily-1");
@@ -218,17 +218,17 @@ for (const outcome of ["Succeeded", "Failed"] as const) test(`Queued mix refresh
   await page.route("**/api/admin/jobs/mix-job?*", route => { jobReads++; return route.fulfill({ json: { job: { id: "mix-job", state: jobState } } }); });
   await page.clock.install();
   await page.goto("/#/for-you?mix=daily-1");
-  await page.getByRole("button", { name: "Refresh mix", exact: true }).click();
-  await expect(page.getByText("Refreshing this mix...", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Update now", exact: true }).click();
+  await expect(page.getByText("Updating this mix…", { exact: true })).toBeVisible();
   await expect.poll(() => jobReads).toBe(1);
   await page.clock.runFor(10_000);
   expect(jobReads).toBe(1);
   if (outcome === "Succeeded") state.songs[0].song.title = "Freshly refreshed song";
   jobState = outcome;
   await page.evaluate(() => Reflect.get(window, "finishMixJob")());
-  await expect(page.getByText(outcome === "Succeeded" ? "Your mix has refreshed." : "Your mix could not be refreshed. Try again.", { exact: true })).toBeVisible();
+  await expect(page.getByText(outcome === "Succeeded" ? "Your mix is up to date." : "Your mix could not be updated. Try again.", { exact: true })).toBeVisible();
   if (outcome === "Succeeded") await expect(page.getByRole("dialog").getByText("Freshly refreshed song", { exact: true })).toBeVisible();
-  else await expect(page.getByText("Your mix has refreshed.", { exact: true })).toHaveCount(0);
+  else await expect(page.getByText("Your mix is up to date.", { exact: true })).toHaveCount(0);
   expect(jobReads).toBe(2);
   await page.getByRole("button", { name: "Close", exact: true }).click();
   const before = state.calls.filter(call => call.path === "/api/admin/mixes").length;

@@ -48,10 +48,10 @@ public sealed partial class PersonalMixService
                 return new MixPublicationStatus("updating", publishedAt, null);
             if (relevant.Any(item => item.Job.State == DurableJobState.Failed &&
                 (mix?.UpdatedAt is not { } refreshed || (item.Job.CompletedAt ?? item.Job.UpdatedAt) >= refreshed)))
-                return new MixPublicationStatus("needsLook", publishedAt, "Served by Allstarr. This mix couldn't be refreshed. Try refreshing it again.");
+                return new MixPublicationStatus("needsLook", publishedAt, "Served by Allstarr. This mix couldn't be updated. Choose Update now to try again.");
             if (!published)
                 return new MixPublicationStatus("needsLook", null, enabled
-                    ? "Served by Allstarr. This mix isn't available in your apps yet. Try refreshing it."
+                    ? "Served by Allstarr. This mix isn't in your apps yet. Choose Update now to add it."
                     : "Served by Allstarr. Your admin hasn't allowed publishing mixes to apps.");
             if (card.Songs.Any(item =>
             {
@@ -59,10 +59,10 @@ public sealed partial class PersonalMixService
                 var parsed = LocalLibraryService.ParseExternalResource(item.Song.Id);
                 return string.IsNullOrWhiteSpace(item.Song.ExternalProvider ?? parsed.provider) || string.IsNullOrWhiteSpace(item.Song.ExternalId ?? parsed.externalId);
             }))
-                return new MixPublicationStatus("needsLook", publishedAt, "Served by Allstarr. Some songs are no longer available. Try refreshing this mix.");
+                return new MixPublicationStatus("needsLook", publishedAt, "Served by Allstarr. Some songs are no longer available. Choose Update now to replace them.");
             if (card.Kind != "custom" && mix!.UpdatedAt is { } updated &&
                 DurableScheduleEngine.GetNextOccurrence(PersonalMixRules.Cron(card.Kind), document.TimeZoneId, updated) <= clock.UtcNow)
-                return new MixPublicationStatus("needsLook", publishedAt, "Served by Allstarr. This mix is past its refresh time. Try refreshing it again.");
+                return new MixPublicationStatus("needsLook", publishedAt, "Served by Allstarr. This mix missed its scheduled update. Choose Update now to catch up.");
             return new MixPublicationStatus("healthy", publishedAt, null);
         });
         await ExternalPublicationStatusAsync(db, user, added.Where(card => card.Kind == "external").ToArray(), result, enabled, token);
@@ -108,19 +108,19 @@ public sealed partial class PersonalMixService
                 run?.State is PlaylistSyncState.Pending or PlaylistSyncState.Running;
             if (relevant.Any(job => job.State == DurableJobState.Failed && (publishedAt == null || (job.CompletedAt ?? job.UpdatedAt) >= publishedAt)) ||
                 run?.State is PlaylistSyncState.Failed or PlaylistSyncState.Conflicted or PlaylistSyncState.PartiallySucceeded)
-                reason = "This mix couldn't be updated. Try refreshing it again.";
+                reason = "This mix couldn't be updated. Choose Update now to try again.";
             else if (link != null && !enabled && IsExternalLink(link))
                 reason = "Your admin hasn't allowed publishing mixes to apps.";
             else if (link == null || snapshot == null || publishedAt == null || !served && string.IsNullOrWhiteSpace(link.TargetPlaylistId))
-                reason = "This mix isn't available in your apps yet. Try refreshing it.";
+                reason = "This mix isn't in your apps yet. Choose Update now to add it.";
             else if (!served && (run == null || run.VerificationCode != "verified" || run.PlaylistSourceSnapshotId != snapshot.Id ||
                 snapshots.Any(item => item.PlaylistLinkId == card.Id && item.SnapshotVersion > snapshot.SnapshotVersion)))
-                reason = "The saved playlist hasn't been verified with the current songs. Try refreshing it.";
+                reason = "Your apps may not have the latest songs yet. Choose Update now to check.";
             else if (run != null && unavailable.Contains(run.Id))
-                reason = "Some songs are no longer available. Try refreshing this mix.";
+                reason = "Some songs are no longer available. Choose Update now to replace them.";
             else if (link.ScheduleId is { } scheduleId && schedules.SingleOrDefault(item => item.Id == scheduleId) is { Enabled: true } schedule &&
                 DurableScheduleEngine.GetNextOccurrence(schedule.CronExpression, schedule.TimeZoneId, publishedAt.Value) <= clock.UtcNow)
-                reason = "This mix is past its refresh time. Try refreshing it again.";
+                reason = "This mix missed its scheduled update. Choose Update now to catch up.";
             result[card.Id] = new(updating ? "updating" : reason == null ? "healthy" : "needsLook", publishedAt,
                 updating || reason == null ? null : $"{delivery} {reason}");
         }

@@ -24,7 +24,7 @@ public sealed partial class PlaylistOrchestrationService
             throw new InvalidOperationException("Add this playlist back to your apps before rebuilding it.");
         if (link.ImportMode == PlaylistImportMode.OneTime) throw new InvalidOperationException("Imports keep your own order.");
         if (link.TargetProtocol != "jellyfin" || link.Mode == PlaylistLinkMode.Virtual || link.TargetPlaylistId == null)
-            throw new InvalidOperationException("Rebuild requires a mapped Jellyfin playlist.");
+            throw new InvalidOperationException("Only a playlist saved in Jellyfin can be made again.");
         var owner = await db.Users.AsNoTracking().SingleOrDefaultAsync(item => item.Id == link.OwnerUserId && item.Enabled &&
             item.BackendType == "jellyfin" && item.BackendInstanceId == link.TargetBackendInstanceId, cancellationToken)
             ?? throw new UnauthorizedAccessException();
@@ -68,7 +68,7 @@ public sealed partial class PlaylistOrchestrationService
                 ids, $"rebuild:{link.Id:N}:{link.Revision}"), cancellationToken);
             stagedId = created.Value?.Snapshot.BackendPlaylistId ?? created.RecoveryPlaylistId;
             if (!created.IsSuccess || created.Value == null)
-                throw new PlaylistRebuildException("The replacement Jellyfin playlist could not be created.");
+                throw new PlaylistRebuildException("Jellyfin couldn't make the new copy, so the old one is unchanged.");
             var snapshotAfter = created.Value.Snapshot;
             if (!snapshotAfter.Members.Select(item => item.BackendItemId).SequenceEqual(ids))
                 throw new PlaylistRebuildException("Jellyfin did not keep the requested playlist order.");

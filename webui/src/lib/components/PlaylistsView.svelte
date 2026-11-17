@@ -47,7 +47,7 @@
   } from "$lib/api";
   import { relativeTime } from "$lib/activity";
   import {
-    canRebuildInJellyfin,
+    canFixOrderWithNewCopy,
     canRemovePlaylistFromApps,
     filterPlaylists,
     filterTracks,
@@ -432,7 +432,7 @@
   }
 
   function confirmRebuild(playlist: PlaylistLink) {
-    if (action || rebuilding || !canRebuildInJellyfin(playlist)) return;
+    if (action || rebuilding || !canFixOrderWithNewCopy(playlist)) return;
     rebuildError = "";
     rebuildingPlaylist = playlist;
   }
@@ -445,10 +445,10 @@
     try {
       await playlistLinks.rebuild(rebuildingPlaylist.id);
       rebuildingPlaylist = null;
-      toast.success("Playlist rebuilt in Jellyfin.");
+      toast.success("Playlist order fixed in Jellyfin.");
       await refresh();
     } catch (cause) {
-      rebuildError = cause instanceof Error ? cause.message : "The playlist could not be rebuilt.";
+      rebuildError = cause instanceof Error ? cause.message : "The order could not be fixed.";
     } finally {
       rebuilding = false;
       action = "";
@@ -691,7 +691,7 @@
             <ItemRow title={playlist.name} subtitle={`Mix · in your apps · ${playlist.trackCount ?? "?"} ${playlist.trackCount === 1 ? "song" : "songs"}`} href={`#/for-you?mix=${encodeURIComponent(playlist.id)}`} actionLabel={`Open ${playlist.name} mix`} attention={needsLook(playlist)}>
               {#snippet leading()}<MediaArtwork class="playlist-art" url={`/api/admin/mixes/${encodeURIComponent(playlist.id)}/cover?v=${encodeURIComponent(playlist.updatedAt ?? playlist.recipeVersion ?? "")}`} />{/snippet}
               {#snippet pill()}{#if rowState(playlist) !== "Healthy"}<StatePill tone={needsLook(playlist) ? "warn" : playlist.publication?.status === "updating" ? "info" : "ok"} text={rowState(playlist)} />{/if}{/snippet}
-              {#snippet menu()}<DropdownMenu.Root><DropdownMenu.Trigger class={buttonVariants({ variant: "text", size: "icon" })} aria-label={`More options for ${playlist.name}`}><MoreHorizontal size={18} /></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content preventScroll={false} class="bits-menu" align="end"><DropdownMenu.Item class="bits-menu-item library-danger" onSelect={() => { removeError = ""; removingMix = playlist; }}>Remove from my apps</DropdownMenu.Item></DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root>{/snippet}
+              {#snippet menu()}<DropdownMenu.Root><DropdownMenu.Trigger class={buttonVariants({ variant: "text", size: "icon" })} aria-label={`More options for ${playlist.name}`}><MoreHorizontal size={18} /></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content preventScroll={false} class="bits-menu" align="end"><DropdownMenu.Item class="bits-menu-item library-danger" onSelect={() => { removeError = ""; removingMix = playlist; }}>Remove from apps</DropdownMenu.Item></DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root>{/snippet}
             </ItemRow>
           {:else}
             <ItemRow title={playlist.name} subtitle={`${providerName(playlist.sourceProviderId)} → ${providerName(playlist.targetProtocol)} · ${countLabel(playlist.trackCount, "song")}${playlist.routeCoverage.some(route => ["local", playlist.targetProtocol].includes(route.providerId)) ? ` · ${playlist.routeCoverage.filter(route => ["local", playlist.targetProtocol].includes(route.providerId)).reduce((sum, route) => sum + route.count, 0)} from your library` : ""}${hasCopy(playlist) ? " · Your copy" : ""}${libraryNote(playlist)}`} actionLabel={`Open ${playlist.name} playlist details`} selected={playlist.id === selectedId} attention={needsLook(playlist)} onclick={event => void loadDetails(playlist.id, event.currentTarget as HTMLElement)}>
@@ -701,7 +701,7 @@
                 <DropdownMenu.Root>
                   <DropdownMenu.Trigger class={buttonVariants({ variant: "text", size: "icon" })} aria-label={`More options for ${playlist.name}`}><MoreHorizontal size={18} /></DropdownMenu.Trigger>
                   <DropdownMenu.Portal><DropdownMenu.Content preventScroll={false} class="bits-menu" align="end">
-                    <DropdownMenu.Item class="bits-menu-item library-danger" onSelect={() => confirmRemoval(playlist)}>Remove from my apps</DropdownMenu.Item>
+                    <DropdownMenu.Item class="bits-menu-item library-danger" onSelect={() => confirmRemoval(playlist)}>Remove from apps</DropdownMenu.Item>
                   </DropdownMenu.Content></DropdownMenu.Portal>
                 </DropdownMenu.Root>
               {/if}{/snippet}
@@ -725,8 +725,7 @@
           </DropdownMenu.Trigger>
           <DropdownMenu.Portal>
             <DropdownMenu.Content preventScroll={false} class="bits-menu" sideOffset={6} align="end">
-              <DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action) || !selected.enabled} onSelect={() => void run("sync")}>{selected.importMode === "oneTime" ? "Rebuild from imported copy" : "Update playlist now"}</DropdownMenu.Item>
-              {#if canRebuildInJellyfin(selected)}<DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action) || rebuilding} onSelect={() => confirmRebuild(selected)}>Rebuild in Jellyfin</DropdownMenu.Item>{/if}
+              <DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action) || !selected.enabled} onSelect={() => void run("sync")}>{selected.importMode === "oneTime" ? "Restore imported copy" : "Update now"}</DropdownMenu.Item>
               <DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => { detailOpen = false; rematchOpen = true; }}>Review account rematch</DropdownMenu.Item>
               {#if selected.importMode === "linked"}<DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => void refreshSources([selected.id])}>Refresh source</DropdownMenu.Item>{/if}
               {#if selected.sourceUpdateAvailable}
@@ -745,7 +744,7 @@
         </DropdownMenu.Root>
       {/if}{/snippet}
       {#snippet artwork()}<MediaArtwork class="hero-art" url={details?.artworkUrl} loading="eager" />{/snippet}
-      {#snippet footer()}{#if selected}<div class="playlist-panel-footer">{#if isServiceMix(selected) || canRemovePlaylistFromApps(selected)}<Button variant="destructive-text" onclick={() => confirmRemoval(selected)}>Remove from my apps</Button>{/if}<div>{#if canRebuildInJellyfin(selected)}<Button variant="outline" disabled={Boolean(action)} onclick={() => confirmRebuild(selected)}>Rebuild…</Button>{/if}<Button disabled={Boolean(action) || !selected.enabled || !details} onclick={() => void run("sync")}>Sync now</Button></div></div>{/if}{/snippet}
+      {#snippet footer()}{#if selected}<div class="playlist-panel-footer">{#if isServiceMix(selected) || canRemovePlaylistFromApps(selected)}<Button variant="destructive-text" onclick={() => confirmRemoval(selected)}>Remove from apps</Button>{/if}<div><Button disabled={Boolean(action) || !selected.enabled || !details} onclick={() => void run("sync")}>Update now</Button></div></div>{/if}{/snippet}
       {#if detailLoading && !details}
         <RowsSkeleton count={5} />
       {:else if detailError && !details}
@@ -763,7 +762,7 @@
           <div class="degraded-banner" role="status"><span aria-hidden="true">!</span><p>Restore media-server access to resume playlist sync and library scans.</p><Button variant="secondary" href="#/settings/people">Open media-server access</Button></div>
         {/if}
         {@const editingWarning = jellyfinPlaylistWarning(selected, providerName(selected.sourceProviderId))}
-        {#if editingWarning}<div class="playlist-warning" role="status"><strong>{consent?.needsSignIn ? "Saved Jellyfin sign-in expired" : editingWarning}.</strong> {#if consent?.granted && !consent.needsSignIn && selected.lastRunCode?.split(",").some(code => code.trim() === "order")}Nothing is missing; only the order is off. Fixing order on the next sync{#if details.schedule?.nextRunAt}{` · ${relativeTime(details.schedule.nextRunAt)}`}{/if}. <Button variant="text" size="sm" disabled={Boolean(action) || !selected.enabled} onclick={() => void run("sync")}>Fix now</Button>{:else}<Button variant="text" href="#/sources/services?section=playlist-editing">Allow editing</Button>{/if}</div>{/if}
+        {#if editingWarning}<div class="playlist-warning" role="status"><strong>{consent?.needsSignIn ? "Saved Jellyfin sign-in expired" : editingWarning}.</strong> {#if consent?.granted && !consent.needsSignIn && selected.lastRunCode?.split(",").some(code => code.trim() === "order")}Nothing is missing; only the order is off. Fixing order at the next update{#if details.schedule?.nextRunAt}{` · ${relativeTime(details.schedule.nextRunAt)}`}{/if}. <Button variant="text" size="sm" disabled={Boolean(action) || !selected.enabled} onclick={() => void run("sync")}>Fix now</Button>{:else}<Button variant="text" href="#/sources/services?section=playlist-editing">Allow editing</Button>{#if canFixOrderWithNewCopy(selected) && selected.lastRunCode?.split(",").some(code => code.trim() === "order")}<Button variant="text" size="sm" disabled={Boolean(action) || rebuilding} onclick={() => confirmRebuild(selected)}>Fix with a new copy…</Button>{/if}{/if}</div>{/if}
         <div class="playlist-kpis"><div><strong>{details.trackCount}</strong><small>{countNoun(details.trackCount, "song")}</small></div><div><strong>{details.playableCount}</strong><small>playable</small></div><div><strong>{details.localCount ?? "—"}</strong><small>from your library</small></div></div>
         <div class="playlist-match-summary"><strong>{details.reviewCount + details.unresolvedCount ? countLabel(details.reviewCount + details.unresolvedCount, "song needs a look", "songs need a look") : `All ${countLabel(details.trackCount, "match is settled", "matches are settled")}`}</strong><span>{details.reviewCount + details.unresolvedCount ? "Review these songs in Matches." : "None of this playlist’s songs need a look."} <Button variant="text" size="sm" href="#/library/matches">Open in Matches</Button></span></div>
         {#key selected.id}<PlaylistSyncSettings playlist={selected} schedule={details.schedule ?? null} sourceName={providerName(selected.sourceProviderId)} {targetName} onPlaylist={value => playlists = playlists.map(item => item.id === value.id ? value : item)} onSchedule={(value, id) => { if (details?.id === id) details = { ...details, schedule: value }; }} />{/key}
@@ -1063,7 +1062,7 @@
   />
 {/if}
 
-<ConfirmDialog bind:open={() => Boolean(removingMix), value => { if (!value) removingMix = null; }} title={`Remove ${removingMix?.name ?? "this playlist"} from your apps?`} description={`${removingMix?.name ?? "This playlist"} leaves your apps for you. Its source is unchanged. Saved matches stay, so adding it back is quick.`} confirmLabel="Remove from my apps" disabled={removing} closeOnConfirm={false} error={removeError} onConfirm={removeMix} />
+<ConfirmDialog bind:open={() => Boolean(removingMix), value => { if (!value) removingMix = null; }} title={`Remove ${removingMix?.name ?? "this playlist"} from your apps?`} description={`${removingMix?.name ?? "This playlist"} leaves your apps for you. Its source is unchanged. Saved matches stay, so adding it back is quick.`} confirmLabel="Remove from apps" disabled={removing} closeOnConfirm={false} error={removeError} onConfirm={removeMix} />
 <PlaylistRemovalDialog
   bind:open={() => Boolean(removingPlaylist), value => { if (!value) { removingPlaylist = null; removalPreview = null; removalPreviewError = ""; removalPreviewRequest++; removalPreviewLoading = false; } }}
   name={removingPlaylist?.name ?? "this playlist"}
@@ -1077,9 +1076,9 @@
 />
 <ConfirmDialog
   bind:open={() => Boolean(rebuildingPlaylist), value => { if (!value && !rebuilding) rebuildingPlaylist = null; }}
-  title="Rebuild this playlist in Jellyfin?"
-  description="Allstarr makes the playlist again in the right order and removes the old copy. Apps see it as a new playlist, so pins, favourites and shortcuts to the old one stop working."
-  confirmLabel={rebuilding ? "Rebuilding…" : "Rebuild"}
+  title="Fix the order with a new copy?"
+  description="Allstarr makes this playlist again in Jellyfin in the right order and removes the old one. Apps see a new playlist, so pins, favourites and shortcuts to the old one stop working. Allowing playlist editing fixes the order without this."
+  confirmLabel={rebuilding ? "Making a new copy…" : "Make a new copy"}
   confirmVariant="default"
   disabled={rebuilding}
   closeOnConfirm={false}

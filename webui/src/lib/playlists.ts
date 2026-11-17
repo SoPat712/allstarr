@@ -1,15 +1,20 @@
 import { countLabel } from "./count-label";
 import type { MixCard, PlaylistLink, PlaylistSourceAccount, PlaylistTrack } from "./api";
 
-export function canRebuildInJellyfin(link: Pick<PlaylistLink, "importMode" | "targetProtocol">) {
+export function syncsToJellyfin(link: Pick<PlaylistLink, "importMode" | "targetProtocol">) {
   return link.importMode === "linked" && link.targetProtocol.toLowerCase() === "jellyfin";
+}
+
+// Making a fresh copy only works for a playlist saved in Jellyfin; playlists Allstarr serves to apps have no copy to replace.
+export function canFixOrderWithNewCopy(link: Pick<PlaylistLink, "importMode" | "targetProtocol" | "mode" | "targetPlaylistId">) {
+  return syncsToJellyfin(link) && link.mode !== "virtual" && Boolean(link.targetPlaylistId);
 }
 
 export function jellyfinPlaylistWarning(
   link: Pick<PlaylistLink, "importMode" | "targetProtocol" | "lastRunCode">,
   sourceName: string,
 ) {
-  if (!canRebuildInJellyfin(link)) return "";
+  if (!syncsToJellyfin(link)) return "";
   const codes = link.lastRunCode?.split(",").map(code => code.trim()) ?? [];
   if (codes.includes("credential_expired")) return "Saved Jellyfin sign-in expired";
   return codes.includes("order") ? `Order in Jellyfin differs from ${sourceName}` : "";

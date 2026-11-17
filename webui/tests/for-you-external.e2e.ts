@@ -123,8 +123,8 @@ test("Removing an external playlist makes its recipe available again", async ({ 
   const state = await mockForYou(page); await openHome(page); await add(page);
   await page.goto("/#/library/playlists");
   await page.getByRole("button", { name: "Open Loved on Last.fm playlist details", exact: true }).click();
-  await page.getByRole("dialog", { name: "Loved on Last.fm", exact: true }).getByRole("button", { name: "Remove from my apps", exact: true }).click();
-  await page.getByRole("alertdialog").getByRole("button", { name: "Remove from my apps", exact: true }).click();
+  await page.getByRole("dialog", { name: "Loved on Last.fm", exact: true }).getByRole("button", { name: "Remove from apps", exact: true }).click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Remove from apps", exact: true }).click();
   await expect(page.getByRole("button", { name: "Open Loved on Last.fm playlist details", exact: true })).toHaveCount(0);
   await openHome(page); await add(page);
   await expect.poll(() => state.calls.filter(call => call.path === "/api/admin/mixes/external" && call.method === "POST").length).toBe(2);

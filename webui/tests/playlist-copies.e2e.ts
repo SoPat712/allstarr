@@ -184,8 +184,8 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     expect(reads.filter(path => path === `/api/admin/mixes/${builtInMixes[3].id}`)).toHaveLength(0);
     await page.getByRole("dialog").getByRole("link", { name: "Manage in Playlists", exact: true }).click();
     await page.getByRole("button", { name: `More options for ${keptMix.name}`, exact: true }).click();
-    await page.getByRole("menuitem", { name: "Remove from my apps", exact: true }).click();
-    await page.getByRole("alertdialog").getByRole("button", { name: "Remove from my apps", exact: true }).click();
+    await page.getByRole("menuitem", { name: "Remove from apps", exact: true }).click();
+    await page.getByRole("alertdialog").getByRole("button", { name: "Remove from apps", exact: true }).click();
     await expect(rows.filter({ hasText: keptMix.name })).toHaveCount(0);
     await capture(page, "playlist-after-remove", width, theme);
     await page.goto(`/#/for-you?mix=${keptMix.id}`);
@@ -208,11 +208,11 @@ test("Removing a mix from playlists keeps it available to add again", async ({ p
   const cards = [{ ...keptMix }]; const reads = await mockCopies(page, false, false, [], cards);
   await page.goto("/#/library/playlists");
   const remove = page.getByRole("button", { name: `More options for ${keptMix.name}`, exact: true }); await remove.click();
-  await page.getByRole("menuitem", { name: "Remove from my apps", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Remove from apps", exact: true }).click();
   await page.getByRole("alertdialog").getByRole("button", { name: "Cancel", exact: true }).click();
   expect(cards[0].inApps).toBe(true); await remove.click();
-  await page.getByRole("menuitem", { name: "Remove from my apps", exact: true }).click();
-  await page.getByRole("alertdialog").getByRole("button", { name: "Remove from my apps", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Remove from apps", exact: true }).click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Remove from apps", exact: true }).click();
   await expect(page.locator(".playlist-row")).toHaveCount(0);
   expect(reads).toContain(`DELETE /api/admin/mixes/${keptMix.id}/in-apps`);
   await page.goto(`/#/for-you?mix=${keptMix.id}`);
@@ -226,8 +226,8 @@ test("A failed removal keeps the mix and can be retried", async ({ page }) => {
   await page.route("**/in-apps", route => failing ? route.fulfill({ status: 503, json: {} }) : route.fallback());
   await page.goto("/#/library/playlists");
   await page.getByRole("button", { name: `More options for ${keptMix.name}`, exact: true }).click();
-    await page.getByRole("menuitem", { name: "Remove from my apps", exact: true }).click();
-  const dialog = page.getByRole("alertdialog"), confirm = dialog.getByRole("button", { name: "Remove from my apps", exact: true });
+    await page.getByRole("menuitem", { name: "Remove from apps", exact: true }).click();
+  const dialog = page.getByRole("alertdialog"), confirm = dialog.getByRole("button", { name: "Remove from apps", exact: true });
   await confirm.click(); await expect(dialog.getByRole("alert")).toContainText("Try again.");
   expect(cards[0].inApps).toBe(true); failing = false; await confirm.click();
   await expect(dialog).toHaveCount(0); await expect(page.locator(".playlist-row")).toHaveCount(0);
@@ -238,7 +238,7 @@ test("Playlist removal lives in the panel or overflow menu and confirms", async 
   await mockCopies(page, false, false, [mixPlaylist], builtInMixes);
   await page.goto("/#/library/playlists");
   await page.getByRole("button", { name: `Open ${mixPlaylist.name} playlist details` }).click();
-  const action = page.getByRole("dialog").getByRole("button", { name: "Remove from my apps", exact: true });
+  const action = page.getByRole("dialog").getByRole("button", { name: "Remove from apps", exact: true });
   await expect(action).toBeVisible(); await action.click();
   await expect(page.getByRole("alertdialog")).toContainText(mixPlaylist.name);
   await page.getByRole("alertdialog").getByRole("button", { name: "Cancel", exact: true }).click();

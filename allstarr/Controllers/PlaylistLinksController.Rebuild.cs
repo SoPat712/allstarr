@@ -15,7 +15,7 @@ public sealed partial class PlaylistLinksController
             if (link.ImportMode == PlaylistImportMode.OneTime)
                 return Conflict(new { error = "Imports keep your own order." });
             if (link.TargetProtocol != "jellyfin" || link.Mode == PlaylistLinkMode.Virtual || link.TargetPlaylistId == null)
-                return Conflict(new { error = "Rebuild requires a mapped Jellyfin playlist." });
+                return Conflict(new { error = "Only a playlist saved in Jellyfin can be made again." });
             try
             {
                 var updated = await orchestration.RebuildAsync(await CreateExecutionAsync(session, cancellationToken), id, cancellationToken);

@@ -68,7 +68,7 @@
   async function refresh() {
     await perform(async target => {
       try {
-        refreshToast = toast.progress("Refreshing this mix...");
+        refreshToast = toast.progress("Updating this mix…");
         refreshJob = (await mixes.refresh(target)).jobId;
         await checkRefresh();
       }
@@ -80,7 +80,7 @@
             throttled = true;
             throttleTimer = setTimeout(() => { throttled = false; }, 15 * 60_000);
           }
-          toast.info("Wait 15 minutes before refreshing this mix again.");
+          toast.info("Wait 15 minutes before updating this mix again.");
         } else throw cause;
       }
     });
@@ -97,11 +97,11 @@
         refreshJob = "";
         await pending; await load();
         if (error) throw new Error("Refresh could not be loaded");
-        if (refreshToast !== undefined) toast.update(refreshToast, { message: "Your mix has refreshed.", busy: false, kind: "success" });
+        if (refreshToast !== undefined) toast.update(refreshToast, { message: "Your mix is up to date.", busy: false, kind: "success" });
       }
     } catch {
       refreshJob = "";
-      if (!disposed && refreshToast !== undefined) toast.update(refreshToast, { message: "Your mix could not be refreshed. Try again.", busy: false, kind: "error" });
+      if (!disposed && refreshToast !== undefined) toast.update(refreshToast, { message: "Your mix could not be updated. Try again.", busy: false, kind: "error" });
     } finally { checkingJob = false; if (checkAgain) { checkAgain = false; void checkRefresh(); } }
   }
   async function feedback(row: MixSong, kind: "moreLikeThis" | "notForMe" | "neverArtist", today = false) {
@@ -180,7 +180,7 @@
     {#if detail.songs.length}<div class="songs-heading"><h3>Songs</h3><span>Plays from</span></div><MixTrackRows songs={detail.songs} {busy} onfeedback={detail.mix.kind === "external" ? undefined : feedback} />{/if}
   {/if}
   {#snippet footer()}{#if detail}<div class="mix-footer">
-    {#if detail.mix.kind !== "custom" && detail.mix.kind !== "external"}<Button variant="outline" disabled={busy || throttled || Boolean(refreshJob)} onclick={() => void refresh()}>Refresh mix</Button>{/if}
+    {#if detail.mix.kind !== "custom" && detail.mix.kind !== "external"}<Button variant="outline" disabled={busy || throttled || Boolean(refreshJob)} onclick={() => void refresh()}>Update now</Button>{/if}
   </div>{/if}{/snippet}
 </SidePanel>
 <ConfirmDialog bind:open={deleteOpen} title="Delete mix?" description="This saved mix will be removed from your mixes and apps." confirmLabel="Delete mix" disabled={busy} closeOnConfirm={false} onConfirm={() => perform(async target => { await mixes.delete(target); if (id === target) close(); })} />

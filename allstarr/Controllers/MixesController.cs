@@ -57,7 +57,7 @@ public sealed partial class MixesController(PersonalMixService mixes, IDurableRu
     {
         var mix = await mixes.GetAsync(user.Id, id, token);
         if (mix.Kind is "custom" or "external") throw new ArgumentException("This mix does not refresh here.");
-        if (mix.UpdatedAt > clock.UtcNow.AddMinutes(-15)) throw new InvalidOperationException("Wait 15 minutes before refreshing this mix again.");
+        if (mix.UpdatedAt > clock.UtcNow.AddMinutes(-15)) throw new InvalidOperationException("Wait 15 minutes before updating this mix again.");
         var queue = HttpContext.RequestServices.GetRequiredService<DurableJobQueue>();
         var job = await queue.EnqueueAsync(new DurableJobEnqueueRequest<Guid>(PersonalMixService.JobType,
             $"mix-refresh:{user.Id}:{id}:{clock.UtcNow.ToUnixTimeSeconds() / 900}", id, user.Id), token);

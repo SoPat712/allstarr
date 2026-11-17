@@ -41,7 +41,7 @@ export async function mockForYou(page: Page, options: { admin?: boolean; brandNe
       return reply({ removed: body.songId });
     }
     if (path.endsWith("/in-apps")) { if (method === "POST" && !state.publish) return reply({ error: "Your admin hasn't allowed adding mixes." }, 403); const item = state.cards.find(item => path.includes(`/${item.id}/`))!; item.inApps = method === "POST" && !options.preparing; item.added = method === "POST"; item.appsUnavailableReason = options.preparing && method === "POST" ? "Preparing this mix for your apps." : null; const link = linked.find(link => link.id === item.id); if (link) link.enabled = item.added; return reply(item); }
-    if (path.endsWith("/refresh")) return reply({ error: "Wait 15 minutes before refreshing this mix again." }, 429);
+    if (path.endsWith("/refresh")) return reply({ error: "Wait 15 minutes before updating this mix again." }, 429);
     if (path.startsWith("/api/admin/mixes/")) { if (method === "DELETE") { state.cards = state.cards.filter(item => item.id !== path.split("/").at(-1)); return reply({}); } const item = state.cards.find(item => item.id === path.split("/").at(-1)); return reply({ mix: { ...item, appsAllowed: state.publish }, songs: item?.kind === "external" ? [...state.songs, state.songs[0]] : state.songs }); }
     if (path.includes("/track-matches/targets/")) return reply({ tracks: [{ id: "local", backendItemId: "seed", title: "Golden hour", artist: "Mira", album: "Warm light", artworkUrl: null }], providers: [] });
     if (path.startsWith("/api/admin/taste")) {

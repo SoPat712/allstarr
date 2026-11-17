@@ -34,7 +34,7 @@
   bind:open
   title={copy.title}
   description={copy.description}
-  confirmLabel="Remove from my apps"
+  confirmLabel="Remove from apps"
   {disabled}
   confirmDisabled={loading || !preview || Boolean(previewError)}
   closeOnConfirm={false}

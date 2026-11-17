@@ -149,7 +149,7 @@ test("Phone sheets keep their existing width without desktop panel controls", as
 test("Playlist routes use provider artwork and shared control surfaces", async ({ page }) => {
   await fixture(page, 1280, true);
   const panel = await open(page);
-  const remove = panel.getByRole("button", { name: "Remove from my apps", exact: true });
+  const remove = panel.getByRole("button", { name: "Remove from apps", exact: true });
   await expect(remove).toBeEnabled();
   await expect(remove).toHaveAttribute("data-variant", "destructive-text");
   await expect(remove).toHaveCSS("opacity", "1");
