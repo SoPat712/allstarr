@@ -42,16 +42,27 @@ public sealed partial class ItemMatchReader(
             .Select(item => CanonicalCatalogKeys.Hash(item.externalId!)).Distinct().ToArray();
         await using var db = await factory.CreateDbContextAsync(token);
         var decisions = await db.TrackMatches.AsNoTracking().Where(item => item.OwnerUserId == owner &&
-            item.CanonicalRecordingId.HasValue && recordingIds.Contains(item.CanonicalRecordingId.Value)).ToArrayAsync(token);
+                item.CanonicalRecordingId.HasValue && recordingIds.Contains(item.CanonicalRecordingId.Value))
+            .Select(item => new { item.ExternalSnapshotId, item.CanonicalRecordingId }).ToArrayAsync(token);
         var links = await db.ProviderTrackIdentities.AsNoTracking().Where(item => recordingIds.Contains(item.CanonicalRecordingId)).ToArrayAsync(token);
         var snapshotIds = decisions.Select(item => item.ExternalSnapshotId).ToArray();
         var identityIds = links.Select(item => (Guid?)item.Id).ToArray();
         hashes = hashes.Concat(links.Select(item => item.ExternalIdHash)).Distinct().ToArray();
-        var snapshots = await db.ExternalMetadataSnapshots.AsNoTracking().Where(item => item.OwnerUserId == owner &&
-            item.ResourceKind == "track" && item.ProviderId != "allstarr" && item.Protocol == execution.Protocol.ToString().ToLowerInvariant() &&
-            item.BackendInstanceId == execution.BackendInstanceId && item.BackendPrincipalId == execution.VerifiedBackendPrincipalId &&
-            (snapshotIds.Contains(item.Id) || identityIds.Contains(item.ProviderTrackIdentityId) || hashes.Contains(item.ExternalIdHash)))
-            .OrderByDescending(item => item.RetrievedAt).ThenByDescending(item => item.SnapshotVersion).ThenByDescending(item => item.Id).ToArrayAsync(token);
+        var protocol = execution.Protocol.ToString().ToLowerInvariant();
+        IQueryable<ExternalMetadataSnapshotRecord> Visible(IQueryable<ExternalMetadataSnapshotRecord> query) => query.Where(item => item.OwnerUserId == owner &&
+            item.ResourceKind == "track" && item.ProviderId != "allstarr" && item.Protocol == protocol &&
+            item.BackendInstanceId == execution.BackendInstanceId && item.BackendPrincipalId == execution.VerifiedBackendPrincipalId);
+        // Three lookups that each use an index; one filter joining them with "or" walked every snapshot the listener has.
+        // Rows load without payloads, which only the chosen snapshots need.
+        var rows = new List<ExternalMetadataSnapshotRecord>();
+        if (snapshotIds.Length > 0)
+            rows.AddRange(await Visible(db.ExternalMetadataSnapshots.AsNoTracking().Where(item => snapshotIds.Contains(item.Id))).Select(ItemDetailsReader.WithoutPayload).ToArrayAsync(token));
+        if (identityIds.Length > 0)
+            rows.AddRange(await Visible(db.ExternalMetadataSnapshots.AsNoTracking().Where(item => identityIds.Contains(item.ProviderTrackIdentityId))).Select(ItemDetailsReader.WithoutPayload).ToArrayAsync(token));
+        if (hashes.Length > 0)
+            rows.AddRange(await Visible(db.ExternalMetadataSnapshots.AsNoTracking().Where(item => hashes.Contains(item.ExternalIdHash))).Select(ItemDetailsReader.WithoutPayload).ToArrayAsync(token));
+        var snapshots = rows.DistinctBy(item => item.Id).OrderByDescending(item => item.RetrievedAt).ThenByDescending(item => item.SnapshotVersion)
+            .ThenByDescending(item => item.Id).ToArray();
         var selected = new Dictionary<string, ExternalMetadataSnapshotRecord>(StringComparer.Ordinal);
         foreach (var (itemId, recording) in recordings)
         {
@@ -72,7 +83,11 @@ public sealed partial class ItemMatchReader(
             }
             if (snapshot != null) selected[itemId] = snapshot;
         }
-        var reviews = await commands.GetClientReviewsAsync(Actor(execution), selected.Values.Select(item => item.Id).Distinct().ToArray(), token, libraryMemo);
+        var chosen = selected.Values.Select(item => item.Id).Distinct().ToArray();
+        var payloads = chosen.Length == 0 ? new Dictionary<Guid, string>() : await db.ExternalMetadataSnapshots.AsNoTracking()
+            .Where(item => chosen.Contains(item.Id)).ToDictionaryAsync(item => item.Id, item => item.PayloadJson, token);
+        foreach (var snapshot in selected.Values) snapshot.PayloadJson = payloads.GetValueOrDefault(snapshot.Id) ?? "{}";
+        var reviews = await commands.GetClientReviewsAsync(Actor(execution), chosen, token, libraryMemo);
         http.Items[typeof(SummaryBatch)] = new SummaryBatch(selected.Where(item => reviews.ContainsKey(item.Value.Id))
             .ToDictionary(item => item.Key, item => new SummaryEntry(item.Value, reviews[item.Value.Id]), StringComparer.Ordinal));
     }

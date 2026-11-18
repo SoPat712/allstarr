@@ -32,7 +32,7 @@ public sealed class ItemDetailsReader(
     ILogger<ItemDetailsReader>? logger = null)
 {
     // Every snapshot column but the payload, the largest by far.
-    private static readonly System.Linq.Expressions.Expression<Func<ExternalMetadataSnapshotRecord, ExternalMetadataSnapshotRecord>> WithoutPayload =
+    internal static readonly System.Linq.Expressions.Expression<Func<ExternalMetadataSnapshotRecord, ExternalMetadataSnapshotRecord>> WithoutPayload =
         item => new ExternalMetadataSnapshotRecord
         {
             Id = item.Id,
