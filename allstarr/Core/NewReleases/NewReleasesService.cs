@@ -424,16 +424,31 @@ public sealed partial class NewReleasesService(IDbContextFactory<AllstarrDbConte
         var user = await UserAsync(db, owner, token);
         var sources = new List<ReleaseSource>();
         var coverage = new List<ReleaseCoverage>();
-        foreach (var artist in await ListAsync(owner, token))
+        // A route depends only on the service, and the catalogs come back in one query rather than one scan per artist.
+        var artists = await ListAsync(owner, token);
+        var routes = new Dictionary<string, ProviderRouteCandidate<IProviderMetadataCapability>?>(StringComparer.Ordinal);
+        var keys = new Dictionary<FollowedReleaseArtist, string>();
+        foreach (var artist in artists.Where(item => item.LibraryArtistId == null || item.ProviderId != "jellyfin"))
+        {
+            if (!routes.TryGetValue(artist.ProviderId, out var route)) routes[artist.ProviderId] = route = await RouteAsync(user, artist, token);
+            if (route != null) keys[artist] = CatalogKey(artist, route.Context);
+        }
+        var wanted = keys.Values.Distinct().ToArray();
+        var catalogs = (await db.ExternalMetadataSnapshots.AsNoTracking()
+                .Where(item => item.ResourceKind == CatalogKind && wanted.Contains(item.ExternalIdHash))
+                .Select(item => new { item.ExternalIdHash, item.RetrievedAt, item.SnapshotVersion, item.Id, item.PayloadJson })
+                .ToArrayAsync(token))
+            .GroupBy(item => item.ExternalIdHash)
+            .ToDictionary(group => group.Key, group => group.OrderByDescending(item => item.RetrievedAt)
+                .ThenByDescending(item => item.SnapshotVersion).ThenByDescending(item => item.Id).First().PayloadJson);
+        foreach (var artist in artists)
         {
             if (artist.LibraryArtistId != null && artist.ProviderId == "jellyfin")
             {
                 coverage.Add(new(artist, "library-only", null, artist.ResolutionReason));
                 continue;
             }
-            var route = await RouteAsync(user, artist, token);
-            var cache = route == null ? null : await LatestAsync(db, CatalogKind, CatalogKey(artist, route.Context), token);
-            var catalog = Read<ReleaseCatalog>(cache);
+            var catalog = keys.TryGetValue(artist, out var key) && catalogs.TryGetValue(key, out var json) ? JsonSerializer.Deserialize<ReleaseCatalog>(json) : null;
             if (catalog != null) sources.AddRange(catalog.Releases);
             coverage.Add(new(artist, catalog == null || catalog.Status == "retry" || catalog.NextCheckAt <= clock.UtcNow && catalog.Cursor == null
                 ? "unknown" : catalog.Status, catalog?.CheckedAt, artist.ResolutionReason));
