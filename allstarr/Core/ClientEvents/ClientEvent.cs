@@ -21,6 +21,8 @@ public sealed record ClientEvent(string Type, string Key, string Json)
     public static ClientEvent Releases(int count) => Create("releases.updated", "inbox", new { count });
     public static ClientEvent Preferences(string field) => Create("preferences.updated", field, new { field });
     public static ClientEvent Playback(string itemId) => Create("playback.updated", itemId, new { itemId });
+    // A song's measured loudness was stored, so apps can level it during its first play.
+    public static ClientEvent Loudness(string itemId) => Create("loudness.updated", itemId, new { itemId });
     public static ClientEvent LibraryAddition(ClientLibraryAddition value) => Create("libraryAddition.updated", value.Id.ToString("D"), value);
     public static ClientEvent LibraryRequest(ClientLibraryAddition value) => Create("libraryRequest.updated", value.Id.ToString("D"), value);
     internal static ClientEvent Create(string type, string key, object data) => new(type, key,

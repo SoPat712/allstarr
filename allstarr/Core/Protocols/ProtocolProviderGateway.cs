@@ -268,7 +268,8 @@ public sealed partial class ProtocolProviderGateway(
     IProviderAudioVerifier? audioVerifier = null,
     Enrichment.SharedTagQueue? sharedTags = null, LyricsSearchChanges? lyricsChanges = null,
     TrackMatchDecisionEngine? playbackMatcher = null,
-    ProviderStatusManager? providerStatuses = null) : IProtocolProviderGateway
+    ProviderStatusManager? providerStatuses = null,
+    ClientEvents.IClientEventPublisher? clientEvents = null) : IProtocolProviderGateway
 {
     private const string StreamingClientName = "ProtocolProviderStreaming";
     private readonly IProviderAudioVerifier streamVerifier = audioVerifier ?? new ProviderAudioVerifier();
@@ -1942,6 +1943,8 @@ public sealed partial class ProtocolProviderGateway(
                         execution.Policy, execution.OperationId, execution.CorrelationId, clock.GetUtcNow().AddSeconds(30),
                         writing.Token, execution.IdempotencyKey);
                     await store.RememberMediaFactsAsync(recording, servingTrack, facts, writing.Token);
+                    if (facts.ReplayGain?.TrackGain is not null && execution.Actor.EffectiveUserId is { } listener)
+                        clientEvents?.Publish(listener, ClientEvents.ClientEvent.Loudness(itemId));
                 };
             var prefixFacts = PrefetchedStream.Facts(stream.Response.Content);
             var measured = stream.FileFacts.Measured ?? prefixFacts;

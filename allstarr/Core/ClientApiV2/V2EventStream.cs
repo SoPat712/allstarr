@@ -137,7 +137,7 @@ public sealed class V2EventStream : BackgroundService
     private void Queue(Guid owner, ClientEvent value)
     {
         if (value.Type is not ("keep.updated" or "match.updated" or "lyrics.updated" or "mix.updated" or "releases.updated" or
-            "libraryAddition.updated" or "libraryRequest.updated" or "playback.updated" or "preferences.updated")) return;
+            "libraryAddition.updated" or "libraryRequest.updated" or "playback.updated" or "preferences.updated" or "loudness.updated")) return;
         lock (gate)
             if (listeners.TryGetValue(owner, out var listener) && !pending.Writer.TryWrite((owner, listener, listener.Generation, value)))
             {
@@ -212,11 +212,13 @@ public sealed class V2EventStream : BackgroundService
     {
         using var document = JsonDocument.Parse(value.Json);
         var data = document.RootElement;
-        if (value.Type is "keep.updated" or "match.updated")
+        if (value.Type is "keep.updated" or "match.updated" or "loudness.updated")
         {
             var result = await http.RequestServices.GetRequiredService<V2TrackReader>().ReadAsync(http, execution, [value.Key], false);
             var track = result.Tracks.FirstOrDefault();
             if (track == null) return [ClientEvent.Create("resync", "", new { })];
+            // The whole track comes along, so its new trackGainDb is there without another read.
+            if (value.Type == "loudness.updated") return [ClientEvent.Create("track.updated", track.Id, new { track, changed = new[] { "loudness" } })];
             return
             [
                 ClientEvent.Create("track.updated", track.Id, new { track }),

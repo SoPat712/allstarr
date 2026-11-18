@@ -78,6 +78,10 @@ public sealed partial class ProtocolRouteFixtureTests
         hub.Publish(principal.UserId, ClientEvent.Match("ext-deezer-song-known", "accepted"));
         await V2FrameAsync(stream, "track.updated");
         Assert.Equal("accepted", (await V2FrameAsync(stream, "match.updated")).Data.GetProperty("state").GetString());
+        hub.Publish(principal.UserId, ClientEvent.Loudness("ext-deezer-song-known"));
+        var loudness = (await V2FrameAsync(stream, "track.updated")).Data;
+        Assert.Equal(V2Ids.Track(recording), loudness.GetProperty("track").GetProperty("id").GetString());
+        Assert.Equal(["loudness"], loudness.GetProperty("changed").EnumerateArray().Select(item => item.GetString()!).ToArray());
         hub.Publish(principal.UserId, ClientEvent.Lyrics("ext-deezer-song-known", "revision"));
         var lyrics = (await V2FrameAsync(stream, "lyrics.updated")).Data;
         Assert.Equal(V2Ids.Track(recording), lyrics.GetProperty("trackId").GetString());
