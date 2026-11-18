@@ -425,7 +425,9 @@ public sealed partial class NewReleasesService(IDbContextFactory<AllstarrDbConte
         var sources = new List<ReleaseSource>();
         var coverage = new List<ReleaseCoverage>();
         // A route depends only on the service, and the catalogs come back in one query rather than one scan per artist.
-        var artists = await ListAsync(owner, token);
+        IReadOnlyList<FollowedReleaseArtist> artists;
+        using (RequestTiming.Current?.Stage("library")) artists = await ListAsync(owner, token);
+        var planning = RequestTiming.Current?.Stage("resolve");
         var routes = new Dictionary<string, ProviderRouteCandidate<IProviderMetadataCapability>?>(StringComparer.Ordinal);
         var keys = new Dictionary<FollowedReleaseArtist, string>();
         foreach (var artist in artists.Where(item => item.LibraryArtistId == null || item.ProviderId != "jellyfin"))
@@ -433,8 +435,10 @@ public sealed partial class NewReleasesService(IDbContextFactory<AllstarrDbConte
             if (!routes.TryGetValue(artist.ProviderId, out var route)) routes[artist.ProviderId] = route = await RouteAsync(user, artist, token);
             if (route != null) keys[artist] = CatalogKey(artist, route.Context);
         }
+        planning?.Dispose();
+        using var reading = RequestTiming.Current?.Stage("fetch");
         var wanted = keys.Values.Distinct().ToArray();
-        var catalogs = (await db.ExternalMetadataSnapshots.AsNoTracking()
+        var catalogs = (await ReleaseRows(db)
                 .Where(item => item.ResourceKind == CatalogKind && wanted.Contains(item.ExternalIdHash))
                 .Select(item => new { item.ExternalIdHash, item.RetrievedAt, item.SnapshotVersion, item.Id, item.PayloadJson })
                 .ToArrayAsync(token))
@@ -453,7 +457,7 @@ public sealed partial class NewReleasesService(IDbContextFactory<AllstarrDbConte
             coverage.Add(new(artist, catalog == null || catalog.Status == "retry" || catalog.NextCheckAt <= clock.UtcNow && catalog.Cursor == null
                 ? "unknown" : catalog.Status, catalog?.CheckedAt, artist.ResolutionReason));
         }
-        var dismissed = await db.ExternalMetadataSnapshots.AsNoTracking().Where(item => item.OwnerUserId == owner &&
+        var dismissed = await ReleaseRows(db).Where(item => item.OwnerUserId == owner &&
             item.ResourceKind == DismissKind && item.Protocol == user.BackendType && item.BackendInstanceId == user.BackendInstanceId &&
             item.BackendPrincipalId == user.BackendPrincipalId).Select(item => item.PayloadJson).ToArrayAsync(token);
         var dismissedSources = dismissed.SelectMany(json => JsonSerializer.Deserialize<ReleaseSource[]>(json) ?? []).ToArray();
@@ -603,7 +607,7 @@ public sealed partial class NewReleasesService(IDbContextFactory<AllstarrDbConte
     {
         var result = new Dictionary<Guid, ReleaseInbox>();
         if (events == null) return result;
-        var owners = await db.ExternalMetadataSnapshots.AsNoTracking()
+        var owners = await ReleaseRows(db)
             .Where(item => item.ResourceKind == FollowsKind)
             .Select(item => item.OwnerUserId).Distinct().ToArrayAsync(token);
         var users = await db.Users.AsNoTracking().Where(item => item.Enabled && owners.Contains(item.Id)).ToArrayAsync(token);
@@ -673,8 +677,11 @@ public sealed partial class NewReleasesService(IDbContextFactory<AllstarrDbConte
     private static async Task<UserRecord> UserAsync(AllstarrDbContext db, Guid owner, CancellationToken token) =>
         await db.Users.AsNoTracking().SingleOrDefaultAsync(item => item.Id == owner && item.Enabled, token)
             ?? throw new UnauthorizedAccessException("A linked listener is required.");
+    // Release state is always saved as Allstarr's own row without an account, which an index finds without scanning every snapshot.
+    private static IQueryable<ExternalMetadataSnapshotRecord> ReleaseRows(AllstarrDbContext db) =>
+        db.ExternalMetadataSnapshots.AsNoTracking().Where(item => item.ProviderAccountId == null && item.ProviderId == "allstarr");
     private static Task<ExternalMetadataSnapshotRecord?> LatestAsync(AllstarrDbContext db, string kind, string key, CancellationToken token) =>
-        db.ExternalMetadataSnapshots.AsNoTracking().Where(item => item.ResourceKind == kind && item.ExternalIdHash == key)
+        ReleaseRows(db).Where(item => item.ResourceKind == kind && item.ExternalIdHash == key)
             .OrderByDescending(item => item.RetrievedAt).ThenByDescending(item => item.SnapshotVersion).ThenByDescending(item => item.Id).FirstOrDefaultAsync(token);
     private static async Task<FollowedReleaseArtist[]> FollowsAsync(AllstarrDbContext db, UserRecord user, CancellationToken token) =>
         Read<FollowedReleaseArtist[]>(await LatestAsync(db, FollowsKind, Scope(user), token)) ?? [];
