@@ -2073,6 +2073,9 @@ public class AdminUiController : ControllerBase
             .Append(Field("ODESLI_API_KEY", "Optional song.link API key", "password", "operatorSettings.Odesli:ApiKey",
                 sensitive: true, requiresRestart: true,
                 helpText: "Stored encrypted. Optional; blank clears a saved key. Allstarr restarts after saving."))
+            .Append(Field("MUSICLINK_API_KEY", "Optional MusicLink API key", "password", "operatorSettings.MusicLink:ApiKey",
+                sensitive: true, requiresRestart: true,
+                helpText: "Stored encrypted. A free key from musiclink.one finds songs by ISRC on Apple Music, Spotify, YouTube Music and more. Blank clears it; Allstarr restarts after saving."))
             .ToList()),
         Section("general", "Defaults for everyone",
         [

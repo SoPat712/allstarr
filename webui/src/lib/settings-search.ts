@@ -14,7 +14,7 @@ const pageByKey: [RegExp, string][] = [
   [/^(EXPLICIT_FILTER|ADMIN_)/, "people"],
   [/^(STORAGE_MODE$|CACHE_|PROVIDER_STREAMS_PER_LISTENER|MEDIA_MAXIMUM_CONCURRENT_CONVERSIONS)/, "storage"],
   [/^DEBUG_/, "backups"],
-  [/^(ODESLI_|EXTENSIONS_ALLOW_REMOTE_INSTALL|CHALLENGE_SOLVER_|BACKEND_TYPE$)/, "advanced"],
+  [/^(ODESLI_|MUSICLINK_|EXTENSIONS_ALLOW_REMOTE_INSTALL|CHALLENGE_SOLVER_|BACKEND_TYPE$)/, "advanced"],
 ];
 
 export const settingPage = (key: string) => pageByKey.find(([pattern]) => pattern.test(key))?.[1] ?? null;
@@ -41,7 +41,7 @@ export function searchSettings(query: string, fields: ConfigField[], pageLabels:
   const candidates = [
     ...fields.map(field => ({
       key: field.key, label: settingNames[field.key] ?? field.label, page: settingPage(field.key),
-      words: `${settingHelp[field.key] ?? field.helpText ?? ""} ${field.label}${field.key.startsWith("ODESLI_") ? " song.link odesli" : ""}`,
+      words: `${settingHelp[field.key] ?? field.helpText ?? ""} ${field.label}${field.key.startsWith("ODESLI_") || field.key.startsWith("MUSICLINK_") ? " song.link odesli musiclink" : ""}`,
     })),
     ...cards,
     ...Object.entries(pageLabels).map(([page, label]) => ({ key: `page-${page}`, label, page, words: "" })),

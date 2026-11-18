@@ -1076,7 +1076,7 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
             .AddSingleton<IDurableRuntimeSettings>(durableSettings)
             .AddSingleton<IEffectiveProviderPolicyResolver>(effectiveProviderPolicies)
             .AddSingleton(migration)
-            .AddSingleton(new OdesliApiKeySettingsService(_factory, durableSettings, effectiveSecretStore, clock))
+            .AddSingleton(new LinkServiceKeySettingsService(_factory, durableSettings, effectiveSecretStore, clock))
             .AddSingleton(effectiveSecretStore);
         if (mounted != null) services.AddSingleton(mounted);
         services.AddSingleton(healthStore ?? new ProviderRuntimeHealth());

@@ -41,6 +41,7 @@ public static class RuntimeEnvConfiguration
             ["CORS_ALLOWED_HEADERS"] = ["Cors:AllowedHeaders"],
             ["CORS_ALLOW_CREDENTIALS"] = ["Cors:AllowCredentials"],
             ["ODESLI_API_KEY"] = ["Odesli:ApiKey"],
+            ["MUSICLINK_API_KEY"] = ["MusicLink:ApiKey"],
             ["EXTENSIONS_ALLOW_REMOTE_INSTALL"] = ["Extensions:AllowRemoteInstall"],
 
             ["SUBSONIC_URL"] = ["Subsonic:Url"],

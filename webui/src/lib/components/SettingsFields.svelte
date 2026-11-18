@@ -28,7 +28,8 @@
   let librariesLoading = $state(false);
   let drafts = $state<Record<string, string>>({}), saved = $state<Record<string, boolean>>({});
   let busy = $state(false), error = $state(""), restartOpen = $state(false);
-  let keyOpen = $state(false);
+  // API keys stay behind a button until someone means to change one.
+  let keyOpen = $state<Record<string, boolean>>({});
   let requestedQualities = $state<readonly string[]>([]);
   let pending = $state<{ field: ConfigField; value: string; previous: string; removing?: boolean } | null>(null);
   const abort = new AbortController();
@@ -157,8 +158,8 @@
         </div>
         {#if locked(field)}
           <div class="locked-setting"><output>{toggle(field) ? value(field) === "true" ? "On" : "Off" : field.sensitive ? fieldValue(config, field) ? "Key saved" : "Not set" : optionLabel(field, value(field)) || "Not set"}</output><small><Lock size={12} aria-hidden="true" />Set in your deployment</small></div>
-        {:else if field.key === "ODESLI_API_KEY" && !keyOpen}
-          <Button variant="outline" disabled={busy} onclick={() => keyOpen = true}>{fieldValue(config, field) ? "Change key…" : "Add key…"}</Button>
+        {:else if (field.key === "ODESLI_API_KEY" || field.key === "MUSICLINK_API_KEY") && !keyOpen[field.key]}
+          <Button variant="outline" disabled={busy} onclick={() => keyOpen[field.key] = true}>{fieldValue(config, field) ? "Change key…" : "Add key…"}</Button>
         {:else if field.key === "BACKEND_MUSIC_LIBRARY_IDS" && libraries !== null}
           <fieldset id={`${id}-${field.key}`} class="library-choices quality-control" aria-label={label(field)} disabled={busy}>
             <label><Checkbox aria-label="All libraries" checked={!splitLibraryIds(value(field)).length} onCheckedChange={checked => change(field, checked ? "" : joinLibraryIds(libraries?.map(item => item.id) ?? []))} /><span>All libraries</span></label>
@@ -199,7 +200,7 @@
           </div>
         {/if}
       </div>
-      {#if field.key === "MATCHING_LOCAL_PREFERENCE_PERCENT" && !locked(field)}<AdvancedFold label="Preference window"><label class="setting-field settings-row"><div><strong>Points</strong><small>Between {field.min ?? 0} and {field.max ?? 20}.</small></div><input type="number" aria-label="Preference window (points)" value={value(field)} min={field.min ?? 0} max={field.max ?? 20} disabled={busy} onchange={event => { if (event.currentTarget.reportValidity()) change(field, event.currentTarget.value); }} /></label></AdvancedFold>{/if}
+      {#if field.key === "MATCHING_LOCAL_PREFERENCE_PERCENT" && !locked(field)}<AdvancedFold label="Preference window"><label class="setting-field settings-row"><div><strong>Points</strong> <small>Between {field.min ?? 0} and {field.max ?? 20}.</small></div><input type="number" aria-label="Preference window (points)" value={value(field)} min={field.min ?? 0} max={field.max ?? 20} disabled={busy} onchange={event => { if (event.currentTarget.reportValidity()) change(field, event.currentTarget.value); }} /></label></AdvancedFold>{/if}
     {/each}
   </div>
   {#if section.fields.some(field => field.type === "audio-quality") && sourceQuality}{@render sourceQuality(requestedQualities)}

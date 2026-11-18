@@ -143,8 +143,11 @@ public sealed class CrossProviderLinkResolver(
                         transient |= IsTransient(search.Error);
                         if (search.IsSuccess) tracks.AddRange(search.RequireValue().Items);
                     }
-                    // Optional links are candidates too: their target metadata must pass the same match rules.
-                    if (tracks.Count == 0 && odesli != null && settings.Value.Enabled)
+                    List<CrossProviderLinkCandidate> Scored() => Score(recording, tracks.Where(track => track.Id.ProviderId == providerId)
+                        .DistinctBy(track => track.Id).Take(20).ToArray(), userId);
+                    var found = Scored();
+                    // When the searches found no sure copy, a link service may know it; its target must pass the same match rules.
+                    if (!found.Any(item => item.Verified) && odesli != null && settings.Value.Enabled)
                     {
                         var url = verifiedIdentities.Select(id => OdesliService.BuildTrackUrl(id.ProviderId, id.Value)).FirstOrDefault(url => url != null);
                         if (url != null)
@@ -163,12 +166,14 @@ public sealed class CrossProviderLinkResolver(
                                     context.OperationId, correlationId, clock.UtcNow.AddSeconds(10), linkDeadline.Token);
                                 var lookup = await metadata.GetTrackAsync(linkContext, new(new(providerId, ProviderResourceKind.Track, id))).WaitAsync(linkDeadline.Token);
                                 transient |= IsTransient(lookup.Error);
-                                if (lookup.IsSuccess) tracks.Add(lookup.RequireValue());
+                                if (lookup.IsSuccess)
+                                {
+                                    tracks.Insert(0, lookup.RequireValue());
+                                    found = Scored();
+                                }
                             }
                         }
                     }
-                    var found = Score(recording, tracks.Where(track => track.Id.ProviderId == providerId)
-                        .DistinctBy(track => track.Id).Take(20).ToArray(), userId);
                     if (!transient) await cache.SetAsync(key, found, found.Count == 0 ? TimeSpan.FromMinutes(15) : TimeSpan.FromDays(1));
                     return found;
                 }, timeout.Token);

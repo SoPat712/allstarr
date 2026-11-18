@@ -39,7 +39,8 @@ public sealed class OdesliServiceTests
         Assert.Equal("91", links["deezer"]);
         Assert.Equal("abc123", await service.ConvertTidalToSpotifyIdAsync("42"));
         Assert.Equal("abc123", await service.TranslateCachedTrackUrlAsync(Source, "spotify"));
-        Assert.Equal(new[] { "song.link", "api.unitune.art" }, handler.Hosts);
+        // YouTube is still unknown after the first two, so squigly is asked as well.
+        Assert.Equal(new[] { "song.link", "api.unitune.art", "squigly.link" }, handler.Hosts);
         Assert.Contains("text/html", handler.Accepts[0]);
     }
 
@@ -48,12 +49,50 @@ public sealed class OdesliServiceTests
     {
         var handler = new Handler((_, _) => Task.FromResult(Text("""
             <a href='https://open.spotify.com/track/abc123'>Spotify</a>
+            <a href='https://music.apple.com/us/song/81'>Apple Music</a>
+            <a href='https://music.youtube.com/watch?v=yt1'>YouTube Music</a>
             <a href='https://deezer.com/track/71'>Deezer</a>
             <a href='https://open.qobuz.com/track/72'>Qobuz</a>
             """)));
         var links = await Create(handler).GetTrackLinksAsync(Source, default);
-        Assert.Equal(4, links.Count);
+        Assert.Equal(6, links.Count);
         Assert.Equal("song.link", Assert.Single(handler.Hosts));
+    }
+
+    [Fact]
+    public async Task SongLinkPageWithoutAppleMusic_KeepsAskingLaterServices()
+    {
+        var handler = new Handler((request, _) => Task.FromResult(request.RequestUri!.Host == "song.link" ? Text("""
+            <a href='https://open.spotify.com/track/abc123'>Spotify</a>
+            <a href='https://deezer.com/track/71'>Deezer</a>
+            <a href='https://open.qobuz.com/track/72'>Qobuz</a>
+            """) : new(HttpStatusCode.NotFound)));
+        var links = await Create(handler).GetTrackLinksAsync(Source, default);
+        Assert.Equal("71", links["deezer"]);
+        Assert.Contains("api.unitune.art", handler.Hosts);
+    }
+
+    [Fact]
+    public async Task MusicLinkKey_IsAskedFirstByIsrcAndKeepsTheReleaseHoldingTheSource()
+    {
+        var handler = new Handler((request, _) =>
+        {
+            Assert.Equal("api.musiclink.one", request.RequestUri!.Host);
+            Assert.Equal("Bearer musiclink-fixture", request.Headers.Authorization?.ToString());
+            Assert.Equal("USRC17607839", Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(request.RequestUri.Query)["q"]);
+            return Task.FromResult(Text("""
+                {"success":true,"data":[
+                 {"type":"track","platforms":{"tidal":"https://tidal.com/browse/track/7","spotify":"https://open.spotify.com/track/other"}},
+                 {"type":"track","platforms":{"tidal":"https://tidal.com/browse/track/42","youtube":"https://www.youtube.com/watch?v=video1",
+                  "youtube_music":"https://music.youtube.com/watch?v=song1","apple_music":"https://music.apple.com/us/song/81",
+                  "spotify":"https://open.spotify.com/track/abc123"}}]}
+                """));
+        });
+        var links = await Create(handler, musicLinkKey: "musiclink-fixture").GetTrackLinksAsync(Source, default, isrc: "USRC17607839");
+        Assert.Equal("abc123", links["spotify"]);
+        Assert.Equal("81", links["apple-musickit"]);
+        Assert.Equal("song1", links["youtube"]);
+        Assert.Equal("api.musiclink.one", Assert.Single(handler.Hosts));
     }
 
     [Fact]
@@ -383,12 +422,13 @@ public sealed class OdesliServiceTests
     }
 
     internal static OdesliService Create(HttpMessageHandler handler, TimeProvider? timeProvider = null, string? apiKey = null,
-        Microsoft.Extensions.Logging.ILogger<OdesliService>? logger = null, MusicBrainzService? musicBrainz = null)
+        Microsoft.Extensions.Logging.ILogger<OdesliService>? logger = null, MusicBrainzService? musicBrainz = null, string? musicLinkKey = null)
     {
         CacheExtensions.InitializeCacheSettings(Mock.Of<IServiceProvider>());
         return new(Factory(handler), logger ?? NullLogger<OdesliService>.Instance, new TestMemoryApplicationCache(),
             Options.Create(new OdesliSettings { Enabled = true, RateLimitMs = 1000, ApiKey = apiKey }),
-            timeProvider: timeProvider ?? new ManualTimeProvider(), musicBrainz: musicBrainz);
+            timeProvider: timeProvider ?? new ManualTimeProvider(), musicBrainz: musicBrainz,
+            musicLink: Options.Create(new MusicLinkSettings { ApiKey = musicLinkKey }));
     }
 
     private static IHttpClientFactory Factory(HttpMessageHandler handler)
@@ -412,7 +452,8 @@ public sealed class OdesliServiceTests
         public List<string> Accepts { get; } = [];
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
-            Assert.Null(request.Headers.Authorization);
+            // Only MusicLink is sent its own key; no other service sees a credential.
+            if (request.RequestUri!.Host != "api.musiclink.one") Assert.Null(request.Headers.Authorization);
             Assert.Null(request.Headers.Referrer);
             Hosts.Add(request.RequestUri!.Host);
             Uris.Add(request.RequestUri);

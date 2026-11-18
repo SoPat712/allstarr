@@ -31,6 +31,7 @@ internal sealed class PlatformLinkResolverChain
     private readonly MusicBrainzService? _musicBrainz;
     private readonly ServiceRates _rates;
     private long _officialUnavailableUntil;
+    private long _musicLinkUnavailableUntil;
 
     public PlatformLinkResolverChain(HttpClient http, TimeProvider clock, MusicBrainzService? musicBrainz)
     {
@@ -42,7 +43,8 @@ internal sealed class PlatformLinkResolverChain
     }
 
     public async Task<Dictionary<string, string>> ResolveAsync(string sourceUrl, string? apiKey, int apiIntervalMs,
-        string? isrc, string? title, string? artist, CancellationToken cancellationToken, bool allowMusicBrainz = true)
+        string? isrc, string? title, string? artist, CancellationToken cancellationToken, bool allowMusicBrainz = true,
+        string? musicLinkKey = null)
     {
         if (sourceUrl.Length > 65536) throw new OdesliLookupException(false);
         if (title?.Length > 500) title = null;
@@ -53,6 +55,27 @@ internal sealed class PlatformLinkResolverChain
         var links = new Dictionary<string, string>(StringComparer.Ordinal);
         var source = OdesliService.ParseTrackUrl(sourceUrl)!.Value;
         var failed = false;
+        // MusicLink answers for every major service in one call, by ISRC when known, so it goes first when it has a free slot.
+        if (!string.IsNullOrWhiteSpace(musicLinkKey) && Interlocked.Read(ref _musicLinkUnavailableUntil) <= _clock.GetUtcNow().UtcTicks)
+        {
+            try
+            {
+                if (await _rates.MusicLink.TryAcquireAsync(token))
+                {
+                    foreach (var pair in await MusicLinkAsync(source, sourceUrl, isrc, musicLinkKey, token)) links.TryAdd(pair.Key, pair.Value);
+                    if (links.Count > 1)
+                    {
+                        links.TryAdd(source.Provider, source.Id);
+                        return links;
+                    }
+                }
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+            catch (Exception error) when (error is OperationCanceledException or HttpRequestException or JsonException or OdesliLookupException)
+            {
+                failed = true;
+            }
+        }
         for (var step = string.IsNullOrWhiteSpace(apiKey) ? 1 : 0; step < 5; step++)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -94,7 +117,9 @@ internal sealed class PlatformLinkResolverChain
                 if (found.TryGetValue(source.Provider, out var sourceId) && sourceId != source.Id)
                     throw new OdesliLookupException(false);
                 foreach (var pair in found) links.TryAdd(pair.Key, pair.Value);
-                if (links.Count >= 4 && new[] { "deezer", "tidal", "amazon", "qobuz" }.Count(links.ContainsKey) >= 2) break;
+                // song.link's own page now leaves out Apple Music, Spotify and YouTube, so keep asking until those are known too.
+                if (links.Count >= 4 && new[] { "deezer", "tidal", "amazon", "qobuz" }.Count(links.ContainsKey) >= 2 &&
+                    new[] { "apple-musickit", "spotify", "youtube" }.All(links.ContainsKey)) break;
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
             catch (Exception error) when (error is OperationCanceledException or HttpRequestException or JsonException or
@@ -111,6 +136,31 @@ internal sealed class PlatformLinkResolverChain
         }
         if (failed || deadline.IsCancellationRequested) throw new OdesliLookupException(true);
         return links;
+    }
+
+    private async Task<Dictionary<string, string>> MusicLinkAsync((string Provider, string Id) source, string sourceUrl, string? isrc,
+        string key, CancellationToken cancellationToken)
+    {
+        var query = string.IsNullOrWhiteSpace(isrc) ? sourceUrl : isrc.Trim();
+        var json = await RequestAsync(new Uri("https://api.musiclink.one/v2/resolve?type=track&q=" + Uri.EscapeDataString(query)),
+            _rates.MusicLink, false, cancellationToken, bearer: key, acquired: true);
+        using var document = JsonDocument.Parse(json);
+        Dictionary<string, string>? first = null;
+        if (document.RootElement.ValueKind != JsonValueKind.Object || !document.RootElement.TryGetProperty("data", out var data) ||
+            data.ValueKind != JsonValueKind.Array) return new(StringComparer.Ordinal);
+        foreach (var item in data.EnumerateArray().Take(16))
+        {
+            var links = new Dictionary<string, string>(StringComparer.Ordinal);
+            if (item.ValueKind == JsonValueKind.Object && item.TryGetProperty("platforms", out var platforms) && platforms.ValueKind == JsonValueKind.Object)
+                // YouTube Music names the song; plain YouTube may name a video of it instead, so the song wins.
+                foreach (var platform in platforms.EnumerateObject().Take(64).OrderBy(platform => platform.Name == "youtube"))
+                    if (platform.Value.ValueKind == JsonValueKind.String && OdesliService.ParseTrackUrl(platform.Value.GetString()) is { } target)
+                        links.TryAdd(target.Provider, target.Id);
+            // One ISRC can name several releases; the one holding the source song is the right one.
+            if (links.GetValueOrDefault(source.Provider) == source.Id) return links;
+            if (!links.ContainsKey(source.Provider)) first ??= links;
+        }
+        return first ?? new(StringComparer.Ordinal);
     }
 
     private async Task<Dictionary<string, string>> SquiglyAsync(string sourceUrl, CancellationToken cancellationToken)
@@ -137,7 +187,8 @@ internal sealed class PlatformLinkResolverChain
     }
 
     private async Task<string> RequestAsync(Uri uri, PlatformLinkRateLimiter limiter, bool html,
-        CancellationToken cancellationToken, bool songLink = false, string? body = null, TimeSpan? apiInterval = null)
+        CancellationToken cancellationToken, bool songLink = false, string? body = null, TimeSpan? apiInterval = null,
+        string? bearer = null, bool acquired = false)
     {
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(6), _clock);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
@@ -145,12 +196,13 @@ internal sealed class PlatformLinkResolverChain
         for (var redirects = 0; redirects <= 5; redirects++)
         {
             if (!IsPublicEndpoint(uri) || !(songLink ? IsSongLinkHost(uri.Host) :
-                uri.Host is "api.song.link" or "api.unitune.art" or "squigly.link"))
+                uri.Host is "api.song.link" or "api.unitune.art" or "squigly.link" or "api.musiclink.one"))
                 throw new OdesliLookupException(false);
-            await limiter.WaitAsync(token, apiInterval);
+            if (!acquired || redirects > 0) await limiter.WaitAsync(token, apiInterval);
             using var request = new HttpRequestMessage(body == null ? HttpMethod.Get : HttpMethod.Post, uri);
             request.Headers.Accept.ParseAdd(html ? "text/html" : "application/json");
             request.Headers.UserAgent.ParseAdd(BrowserHeaders[Random.Shared.Next(BrowserHeaders.Length)]);
+            if (bearer != null) request.Headers.Authorization = new("Bearer", bearer);
             if (body != null) request.Content = new StringContent(body, Encoding.UTF8, "application/json");
             using var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token);
             if ((int)response.StatusCode is 301 or 302 or 303 or 307 or 308)
@@ -173,6 +225,10 @@ internal sealed class PlatformLinkResolverChain
             {
                 if (uri.Host == "api.song.link" && response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden or HttpStatusCode.Gone)
                     Interlocked.Exchange(ref _officialUnavailableUntil, _clock.GetUtcNow().AddHours(1).UtcTicks);
+                if (uri.Host == "api.musiclink.one" && response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
+                    Interlocked.Exchange(ref _musicLinkUnavailableUntil, _clock.GetUtcNow().AddHours(1).UtcTicks);
+                // No match on MusicLink is an answer, not a failure.
+                if (uri.Host == "api.musiclink.one" && response.StatusCode == HttpStatusCode.NotFound) return "{}";
                 throw new OdesliLookupException(false);
             }
             var limit = html ? MaximumHtmlBytes : MaximumJsonBytes;
@@ -260,5 +316,7 @@ internal sealed class PlatformLinkResolverChain
         public PlatformLinkRateLimiter Web { get; } = new(20, TimeSpan.FromMinutes(1), clock);
         public PlatformLinkRateLimiter UniTune { get; } = new(30, TimeSpan.FromMinutes(1), clock);
         public PlatformLinkRateLimiter Squigly { get; } = new(18, TimeSpan.FromMinutes(1), clock);
+        // MusicLink's free plan: 10 a minute.
+        public PlatformLinkRateLimiter MusicLink { get; } = new(10, TimeSpan.FromMinutes(1), clock);
     }
 }

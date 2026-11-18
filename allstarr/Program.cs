@@ -87,7 +87,7 @@ builder.Services.AddSingleton<MountedLegacyEnvironment>();
 builder.Services.AddSingleton<IBackendConnectionVerifier, BackendConnectionVerifier>();
 builder.Services.AddSingleton<BackendSetupService>();
 builder.Services.AddSingleton<AdminOidcSettingsService>();
-builder.Services.AddSingleton<OdesliApiKeySettingsService>();
+builder.Services.AddSingleton<LinkServiceKeySettingsService>();
 builder.Services.AddSingleton<allstarr.Core.AudioMuse.AudioMuseSettings>();
 builder.Services.AddSingleton<allstarr.Core.AudioMuse.AudioMuseClient>();
 builder.Services.AddSingleton<allstarr.Core.AudioMuse.AudioMuseDiscovery>();
@@ -312,6 +312,7 @@ builder.Services.ConfigureAll<Microsoft.Extensions.Http.HttpClientFactoryOptions
         LibraryBackendBrandResolver.HttpClientName or BackendConnectionVerifier.HttpClientName))));
 builder.Services.ConfigureHttpClientDefaults(client => client.AddHttpMessageHandler(() => new allstarr.Core.Intelligence.HistoryRequestBudgetHandler()));
 builder.Services.Configure<OdesliSettings>(builder.Configuration.GetSection("Odesli"));
+builder.Services.Configure<MusicLinkSettings>(builder.Configuration.GetSection("MusicLink"));
 builder.Services.AddHttpClient("Odesli", client => client.Timeout = TimeSpan.FromSeconds(6)).RemoveAllLoggers()
     .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false, UseDefaultCredentials = false });
 builder.Services.AddHttpClient("Lrclib", client => client.Timeout = TimeSpan.FromSeconds(5));

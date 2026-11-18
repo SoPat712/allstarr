@@ -142,11 +142,14 @@ public class ConfigController : ControllerBase
         var operatorSettings = OperatorSettingPolicy.Definitions.ToDictionary(
             item => item.Key, item => runtimeSettings.TryGetValue(item.Key, out var setting)
                 ? setting.Value : (object)(_configuration[item.Key] ?? item.DefaultValue ?? ""));
-        var hasOdesliKey = runtimeSettings.TryGetValue(OdesliApiKeySettingsService.ReferenceKey, out var keyReference) &&
-                          keyReference.Origin == RuntimeSettingOrigin.Durable
-            ? !string.IsNullOrEmpty(keyReference.NormalizedValue)
-            : !string.IsNullOrWhiteSpace(_configuration["Odesli:ApiKey"]);
-        operatorSettings["Odesli:ApiKey"] = hasOdesliKey ? "********" : "";
+        foreach (var linkKey in LinkServiceKey.All)
+        {
+            var hasKey = runtimeSettings.TryGetValue(linkKey.ReferenceKey, out var keyReference) &&
+                         keyReference.Origin == RuntimeSettingOrigin.Durable
+                ? !string.IsNullOrEmpty(keyReference.NormalizedValue)
+                : !string.IsNullOrWhiteSpace(_configuration[linkKey.ConfigKey]);
+            operatorSettings[linkKey.ConfigKey] = hasKey ? "********" : "";
+        }
 
         return Ok(new
         {
@@ -355,9 +358,9 @@ public class ConfigController : ControllerBase
             var normalized = new List<(string LegacyKey, string DurableKey, string Value)>();
             foreach (var (key, value) in request.Updates)
             {
-                if (key.Equals("ODESLI_API_KEY", StringComparison.OrdinalIgnoreCase))
+                if (LinkServiceKey.All.FirstOrDefault(item => item.Field.Equals(key, StringComparison.OrdinalIgnoreCase)) is { } linkKey)
                 {
-                    normalized.Add((key, OdesliApiKeySettingsService.ReferenceKey, value));
+                    normalized.Add((key, linkKey.ReferenceKey, value));
                     continue;
                 }
                 if (!LegacyEnvParser.TryGetDurableAlias(key, out var durableKey))
@@ -376,9 +379,10 @@ public class ConfigController : ControllerBase
 
             var settings = HttpContext.RequestServices.GetRequiredService<IDurableRuntimeSettings>();
             var current = await settings.GetManyAsync(normalized.Select(item => item.DurableKey));
-            var keyUpdates = normalized.Where(item => item.DurableKey == OdesliApiKeySettingsService.ReferenceKey).ToArray();
-            if (keyUpdates.Length > 1) throw new ArgumentException("Supply the song.link API key only once.");
-            var writes = normalized.Where(item => item.DurableKey != OdesliApiKeySettingsService.ReferenceKey).Select(item =>
+            var keyReferences = LinkServiceKey.All.Select(item => item.ReferenceKey).ToHashSet(StringComparer.Ordinal);
+            var keyUpdates = normalized.Where(item => keyReferences.Contains(item.DurableKey)).ToArray();
+            if (keyUpdates.DistinctBy(item => item.DurableKey).Count() < keyUpdates.Length) throw new ArgumentException("Supply each API key only once.");
+            var writes = normalized.Where(item => !keyReferences.Contains(item.DurableKey)).Select(item =>
             {
                 var existing = current[item.DurableKey];
                 return new RuntimeSettingWrite(
@@ -386,16 +390,18 @@ public class ConfigController : ControllerBase
                     item.Value,
                     existing.Origin == RuntimeSettingOrigin.Durable ? existing.Revision : null);
             }).ToArray();
-            RuntimeSettingBatchResult result;
-            if (keyUpdates.Length == 1)
+            RuntimeSettingBatchResult? result = null;
+            // Each key is stored with its own secret; the other settings go with the first key, or alone.
+            foreach (var update in keyUpdates)
             {
-                var reference = current[OdesliApiKeySettingsService.ReferenceKey];
-                result = await HttpContext.RequestServices.GetRequiredService<OdesliApiKeySettingsService>().ApplyAsync(
-                    session, keyUpdates[0].Value,
+                var reference = current[update.DurableKey];
+                var applied = await HttpContext.RequestServices.GetRequiredService<LinkServiceKeySettingsService>().ApplyAsync(
+                    session, LinkServiceKey.All.Single(item => item.ReferenceKey == update.DurableKey), update.Value,
                     reference.Origin == RuntimeSettingOrigin.Durable ? reference.Revision : null,
-                    writes, HttpContext.RequestAborted);
+                    result == null ? writes : [], HttpContext.RequestAborted);
+                result = result == null ? applied : new([.. result.Settings, .. applied.Settings], applied.ChangeVersion);
             }
-            else result = await settings.ApplyBatchAsync(writes, "admin-ui", session.AllstarrUserId, HttpContext.RequestAborted);
+            result ??= await settings.ApplyBatchAsync(writes, "admin-ui", session.AllstarrUserId, HttpContext.RequestAborted);
             var cacheEntriesInvalidated = normalized.Any(item =>
                 !item.DurableKey.StartsWith("Scrobbling:", StringComparison.OrdinalIgnoreCase) &&
                 !item.DurableKey.StartsWith("WebUi:", StringComparison.OrdinalIgnoreCase))
@@ -412,7 +418,7 @@ public class ConfigController : ControllerBase
                 requiresRestart,
                 changeVersion = result.ChangeVersion,
                 cacheEntriesInvalidated,
-                settings = result.Settings.Where(item => item.Key != OdesliApiKeySettingsService.ReferenceKey)
+                settings = result.Settings.Where(item => !keyReferences.Contains(item.Key))
                     .Select(item => new { item.Key, item.Revision, item.UpdatedAt })
             });
         }

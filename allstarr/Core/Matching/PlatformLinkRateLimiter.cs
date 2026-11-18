@@ -32,6 +32,21 @@ internal sealed class PlatformLinkRateLimiter(int maximum, TimeSpan window, Time
         }
     }
 
+    // Takes a slot only if one is free now, for a service worth asking only when it answers without a wait.
+    public async Task<bool> TryAcquireAsync(CancellationToken cancellationToken)
+    {
+        await _gate.WaitAsync(cancellationToken);
+        try
+        {
+            var now = clock.GetUtcNow();
+            while (_requests.TryPeek(out var oldest) && now - oldest >= window) _requests.Dequeue();
+            if (_retryAt > now || _requests.Count >= maximum) return false;
+            _requests.Enqueue(now);
+            return true;
+        }
+        finally { _gate.Release(); }
+    }
+
     public async Task BackoffAsync(TimeSpan delay, CancellationToken cancellationToken)
     {
         await _gate.WaitAsync(cancellationToken);

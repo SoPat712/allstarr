@@ -12,15 +12,15 @@ using Moq;
 
 namespace allstarr.Tests;
 
-public sealed class OdesliApiKeySettingsServiceTests
+public sealed class LinkServiceKeySettingsServiceTests
 {
     [Fact]
     public async Task Key_is_encrypted_rotated_loaded_at_startup_and_explicitly_removed()
     {
         await using var database = await SqliteTestDatabase.CreateAsync();
         var (service, settings, actor) = await CreateAsync(database);
-        await service.ApplyAsync(actor, "private-song-link", null, [], default);
-        await service.ApplyAsync(actor, "replacement-song-link", 1, [], default);
+        await service.ApplyAsync(actor, LinkServiceKey.SongLink, "private-song-link", null, [], default);
+        await service.ApplyAsync(actor, LinkServiceKey.SongLink, "replacement-song-link", 1, [], default);
         await using (var db = new AllstarrDbContext(database.Options))
         {
             var reference = Assert.Single(await db.SecretReferences.ToListAsync());
@@ -36,13 +36,13 @@ public sealed class OdesliApiKeySettingsServiceTests
         await StartupConfiguration.PrepareAsync(restarted, Mock.Of<IHostEnvironment>());
         Assert.Equal("replacement-song-link", restarted["Odesli:ApiKey"]);
 
-        await service.ApplyAsync(actor, "", 2, [], default);
+        await service.ApplyAsync(actor, LinkServiceKey.SongLink, "", 2, [], default);
         restarted["Odesli:ApiKey"] = "deployment-song-link";
         await StartupConfiguration.PrepareAsync(restarted, Mock.Of<IHostEnvironment>());
         Assert.Equal("", restarted["Odesli:ApiKey"]);
         await using var cleared = new AllstarrDbContext(database.Options);
         Assert.NotNull((await cleared.SecretReferences.SingleAsync()).RevokedAt);
-        Assert.Equal("", (await settings.GetAsync(OdesliApiKeySettingsService.ReferenceKey)).NormalizedValue);
+        Assert.Equal("", (await settings.GetAsync(LinkServiceKey.SongLink.ReferenceKey)).NormalizedValue);
     }
 
     [Fact]
@@ -50,7 +50,7 @@ public sealed class OdesliApiKeySettingsServiceTests
     {
         await using var database = await SqliteTestDatabase.CreateAsync();
         var (service, _, actor) = await CreateAsync(database);
-        await service.ApplyAsync(actor, "private-song-link", null, [], default);
+        await service.ApplyAsync(actor, LinkServiceKey.SongLink, "private-song-link", null, [], default);
         await using (var db = new AllstarrDbContext(database.Options))
         {
             (await db.SecretReferences.SingleAsync()).Purpose = "unrelated-service";
@@ -76,7 +76,7 @@ public sealed class OdesliApiKeySettingsServiceTests
             await db.SaveChangesAsync();
         }
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
-            service.ApplyAsync(actor, "private-song-link", null, [], default));
+            service.ApplyAsync(actor, LinkServiceKey.SongLink, "private-song-link", null, [], default));
         await using var unchanged = new AllstarrDbContext(database.Options);
         Assert.Empty(await unchanged.SecretReferences.ToListAsync());
         Assert.Empty(await unchanged.RuntimeSettings.ToListAsync());
@@ -87,22 +87,22 @@ public sealed class OdesliApiKeySettingsServiceTests
     {
         await using var database = await SqliteTestDatabase.CreateAsync();
         var (service, _, actor) = await CreateAsync(database);
-        await Assert.ThrowsAsync<ArgumentException>(() => service.ApplyAsync(actor, "private-song-link", null,
+        await Assert.ThrowsAsync<ArgumentException>(() => service.ApplyAsync(actor, LinkServiceKey.SongLink, "private-song-link", null,
             [new("Odesli:RateLimitMs", "-1")], default));
         await using (var db = new AllstarrDbContext(database.Options))
         {
             Assert.Empty(await db.SecretReferences.ToListAsync());
             Assert.Empty(await db.RuntimeSettings.ToListAsync());
         }
-        await service.ApplyAsync(actor, "private-song-link", null, [], default);
+        await service.ApplyAsync(actor, LinkServiceKey.SongLink, "private-song-link", null, [], default);
         await Assert.ThrowsAsync<RuntimeSettingConflictException>(() =>
-            service.ApplyAsync(actor, "replacement-song-link", null, [], default));
+            service.ApplyAsync(actor, LinkServiceKey.SongLink, "replacement-song-link", null, [], default));
         await using var unchanged = new AllstarrDbContext(database.Options);
         Assert.Equal(1, (await unchanged.SecretReferences.SingleAsync()).ActiveVersion);
         Assert.Single(await unchanged.SecretVersions.ToListAsync());
     }
 
-    private static async Task<(OdesliApiKeySettingsService Service, DurableRuntimeSettingsService Settings, AdminAuthSession Actor)> CreateAsync(SqliteTestDatabase database)
+    private static async Task<(LinkServiceKeySettingsService Service, DurableRuntimeSettingsService Settings, AdminAuthSession Actor)> CreateAsync(SqliteTestDatabase database)
     {
         var factory = new Factory(database.Options);
         var configuration = new ConfigurationManager { ["Storage:DataDirectory"] = database.StorageOptions.DataDirectory };
