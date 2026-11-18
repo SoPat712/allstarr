@@ -152,12 +152,14 @@ public sealed partial class MusicSearchService(
 
     /// <summary>
     /// Search lists two copies as one row only on proof: the same saved recording, or the same artist, title, version and
-    /// length (within two seconds) together with the same ISRC or the same album. Anything less stays its own row.
+    /// length (within two seconds) together with the same ISRC or the same album. Anything less stays its own row, and so
+    /// does a remaster beside a copy that doesn't name the same remaster.
     /// </summary>
     internal static bool SameSearchRecording(Song left, Song right)
     {
         if (left.CanonicalRecordingId is { } recording && recording != Guid.Empty && right.CanonicalRecordingId == recording) return true;
-        if (!SameRecordingFacts(left, right, allowSparse: false)) return false;
+        if (!SameRecordingFacts(left, right, allowSparse: false) ||
+            FuzzyMatcher.RemasterTag(left.Title + " " + left.Album) != FuzzyMatcher.RemasterTag(right.Title + " " + right.Album)) return false;
         var album = FuzzyMatcher.NormalizeAlbumForMatching(left.Album);
         return NormalizeIdentifier(left.Isrc) is { } isrc && isrc == NormalizeIdentifier(right.Isrc) ||
             album.Length > 0 && album == FuzzyMatcher.NormalizeAlbumForMatching(right.Album);

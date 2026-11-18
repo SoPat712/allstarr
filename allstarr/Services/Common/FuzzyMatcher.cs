@@ -623,6 +623,13 @@ public static partial class FuzzyMatcher
         };
     }
 
+    [System.Text.RegularExpressions.GeneratedRegex(@"\b(?:(?<before>\d{4})\s+)?(?:digital(?:ly)?\s+)?re-?master(?:ed)?\b(?:\s+(?<after>\d{4}))?", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
+    private static partial System.Text.RegularExpressions.Regex RemasterRegex();
+
+    /// <summary>"remaster", with its year when the text names one ("remaster 2011"), or empty when it names no remaster.</summary>
+    public static string RemasterTag(string? text) => RemasterRegex().Match(text ?? "") is { Success: true } match
+        ? ("remaster " + (match.Groups["before"].Success ? match.Groups["before"].Value : match.Groups["after"].Value)).TrimEnd() : "";
+
     public static IReadOnlySet<string> SpecialEditionTags(string? title) =>
         SemanticVersionTags(title).Where(tag => tag is not
             ("live" or "acoustic" or "stripped" or "radio edit" or "original mix" or "clean" or "explicit"))

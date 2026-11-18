@@ -14,11 +14,11 @@ public sealed class RankedSearchRecordingRowsTests
     {
         await using var search = new Search(["songs"]);
         await search.AddAsync("deezer", Song("ext-deezer-song-1", "deezer", "Walk", "Walk", 152, "GBAHT2100001"));
-        await search.AddAsync("tidal",
-            Song("ext-tidal-song-2", "tidal", "Walk", "vertigo", 153, "GBAHT2100001"),
-            // Same title, artist and length on another album, without an ISRC: not proven, so its own row.
-            Song("ext-tidal-song-3", "tidal", "Walk", "One Foot In Front Of The Other", 152),
-            Song("ext-tidal-song-4", "tidal", "Walk (Live)", "Walk", 160, "GBAHT2100009"));
+        // Song 3 has Walk's title, artist and length on another album without an ISRC: not proven, so its own row.
+        var copy = Song("ext-tidal-song-2", "tidal", "Walk", "vertigo", 153, "GBAHT2100001");
+        var lookalike = Song("ext-tidal-song-3", "tidal", "Walk", "One Foot In Front Of The Other", 152);
+        var live = Song("ext-tidal-song-4", "tidal", "Walk (Live)", "Walk", 160, "GBAHT2100009");
+        await search.AddAsync("tidal", copy, lookalike, live);
 
         var songs = (await search.FinalAsync())["sections"]!["songs"]!.AsArray();
 
@@ -40,7 +40,11 @@ public sealed class RankedSearchRecordingRowsTests
         { AlbumText = "Walk", DurationSeconds = 152 };
         await search.AddLibraryAsync(new RankedSearchRow(new JsonObject
         {
-            ["Id"] = "lib-walk", ["Name"] = "Walk", ["score"] = 100d, ["source"] = "jellyfin", ["sourceName"] = "Jellyfin"
+            ["Id"] = "lib-walk",
+            ["Name"] = "Walk",
+            ["score"] = 100d,
+            ["source"] = "jellyfin",
+            ["sourceName"] = "Jellyfin"
         }, "songs", Native: native));
 
         var final = await search.FinalAsync();
@@ -62,7 +66,11 @@ public sealed class RankedSearchRecordingRowsTests
         var native = new NativeMusicItem<object>(MusicItemKind.Album, "lib-album", title, "AT Musica", new object());
         await search.AddLibraryAsync(new RankedSearchRow(new JsonObject
         {
-            ["Id"] = "lib-album", ["Name"] = title, ["score"] = 100d, ["source"] = "jellyfin", ["sourceName"] = "Jellyfin"
+            ["Id"] = "lib-album",
+            ["Name"] = title,
+            ["score"] = 100d,
+            ["source"] = "jellyfin",
+            ["sourceName"] = "Jellyfin"
         }, "albums", Native: native));
 
         var albums = (await search.FinalAsync())["sections"]!["albums"]!.AsArray();
@@ -79,7 +87,11 @@ public sealed class RankedSearchRecordingRowsTests
 
     private static RankedSearchRow Row(string id, string source, string section, Song? song, Album? album) => new(new JsonObject
     {
-        ["Id"] = id, ["Name"] = song?.Title ?? album!.Title, ["score"] = 100d, ["source"] = source, ["sourceName"] = source
+        ["Id"] = id,
+        ["Name"] = song?.Title ?? album!.Title,
+        ["score"] = 100d,
+        ["source"] = source,
+        ["sourceName"] = source
     }, section, Song: song, Album: album);
 
     private static string Id(JsonNode? row) => row!["Id"]!.GetValue<string>();

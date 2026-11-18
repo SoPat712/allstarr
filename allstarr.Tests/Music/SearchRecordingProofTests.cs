@@ -42,6 +42,10 @@ public sealed class SearchRecordingProofTests
         Assert.False(MusicSearchService.SameSearchRecording(Walk(title: "Walk (In The Room)"), Walk()));
         Assert.False(MusicSearchService.SameSearchRecording(Walk(isrc: "GBAHT2100001", explicitContent: 1),
             Walk(isrc: "GBAHT2100001", explicitContent: 0)));
+        // A remaster stays apart from a copy that doesn't name the same remaster.
+        Assert.False(MusicSearchService.SameSearchRecording(Walk(title: "Walk - Remastered 2011", isrc: "GBAHT2100001"), Walk(isrc: "GBAHT2100001")));
+        Assert.False(MusicSearchService.SameSearchRecording(Walk("Walk (2011 Remaster)"), Walk("Walk (2019 Remaster)")));
+        Assert.True(MusicSearchService.SameSearchRecording(Walk("Walk", title: "Walk - Remastered 2011"), Walk("Walk", title: "Walk (2011 Remaster)")));
         // A copy without a length can't be checked, so it stays apart.
         Assert.False(MusicSearchService.SameSearchRecording(Walk(duration: 0, isrc: "GBAHT2100001"), Walk(isrc: "GBAHT2100001")));
     }

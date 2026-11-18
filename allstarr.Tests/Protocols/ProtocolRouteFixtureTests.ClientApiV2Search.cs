@@ -45,8 +45,14 @@ public sealed partial class ProtocolRouteFixtureTests
     {
         static Song Copy(string provider, string id, string album, string? isrc) => new()
         {
-            Id = $"ext-{provider}-song-{id}", Title = "Walk", Artist = "Griff", Album = album, Duration = 152, Isrc = isrc,
-            ExternalProvider = provider, ExternalId = id
+            Id = $"ext-{provider}-song-{id}",
+            Title = "Walk",
+            Artist = "Griff",
+            Album = album,
+            Duration = 152,
+            Isrc = isrc,
+            ExternalProvider = provider,
+            ExternalId = id
         };
         var gateway = V2BatchGateway();
         gateway.Setup(item => item.GetProviderOrder(It.IsAny<ProviderCapabilityKind>())).Returns(["deezer", "qobuz"]);
