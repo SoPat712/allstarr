@@ -82,12 +82,17 @@ public sealed partial class TrackIdentityService
         if (hashes.Length == 0) return;
         await using var db = await _contextFactory.CreateDbContextAsync(cancellationToken);
         await ValidateActorAsync(db, actor, cancellationToken);
-        var snapshots = await db.ExternalMetadataSnapshots.AsNoTracking().Where(item => item.OwnerUserId == user &&
-            item.ResourceKind == MediaSnapshotKind && hashes.Contains(item.ExternalIdHash) &&
-            (item.ProviderAccountId == null || db.ProviderAccounts.Any(account => account.Id == item.ProviderAccountId &&
-                account.Enabled && (account.OwnerUserId == null || account.OwnerUserId == user) &&
-                item.ProviderRevision == "media:" + account.Revision)))
-            .ToArrayAsync(cancellationToken);
+        // Two lookups that follow the snapshot index column by column; one filter over "no account or any account" scanned
+        // every snapshot the listener has.
+        var accounts = await db.ProviderAccounts.AsNoTracking().Where(account => account.Enabled && (account.OwnerUserId == null || account.OwnerUserId == user))
+            .ToDictionaryAsync(account => account.Id, account => "media:" + account.Revision, cancellationToken);
+        var accountIds = accounts.Keys.Select(id => (Guid?)id).ToArray();
+        var snapshots = (await db.ExternalMetadataSnapshots.AsNoTracking().Where(item => item.OwnerUserId == user && item.ProviderAccountId == null &&
+                item.ResourceKind == MediaSnapshotKind && hashes.Contains(item.ExternalIdHash)).ToArrayAsync(cancellationToken))
+            .Concat(accountIds.Length == 0 ? [] : (await db.ExternalMetadataSnapshots.AsNoTracking().Where(item => item.OwnerUserId == user &&
+                    accountIds.Contains(item.ProviderAccountId) && item.ResourceKind == MediaSnapshotKind && hashes.Contains(item.ExternalIdHash))
+                .ToArrayAsync(cancellationToken)).Where(item => accounts[item.ProviderAccountId!.Value] == item.ProviderRevision))
+            .ToArray();
         var externalIds = candidates.Select(item => item.Song.ExternalId!).Distinct().ToArray();
         var artifacts = await db.ProviderDownloadArtifacts.AsNoTracking().Where(item => item.OwnerUserId == user &&
             item.SourceExternalTrackId != null && externalIds.Contains(item.SourceExternalTrackId) && item.SupersededAt == null &&
@@ -97,9 +102,10 @@ public sealed partial class TrackIdentityService
             .ToArrayAsync(cancellationToken);
         foreach (var candidate in candidates)
         {
-            var snapshot = snapshots.Where(item => item.ProviderId == candidate.Provider && item.ExternalIdHash == candidate.Hash)
+            // Apple's two sources name the same song, so facts measured through either apply to both.
+            var snapshot = snapshots.Where(item => SameProvider(item.ProviderId, candidate.Provider) && item.ExternalIdHash == candidate.Hash)
                 .OrderByDescending(item => item.RetrievedAt).ThenByDescending(item => item.SnapshotVersion).FirstOrDefault();
-            var artifact = artifacts.Where(item => item.ProviderId == candidate.Provider && item.SourceExternalTrackId == candidate.Song.ExternalId)
+            var artifact = artifacts.Where(item => SameProvider(item.ProviderId, candidate.Provider) && item.SourceExternalTrackId == candidate.Song.ExternalId)
                 .OrderByDescending(item => item.VerifiedAt).FirstOrDefault();
             if (artifact != null && (snapshot == null || artifact.VerifiedAt > snapshot.RetrievedAt))
             {
@@ -114,4 +120,7 @@ public sealed partial class TrackIdentityService
             catch (JsonException) { }
         }
     }
+
+    private static bool SameProvider(string left, string right) =>
+        Core.Providers.AppleMusicKit.AppleMusicClient.NormalizeProviderId(left) == Core.Providers.AppleMusicKit.AppleMusicClient.NormalizeProviderId(right);
 }

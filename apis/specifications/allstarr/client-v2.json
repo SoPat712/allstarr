@@ -9723,6 +9723,21 @@
           },
           "lyrics": {
             "$ref": "#/components/schemas/V2LyricsAvailability"
+          },
+          "trackGainDb": {
+            "type": [
+              "null",
+              "number"
+            ],
+            "description": "A service song\u0027s measured gain at the \u221218 LUFS reference, or null; library songs carry their media server\u0027s own.",
+            "format": "double"
+          },
+          "albumGainDb": {
+            "type": [
+              "null",
+              "number"
+            ],
+            "format": "double"
           }
         }
       },

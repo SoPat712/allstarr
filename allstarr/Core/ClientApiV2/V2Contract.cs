@@ -197,7 +197,9 @@ public sealed record V2TrackFacts(
     [property: JsonPropertyName("lastPlayedAt")] DateTimeOffset? LastPlayedAt,
     [property: JsonPropertyName("keep")] V2Keep Keep,
     [property: JsonPropertyName("match")] V2Match? Match,
-    [property: JsonPropertyName("lyrics")] V2LyricsAvailability Lyrics);
+    [property: JsonPropertyName("lyrics")] V2LyricsAvailability Lyrics,
+    [property: JsonPropertyName("trackGainDb"), Description("A service song's measured gain at the −18 LUFS reference, or null; library songs carry their media server's own.")] double? TrackGainDb = null,
+    [property: JsonPropertyName("albumGainDb")] double? AlbumGainDb = null);
 
 public sealed record V2TrackFactsResponse(
     [property: JsonPropertyName("tracks")] IReadOnlyList<V2TrackFacts> Tracks,

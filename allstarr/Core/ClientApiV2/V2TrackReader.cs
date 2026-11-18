@@ -115,7 +115,7 @@ public sealed class V2TrackReader(
         foreach (var id in requested)
             if (V2Ids.TryDecode(id, V2IdKind.Track, out var decoded))
                 sources[id] = decoded.Recording is { } recording ? CanonicalRecordingRecord.DefaultPublicId(recording) : decoded.Source!;
-        var (read, _) = await details.ReadWithSongsAsync(http, execution, sources.Values.Distinct(StringComparer.Ordinal).ToArray(), resolveServingProvider: true);
+        var (read, songs) = await details.ReadWithSongsAsync(http, execution, sources.Values.Distinct(StringComparer.Ordinal).ToArray(), resolveServingProvider: true);
         var facts = read.Items.ToDictionary(item => item.Id, StringComparer.Ordinal);
         var tracks = new List<V2TrackFacts>();
         var returned = new Dictionary<string, int>(StringComparer.Ordinal);
@@ -145,7 +145,8 @@ public sealed class V2TrackReader(
                 item.Audio is { } audio ? FormatOf(null, audio.Codec, audio.Bitrate, audio.SampleRate, audio.BitDepth, null) : null,
                 item.Explicit, item.Saved, item.PlayCount, item.LastPlayedAt, new(item.Keep.State, item.Keep.Progress),
                 item.Match == null ? null : new(item.Match.State, item.Match.Confidence, item.Match.Authority),
-                new(item.Lyrics.Available, item.Lyrics.Format, item.Lyrics.Source)));
+                new(item.Lyrics.Available, item.Lyrics.Format, item.Lyrics.Source),
+                Finite(songs.GetValueOrDefault(source)?.ReplayGain?.TrackGain), Finite(songs.GetValueOrDefault(source)?.ReplayGain?.AlbumGain)));
         }
         return new(tracks, missing);
     }
