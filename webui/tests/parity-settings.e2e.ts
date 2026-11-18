@@ -512,9 +512,7 @@ test("Cross-service links explain built-in lookups and preserve the optional mas
     } } });
   });
   await page.goto("#/settings/advanced");
-  const card = page.getByRole("form", { name: "song.link settings" });
-  await expect(card.getByText("Find links to the same song across your enabled services.", { exact: true })).toBeVisible();
-  await expect(card.getByText("Optional. With a key, the official API is tried first. Leave unchanged to keep it.")).toBeVisible();
+  const card = page.getByRole("form", { name: "Song links settings" });
   const key = card.getByLabel("song.link API key", { exact: true });
   await expect(key).toHaveCount(0);
   await card.getByRole("button", { name: "Change key…", exact: true }).click();

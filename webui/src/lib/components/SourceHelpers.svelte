@@ -9,7 +9,7 @@
   const fields = $derived((schema?.configSections ?? []).flatMap(item => item.fields));
   const pick = (...keys: string[]) => keys.flatMap(key => fields.filter(field => field.key === key));
   const group = (id: string, label: string, selected: typeof fields): ConfigSection => ({ id, label, fields: selected });
-  const songLinks = $derived(group("song-links", "song.link", pick("ODESLI_ENABLED", "ODESLI_API_KEY")));
+  const songLinks = $derived(group("song-links", "Song links", pick("ODESLI_ENABLED", "MUSICLINK_API_KEY", "ODESLI_API_KEY")));
   const songLinkTiming = $derived(group("song-link-timing", "Song link timing", pick("ODESLI_RATE_LIMIT_MS")));
   const extensions = $derived(group("extension-installs", "Extensions", pick("EXTENSIONS_ALLOW_REMOTE_INSTALL")));
   const cloudflare = $derived(group("cloudflare", "Cloudflare checks", pick("CHALLENGE_SOLVER_URL", "CHALLENGE_SOLVER_TIMEOUT_SECONDS")));

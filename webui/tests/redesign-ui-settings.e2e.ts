@@ -369,7 +369,7 @@ test("A song.link key is requested with an action before showing a replacement f
     ["**/api/admin/extensions/packages", []], ["**/api/admin/extensions/registries", []], ["**/api/admin/extensions/store", { items: [], errors: [] }]] as const)
     await page.route(path, route => route.fulfill({ json }));
   await page.goto("/#/settings/advanced");
-  await expect(page.getByRole("heading", { name: "song.link", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Song links", exact: true })).toBeVisible();
   await expect(page.getByLabel("song.link API key", { exact: true })).toHaveCount(0);
   await page.getByRole("button", { name: "Add key…", exact: true }).click();
   await expect(page.getByLabel("song.link API key", { exact: true })).toBeVisible();

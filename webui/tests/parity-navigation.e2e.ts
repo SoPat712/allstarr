@@ -153,7 +153,7 @@ for (const theme of ["light", "dark"] as const) {
           probe.style.color = `var(${token})`;
           return getComputedStyle(probe).color;
         };
-        const edge = color("--color-edge-strong"), ink = color("--color-ink");
+        const edge = color("--color-edge-strong"), ink = color("--color-ink"), muted = color("--color-ink-muted");
         const tonal = color("--md-sys-color-secondary-container"), onTonal = color("--md-sys-color-on-secondary-container");
         const errors: string[] = [];
         for (const group of groups) {
@@ -165,7 +165,9 @@ for (const theme of ["light", "dark"] as const) {
           for (const [index, control] of [...group.querySelectorAll(":scope > a, :scope > button")].entries()) {
             const selected = control.matches('[aria-selected="true"], [aria-checked="true"], [aria-pressed="true"]');
             const item = getComputedStyle(control);
-            if (item.backgroundColor !== (selected ? tonal : "rgba(0, 0, 0, 0)") || item.color !== (selected ? onTonal : ink)) errors.push(`${name}: ${control.textContent} colors`);
+            // An empty filter reads in the muted ink when it isn't selected.
+            const text = selected ? onTonal : control.classList.contains("zero") ? muted : ink;
+            if (item.backgroundColor !== (selected ? tonal : "rgba(0, 0, 0, 0)") || item.color !== text) errors.push(`${name}: ${control.textContent} colors`);
             if (index > 0 && (item.borderInlineStartWidth !== "1px" || item.borderInlineStartColor !== edge)) errors.push(`${name}: divider`);
             if (!["none", "normal"].includes(getComputedStyle(control, "::after").content)) errors.push(`${name}: underline`);
           }
