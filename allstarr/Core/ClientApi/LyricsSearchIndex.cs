@@ -223,7 +223,8 @@ public sealed class LyricsSearchIndex(StorageOptions options, IProviderRouter? r
                 _transaction = null;
             }
             Timed("eligible");
-            var fts = string.Join(" OR ", normalized.Split(' ', StringSplitOptions.RemoveEmptyEntries).Distinct(StringComparer.Ordinal).Select(word => "\"" + word + "\"*"));
+            // Lines holding only filler words such as "a" or "my" never score, and scoring them was most of the search's time.
+            var fts = string.Join(" OR ", LyricsSearchMatcher.CandidateWords(normalized).Select(word => "\"" + word + "\"*"));
             var matches = new List<(long Id, int Ordinal)>();
             // At most 2,000 lines per document still allows limit + 1 distinct matches.
             using (var exact = Command("""

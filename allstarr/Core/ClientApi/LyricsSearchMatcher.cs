@@ -60,6 +60,14 @@ public static class LyricsSearchMatcher
 
     private static double Weight(string word) => Filler.Contains(word) ? 0.2 : 1;
 
+    /// <summary>The words a line must hold one of to score at all: the search's other words, or all of them when every word is filler.</summary>
+    internal static IReadOnlyList<string> CandidateWords(string query)
+    {
+        var words = query.Split(' ', StringSplitOptions.RemoveEmptyEntries).Distinct(StringComparer.Ordinal).ToArray();
+        var content = words.Where(word => !Filler.Contains(word)).ToArray();
+        return content.Length > 0 ? content : words;
+    }
+
     internal sealed class PreparedQuery(string query)
     {
         private readonly string[] words = query.Split(' ', StringSplitOptions.RemoveEmptyEntries).Distinct(StringComparer.Ordinal).ToArray();

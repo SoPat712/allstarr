@@ -34,6 +34,15 @@ public sealed class LyricsSearchMatcherTests
     }
 
     [Theory]
+    [InlineData("i just wanna make a lot of money", "wanna make lot money")]
+    [InlineData("all of me", "all of me")]
+    [InlineData("you you walk", "walk")]
+    public void LyricsSearch_LooksUpLinesByTheWordsThatCanMatch(string query, string expected)
+    {
+        Assert.Equal(expected.Split(' '), LyricsSearchMatcher.CandidateWords(query));
+    }
+
+    [Theory]
     [InlineData("Walk", 0.15)]
     [InlineData("Walk (In The Room)", 0)]
     [InlineData("You", 0)]
