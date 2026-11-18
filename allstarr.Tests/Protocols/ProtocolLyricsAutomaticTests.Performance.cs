@@ -24,6 +24,30 @@ public sealed partial class ProtocolLyricsAutomaticTests
     }
 
     [Fact]
+    public async Task VersionListAnswersOnceTheChoiceIsSettledAndAnnouncesThePendingRest()
+    {
+        var known = new Source("lrclib") { Cached = Result("lrclib", true) };
+        var slow = new Source("lrcred");
+        await using var fixture = new Fixture(known, slow);
+        var song = new allstarr.Models.Domain.Song { Id = "song", Title = "Fixture", Artist = "Artist", Album = "Album", Duration = 120 };
+
+        // The clock never moves, so only a settled choice can end this read.
+        var answered = await fixture.Resolver.FindAllAsync(fixture.Protocol, song, "recording",
+            new ProtocolLyricsSources { UntilChosen = true }).WaitAsync(TimeSpan.FromSeconds(5));
+        var chosen = await fixture.Resolver.FindAsync(fixture.Protocol, song, "recording", new ProtocolLyricsSources())
+            .WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal("ready", Assert.Single(answered, candidate => candidate.SourceId == "lrclib").State);
+        Assert.Equal("pending", Assert.Single(answered, candidate => candidate.SourceId == "lrcred").State);
+        Assert.Equal("lrclib", chosen?.Source);
+        Assert.Empty(fixture.Events);
+        await slow.WaitForCallsAsync(1);
+        slow.CompleteAll();
+        await fixture.EventPublished.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal("lyrics.updated", Assert.Single(fixture.Events).Type);
+    }
+
+    [Fact]
     public async Task LyricsUnavailableResultIsSharedAcrossReadsAndExpiresAfterSixHours()
     {
         var source = new Source("lyricsplus", ProviderOutcome<ProviderLyricsResult>.Success(

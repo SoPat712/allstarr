@@ -41,6 +41,7 @@ public sealed partial class ProtocolLyricsResolver
         internal TaskCompletionSource Changed { get; set; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal TaskCompletionSource Completion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal bool Observed { get; set; }
+        internal bool VersionsAnnounced { get; set; }
         internal void Pulse()
         {
             var changed = Changed;
@@ -274,7 +275,7 @@ public sealed partial class ProtocolLyricsResolver
     }
 
     private async Task<IReadOnlyList<ProtocolLyricsCandidate>> WaitAutomaticAsync(AutomaticLookup lookup,
-        bool all, CancellationToken caller, DateTimeOffset responseDeadline)
+        bool all, CancellationToken caller, DateTimeOffset responseDeadline, bool untilChosen = false)
     {
         var now = LyricsClock.GetUtcNow();
         var budget = responseDeadline - now;
@@ -308,8 +309,10 @@ public sealed partial class ProtocolLyricsResolver
             lock (lookup.Gate)
             {
                 var best = BestAutomatic(lookup);
+                // A version list asked for until the choice is settled stops where a single read would, so the choice it
+                // reports is the one the lyrics read serves; services still answering are listed as pending.
                 if (timer.IsCancellationRequested || _automaticShutdown.IsCancellationRequested || lookup.Sources.All(source => source.Finished) ||
-                    !all && best != null && (lookup.Sources.Any(source => source.Known && source.Id == LyricsVersions.ProviderId(best.SourceId)) || IsBestPossible(lookup, best)))
+                    (!all || untilChosen) && best != null && (lookup.Sources.Any(source => source.Known && source.Id == LyricsVersions.ProviderId(best.SourceId)) || IsBestPossible(lookup, best)))
                 {
                     lookup.Observed = true;
                     ObserveAutomatic(lookup, best);
@@ -318,7 +321,13 @@ public sealed partial class ProtocolLyricsResolver
                         if (best?.Lyrics != null) best.Lyrics.Source = best.SourceId;
                         return best == null ? [] : [best];
                     }
-                    return AutomaticCandidates(lookup).ToArray();
+                    var candidates = AutomaticCandidates(lookup).ToArray();
+                    if (untilChosen && !lookup.CacheOnly && !lookup.VersionsAnnounced && lookup.Sources.Any(source => !source.Finished))
+                    {
+                        lookup.VersionsAnnounced = true;
+                        _ = AnnounceSettledVersionsAsync(lookup, Versions(candidates));
+                    }
+                    return candidates;
                 }
                 changed = lookup.Changed.Task;
             }
@@ -329,6 +338,21 @@ public sealed partial class ProtocolLyricsResolver
             catch (OperationCanceledException) when (!caller.IsCancellationRequested) { }
         }
     }
+
+    // A version list answered while services were still looking is announced once they settle, if it changed.
+    private async Task AnnounceSettledVersionsAsync(AutomaticLookup lookup, string answered)
+    {
+        await lookup.Completion.Task;
+        var context = lookup.Protocol;
+        if (context.Actor?.EffectiveUserId is not { } owner || context.IsPreparation || context.IsReadOnly || lookup.HouseholdOnly) return;
+        string settled;
+        lock (lookup.Gate) settled = Versions(AutomaticCandidates(lookup));
+        if (settled != answered)
+            clientUpdates?.VersionsChanged(owner, string.IsNullOrWhiteSpace(context.RequestedItemId) ? lookup.Song.Id : context.RequestedItemId, settled);
+    }
+
+    private static string Versions(IEnumerable<ProtocolLyricsCandidate> candidates) =>
+        string.Join('\n', candidates.Select(candidate => candidate.SourceId + " " + (candidate.Lyrics != null ? "ready" : candidate.State)));
 
     public Task StartAsync(CancellationToken token) => Task.CompletedTask;
     public async Task StopAsync(CancellationToken token)

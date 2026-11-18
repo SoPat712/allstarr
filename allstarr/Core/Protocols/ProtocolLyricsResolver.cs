@@ -23,6 +23,9 @@ public sealed record ProtocolLyricsSources(
     public string? OnlySourceId { get; init; }
     public bool ForPermanentSidecar { get; init; }
     public bool ReadOnly { get; init; }
+    /// <summary>Answers a version list once the automatic choice is settled; versions still being looked up come back
+    /// pending, and a lyrics update follows when they settle.</summary>
+    public bool UntilChosen { get; init; }
     internal bool CacheOnly { get; init; }
 }
 
@@ -410,7 +413,7 @@ public sealed partial class ProtocolLyricsResolver(
             }, sources?.CacheOnly == true);
             if (lookup != null)
                 foreach (var candidate in await WaitAutomaticAsync(lookup, !automaticLookup, callerToken,
-                    responseDeadline ?? LyricsClock.GetUtcNow().Add(LookupOptions.ResponseBudget)))
+                    responseDeadline ?? LyricsClock.GetUtcNow().Add(LookupOptions.ResponseBudget), sources?.UntilChosen == true))
                     yield return candidate with { AutomaticEligible = automaticOrder.Contains(LyricsVersions.ProviderId(candidate.SourceId), StringComparer.Ordinal) };
             yield break;
         }

@@ -26,5 +26,12 @@ public sealed class ClientLyricsUpdates(IClientEventPublisher events) : IDisposa
         if (changed) events.Publish(owner, ClientEvent.Lyrics(itemId, revision));
     }
 
+    // A version list changed after it was answered while the served lyrics stayed the same.
+    public void VersionsChanged(Guid owner, string itemId, string versions)
+    {
+        if (string.IsNullOrWhiteSpace(itemId)) return;
+        events.Publish(owner, ClientEvent.Lyrics(itemId, Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(versions)))));
+    }
+
     public void Dispose() => _observed.Dispose();
 }

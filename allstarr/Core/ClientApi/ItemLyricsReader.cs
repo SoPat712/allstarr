@@ -58,7 +58,8 @@ public sealed class ItemLyricsReader(
         if (item == null) return null;
         var layers = await ChoicesAsync(execution, item);
         var recordingDurationMs = await RecordingDurationMsAsync(execution, item);
-        var candidates = await lyrics.FindAllAsync(execution with { RequestedItemId = itemId }, item.Song, item.ResourceKey, item.Sources);
+        var candidates = await lyrics.FindAllAsync(execution with { RequestedItemId = itemId }, item.Song, item.ResourceKey,
+            item.Sources with { UntilChosen = true });
         using var serialization = RequestTiming.Current?.Stage("serialize");
         var scored = recordingDurationMs is > 0
             ? candidates.Select(candidate => candidate with { Assessment = null }).ToArray()
