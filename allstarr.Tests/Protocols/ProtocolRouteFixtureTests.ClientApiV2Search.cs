@@ -41,6 +41,47 @@ public sealed partial class ProtocolRouteFixtureTests
     }
 
     [Fact]
+    public async Task ClientApiV2_SearchListsARecordingOnceWithItsOtherCopiesAndKeepsLookalikesApart()
+    {
+        static Song Copy(string provider, string id, string album, string? isrc) => new()
+        {
+            Id = $"ext-{provider}-song-{id}", Title = "Walk", Artist = "Griff", Album = album, Duration = 152, Isrc = isrc,
+            ExternalProvider = provider, ExternalId = id
+        };
+        var gateway = V2BatchGateway();
+        gateway.Setup(item => item.GetProviderOrder(It.IsAny<ProviderCapabilityKind>())).Returns(["deezer", "qobuz"]);
+        gateway.Setup(item => item.StreamSearchAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), It.IsAny<int>(),
+                It.IsAny<bool>(), It.IsAny<bool>(), It.IsAny<bool>(), It.IsAny<bool>(),
+                It.IsAny<Func<string, SearchResult, IReadOnlyList<ExternalPlaylist>, CancellationToken, Task>>(), It.IsAny<CancellationToken>()))
+            .Returns(async (ProtocolExecutionContext _, string _, int _, bool _, bool _, bool _, bool _,
+                Func<string, SearchResult, IReadOnlyList<ExternalPlaylist>, CancellationToken, Task> write, CancellationToken token) =>
+            {
+                // Qobuz's copy shares Deezer's ISRC; Deezer's other "Walk" only shares title, artist and length.
+                await write("deezer", new() { Songs = [Copy("deezer", "1", "Walk", "GBAHT2100001"), Copy("deezer", "3", "Other", null)] }, [], token);
+                await write("qobuz", new() { Songs = [Copy("qobuz", "2", "vertigo", "GBAHT2100001")] }, [], token);
+                return (IReadOnlyList<string>)[];
+            });
+        using var factory = SearchV2Factory(gateway, _ => Json(200, """{"Items":[]}"""));
+        using var icons = new ProviderIconFiles();
+        using var client = CreateClientApiClient(factory);
+        icons.Use(factory.Services);
+        client.DefaultRequestHeaders.Authorization = new("Bearer", "listener-token");
+
+        using var response = await client.GetAsync("/allstarr/v2/search?q=walk%20griff&types=songs");
+
+        var text = await response.Content.ReadAsStringAsync();
+        Assert.True(response.StatusCode == HttpStatusCode.OK, text);
+        var songs = SearchV2Lines(text)[^1]["sections"]!["songs"]!.AsArray();
+        Assert.Equal(2, songs.Count);
+        var walk = songs.Single(hit => hit!["alsoOn"] != null)!;
+        Assert.Equal(V2Ids.TrackSource("ext-deezer-song-1"), walk["id"]!.GetValue<string>());
+        Assert.Equal(["deezer", "qobuz"], walk["alsoOn"]!.AsArray().Select(entry => entry!["source"]!.GetValue<string>()).ToArray());
+        Assert.Equal([V2Ids.TrackSource("ext-deezer-song-1"), V2Ids.TrackSource("ext-qobuz-song-2")],
+            walk["alsoOn"]!.AsArray().Select(entry => entry!["id"]!.GetValue<string>()).ToArray());
+        Assert.Equal(V2Ids.TrackSource("ext-deezer-song-3"), songs.Single(hit => hit!["alsoOn"] == null)!["id"]!.GetValue<string>());
+    }
+
+    [Fact]
     public async Task ClientApiV2_SearchStreamsTypedRankedResourcesAndNativeTracks()
     {
         var result = new SearchResult

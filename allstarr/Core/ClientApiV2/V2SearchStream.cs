@@ -117,7 +117,14 @@ public sealed class V2SearchStream(IProtocolProviderGateway providers, MusicSear
                             ExplicitContentLyrics = item.ExplicitContentLyrics
                         }).ToArray();
                     var projected = await music.ProjectSearchSongsAsync(execution, results.Songs, native, cancellation).WaitAsync(cancellation);
-                    var projectedSongs = projected.Where(item => item.Song != null).Select(item => item.Song!).ToArray();
+                    // Ranked search keeps a service song Allstarr matched to a library song: it joins that song's row,
+                    // or stands in for it when the library search didn't list it.
+                    var libraryCopies = new Dictionary<Song, string>(ReferenceEqualityComparer.Instance);
+                    if (ranked)
+                        foreach (var entry in projected)
+                            if (entry is { Native: { } copy, Origin: { } origin }) libraryCopies.TryAdd(origin, copy.Id);
+                    var projectedSongs = projected.Where(item => item.Song != null).Select(item => item.Song!)
+                        .Concat(libraryCopies.Keys).ToArray();
                     var knownDurationTitles = nativeSongs.Concat(projectedSongs)
                         .Where(song => (song.PreciseDuration?.TotalSeconds ?? song.Duration) is > 0)
                         .Select(song => SearchRelevanceRanker.RecordingTitle(song.Title, song.Artist, song.AlbumArtist)).ToHashSet(StringComparer.Ordinal);
@@ -159,27 +166,30 @@ public sealed class V2SearchStream(IProtocolProviderGateway providers, MusicSear
                         var local = song?.IsLocal == true;
                         item["source"] = local ? library.Id : provider;
                         item["sourceName"] = local ? library.Name : providerName;
-                        var row = new RankedSearchRow(JsonSerializer.SerializeToNode(item)!.AsObject(), section, song, artist, album, playlist);
+                        var row = new RankedSearchRow(JsonSerializer.SerializeToNode(item)!.AsObject(), section, song, artist, album, playlist)
+                        { LibraryCopy = song != null ? libraryCopies.GetValueOrDefault(song) : null };
                         row.Scores[query] = song != null ? relevance[song] : score;
                         items.Add(row);
                     }
                     foreach (var song in projectedSongs.OrderByDescending(SongScore).Take(limit))
                     {
                         cancellation.ThrowIfCancellationRequested();
-                        if (nativeSongs.Any(known => { cancellation.ThrowIfCancellationRequested(); return MusicSearchService.MetadataRecordingsMatch(known, song); }) ||
+                        // Ranked snapshots list every copy and join only proven ones into one row; the per-service shape leaves repeats out.
+                        if (!ranked && (nativeSongs.Any(known => { cancellation.ThrowIfCancellationRequested(); return MusicSearchService.MetadataRecordingsMatch(known, song); }) ||
                             sentSongs.Any(known =>
                             {
                                 cancellation.ThrowIfCancellationRequested(); return known.Id == song.Id ||
                                 song.CanonicalRecordingId is { } recording && known.CanonicalRecordingId == recording ||
                                 MusicSearchService.MetadataRecordingsMatch(known, song);
-                            })) continue;
+                            }))) continue;
                         if (!sentIds.Add("Audio:" + song.Id)) continue;
                         sentSongs.Add(song);
                         Add(builder.ConvertSongToJellyfinItem(song), SongScore(song), "songs", song);
                     }
                     foreach (var album in results.Albums.OrderByDescending(AlbumScore).Take(limit))
-                        // Library albums and artists never hide a same-named service result; only repeats from other services do.
-                        if (sentAlbums.Add(AlbumKey(album.Title, album.Artist)) &&
+                        // Library albums and artists never hide a same-named service result. Ranked snapshots join another
+                        // service's copy of the same release into one row; the per-service shape leaves it out.
+                        if ((ranked || sentAlbums.Add(AlbumKey(album.Title, album.Artist))) &&
                             sentIds.Add("MusicAlbum:" + album.Id)) Add(builder.ConvertAlbumToJellyfinItem(album), AlbumScore(album), "albums", album: album);
                     foreach (var artist in results.Artists.Where(artist => !music.IsEmptyArtist(artist))
                                  .OrderByDescending(ArtistScore).Take(limit))

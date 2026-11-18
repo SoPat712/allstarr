@@ -12,6 +12,8 @@ internal sealed record RankedSearchRow(JsonObject Item, string Section, Song? So
     Album? Album = null, ExternalPlaylist? Playlist = null, NativeMusicItem<object>? Native = null)
 {
     internal Dictionary<string, double> Scores { get; } = new(StringComparer.Ordinal);
+    /// <summary>The library song Allstarr matched this service song to, which proves the two are one recording.</summary>
+    internal string? LibraryCopy { get; init; }
     private string? recordingTitle;
     internal string RecordingTitle => recordingTitle ??= SearchRelevanceRanker.RecordingTitle(Song?.Title ?? Native!.Name,
         Song?.Artist ?? Native?.ArtistText, Song?.AlbumArtist ?? Native?.AlbumArtistText);
@@ -139,14 +141,20 @@ internal sealed partial class RankedSearchSnapshots(string query, int limit, IRe
                     if (update.Spelled is { Length: > 0 } spelling) spelled = spelling;
                     if (update.Provider == null && update.Rows.Count > 0)
                     {
-                        PruneExternalDuplicates(update.Rows, token);
+                        PruneLinkedArtists();
                         libraryArtists = update.Rows.Where(row => row.Native?.Kind == MusicItemKind.Artist)
                             .ToLookup(row => FuzzyMatcher.NormalizeForMatching(row.Native!.Name));
                     }
                     foreach (var row in update.Rows)
                     {
                         token.ThrowIfCancellationRequested();
-                        if (!IsLinked(row) && sections.TryGetValue(row.Section, out var rows)) { rows.Add(row); fresh.Add(row); }
+                        if (IsLinked(row) || !sections.TryGetValue(row.Section, out var rows)) continue;
+                        if (row.Native != null)
+                            // A library copy wins: it takes the place of every service row proven to be it.
+                            while (Twin(row, token) is { } listed) Replace(listed, row);
+                        else if (Twin(row, token) is { } listed) { Join(listed, row); continue; }
+                        rows.Add(row);
+                        fresh.Add(row);
                     }
                     TagNamesakes(token);
                     foreach (var (id, entry) in update.AlsoOn ?? [])
@@ -218,7 +226,7 @@ internal sealed partial class RankedSearchSnapshots(string query, int limit, IRe
 
     private bool IsLinked(RankedSearchRow row) => row.Native == null && row.Artist != null && MusicSearchService.IsLinked(row.Artist, linked);
 
-    private void PruneExternalDuplicates(IReadOnlyList<RankedSearchRow> libraryRows, CancellationToken token)
+    private void PruneLinkedArtists()
     {
         resetOrder = true;
         if (linked.Count > 0)
@@ -228,29 +236,57 @@ internal sealed partial class RankedSearchSnapshots(string query, int limit, IRe
             if (pinned != null && IsLinked(pinned)) pinned = null;
             if (top != null && IsLinked(top)) top = null;
         }
-        // Same-named artists and albums stay separate rows; only a matching recording of a library song is a duplicate.
-        var nativeSongs = libraryRows.Where(r => r.Native?.Kind == MusicItemKind.Song).Select(r => new Song
-        {
-            Title = r.Native!.Name,
-            Artist = r.Native.ArtistText ?? "",
-            Album = r.Native.AlbumText ?? "",
-            PreciseDuration = r.Native.DurationSeconds is { } seconds ? TimeSpan.FromSeconds(seconds) : null,
-            ExplicitContentLyrics = r.Native.ExplicitContentLyrics
-        }).ToArray();
-        if (nativeSongs.Length > 0 && sections.TryGetValue("songs", out var songRows))
-        {
-            var duplicates = songRows.Where(row =>
-            {
-                token.ThrowIfCancellationRequested();
-                return row.Native == null && row.Song != null && nativeSongs.Any(known =>
-                {
-                    token.ThrowIfCancellationRequested();
-                    return MusicSearchService.MetadataRecordingsMatch(known, row.Song);
-                });
-            }).ToHashSet(ReferenceEqualityComparer.Instance);
-            songRows.RemoveAll(duplicates.Contains);
-            mixed.RemoveAll(duplicates.Contains);
-        }
+    }
+
+    // One row per recording: a copy proven to be a listed song, or another service's copy of a listed album, joins that row.
+    // Same-named library albums stay separate rows, and so does any copy without proof.
+    private RankedSearchRow? Twin(RankedSearchRow row, CancellationToken token) =>
+        row.Section is "songs" or "albums" && sections.TryGetValue(row.Section, out var rows)
+            ? rows.FirstOrDefault(listed => { token.ThrowIfCancellationRequested(); return Same(listed, row); }) : null;
+
+    private static bool Same(RankedSearchRow listed, RankedSearchRow row)
+    {
+        if (ReferenceEquals(listed, row) || listed.Native != null && row.Native != null) return false;
+        if (listed.Section == "albums") return listed.Album != null && row.Album != null && MusicSearchService.SameSearchRelease(listed.Album, row.Album);
+        if (listed.LibraryCopy != null && (listed.LibraryCopy == row.LibraryCopy || listed.LibraryCopy == row.Native?.Id) ||
+            row.LibraryCopy != null && row.LibraryCopy == listed.Native?.Id) return true;
+        return (listed.Song ?? AsSong(listed.Native)) is { } left && (row.Song ?? AsSong(row.Native)) is { } right &&
+            MusicSearchService.SameSearchRecording(left, right);
+    }
+
+    private static Song? AsSong(NativeMusicItem<object>? native) => native?.Kind != MusicItemKind.Song ? null : new Song
+    {
+        Title = native.Name,
+        Artist = native.ArtistText ?? "",
+        Album = native.AlbumText ?? "",
+        PreciseDuration = native.DurationSeconds is { } seconds ? TimeSpan.FromSeconds(seconds) : null,
+        ExplicitContentLyrics = native.ExplicitContentLyrics
+    };
+
+    // The listed row keeps its place and names every copy in alsoOn, its own first and one entry per service.
+    private static void Join(RankedSearchRow listed, RankedSearchRow copy)
+    {
+        if (listed.Item["alsoOn"] is not JsonArray also) listed.Item["alsoOn"] = also = [Entry(listed)];
+        foreach (var entry in copy.Item["alsoOn"] is JsonArray copies ? copies.OfType<JsonObject>().Select(part => part.DeepClone().AsObject()) : [Entry(copy)])
+            if (!also.OfType<JsonObject>().Any(known => known["source"]?.GetValue<string>() == entry["source"]?.GetValue<string>()))
+                also.Add(entry);
+    }
+
+    private static JsonObject Entry(RankedSearchRow row) => new()
+    {
+        ["source"] = row.Item["source"]?.DeepClone(),
+        ["sourceName"] = row.Item["sourceName"]?.DeepClone(),
+        ["id"] = row.Item["Id"]?.DeepClone()
+    };
+
+    private void Replace(RankedSearchRow listed, RankedSearchRow library)
+    {
+        Join(library, listed);
+        sections[listed.Section].Remove(listed);
+        mixed.Remove(listed);
+        fresh.Remove(listed);
+        if (ReferenceEquals(top, listed)) top = library;
+        resetOrder = true;
     }
 
 

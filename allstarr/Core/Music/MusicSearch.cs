@@ -45,6 +45,8 @@ public sealed record MusicSearchEntry<TPayload>
 {
     public string? TasteReason { get; init; }
     public NativeMusicItem<TPayload>? Native { get; init; }
+    /// <summary>The service song a native copy stands in for, when projection replaced one.</summary>
+    public Song? Origin { get; init; }
     public Song? Song { get; init; }
     public Album? Album { get; init; }
     public Artist? Artist { get; init; }
@@ -136,6 +138,45 @@ public sealed partial class MusicSearchService(
 
     internal static bool MetadataRecordingsMatch(Song left, Song right, bool allowSparse = false)
     {
+        if (!SameRecordingFacts(left, right, allowSparse)) return false;
+        var leftDuration = RecordingDuration(left);
+        var rightDuration = RecordingDuration(right);
+        var album = FuzzyMatcher.NormalizeForMatching(left.Album);
+        var otherAlbum = FuzzyMatcher.NormalizeForMatching(right.Album);
+        // Releases can assign different ISRCs to the same ordinary recording. Require matching
+        // album evidence as well when the identifiers disagree.
+        if (NormalizeIdentifier(left.Isrc) is { } firstIsrc && NormalizeIdentifier(right.Isrc) is { } secondIsrc &&
+            firstIsrc != secondIsrc) return leftDuration is > 0 && rightDuration is > 0 && album.Length > 0 && album == otherAlbum;
+        return album.Length == 0 || otherAlbum.Length == 0 || album == otherAlbum;
+    }
+
+    /// <summary>
+    /// Search lists two copies as one row only on proof: the same saved recording, or the same artist, title, version and
+    /// length (within two seconds) together with the same ISRC or the same album. Anything less stays its own row.
+    /// </summary>
+    internal static bool SameSearchRecording(Song left, Song right)
+    {
+        if (left.CanonicalRecordingId is { } recording && recording != Guid.Empty && right.CanonicalRecordingId == recording) return true;
+        if (!SameRecordingFacts(left, right, allowSparse: false)) return false;
+        var album = FuzzyMatcher.NormalizeAlbumForMatching(left.Album);
+        return NormalizeIdentifier(left.Isrc) is { } isrc && isrc == NormalizeIdentifier(right.Isrc) ||
+            album.Length > 0 && album == FuzzyMatcher.NormalizeAlbumForMatching(right.Album);
+    }
+
+    /// <summary>Two services' albums are one release when artist and title agree (ignoring "- Single"), and so do year and track count when both give them.</summary>
+    internal static bool SameSearchRelease(Album left, Album right)
+    {
+        var title = FuzzyMatcher.NormalizeAlbumForMatching(left.Title);
+        var artist = FuzzyMatcher.NormalizeForMatching(FuzzyMatcher.SplitCredits(left.Artist).FirstOrDefault() ?? "");
+        return title.Length > 0 && artist.Length > 0 && title == FuzzyMatcher.NormalizeAlbumForMatching(right.Title) &&
+            artist == FuzzyMatcher.NormalizeForMatching(FuzzyMatcher.SplitCredits(right.Artist).FirstOrDefault() ?? "") &&
+            (left.Year is not { } year || right.Year is not { } otherYear || year == otherYear) &&
+            (left.SongCount is not > 0 || right.SongCount is not > 0 || left.SongCount == right.SongCount) &&
+            (left.IsExplicit is not { } explicitContent || right.IsExplicit is not { } otherExplicit || explicitContent == otherExplicit);
+    }
+
+    private static bool SameRecordingFacts(Song left, Song right, bool allowSparse)
+    {
         var leftDuration = RecordingDuration(left);
         var rightDuration = RecordingDuration(right);
         if (left.ExternalProvider?.Contains("artistgrid", StringComparison.OrdinalIgnoreCase) == true ||
@@ -150,14 +191,7 @@ public sealed partial class MusicSearchService(
         var otherArtist = FuzzyMatcher.NormalizeForMatching(FuzzyMatcher.SplitCredits(right.Artist).FirstOrDefault() ?? "");
         var title = FuzzyMatcher.NormalizeForMatching(FuzzyMatcher.StripDecorators(left.Title));
         var otherTitle = FuzzyMatcher.NormalizeForMatching(FuzzyMatcher.StripDecorators(right.Title));
-        if (artist.Length == 0 || title.Length == 0 || artist != otherArtist || title != otherTitle) return false;
-        var album = FuzzyMatcher.NormalizeForMatching(left.Album);
-        var otherAlbum = FuzzyMatcher.NormalizeForMatching(right.Album);
-        // Releases can assign different ISRCs to the same ordinary recording. Require matching
-        // album evidence as well when the identifiers disagree.
-        if (NormalizeIdentifier(left.Isrc) is { } firstIsrc && NormalizeIdentifier(right.Isrc) is { } secondIsrc &&
-            firstIsrc != secondIsrc) return leftDuration is > 0 && rightDuration is > 0 && album.Length > 0 && album == otherAlbum;
-        return album.Length == 0 || otherAlbum.Length == 0 || album == otherAlbum;
+        return artist.Length > 0 && title.Length > 0 && artist == otherArtist && title == otherTitle;
     }
 
     internal static IReadOnlyList<List<Song>> PartitionMetadataRecordings(IEnumerable<Song> songs,
@@ -559,7 +593,7 @@ public sealed partial class MusicSearchService(
             if (!seenItems.Add(copy == null ? $"provider:{song.Id}" : $"native:{copy.Id}")) continue;
             if (song.CanonicalRecordingId is { } recording && recording != Guid.Empty &&
                 !seenRecordings.Add(recording)) continue;
-            result.Add(copy == null ? new() { Song = song } : new() { Native = copy });
+            result.Add(copy == null ? new() { Song = song } : new() { Native = copy, Origin = song });
         }
         return result;
     }

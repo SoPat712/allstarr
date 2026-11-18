@@ -38,10 +38,17 @@ public sealed class V2SearchEndpoints(V2SearchStream stream, V2TrackReader track
             }
             var hits = rows.Select(row => Project(row, read.GetValueOrDefault(Id(row)))).Where(hit => hit.HasValue)
                 .Select(hit => hit!.Value).ToDictionary(hit => hit.Key, hit => hit.Value);
-            V2SearchHit[] Hits(IEnumerable<RankedSearchRow> values) => values.Select(row => hits.GetValueOrDefault(Id(row))).OfType<V2SearchHit>().ToArray();
+            V2SearchHit[] Hits(IEnumerable<RankedSearchRow> values) => OneHitPerTrack(values
+                .Select(row => (Source: Id(row), Hit: hits.GetValueOrDefault(Id(row)))).Where(pair => pair.Hit != null)
+                .Select(pair => (pair.Source, pair.Hit!)));
+            var items = Hits(batch.Items);
+            var sections = batch.Sections.ToDictionary(pair => pair.Key, pair => Hits(pair.Value));
+            var first = batch.Top == null ? null : hits.GetValueOrDefault(Id(batch.Top));
+            // The top hit carries the same alsoOn as its row in the lists.
+            var top = first == null ? null : sections.Values.SelectMany(values => values).Concat(items)
+                .FirstOrDefault(hit => hit.Kind == first.Kind && hit.Id == first.Id) ?? first;
             await V2SearchStream.WriteResponseAsync(http, new V2SearchSnapshot(batch.Revision, batch.Late != null, batch.Providers,
-                batch.Top == null ? null : hits.GetValueOrDefault(Id(batch.Top)), Hits(batch.Items),
-                batch.Sections.ToDictionary(pair => pair.Key, pair => Hits(pair.Value)), batch.Late), token);
+                top, items, sections, batch.Late), token);
         });
     }
 
@@ -64,6 +71,31 @@ public sealed class V2SearchEndpoints(V2SearchStream stream, V2TrackReader track
 
     private static string Id(RankedSearchRow row) => row.Item["Id"]!.GetValue<string>();
 
+    // Song rows the track read finds to be one recording share a track id, so they are one hit: the first keeps its place
+    // and lists the others' sources in alsoOn.
+    private static V2SearchHit[] OneHitPerTrack(IEnumerable<(string Source, V2SearchHit Hit)> values)
+    {
+        var result = new List<(string Source, V2SearchHit Hit)>();
+        foreach (var (source, hit) in values)
+        {
+            var index = hit.Kind == "track" ? result.FindIndex(known => known.Hit.Kind == "track" && known.Hit.Id == hit.Id) : -1;
+            if (index < 0)
+            {
+                result.Add((source, hit));
+                continue;
+            }
+            var known = result[index];
+            var also = (known.Hit.AlsoOn ?? Own(known.Hit, known.Source)).ToList();
+            foreach (var entry in hit.AlsoOn ?? Own(hit, source))
+                if (also.All(item => item.Source != entry.Source)) also.Add(entry);
+            result[index] = (known.Source, known.Hit with { AlsoOn = also });
+        }
+        return result.Select(item => item.Hit).ToArray();
+    }
+
+    private static IReadOnlyList<V2SearchSource> Own(V2SearchHit hit, string source) =>
+        V2Ids.IsValidSource(source, V2IdKind.Track) ? [new(hit.Source, hit.SourceName, V2Ids.TrackSource(source))] : [];
+
     private static KeyValuePair<string, V2SearchHit>? Project(RankedSearchRow row, V2Track? track)
     {
         var item = JsonSerializer.SerializeToElement(row.Item);
@@ -81,10 +113,18 @@ public sealed class V2SearchEndpoints(V2SearchStream stream, V2TrackReader track
         };
         if (id == null) return null;
         var hit = new V2SearchHit(id, kind, row.Score, Text(item, "source") ?? "", Text(item, "sourceName") ?? "");
+        IReadOnlyList<V2SearchSource>? Copies(V2IdKind copyKind, Func<string, string> v2) => Entries(item, "alsoOn")
+            .Where(entry => Text(entry, "id") is { } value && V2Ids.IsValidSource(value, copyKind))
+            .Select(entry => new V2SearchSource(Text(entry, "source") ?? "", Text(entry, "sourceName") ?? "", v2(Text(entry, "id")!)))
+            .ToArray() is { Length: > 0 } listed ? listed : null;
         hit = kind switch
         {
-            "track" => hit with { Track = track },
-            "album" => hit with { Album = new(id, name, V2TrackReader.Refs(item, "AlbumArtists"), V2TrackReader.Int(item, "ProductionYear"), external, artwork) },
+            "track" => hit with { Track = track, AlsoOn = Copies(V2IdKind.Track, V2Ids.TrackSource) },
+            "album" => hit with
+            {
+                Album = new(id, name, V2TrackReader.Refs(item, "AlbumArtists"), V2TrackReader.Int(item, "ProductionYear"), external, artwork),
+                AlsoOn = Copies(V2IdKind.Album, V2Ids.Album)
+            },
             "artist" => hit with
             {
                 Artist = new(id, name, external, artwork, Entries(item, "alsoOn")

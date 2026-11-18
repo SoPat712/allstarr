@@ -8782,6 +8782,16 @@
                 "type": "null"
               }
             ]
+          },
+          "alsoOn": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/V2SearchSource"
+            },
+            "description": "Song and album hits that stand for several proven copies list each, this hit\u0027s own first, one per source. Absent otherwise; artists keep theirs in artist.alsoOn."
           }
         },
         "description": "One ranked result. Kind selects exactly one of track, album, artist or playlist; id is that resource\u0027s v2 id."

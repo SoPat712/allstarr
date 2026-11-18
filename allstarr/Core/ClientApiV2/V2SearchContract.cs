@@ -27,6 +27,10 @@ public sealed record V2SearchHit(
     [JsonPropertyName("album"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public V2AlbumSummary? Album { get; init; }
     [JsonPropertyName("artist"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public V2SearchArtist? Artist { get; init; }
     [JsonPropertyName("playlist"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public V2SearchPlaylist? Playlist { get; init; }
+
+    [JsonPropertyName("alsoOn"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull),
+     Description("Song and album hits that stand for several proven copies list each, this hit's own first, one per source. Absent otherwise; artists keep theirs in artist.alsoOn.")]
+    public IReadOnlyList<V2SearchSource>? AlsoOn { get; init; }
 }
 
 public sealed record V2SearchArtist(
