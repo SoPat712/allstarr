@@ -66,6 +66,35 @@ public sealed class PersonalMixMoodTests
     }
 
     [Fact]
+    public void Songs_that_read_high_on_every_mood_join_one_mood_at_most()
+    {
+        // Close, high scores on every mood, as AudioMuse reports for much of a library.
+        var features = new Dictionary<string, AudioMuseScores>();
+        for (var i = 0; i < 20; i++)
+        {
+            var step = i * .002;
+            features[$"party-{i}"] = new(null, .45 + step, .8, .8, .6, .8, .45, null);
+            features[$"sleep-{i}"] = new(.25, .82 + step, .45, .45, .45, .35, .8, null);
+            features[$"flat-{i}"] = new(.25, .7 + step, .7, .7, .7, .7, .7, null);
+        }
+        features["everything"] = new(.25, .75, .75, .75, .7, .75, .78, null);
+        var rows = features.Keys.Select(id => new MixCandidate(new Song { Id = id, IsLocal = true },
+            new Dictionary<string, double> { ["dance"] = 1, ["calm"] = 1, ["chill"] = 1 }, 0, 0, null, false, "library", 0)).ToArray();
+
+        var chosen = PersonalMixMoods.Kinds.ToDictionary(kind => kind,
+            kind => PersonalMixMoods.Qualify(kind, rows, features).Select(row => row.Song.Id).ToHashSet());
+
+        Assert.NotEmpty(chosen["party"]);
+        Assert.All(chosen["party"], id => Assert.StartsWith("party-", id));
+        var calm = chosen["sleep"].Concat(chosen["chill"]).ToArray();
+        Assert.NotEmpty(calm);
+        Assert.All(calm, id => Assert.StartsWith("sleep-", id));
+        var all = chosen.Values.SelectMany(ids => ids).ToArray();
+        Assert.Equal(all.Length, all.Distinct().Count());
+        Assert.DoesNotContain(all, id => id == "everything" || id.StartsWith("flat-", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void Saved_service_songs_qualify_by_fitting_style_without_plays()
     {
         var song = new MixCandidate(new Song { Id = "saved" }, new Dictionary<string, double> { ["hip-hop"] = 1 },

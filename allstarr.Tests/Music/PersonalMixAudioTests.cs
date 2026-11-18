@@ -406,7 +406,7 @@ public sealed partial class PersonalMixAudioTests
         var mix = (await service.GenerateAsync(f.Actor.AllstarrUserId!.Value)).Single(item => item.Kind == kind);
         Assert.True(mix.Readiness.Ready);
         Assert.Equal(25, mix.Songs.Count);
-        Assert.Equal("moods-v4", mix.RecipeVersion);
+        Assert.Equal(PersonalMixMoods.RecipeVersion, mix.RecipeVersion);
         Assert.All(mix.Songs, item => { Assert.True(item.Song.IsLocal); Assert.Equal(kind switch { "workout" => "Energetic sound", "party" => "Party sound", _ => "Calm sound" }, item.Reason); });
     }
 
