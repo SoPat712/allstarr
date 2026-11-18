@@ -154,7 +154,13 @@ public sealed partial class ExtensionRuntimeCoordinator : IHostedService, IAsync
     {
         await _stopping.CancelAsync();
         await Restored.WaitAsync(cancellationToken).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
-        await StopRuntimesAsync(cancellationToken);
+        // A runtime still busy when the host's stop time runs out must not turn a clean exit into a crash (which also
+        // writes a memory dump the size of the process); its sandbox files are left for the next start to clear.
+        try { await StopRuntimesAsync(cancellationToken); }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            _logger.LogWarning("Extension runtimes were still busy when Allstarr stopped; their cleanup was skipped");
+        }
     }
 
     private Task StopRuntimesAsync(CancellationToken cancellationToken) => WithRuntimeGateAsync(async () =>
