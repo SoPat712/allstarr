@@ -114,7 +114,11 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.False(resolved.GetProperty("track").TryGetProperty("Name", out _));
         Assert.Equal(120000, resolved.GetProperty("durationMs").GetInt64());
         Assert.Equal(JsonValueKind.Null, plays.Single(item => item.GetProperty("title").GetString() == "Unresolved import").GetProperty("track").ValueKind);
-        Assert.All(plays, play => Assert.StartsWith("/allstarr/v2/me/stats/art?", play.GetProperty("artwork").GetProperty("url").GetString()));
+        // A play whose song is known shows the song's own cover; only an unresolved one is looked up by name.
+        Assert.Equal(resolved.GetProperty("track").GetProperty("artwork").GetProperty("url").GetString(),
+            resolved.GetProperty("artwork").GetProperty("url").GetString());
+        Assert.StartsWith("/allstarr/v2/me/stats/art?", plays.Single(item => item.GetProperty("title").GetString() == "Unresolved import")
+            .GetProperty("artwork").GetProperty("url").GetString());
         using var stats = await client.GetAsync("/allstarr/v2/me/stats?period=all");
         Assert.Equal(HttpStatusCode.OK, stats.StatusCode);
         using var statsBody = JsonDocument.Parse(await stats.Content.ReadAsStringAsync());

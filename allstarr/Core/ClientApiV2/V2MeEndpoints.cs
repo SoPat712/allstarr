@@ -33,10 +33,11 @@ public sealed class V2MeEndpoints(ClientListeningHistory history, ListeningHisto
                     if (!int.TryParse(Value("limit") ?? "50", NumberStyles.None, CultureInfo.InvariantCulture, out var limit)) return new(400, null);
                     var page = await history.ReadAsync(execution, limit, Value("before"));
                     var historyTracks = await TrackMapAsync(http, execution, page.Plays.Select(play => play.ItemId));
-                    return new(200, new V2HistoryPage(page.Plays.Select(play => new V2HistoryPlay(
-                        play.ItemId == null ? null : historyTracks.GetValueOrDefault(play.ItemId), play.Title, play.Artist, play.Album,
-                        play.DurationMs, string.IsNullOrWhiteSpace(play.Artist) ? null : V2ListeningStats.Artwork(play.Artist, title: play.Title),
-                        play.PlayedAt, play.IsExternal, play.Provider)).ToArray(), page.Next));
+                    // A known song shows its own cover, as everywhere else; looking art up by name is for songs no longer found.
+                    return new(200, new V2HistoryPage(page.Plays.Select(play => play.ItemId == null ? null : historyTracks.GetValueOrDefault(play.ItemId))
+                        .Zip(page.Plays, (track, play) => new V2HistoryPlay(track, play.Title, play.Artist, play.Album, play.DurationMs,
+                            track?.Artwork ?? (string.IsNullOrWhiteSpace(play.Artist) ? null : V2ListeningStats.Artwork(play.Artist, title: play.Title)),
+                            play.PlayedAt, play.IsExternal, play.Provider)).ToArray(), page.Next));
                 case "history/imports":
                     return new(200, await imports.ListAsync(new(owner, execution.Protocol.ToString().ToLowerInvariant(), execution.BackendInstanceId), 50, token));
                 case "history/imports/recheck":
@@ -55,9 +56,9 @@ public sealed class V2MeEndpoints(ClientListeningHistory history, ListeningHisto
                     }
                     var listening = await stats.GetAsync(execution, Value("period"), year, token, Value("timeZoneId"));
                     var songTracks = await TrackMapAsync(http, execution, listening.TopSongs.Select(song => song.ItemId));
-                    return new(200, new V2ListeningStats(listening, listening.TopSongs.Select(song => new V2StatsSong(
-                        song.ItemId == null ? null : songTracks.GetValueOrDefault(song.ItemId), song.Title, song.Artist, song.Album,
-                        song.PlayCount, V2ListeningStats.Artwork(song.Artist, title: song.Title))).ToArray()));
+                    return new(200, new V2ListeningStats(listening, listening.TopSongs.Select(song => song.ItemId == null ? null : songTracks.GetValueOrDefault(song.ItemId))
+                        .Zip(listening.TopSongs, (track, song) => new V2StatsSong(track, song.Title, song.Artist, song.Album, song.PlayCount,
+                            track?.Artwork ?? V2ListeningStats.Artwork(song.Artist, title: song.Title))).ToArray()));
                 case "sound":
                     var profile = await sound.GetAsync(owner, token);
                     return profile == null ? new(404, null) : new(200, profile);
