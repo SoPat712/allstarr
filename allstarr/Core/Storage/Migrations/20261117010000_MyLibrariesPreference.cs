@@ -6,7 +6,7 @@ namespace allstarr.Core.Storage.Migrations;
 
 [DbContext(typeof(AllstarrDbContext))]
 [Migration("20261117010000_MyLibrariesPreference")]
-public sealed class MyLibrariesPreference : HeartActionPreference
+public class MyLibrariesPreference : HeartActionPreference
 {
     private const string PreviousConstraint = "\"OwnerUserId\" IS NULL OR \"Key\" IN ('Library:ExplicitFilter', 'Playback:ShowExternalLabel', 'Playback:ShowExplicitLabel', 'Playback:StartPreference', 'Providers:LyricsOrder', 'Providers:UseModes', 'Library:HeartAction')";
     private const string CurrentConstraint = "\"OwnerUserId\" IS NULL OR \"Key\" IN ('Library:ExplicitFilter', 'Playback:ShowExternalLabel', 'Playback:ShowExplicitLabel', 'Playback:StartPreference', 'Providers:LyricsOrder', 'Providers:UseModes', 'Library:HeartAction', 'Library:MyLibraries')";
