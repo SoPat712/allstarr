@@ -50,7 +50,7 @@
             {#each section.services as service (key(service))}
               <li class="link" class:ask={section.id === "ask"}>
                 <ProviderMark id={service.providerId} definition={findProviderDefinition(providers, service.providerId)} label={service.providerName} />
-                <div class="link-copy"><strong>{service.name} · {service.providerName}</strong><small>{serviceDetail(service)}</small></div>
+                <div class="link-copy"><strong>{service.name} · {service.providerName}</strong> <small>{serviceDetail(service)}</small></div>
                 <div class="link-actions">
                   {#if section.id === "ask"}
                     <SplitButton label="Same artist" options={artistScopes} bind:value={scope} disabled={Boolean(busy)} onclick={() => onanswer(service, true, scope as ArtistLinkScope)} />

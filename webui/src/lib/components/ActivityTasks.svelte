@@ -128,7 +128,7 @@
               {#each group.name === "Playlist syncs" && !showAll ? group.tasks.slice(0, 4) : group.tasks as task (task.id)}
                 {@const playlist = links.find(link => link.id === task.runPlaylistLinkId)}
                 <tr class="activity-task" class:selected={selected?.id === task.id}>
-                  <td><button class="task-open" type="button" onclick={() => void open(task)}><MediaArtwork url={playlist?.artworkUrl} fallback="↻" /><span><strong>{plainTaskName(task.name, isPlaylist(task) ? "playlist" : task.kind)}</strong><small>{[playlist ? providerDisplayName(providers, playlist.sourceProviderId, "Playlist sync") : isPlaylist(task) ? "Playlist sync" : "Automatic upkeep", administrator ? task.ownerName : ""].filter(Boolean).join(" · ")}</small></span></button></td>
+                  <td><button class="task-open" type="button" onclick={() => void open(task)}><MediaArtwork url={playlist?.artworkUrl} fallback="↻" /><span><strong>{plainTaskName(task.name, isPlaylist(task) ? "playlist" : task.kind)}</strong> <small>{[playlist ? providerDisplayName(providers, playlist.sourceProviderId, "Playlist sync") : isPlaylist(task) ? "Playlist sync" : "Automatic upkeep", administrator ? task.ownerName : ""].filter(Boolean).join(" · ")}</small></span></button></td>
                   <td class="cadence">{taskCadence(task.cadence)}</td>
                   <td>{#if task.lastRunAt}<span class="last-run">{time(task.lastRunAt)}</span>{/if}<span class="last-result">{taskLastResult(task.state, task.lastRunAt)}</span></td>
                   <td>{task.enabled ? task.nextRunAt ? time(task.nextRunAt) : task.state === "Running" ? "After this run" : "When needed" : "Paused"}</td>

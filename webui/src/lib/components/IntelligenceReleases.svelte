@@ -36,7 +36,8 @@
   let choiceTarget = $state<FollowedReleaseArtist | null>(null);
   const selected = $derived(inbox?.entries.find(entry => entry.id === initialRelease) ?? inbox?.excluded?.find(entry => entry.id === initialRelease));
   const entries = $derived((inbox?.entries ?? []).filter(entry => type === "all" || entry.type.toLowerCase() === type).slice().sort((a, b) => (a.releaseDate ?? "").localeCompare(b.releaseDate ?? "") * (sort === "newest" ? -1 : 1)));
-  const filters = $derived([{ id: "all", label: "All", count: inbox?.entries.length ?? 0 }, ...[{ id: "album", label: "Albums" }, { id: "single", label: "Singles" }, { id: "ep", label: "EPs" }].map(option => ({ ...option, count: inbox?.entries.filter(entry => entry.type.toLowerCase() === option.id).length ?? 0 }))]);
+  // Counts wait for the first answer, so a page still loading never claims there is nothing.
+  const filters = $derived([{ id: "all", label: "All", count: inbox?.entries.length }, ...[{ id: "album", label: "Albums" }, { id: "single", label: "Singles" }, { id: "ep", label: "EPs" }].map(option => ({ ...option, count: inbox?.entries.filter(entry => entry.type.toLowerCase() === option.id).length }))]);
   const closeRelease = () => { void goto("#/for-you?section=releases", { keepFocus: true, noScroll: true }); };
   const openRelease = (entry: ReleaseInboxEntry) => { void goto(`#/for-you?section=releases&release=${encodeURIComponent(entry.id)}`, { keepFocus: true, noScroll: true }); };
   function askDismiss(entry: ReleaseInboxEntry) { dismissTarget = entry; dismissOpen = true; }
@@ -187,9 +188,9 @@
 </script>
 
 <div class="releases-inbox">
-  <PageStatus items={[{ label: `${inbox?.entries.length ?? 0} ${(inbox?.entries.length ?? 0) === 1 ? "release" : "releases"} from ${countLabel(artists.length, "artist")} you follow` }, { label: "Just Dropped collects these every Friday." }]} />
+  <PageStatus items={[{ label: inbox ? `${inbox.entries.length} ${inbox.entries.length === 1 ? "release" : "releases"} from ${countLabel(artists.length, "artist")} you follow` : "Checking releases from artists you follow…" }, { label: "Just Dropped collects these every Friday." }]} />
   <section class="following-row" aria-label="Following artists">
-    <Button variant="text" size="sm" onclick={() => artistsOpen = true}>Following ({artists.length})</Button>
+    <Button variant="text" size="sm" onclick={() => artistsOpen = true}>{inbox ? `Following (${artists.length})` : "Following"}</Button>
     <div class="artist-faces">{#each artists.slice(0, 6) as artist, index (`${index}:${artist.providerId}:${artist.artistId}`)}<button type="button" onclick={() => artistsOpen = true} aria-label={`Manage ${artist.displayName}`}><MediaArtwork url={releaseArtistImage(artist)} /><span>{artist.displayName}</span></button>{/each}</div>
     <Button variant="outline" size="sm" onclick={() => artistsOpen = true}>Follow more artists</Button>
   </section>

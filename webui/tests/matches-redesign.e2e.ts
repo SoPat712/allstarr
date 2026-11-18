@@ -100,7 +100,7 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     await expect(panel.locator(".evidence details dl > div").filter({ has: page.locator("dt", { hasText: /^Match score$/ }) }).locator("dd")).toHaveText("97%");
     await panel.locator(".evidence details summary").click();
     await expect(panel.getByRole("table")).toContainText("Original");
-    await expect(panel).toContainText("Better choices");
+    await expect(panel).toContainText("Other choices");
     await expect(panel).toContainText("in First playlist, Second playlist");
     await panel.getByRole("button", { name: "More", exact: true }).focus();
     await page.keyboard.press("ArrowDown");
@@ -395,7 +395,7 @@ test("Matches redesign keeps desktop status, rows and panel controls compact", a
   const footer = await panel.locator(".panel-footer").boundingBox();
   await panel.locator(".panel-body").evaluate(element => element.scrollTop = element.scrollHeight);
   expect((await panel.locator(".panel-footer").boundingBox())!.y).toBe(footer!.y);
-  await expect(panel.getByRole("heading", { name: "Better choices", exact: true })).toHaveCSS("text-transform", "none");
+  await expect(panel.getByRole("heading", { name: "Other choices", exact: true })).toHaveCSS("text-transform", "none");
   const more = await panel.getByRole("button", { name: "More", exact: true }).boundingBox();
   await page.mouse.click(more!.x + more!.width / 2, more!.y - 4);
   await expect(page.getByRole("menu")).toBeVisible();

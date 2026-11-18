@@ -88,13 +88,13 @@
             {#if supportedAudiences(account).includes("Personal")}
             <label class:active={scope === "Personal"}>
               <input bind:group={scope} type="radio" aria-label="Personal" value="Personal" />
-              <span><strong>Personal</strong><small>Only the selected Allstarr user can use this account.</small></span>
+              <span><strong>Personal</strong> <small>Only the selected Allstarr user can use this account.</small></span>
             </label>
             {/if}
             {#if supportedAudiences(account).includes("Shared")}
             <label class:active={scope === "Shared"}>
               <input bind:group={scope} type="radio" aria-label="Shared" value="Shared" />
-              <span><strong>Shared</strong><small>{sharingDescription(account)}</small></span>
+              <span><strong>Shared</strong> <small>{sharingDescription(account)}</small></span>
             </label>
             {/if}
           </fieldset>

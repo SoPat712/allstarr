@@ -100,7 +100,7 @@
     <Popover.Portal>
       <Popover.Content class="bits-menu operation-popover" sideOffset={6} align="end">
         <header>
-          <span><strong>{humanize(latest.stage || job.type)}</strong><small>{latest.message || jobState(job.state)}</small></span>
+          <span><strong>{humanize(latest.stage || job.type)}</strong> <small>{latest.message || jobState(job.state)}</small></span>
           <Badge state={job.state}>{jobState(job.state)}</Badge>
         </header>
         <div class="operation-console-body">

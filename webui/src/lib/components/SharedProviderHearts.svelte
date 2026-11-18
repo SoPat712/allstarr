@@ -210,12 +210,12 @@
     <p class="setting-help">Current music protocol: {protocol(activeProtocol)}. Each profile keeps its library access, source accounts, history and settings.</p>
     {#each links as link (link.id)}
       <article class="settings-card" aria-label="Linked profiles">
-        <div class="settings-row"><div><strong>{profile(link.jellyfin)}</strong><small>{profile(link.subsonic)}</small></div>
+        <div class="settings-row"><div><strong>{profile(link.jellyfin)}</strong> <small>{profile(link.subsonic)}</small></div>
           <span role="status" aria-label="Sharing status"><Badge state={link.state === "shared" ? "healthy" : link.state === "needs_attention" ? "degraded" : "pending"}>{stateLabel(link)}</Badge></span></div>
         {#each [link.jellyfin, link.subsonic] as member}
           {#if participation(member)}<p class="notice-info">{member.displayName || "Unnamed profile"}: {participation(member)}. Available linked profiles keep their shared hearts.</p>{/if}
         {/each}
-        <div class="settings-row"><div><strong>Saved hearts</strong><small>{link.union.processedRows == null ? "Processed row count unavailable" : `${countLabel(link.union.processedRows, "row")} processed`} · {link.union.seededItems == null ? "Added heart count unavailable" : `${countLabel(link.union.seededItems, "heart")} added`}</small></div>
+        <div class="settings-row"><div><strong>Saved hearts</strong> <small>{link.union.processedRows == null ? "Processed row count unavailable" : `${countLabel(link.union.processedRows, "row")} processed`} · {link.union.seededItems == null ? "Added heart count unavailable" : `${countLabel(link.union.seededItems, "heart")} added`}</small></div>
           <span>{link.union.completedAt ? supportDate(link.union.completedAt) : link.union.state === "failed" || link.union.state === "cancelled"
             ? "Stopped" : link.union.state === "succeeded" ? "Completed; time not available" : "Combining existing hearts"}</span></div>
         {#if link.union.state === "failed" || link.union.state === "cancelled"}<p class="notice-info">Combining saved hearts stopped. A retry continues from the saved progress.</p>{/if}

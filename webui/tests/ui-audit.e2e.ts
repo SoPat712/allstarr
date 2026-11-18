@@ -20,7 +20,9 @@ const pageName = (url: string) => {
 
 test("measure access and consistency", async ({ browser }, testInfo) => {
   test.skip(!process.env.UI_AUDIT, "Run with UI_AUDIT=1");
-  test.setTimeout(600_000);
+  // UI_AUDIT_SECONDS stretches the budget for a full run (every viewport and dialog) on a machine with time to spare.
+  const budget = Number(process.env.UI_AUDIT_SECONDS || 550) * 1000, phoneDarkFrom = budget * 420 / 550, phoneDarkUntil = budget * 480 / 550;
+  test.setTimeout(budget + 50_000);
   const started = Date.now(), rows: Row[] = [], limits: string[] = [], omitted: string[] = [];
   const captures = new Map<string, string>();
   let states = 0;
@@ -31,14 +33,17 @@ test("measure access and consistency", async ({ browser }, testInfo) => {
   // Run the optional, most expensive theme last so it is the first coverage cut.
   configurations.sort((a, b) => Number(a.width === 390 && a.theme === "dark") - Number(b.width === 390 && b.theme === "dark"));
   configurations.splice(6, 0, ...["panels", "settings", "home"].flatMap(fixture => [true, false].map(admin => ({ width: 1280, theme: "light", admin, fixture }))));
+  // UI_AUDIT_WIDTHS (for example "390") measures only those viewports, to finish a partial run sooner.
+  const widths = process.env.UI_AUDIT_WIDTHS?.split(",").map(Number);
+  if (widths) configurations.splice(0, configurations.length, ...configurations.filter(config => widths.includes(config.width)));
   const pendingOverlays = new Map<string, Visit[]>(), pageDistances = new Map<string, Map<string, number>>();
   let nextConfiguration = 0, exploringOverlays = false;
   async function measureConfigurations() {
     while (nextConfiguration < configurations.length) {
       const config = configurations[nextConfiguration++];
       const state = `${config.admin ? "administrator" : "listener"}/${config.width}/${config.theme}/${config.fixture}`;
-      if (config.width === 390 && config.theme === "dark" && Date.now() - started > 420_000) { omitted.push(state); continue; }
-      if (Date.now() - started > 550_000) { omitted.push(state); continue; }
+      if (config.width === 390 && config.theme === "dark" && Date.now() - started > phoneDarkFrom) { omitted.push(state); continue; }
+      if (Date.now() - started > budget) { omitted.push(state); continue; }
       const context = await browser.newContext({ baseURL: testInfo.project.use.baseURL, viewport: { width: config.width, height: config.width === 390 ? 844 : 800 },
         colorScheme: config.theme as "light" | "dark", reducedMotion: "reduce", serviceWorkers: "block", locale: "en-US", timezoneId: "America/New_York" });
       const page = await context.newPage();
@@ -111,7 +116,7 @@ test("measure access and consistency", async ({ browser }, testInfo) => {
         currentPage = new URL(page.url()).hash;
       }
       for (let index = 0; index < queue.length; index++) {
-        if (Date.now() - started > 550_000 || config.width === 390 && config.theme === "dark" && Date.now() - started > 480_000) {
+        if (Date.now() - started > budget || config.width === 390 && config.theme === "dark" && Date.now() - started > phoneDarkUntil) {
           omitted.push(`${state}: ${queue.length - index} queued states`); break;
         }
         const visit = queue[index];
@@ -221,7 +226,7 @@ test("measure access and consistency", async ({ browser }, testInfo) => {
         let dirty = false;
         const patterns = new Set<string>();
         for (const control of candidates) {
-          if (Date.now() - started > 550_000) break;
+          if (Date.now() - started > budget) break;
           if (control.href?.startsWith("#/")) {
             const allowed = config.fixture === "base" || config.fixture === "settings" && control.href.startsWith("#/settings") ||
               config.fixture === "panels" && /library|sources|for-you|activity/.test(control.href) || control.href === "#/";

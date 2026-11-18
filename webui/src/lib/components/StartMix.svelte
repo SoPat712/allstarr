@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { X } from "@lucide/svelte";
   import { onDestroy } from "svelte";
   import { goto } from "$app/navigation";
   import { mixes, type MixPreview, type MixSeed } from "$lib/api";
@@ -58,12 +59,12 @@
 <section aria-label="Start a mix">
   <h2>Start a mix</h2><SearchField bind:value={query} label="Start a mix from a song or artist" placeholder="Start a mix from a song or artist" hiddenLabel />
   {#if searching}<p role="status">Searching…</p>{/if}{#if searchError}<p role="status">{searchError}</p>{/if}
-  {#if results.length}<div class="settings-card seed-results">{#each results.slice(0, 8) as row, index (`${index}:${row.id}`)}<button type="button" onclick={() => choose(row)} aria-label={`${row.title} by ${row.artist}`}><MediaArtwork url={row.artworkUrl} /><span><strong>{row.title}</strong><small>{row.artist}</small></span></button>{/each}
+  {#if results.length}<div class="settings-card seed-results">{#each results.slice(0, 8) as row, index (`${index}:${row.id}`)}<button type="button" onclick={() => choose(row)} aria-label={`${row.title} by ${row.artist}`}><MediaArtwork url={row.artworkUrl} /><span><strong>{row.title}</strong> <small>{row.artist}</small></span></button>{/each}
     <!-- Only while service rows could still fit in the list. -->
     {#if servicesPending && results.length < 8}<p class="seed-pending" role="status">Still searching services…</p>{/if}</div>{/if}
 </section>
 <Dialog.Root bind:open={() => open, value => { if (!saving) open = value; }}><Dialog.Portal><Dialog.Overlay class="dialog-overlay" /><Dialog.Content class="source-dialog mix-preview">
-  <header><div><Dialog.Title>Mix from {seed?.title}</Dialog.Title><Dialog.Description>Songs that fit with {seed?.title}</Dialog.Description></div><Dialog.Close type="button" class="icon-button" aria-label="Close preview" disabled={saving}>×</Dialog.Close></header>
+  <header><div><Dialog.Title>Mix from {seed?.title}</Dialog.Title><Dialog.Description>Songs that fit with {seed?.title}</Dialog.Description></div><Dialog.Close type="button" class="icon-button" aria-label="Close" disabled={saving}><X size={18} aria-hidden="true" /></Dialog.Close></header>
   <div class="preview-body"><SelectField bind:value={length} label="Mix length" disabled={saving} options={[{ value: "25", label: "25 songs" }, { value: "50", label: "50 songs" }]} onchange={() => void loadPreview()} />
     {#if busy && !preview}<Skeleton class="skeleton-panel" aria-label="Loading preview" />{:else if preview}<MixSongs songs={preview.songs} />{#if !preview.readiness.ready}<p>{preview.readiness.message}</p>{/if}{/if}
     {#if error}<p class="notice-error" role="alert">{error}</p><Button variant="secondary" disabled={busy} onclick={loadPreview}>Try again</Button>{/if}

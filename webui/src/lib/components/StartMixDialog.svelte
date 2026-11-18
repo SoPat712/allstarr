@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { X } from "@lucide/svelte";
   import { onDestroy } from "svelte";
   import { goto } from "$app/navigation";
   import { mixes, type MixPreview, type MixSeed } from "$lib/api";
@@ -64,16 +65,16 @@
   onDestroy(() => { disposed = true; request++; previewRequest++; });
 </script>
 <Dialog.Root bind:open={() => open, value => { if (!saving) { open = value; if (!value) onclose(); } }}><Dialog.Portal><Dialog.Overlay class="dialog-overlay" /><Dialog.Content class="source-dialog start-mix-dialog">
-  <header><div><Dialog.Title>Start a mix</Dialog.Title><Dialog.Description>Search for a song or an artist, then pick a song to build around.</Dialog.Description></div><Dialog.Close type="button" class="icon-button" aria-label="Close preview" disabled={saving}>×</Dialog.Close></header>
+  <header><div><Dialog.Title>Start a mix</Dialog.Title><Dialog.Description>Search for a song or an artist, then pick a song to build around.</Dialog.Description></div><Dialog.Close type="button" class="icon-button" aria-label="Close" disabled={saving}><X size={18} aria-hidden="true" /></Dialog.Close></header>
   <div class="start-body">
     <section aria-label="Start a mix" inert={saving}>
       <SearchField bind:value={query} label="Start a mix from a song or artist" placeholder="Song or artist" />
       {#if searching}<p role="status">Searching…</p>{/if}{#if searchError}<p role="status">{searchError}</p>{/if}
-      {#if results.length}<div class="seed-results">{#each results.slice(0, 8) as row, index (`${index}:${row.id}`)}<button type="button" onclick={() => choose(row)} aria-label={`${row.title} by ${row.artist}`}><MediaArtwork url={row.artworkUrl} /><span><strong>{row.title}</strong><small>{row.kind === "artist" ? "Artist" : row.artist}</small></span></button>{/each}
+      {#if results.length}<div class="seed-results">{#each results.slice(0, 8) as row, index (`${index}:${row.id}`)}<button type="button" onclick={() => choose(row)} aria-label={`${row.title} by ${row.artist}`}><MediaArtwork url={row.artworkUrl} /><span><strong>{row.title}</strong> <small>{row.kind === "artist" ? "Artist" : row.artist}</small></span></button>{/each}
         {#if servicesPending && results.length < 8}<p class="seed-pending" role="status">Still searching services…</p>{/if}</div>{/if}
     </section>
     {#if seed}
-      <div class="selected-seed"><MediaArtwork url={seed.artworkUrl} /><div><strong>{seed.title}</strong><small>{seed.artist}</small></div><span>Selected</span></div>
+      <div class="selected-seed"><MediaArtwork url={seed.artworkUrl} /><div><strong>{seed.title}</strong> <small>{seed.artist}</small></div><span>Selected</span></div>
       <div class="preview-heading"><h3>First songs in the mix</h3><SelectField bind:value={length} label="Mix length" disabled={saving} options={[{ value: "25", label: "25 songs" }, { value: "50", label: "50 songs" }]} onchange={() => void loadPreview()} /></div>
       {#if busy && !preview}<RowsSkeleton count={3} />{:else if preview}<div class="preview-songs"><MixSongs songs={preview.songs.slice(0, 3)} /></div>{#if !preview.readiness.ready}<p class="muted">{preview.readiness.message}</p>{/if}{/if}
       {#if error}<ErrorState title="The preview could not be loaded" detail={error} onretry={loadPreview} />{/if}

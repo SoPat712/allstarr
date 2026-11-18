@@ -208,7 +208,7 @@
               <li class="pinned">
                 <span class="routing-index" aria-hidden="true"><Lock size={14} /></span>
                 <ProviderArtwork id={group.pinnedProvider.id} label={group.pinnedProvider.name} />
-                <span class="routing-copy"><strong>{group.pinnedProvider.name}</strong><small>{group.pinnedProvider.reason} · always tried first</small></span>
+                <span class="routing-copy"><strong>{group.pinnedProvider.name}</strong> <small>{group.pinnedProvider.reason} · always tried first</small></span>
               </li>
             {/if}
             {#each (orders[group.id] ?? group.providers).slice(0, expanded ? undefined : 5) as providerId, index (providerId)}
@@ -228,7 +228,7 @@
               >
                 <span class="routing-index" aria-hidden="true"><GripVertical size={16} />{index + 1}</span>
                 <ProviderArtwork id={providerId} definition={definition} label={label} />
-                <span class="routing-copy"><strong>{label}</strong><small>{definition ? sourceOriginLabel(definition) : providerId === "backend" ? "Media server" : providerId === "kept" ? "Kept lyrics" : "Source"}</small></span>
+                <span class="routing-copy"><strong>{label}</strong> <small>{definition ? sourceOriginLabel(definition) : providerId === "backend" ? "Media server" : providerId === "kept" ? "Kept lyrics" : "Source"}</small></span>
                 {#if audioGroups.has(group.id)}<span class="routing-quality-label">{scoreFor(providerId)?.quality?.typical ?? "—"}</span>{/if}
                 {#if localLyrics.has(providerId)}<span class="score-unavailable">Local</span>
                 {:else if scoreFor(providerId)}

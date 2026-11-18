@@ -127,22 +127,22 @@
 </section>
 
 <style>
-  .lyrics-picker { min-width: 0; padding: var(--surface-gutter); border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: var(--color-surface); display: grid; gap: var(--space-3); }
+  .lyrics-picker { min-width: 0; padding: var(--surface-gutter); border: 1px solid var(--color-edge); border-radius: var(--radius-lg); background: var(--color-panel); display: grid; gap: var(--space-3); }
   .lyrics-picker header, .lyrics-preview { min-width: 0; }
   h3, h4, p { margin: 0; overflow-wrap: anywhere; }
-  h3 { font-size: var(--text-base); }
+  h3 { font-size: var(--text-md); }
   h4 { font-size: var(--text-sm); }
   header p, .lyrics-help { color: var(--color-ink-muted); font-size: var(--text-sm); line-height: 1.5; }
   header p { margin-top: var(--space-2); }
   fieldset { display: flex; flex-wrap: wrap; gap: var(--space-2); padding: 0; border: 0; min-width: 0; }
   legend { margin-bottom: var(--space-2); font-size: var(--text-sm); font-weight: 700; }
-  label { min-height: 44px; display: flex; align-items: center; gap: var(--space-2); padding-inline: var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-md); cursor: pointer; }
+  label { min-height: 44px; display: flex; align-items: center; gap: var(--space-2); padding-inline: var(--space-3); border: 1px solid var(--color-edge); border-radius: var(--radius-md); cursor: pointer; }
   input { accent-color: var(--color-signal); }
   .lyrics-comparison { display: grid; grid-template-columns: minmax(140px, 1fr) minmax(0, 2fr); gap: var(--space-3); align-items: start; }
   .lyrics-source-list { display: grid; gap: var(--space-2); min-width: 0; }
   .lyrics-source-list :global(.lyrics-source) { width: 100%; min-height: 44px; height: auto; padding-block: var(--space-2); display: flex; flex-direction: column; gap: 0; white-space: normal; overflow-wrap: anywhere; }
   .lyrics-source-list small { font-weight: 400; }
-  textarea { width: 100%; min-width: 0; max-height: 18rem; resize: vertical; background: transparent; color: inherit; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-size: var(--text-sm); line-height: 1.65; border: 1px solid var(--color-border); padding: var(--space-3); border-radius: var(--radius-md); }
+  textarea { width: 100%; min-width: 0; max-height: 18rem; resize: vertical; background: transparent; color: inherit; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-size: var(--text-sm); line-height: 1.65; border: 1px solid var(--color-edge); padding: var(--space-3); border-radius: var(--radius-md); }
   .lyrics-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
   .lyrics-actions :global(button) { white-space: normal; height: auto; min-height: var(--control-md); padding-block: var(--space-2); }
   .lyrics-error { color: var(--color-danger); font-size: var(--text-sm); line-height: 1.5; }

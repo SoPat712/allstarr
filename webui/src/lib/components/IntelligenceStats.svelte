@@ -172,7 +172,7 @@
         {@const open = expanded === list.title}
         <section class="panel" aria-label={list.title}>
           <h2>{list.title}</h2>
-          <ol>{#each open ? list.rows : list.rows.slice(0, 10) as row, index}<li><span class="rank">{index + 1}</span><MediaArtwork url={row.artworkUrl} class={list.round ? "list-art round" : "list-art"} /><div class="stats-name"><strong>{row.name}</strong><small>{#if row.detail}{row.detail}{" · "}{/if}{countLabel(row.count, "play")}</small></div>
+          <ol>{#each open ? list.rows : list.rows.slice(0, 10) as row, index}<li><span class="rank">{index + 1}</span><MediaArtwork url={row.artworkUrl} class={list.round ? "list-art round" : "list-art"} /><div class="stats-name"><strong>{row.name}</strong> <small>{#if row.detail}{row.detail}{" · "}{/if}{countLabel(row.count, "play")}</small></div>
             {#if row.seed || row.artist}
               <DropdownMenu.Root><DropdownMenu.Trigger class="icon-button row-menu" aria-label={`Actions for ${row.name}`}><UiIcon name="more" /></DropdownMenu.Trigger>
                 <DropdownMenu.Portal><DropdownMenu.Content preventScroll={false} class="bits-menu" align="end">
@@ -189,7 +189,7 @@
     {#if stats.newArtists?.length}
       <section class="panel new-artists" aria-label="New to you">
         <header><h2>New to you</h2><small>{countLabel(stats.newArtistCount ?? 0, "artist")} you hadn't played before this period</small></header>
-        <ul>{#each stats.newArtists as artist}<li><strong>{artist.artist}</strong><small>{countLabel(artist.playCount, "play")}</small></li>{/each}</ul>
+        <ul>{#each stats.newArtists as artist}<li><strong>{artist.artist}</strong> <small>{countLabel(artist.playCount, "play")}</small></li>{/each}</ul>
       </section>
     {/if}
     <footer>
@@ -219,7 +219,7 @@
   .stats-numbers { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-2); min-width: 0; }
   .stats-numbers article { display: grid; align-content: start; gap: 2px; min-width: 0; border-radius: var(--radius-md); padding: var(--space-3); background: var(--color-panel-raised); }
   .stats-numbers strong { font-size: 1.3rem; font-weight: 700; line-height: 1.1; font-variant-numeric: tabular-nums; }
-  .stats-numbers article > span { color: var(--color-ink-muted); font-size: .75rem; text-transform: lowercase; }
+  .stats-numbers article > span { color: var(--color-ink-muted); font-size: var(--text-xs); text-transform: lowercase; }
   @media (max-width: 760px) { .recap-hero { grid-template-columns: minmax(0, 1fr); } .stats-numbers { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
   .stats-numbers small, footer, .rank, .stats-name small, .chart-card header small, .new-artists small { color: var(--color-ink-muted); font-size: var(--text-sm); }
   .chart-card { display: grid; gap: var(--space-4); padding: var(--surface-gutter); min-width: 0; }

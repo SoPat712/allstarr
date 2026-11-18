@@ -111,7 +111,13 @@ export async function touchTarget(control: Locator) {
   const bounds = (await control.boundingBox())!;
   const hit = await control.evaluate(element => {
     const area = getComputedStyle(element, "::after");
-    return area.content === "none" ? { width: 0, height: 0 } : { width: Number.parseFloat(area.minWidth) || 0, height: Number.parseFloat(area.minHeight) || 0 };
+    const after = area.content === "none" ? { width: 0, height: 0 } : {
+      width: Math.max(Number.parseFloat(area.minWidth) || 0, Number.parseFloat(area.width) || 0),
+      height: Math.max(Number.parseFloat(area.minHeight) || 0, Number.parseFloat(area.height) || 0),
+    };
+    // A label wrapping the control activates it too, so its box is part of the tap target.
+    const label = element.closest("label")?.getBoundingClientRect();
+    return { width: Math.max(after.width, label?.width ?? 0), height: Math.max(after.height, label?.height ?? 0) };
   });
   return { width: Math.max(bounds.width, hit.width), height: Math.max(bounds.height, hit.height), visualHeight: bounds.height };
 }

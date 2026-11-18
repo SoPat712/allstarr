@@ -332,7 +332,7 @@
                 <span class="playback-bar" role="progressbar" aria-label={`Playback progress for ${item.title}`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={display.progress === null ? undefined : Math.round(display.progress * 100)} aria-valuetext={display.state === "stale" ? `Estimated ${clockTime(display.seconds)}; awaiting an app update` : undefined}>
                   <span class="transition-[width] duration-200 motion-reduce:transition-none" style={`width: ${(display.progress ?? 0) * 100}%`}></span>
                 </span>
-                {#if item.scrobbleThresholdSeconds}<i title={`Scrobble at ${clockTime(item.scrobbleThresholdSeconds)}`} aria-label={`Scrobble threshold at ${clockTime(item.scrobbleThresholdSeconds)}`}></i>{/if}
+                {#if item.scrobbleThresholdSeconds}<i role="img" title={`Scrobble at ${clockTime(item.scrobbleThresholdSeconds)}`} aria-label={`Scrobble threshold at ${clockTime(item.scrobbleThresholdSeconds)}`}></i>{/if}
               </span>
               {#if display.seconds !== null || (item.durationSeconds ?? 0) > 0}
                 <span class="playback-time" title={display.state === "stale" ? "Estimated position; waiting for an update from your music app." : display.state === "estimated" ? "Progress estimated between updates from your music app." : "Position reported by your music app."}>
@@ -426,18 +426,18 @@
   .now-playing-card.compact-playing { grid-template-columns: 72px minmax(0, 1fr) auto; align-items: center; gap: 16px; padding: 14px; border: 1px solid var(--color-edge); }
   .compact-playing .now-playing-artwork { width: 72px; }
   .compact-playing .now-playing-title h2 { font-size: 1.15rem; line-height: 1.2; }
-  .compact-playing .now-playing-title p { font-size: .78rem; line-height: 1.2; }
+  .compact-playing .now-playing-title p { font-size: var(--text-xs); line-height: 1.2; }
   .compact-playing .now-playing-body { gap: 3px; }
   .playback-meta { color: var(--color-ink-muted); font-size: .7rem; line-height: 1.25; overflow-wrap: anywhere; }
   .compact-playing .playback-progress { display: grid; gap: 3px; margin-top: 4px; }
   .playback-time { display: flex; justify-content: space-between; font-size: .7rem; line-height: 1.2; }
   .only-total { margin-left: auto; }
   .playback-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
-  .playback-state { margin-left: 0; display: inline-flex; align-items: center; gap: 4px; font-size: .74rem; color: var(--color-ink-muted); }
+  .playback-state { margin-left: 0; display: inline-flex; align-items: center; gap: 4px; font-size: var(--text-xs); color: var(--color-ink-muted); }
   .playback-state.complete { color: var(--success); }
-  .playback-controls :global([data-slot="button"]) { padding: 0; height: 24px; font-size: .74rem; }
+  .playback-controls :global([data-slot="button"]) { padding: 0; height: 24px; font-size: var(--text-xs); }
   .attention-banner { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-radius: var(--radius-md); background: var(--warning-container); color: var(--color-ink); }
-  .attention-banner > div { display: flex; align-items: baseline; gap: 3px; min-width: 0; flex: 1; font-size: .78rem; white-space: nowrap; overflow: hidden; }
+  .attention-banner > div { display: flex; align-items: baseline; gap: 3px; min-width: 0; flex: 1; font-size: var(--text-xs); white-space: nowrap; overflow: hidden; }
   .attention-banner strong { flex: none; }
   .attention-banner strong { color: var(--warning); }
   .attention-consequence { flex: none; }

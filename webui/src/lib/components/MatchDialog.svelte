@@ -271,11 +271,11 @@
             <div class="authority-scope-options">
               <label class:active={authorityScope === "personal"}>
                 <input bind:group={authorityScope} type="radio" value="personal" disabled={!canEditAuthorityScope(match, "personal")} />
-                <span><strong>Only me</strong><small>Overrides the household decision for your account.</small></span>
+                <span><strong>Only me</strong> <small>Overrides the household decision for your account.</small></span>
               </label>
               <label class:active={authorityScope === "household"}>
                 <input bind:group={authorityScope} type="radio" value="household" disabled={!canEditAuthorityScope(match, "household")} />
-                <span><strong>Household</strong><small>Applies when a listener has no personal decision.</small></span>
+                <span><strong>Household</strong> <small>Applies when a listener has no personal decision.</small></span>
               </label>
             </div>
           </fieldset>

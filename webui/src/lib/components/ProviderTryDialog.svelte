@@ -436,7 +436,7 @@
       {:else if !catalog}
         <div class="try-body"><div class="try-outcome" data-tone="busy" role="status"><span class="try-spinner" aria-hidden="true"></span><div><strong>Loading what {name} can do…</strong></div></div></div>
       {:else if !tabs.length}
-        <div class="try-body"><div class="try-outcome" data-tone="neutral" role="status"><SearchX size={20} aria-hidden="true" /><div><strong>{name} has nothing to try yet.</strong><small>Turn on one of its features first.</small></div></div></div>
+        <div class="try-body"><div class="try-outcome" data-tone="neutral" role="status"><SearchX size={20} aria-hidden="true" /><div><strong>{name} has nothing to try yet.</strong> <small>Turn on one of its features first.</small></div></div></div>
       {:else}
         {#if tabs.length > 1}<SegmentedNav variant="segments" items={tabs} active={tab} label={`${name} features`} class="route-tabs try-tabs" onchange={(id) => tab = id as Tab} />{/if}
 
@@ -462,17 +462,17 @@
               {:else if result.albums?.length}
                 <ul class="try-list" aria-label="Results">
                   {#each result.albums as album}
-                    <li class="try-row"><MediaArtwork class="try-art" url={album.artworkUrl} fallback="◎" /><span class="try-row-copy"><strong><span>{album.title}</span></strong><small>{album.artists.join(", ")}{album.year ? ` · ${album.year}` : ""}{album.trackCount ? ` · ${countLabel(album.trackCount, "song")}` : ""}</small><small class="try-ids"><span>ID {album.id}</span></small></span></li>
+                    <li class="try-row"><MediaArtwork class="try-art" url={album.artworkUrl} fallback="◎" /><span class="try-row-copy"><strong><span>{album.title}</span></strong> <small>{album.artists.join(", ")}{album.year ? ` · ${album.year}` : ""}{album.trackCount ? ` · ${countLabel(album.trackCount, "song")}` : ""}</small><small class="try-ids"><span>ID {album.id}</span></small></span></li>
                   {/each}
                 </ul>
               {:else if result.artists?.length}
                 <ul class="try-list" aria-label="Results">
                   {#each result.artists as artist}
-                    <li class="try-row"><MediaArtwork class="try-art try-art--round" url={artist.artworkUrl} fallback="♫" /><span class="try-row-copy"><strong><span>{artist.name}</span></strong><small class="try-ids"><span>ID {artist.id}</span></small></span></li>
+                    <li class="try-row"><MediaArtwork class="try-art try-art--round" url={artist.artworkUrl} fallback="♫" /><span class="try-row-copy"><strong><span>{artist.name}</span></strong> <small class="try-ids"><span>ID {artist.id}</span></small></span></li>
                   {/each}
                 </ul>
               {:else}
-                <div class="try-outcome" data-tone="neutral" role="status"><SearchX size={20} aria-hidden="true" /><div><strong>{name} returned no results.</strong><small>{hints.metadata}</small></div></div>
+                <div class="try-outcome" data-tone="neutral" role="status"><SearchX size={20} aria-hidden="true" /><div><strong>{name} returned no results.</strong> <small>{hints.metadata}</small></div></div>
               {/if}
             {/if}
 
@@ -531,7 +531,7 @@
             {#if picks.lyrics?.length}
               <ul class="try-list" aria-label="Songs to test">{#each picks.lyrics as track}{@render trackRow(track, ["lyrics"], lyricSearchProviderId)}{/each}</ul>
             {:else if picks.lyrics && !errors.lyrics}
-              <div class="try-outcome" data-tone="neutral" role="status"><SearchX size={20} aria-hidden="true" /><div><strong>No matching songs found.</strong><small>Use what you typed, or try another title.</small></div></div>
+              <div class="try-outcome" data-tone="neutral" role="status"><SearchX size={20} aria-hidden="true" /><div><strong>No matching songs found.</strong> <small>Use what you typed, or try another title.</small></div></div>
             {/if}
             {/if}
             {#if !lyricNeedsArtist && !result?.succeeded}{@render status("lyrics", result, "")}{/if}
@@ -568,14 +568,14 @@
             {#if result?.succeeded && result.playlist}
               <div class="try-playlist-head">
                 <MediaArtwork class="try-art try-art--large" url={result.playlist.artworkUrl} fallback="♫" />
-                <span><strong>{result.playlist.title}</strong><small>{result.playlist.owner ? `By ${result.playlist.owner} · ` : ""}{countLabel(result.playlist.trackCount ?? result.tracks?.length ?? 0, "song")}{(result.playlist.trackCount ?? 0) > (result.tracks?.length ?? 0) ? `, first ${result.tracks?.length ?? 0} shown` : ""}</small></span>
+                <span><strong>{result.playlist.title}</strong> <small>{result.playlist.owner ? `By ${result.playlist.owner} · ` : ""}{countLabel(result.playlist.trackCount ?? result.tracks?.length ?? 0, "song")}{(result.playlist.trackCount ?? 0) > (result.tracks?.length ?? 0) ? `, first ${result.tracks?.length ?? 0} shown` : ""}</small></span>
               </div>
               {#if result.tracks?.length}<ul class="try-list" aria-label="Playlist songs">{#each result.tracks as track}{@render trackRow(track, [])}{/each}</ul>{/if}
             {:else if result?.succeeded && result.playlists}
               {#if result.playlists.length}
                 <ul class="try-list" aria-label="Your playlists">
                   {#each result.playlists as playlist}
-                    <li class="try-row"><MediaArtwork class="try-art" url={playlist.artworkUrl} fallback="♫" /><span class="try-row-copy"><strong><span>{playlist.title}</span></strong><small>{playlist.owner ? `${playlist.owner} · ` : ""}{playlist.trackCount == null ? "? songs" : countLabel(playlist.trackCount, "song")}</small><small class="try-ids"><span>ID {playlist.id}</span></small></span>
+                    <li class="try-row"><MediaArtwork class="try-art" url={playlist.artworkUrl} fallback="♫" /><span class="try-row-copy"><strong><span>{playlist.title}</span></strong> <small>{playlist.owner ? `${playlist.owner} · ` : ""}{playlist.trackCount == null ? "? songs" : countLabel(playlist.trackCount, "song")}</small><small class="try-ids"><span>ID {playlist.id}</span></small></span>
                       <span class="try-row-end"><Button variant="secondary" size="sm" disabled={Boolean(running)} onclick={() => { playlistUrl = playlist.id; void run("playlist", { operation: "playlist", url: playlist.id }); }}>Open</Button></span></li>
                   {/each}
                 </ul>

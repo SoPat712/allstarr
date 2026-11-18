@@ -290,7 +290,7 @@
   :global(.copy-facts > p), :global(.copy-facts > dl) { margin-block: var(--space-3); }
   .kept-copy .copy-warning { color: var(--warning); }
   h2 { margin: 0; font-size: var(--text-section); font-weight: 600; }
-  .promotion-list { overflow: hidden; border: 1px solid var(--color-edge); border-radius: 14px; }
+  .promotion-list { overflow: hidden; border: 1px solid var(--color-edge); border-radius: var(--radius-list); }
   .downloads-table-scroll { container: downloads / inline-size; min-width: 0; }
   .kept-copies { background: var(--color-panel-raised); }
   .kept-copies[hidden] { display: none; }

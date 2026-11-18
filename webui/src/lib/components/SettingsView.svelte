@@ -191,21 +191,21 @@
     <input type="search" placeholder="Find a setting" aria-label="Find a setting" bind:value={findQuery} onkeydown={event => { if (event.key === "Escape") findQuery = ""; }} />
     {#if findQuery.trim()}
       <ul class="settings-find-results" aria-label="Matching settings">
-        {#each findMatches as match (match.key)}<li><a href={match.href} onclick={() => { findQuery = ""; setTimeout(() => void revealSetting(), 60); }}><strong>{match.label}</strong><small>{match.detail}</small></a></li>
+        {#each findMatches as match (match.key)}<li><a href={match.href} onclick={() => { findQuery = ""; setTimeout(() => void revealSetting(), 60); }}><strong>{match.label}</strong> <small>{match.detail}</small></a></li>
         {:else}<li class="settings-find-empty">No setting matches “{findQuery.trim()}”</li>{/each}
       </ul>
     {/if}
   </div>
 {/snippet}
 {#snippet qualitySends(requested: readonly string[])}
-  <button type="button" class="settings-row settings-link-row" onclick={() => sendsOpen = true}><div><strong>What each source sends</strong><small>What Allstarr asks each service for at this setting, and what it actually got.</small></div><span>Open<ChevronRight size={18} aria-hidden="true" /></span></button>
+  <button type="button" class="settings-row settings-link-row" onclick={() => sendsOpen = true}><div><strong>What each source sends</strong> <small>What Allstarr asks each service for at this setting, and what it actually got.</small></div><span>Open<ChevronRight size={18} aria-hidden="true" /></span></button>
   <SidePanel bind:open={sendsOpen} title="What each source sends" description="Asked for at this setting, and measured from real plays over the last 30 days." width={420} minimumContentWidth={560} wrapTitle browsable={false}>
-    <ul class="source-sends">{#each sendsRows(requested) as row (row.source)}<li><div><strong>{row.source}</strong><small>Asks for {row.asked}</small></div><span>{row.got ?? "Not measured yet"}</span></li>{/each}</ul>
+    <ul class="source-sends">{#each sendsRows(requested) as row (row.source)}<li><div><strong>{row.source}</strong> <small>Asks for {row.asked}</small></div><span>{row.got ?? "Not measured yet"}</span></li>{/each}</ul>
     <p class="settings-muted source-sends-note">Your library always plays as it is. A listener's own limit lowers what they get.</p>
   </SidePanel>
 {/snippet}
 {#snippet linkRow(title: string, detail: string, label: string, target: string)}
-  <a class="settings-row settings-link-row" href={target}><div><strong>{title}</strong><small>{detail}</small></div><span>{label}<ChevronRight size={18} aria-hidden="true" /></span></a>
+  <a class="settings-row settings-link-row" href={target}><div><strong>{title}</strong> <small>{detail}</small></div><span>{label}<ChevronRight size={18} aria-hidden="true" /></span></a>
 {/snippet}
 
 <SettingsRestartNotice />
@@ -291,8 +291,8 @@
         {#await import("./BackupsView.svelte")}<RowsSkeleton />{:then { default: Backups }}<Backups {administrator} />{:catch}<ErrorState title="This settings page could not be opened" onretry={() => window.location.reload()} />{/await}
         {#await import("./HealthView.svelte")}<RowsSkeleton />{:then { default: Health }}<Health {initialPanel} />{:catch}<ErrorState title="This settings page could not be opened" onretry={() => window.location.reload()} />{/await}
         <AdvancedFold placement="standalone" label="Advanced: media and playlist tests, request logging">{#if diagnosticsFields.length}<SettingsFields embedded section={group("diagnostics", "Request logging", diagnosticsFields)} {config} onChanged={refresh} />{/if}<section class="settings-card" aria-label="Diagnostics">
-          <div class="settings-row"><div><strong>Media pipeline</strong><small>Checks song details, artwork and playback.</small></div><Button variant="outline" disabled={Boolean(action)} onclick={() => run("media", settings.mediaProbe, "Media pipeline checked.")}>Test media pipeline</Button></div>
-          <div class="settings-row"><div><strong>Playlist readiness</strong><small>Checks source access and which songs listeners can play.</small></div><Button variant="outline" disabled={Boolean(action)} onclick={() => run("playlists", settings.playlistProbe, "Playlist pipeline checked.")}>Test playlist readiness</Button></div>
+          <div class="settings-row"><div><strong>Media pipeline</strong> <small>Checks song details, artwork and playback.</small></div><Button variant="outline" disabled={Boolean(action)} onclick={() => run("media", settings.mediaProbe, "Media pipeline checked.")}>Test media pipeline</Button></div>
+          <div class="settings-row"><div><strong>Playlist readiness</strong> <small>Checks source access and which songs listeners can play.</small></div><Button variant="outline" disabled={Boolean(action)} onclick={() => run("playlists", settings.playlistProbe, "Playlist pipeline checked.")}>Test playlist readiness</Button></div>
         </section></AdvancedFold>
         <section class="settings-card" aria-label="Setup guide"><header><h3>Setup guide</h3></header>
           {@render linkRow("Walk through setup again", "Nothing is reset; you continue where you left off.", "Open", href("setup"))}
@@ -316,7 +316,7 @@
   .settings-split { display: grid; grid-template-columns: 19rem minmax(0, 1fr); align-items: start; gap: 0 var(--space-8, 2rem); }
   .settings-categories { position: sticky; top: var(--space-4); display: grid; gap: 2px; align-content: start; }
   .settings-categories > p { margin: var(--space-4) 0 var(--space-1); padding-inline: var(--space-4); color: var(--color-signal-text, var(--color-signal)); font-size: var(--text-sm); font-weight: 500; }
-  .settings-categories > a { display: grid; grid-template-columns: 24px minmax(0, 1fr); align-items: center; gap: var(--space-4); min-height: 56px; padding: var(--space-2) var(--space-4); border-radius: 28px; color: var(--color-ink); text-decoration: none; }
+  .settings-categories > a { display: grid; grid-template-columns: 24px minmax(0, 1fr); align-items: center; gap: var(--space-4); min-height: 56px; padding: var(--space-2) var(--space-4); border-radius: var(--radius-2xl); color: var(--color-ink); text-decoration: none; }
   .settings-categories > a :global(svg) { color: var(--color-ink-muted); }
   .settings-categories strong { display: block; font-size: 1rem; line-height: 1.375rem; font-weight: 400; }
   .settings-categories small { display: block; overflow: hidden; color: var(--color-ink-muted); font-size: .8125rem; line-height: 1.125rem; text-overflow: ellipsis; white-space: nowrap; }
@@ -327,7 +327,7 @@
   .settings-page-head { display: grid; gap: var(--space-2); }
   .settings-page-head > div { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); }
   .settings-page-head :global(h2) { font: 400 1.75rem / 2.25rem var(--font-display, inherit); }
-  .settings-scope { display: inline-flex; align-items: center; height: 32px; padding: 0 12px; border: 1px solid var(--color-edge-strong); border-radius: 8px; color: var(--color-ink-muted); font-size: var(--text-sm); font-weight: 500; }
+  .settings-scope { display: inline-flex; align-items: center; height: 32px; padding: 0 12px; border: 1px solid var(--color-edge-strong); border-radius: var(--radius-sm); color: var(--color-ink-muted); font-size: var(--text-sm); font-weight: 500; }
   .settings-scope[data-scope="you"] { border-color: transparent; background: var(--color-panel-raised); }
   .settings-back { display: none; }
   .settings-link-row { width: 100%; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; text-decoration: none; cursor: pointer; }
@@ -350,9 +350,9 @@
   .settings-page-enter { animation: settings-page-in 260ms var(--ease-emphasized); }
   @keyframes settings-page-in { from { opacity: 0; transform: translateY(6px); } }
   .settings-find { position: relative; margin-bottom: var(--space-3); }
-  .settings-find input { width: 100%; min-height: 48px; border: 0; border-radius: 28px; padding: 0 var(--space-5); background: var(--color-panel-raised); color: var(--color-ink); font-size: var(--text-md, 1rem); }
+  .settings-find input { width: 100%; min-height: 48px; border: 0; border-radius: var(--radius-2xl); padding: 0 var(--space-5); background: var(--color-panel-raised); color: var(--color-ink); font-size: var(--text-md, 1rem); }
   .settings-find input:focus-visible { outline: 2px solid var(--color-signal); outline-offset: 0; }
-  .settings-find-results { position: absolute; z-index: 20; top: calc(100% + 6px); left: 0; width: max(100%, 18rem); margin: 0; padding: var(--space-1); list-style: none; border: 1px solid var(--color-edge); border-radius: 14px; background: var(--color-panel-raised, var(--color-panel)); box-shadow: 0 12px 32px color-mix(in srgb, black 30%, transparent); animation: find-in 160ms var(--ease-emphasized); }
+  .settings-find-results { position: absolute; z-index: var(--layer-menu); top: calc(100% + 6px); left: 0; width: max(100%, 18rem); margin: 0; padding: var(--space-1); list-style: none; border: 1px solid var(--color-edge); border-radius: var(--radius-list); background: var(--color-panel-raised, var(--color-panel)); box-shadow: var(--shadow-lg); animation: find-in 160ms var(--ease-emphasized); }
   .settings-find-results a { display: grid; gap: 2px; padding: var(--space-2) var(--space-3); border-radius: 10px; color: inherit; text-decoration: none; }
   .settings-find-results a:hover, .settings-find-results a:focus-visible { background: var(--row-hover); }
   .settings-find-results strong { font-weight: 500; font-size: var(--text-sm); }

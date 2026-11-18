@@ -187,7 +187,7 @@
           <tbody>{#each comparison as row}<tr><th scope="row">{row.label}</th><td>{row.original}</td><td>{row.current}</td><td><span class="verdict" data-verdict={row.verdict === "Same" ? "same" : row.verdict === "Close" ? "close" : row.verdict === "Can't compare" ? "unknown" : "different"}>{row.verdict}</span></td></tr>{/each}</tbody>
         </table>
       </section>
-      <section class="choices" aria-labelledby="better-choices"><h3 id="better-choices" class="sec-label">Better choices</h3>
+      <section class="choices" aria-labelledby="other-choices"><h3 id="other-choices" class="sec-label">Other choices</h3>
         {#each better as target}
           <div class="candidate-card">
             <ItemRow title={`${target.isBestVersion && target.externalProvider?.toLowerCase() === "artistgrid" ? "⭐ " : ""}${target.title}`} subtitle={`${name(target.externalProvider)} · ${target.album || "Album not provided"} · ${formatDuration(target.durationMilliseconds)}`}
@@ -277,7 +277,7 @@
 <style>
   section { margin-bottom: var(--space-3); min-width: 0; }
   .preview-label, .candidate-reasons { color: var(--color-ink-muted); font-size: .8125rem; margin: var(--space-2) 0; }
-  .comparison { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: .75rem; }
+  .comparison { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: var(--text-xs); }
   .comparison th, .comparison td { text-align: left; padding: var(--space-2) var(--space-1); border-bottom: 1px solid var(--color-edge); overflow-wrap: anywhere; vertical-align: top; }
   .comparison th { font-weight: 500; color: var(--color-ink-muted); }
   .comparison th:first-child { width: 16%; }.comparison th:last-child { width: 20%; }
@@ -293,12 +293,12 @@
   .target-search { display: flex; flex-direction: row; align-items: center; gap: var(--space-2); margin-top: var(--space-2); }.grow { min-width: 0; flex: 1; }.grow input { width: 100%; }
   .search-help { margin: var(--space-2) 0 0; color: var(--color-ink-muted); font-size: var(--text-xs); }
   .provider-filters, .evidence-chips { display: flex; flex-wrap: wrap; gap: var(--space-2); }
-  .evidence-chips span { border-radius: var(--radius-sm); padding: var(--space-1) var(--space-2); background: var(--color-panel-raised); font-size: .75rem; }
+  .evidence-chips span { border-radius: var(--radius-sm); padding: var(--space-1) var(--space-2); background: var(--color-panel-raised); font-size: var(--text-xs); }
   :global(.settings-fold) > dl { padding-block: var(--space-2); font-size: .8125rem; }
   dl { margin: 0; } dl > div { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr); gap: var(--space-2); padding-block: var(--space-1); }
   dt { color: var(--color-ink-muted); } dd { margin: 0; overflow-wrap: anywhere; }
   .decision-footer { width: 100%; min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
-  .decision-footer :global(.nothing-fits) { flex: 0 0 auto; padding-inline: var(--space-2); color: var(--danger); font-size: .75rem; }
+  .decision-footer :global(.nothing-fits) { flex: 0 0 auto; padding-inline: var(--space-2); color: var(--danger); font-size: var(--text-xs); }
   .decision-footer :global(.split-button) { min-width: 0; margin-left: auto; }
-  .decision-footer :global(.split-primary), .decision-footer :global(.split-trigger) { padding-inline: var(--space-2); font-size: .75rem; }
+  .decision-footer :global(.split-primary), .decision-footer :global(.split-trigger) { padding-inline: var(--space-2); font-size: var(--text-xs); }
 </style>

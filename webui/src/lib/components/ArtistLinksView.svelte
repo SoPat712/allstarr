@@ -156,7 +156,7 @@
   .artists-title > :global(:last-child) { margin-left: auto; }
   .artists-controls { display: grid; gap: var(--space-3); min-width: 0; }
   .artists-controls :global(.artists-search) { max-width: 420px; }
-  .artist-list { min-width: 0; overflow: hidden; border: 1px solid var(--color-edge); border-radius: 14px; }
+  .artist-list { min-width: 0; overflow: hidden; border: 1px solid var(--color-edge); border-radius: var(--radius-list); }
   .artist-list :global(.artist-art) { border-radius: 50%; }
   .services { display: inline-flex; gap: var(--space-1); align-items: center; }
   .services :global(.provider-mark) { width: 18px; height: 18px; }

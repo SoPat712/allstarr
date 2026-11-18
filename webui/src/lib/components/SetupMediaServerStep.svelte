@@ -28,8 +28,8 @@
   {#if !config && !error}<RowsSkeleton count={2} />{:else if config}
     <section class="settings-card" aria-label="Media-server connection">
       <header><h3>{backend}</h3></header>
-      <div class="settings-row"><div><strong>Server address</strong><small>The address Allstarr uses inside your network.</small></div><div class="server-address"><output>{address}</output><small><Lock size={12} aria-hidden="true" />Saved server connection</small></div></div>
-      <div class="settings-row"><div><strong>Test the saved connection</strong><small>Checks song details, artwork and playback access.</small></div><Button variant="outline" disabled={busy} onclick={test}>{busy ? "Testing…" : "Test"}</Button></div>
+      <div class="settings-row"><div><strong>Server address</strong> <small>The address Allstarr uses inside your network.</small></div><div class="server-address"><output>{address}</output><small><Lock size={12} aria-hidden="true" />Saved server connection</small></div></div>
+      <div class="settings-row"><div><strong>Test the saved connection</strong> <small>Checks song details, artwork and playback access.</small></div><Button variant="outline" disabled={busy} onclick={test}>{busy ? "Testing…" : "Test"}</Button></div>
       {#if message}<p class="settings-impact" role="status" class:passed>{message}</p>{/if}
     </section>
     <AccessSettingsCard kind="backend" />

@@ -211,7 +211,7 @@
           <div class="settings-row">
             <div>
               {#if group.items.length > 1}<strong>{source(group.items)} · {countLabel(group.items.length, "file")} · {historyDateRange(combined.earliest, combined.latest, true)} · {historyPlays(combined.completed)}</strong>
-              {:else}<strong>{source(group.items)}</strong><small>{historyDateRange(combined.earliest, combined.latest)}</small><small>{historyPlays(combined.completed)} in file</small>{/if}
+              {:else}<strong>{source(group.items)}</strong> <small>{historyDateRange(combined.earliest, combined.latest)}</small><small>{historyPlays(combined.completed)} in file</small>{/if}
               <span class="history-state">{groupState(group.items)}</span>
               {#if group.items.some(active)}<Progress value={group.items.length > 1 ? importBatchProgress(group.items).percent : importProgress(group.items[0])} aria-label={`${source(group.items)} import`} />{/if}
             </div>
@@ -219,7 +219,7 @@
           </div>
           {#if group.items.length > 1}
             <details class="history-files"><summary class="disclosure-summary"><DisclosureLabel title="Show files" /></summary>
-              <ul class="history-file-list">{#each group.items as item (item.importId)}<li><strong>{item.displayFileName}</strong><small>{historyPlays(item.preview.completed)} · {historyDateRange(item.preview.earliest, item.preview.latest)}</small><span>{importState(item)}</span></li>{/each}</ul>
+              <ul class="history-file-list">{#each group.items as item (item.importId)}<li><strong>{item.displayFileName}</strong> <small>{historyPlays(item.preview.completed)} · {historyDateRange(item.preview.earliest, item.preview.latest)}</small><span>{importState(item)}</span></li>{/each}</ul>
             </details>
           {/if}
         </li>
@@ -253,7 +253,7 @@
       {@render importRows()}
     {/if}
     <div class="settings-row recheck-row">
-      <div><strong>Check matched songs</strong><small>Find past plays matched to a song whose title doesn't agree, and unmatch the wrong ones.</small></div>
+      <div><strong>Check matched songs</strong> <small>Find past plays matched to a song whose title doesn't agree, and unmatch the wrong ones.</small></div>
       <Button variant="secondary" disabled={uploading || action} onclick={() => void openRecheck()}>Check</Button>
     </div>
   {/if}

@@ -189,7 +189,7 @@
       <article class="settings-card" aria-label="Report note"><header><div><h3>{reportKindLabel(detail.kind)}</h3><small>Reported by {detail.reporterName} · {supportDate(detail.createdAt)}</small></div></header>
         <p class="settings-impact whitespace-pre-wrap break-words">{detail.note}</p>
         <form aria-label="Report status change" onsubmit={(event) => void save(event)}>
-          <div class="settings-row"><div><strong>Status</strong><small>Opening a report leaves its status unchanged.</small></div><SelectField label="Report status" value={desired} options={reportStatuses} onchange={(value) => desired = value as ReportStatus} disabled={saving || conflict} /></div>
+          <div class="settings-row"><div><strong>Status</strong> <small>Opening a report leaves its status unchanged.</small></div><SelectField label="Report status" value={desired} options={reportStatuses} onchange={(value) => desired = value as ReportStatus} disabled={saving || conflict} /></div>
           {#if savedMessage}<p class="settings-impact" role="status">{savedMessage}</p>{/if}
           <footer><Button type="submit" variant="outline" disabled={saving || conflict || desired === detail.status}>{saving ? "Saving…" : "Save status"}</Button></footer>
         </form>

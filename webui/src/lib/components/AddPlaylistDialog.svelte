@@ -646,7 +646,7 @@
                       {@const added = existingPlaylists.some(item => item.enabled && item.providerAccountId === account.id && item.sourcePlaylistId === playlist.id)}
                       <label class="account-playlist-choice">
                         <MediaArtwork class="playlist-art" url={playlist.artworkUrl} fallback="♫" />
-                        <span><strong>{playlist.name}</strong><small>{playlist.trackCount == null ? "Song count unavailable" : countLabel(playlist.trackCount, "song")}{added ? " · Already in your apps" : ""}</small></span>
+                        <span><strong>{playlist.name}</strong> <small>{playlist.trackCount == null ? "Song count unavailable" : countLabel(playlist.trackCount, "song")}{added ? " · Already in your apps" : ""}</small></span>
                         <Checkbox checked={chosenPlaylists.some(item => item.account.id === account.id && item.playlist.id === playlist.id)} disabled={added} aria-label={`${playlist.name}${added ? ", already in your apps" : ""}`} onCheckedChange={checked => togglePlaylist(account, playlist, checked === true)} />
                       </label>
                     {:else}<p class="pl-help">{loading ? "Loading playlists…" : groupErrors.includes(account.id) ? "Playlists could not be loaded. Reopen to try again." : "No playlists found."}</p>{/each}
@@ -664,14 +664,14 @@
                   <label class="pl-option pl-option-media" class:active={publicProviderId === provider.id}>
                     <input type="radio" name="playlist-source-account" value={`public:${provider.id}`} checked={publicProviderId === provider.id} onchange={() => choosePublicProvider(provider.id)} />
                     <ProviderMark id={provider.id} definition={definition(provider.id)} />
-                    <span class="pl-option-text"><strong>Public {provider.displayName} playlist</strong><small>Paste a playlist link. No account needed.</small></span>
+                    <span class="pl-option-text"><strong>Public {provider.displayName} playlist</strong> <small>Paste a playlist link. No account needed.</small></span>
                   </label>
                 {/each}
                 {#each orderedAccounts as account}
                   <label class="pl-option pl-option-media" class:active={accountId === account.id}>
                     <input type="radio" name="playlist-source-account" value={account.id} checked={accountId === account.id} onchange={() => void chooseAccount(account.id)} />
                     <ProviderMark id={account.providerId} definition={definition(account.providerId)} label={accountTitle(account)} />
-                    <span class="pl-option-text"><strong>{accountTitle(account)}</strong><small>{accountDetail(account)}</small></span>
+                    <span class="pl-option-text"><strong>{accountTitle(account)}</strong> <small>{accountDetail(account)}</small></span>
                   </label>
                 {/each}
               </div>
@@ -703,15 +703,15 @@
                 <div class="pl-options" role="radiogroup" aria-labelledby="playlist-add-lastfm">
                   <label class="pl-option" class:active={sourcePlaylistId === "loved"}>
                     <input bind:group={sourcePlaylistId} type="radio" name="playlist-source" value="loved" />
-                    <span class="pl-option-text"><strong>Loved tracks</strong><small>Songs you have loved on Last.fm.</small></span>
+                    <span class="pl-option-text"><strong>Loved tracks</strong> <small>Songs you have loved on Last.fm.</small></span>
                   </label>
                   <label class="pl-option" class:active={sourcePlaylistId.startsWith("top:")}>
                     <input type="radio" name="playlist-source" value={`top:${lastfmPeriod}:50`} checked={sourcePlaylistId.startsWith("top:")} onchange={() => sourcePlaylistId = `top:${lastfmPeriod}:50`} />
-                    <span class="pl-option-text"><strong>Top tracks</strong><small>Your 50 most played songs for the selected period.</small></span>
+                    <span class="pl-option-text"><strong>Top tracks</strong> <small>Your 50 most played songs for the selected period.</small></span>
                   </label>
                   <label class="pl-option" class:active={sourcePlaylistId === "similar"}>
                     <input bind:group={sourcePlaylistId} type="radio" name="playlist-source" value="similar" />
-                    <span class="pl-option-text"><strong>Similar tracks</strong><small>Recommendations based on your listening.</small></span>
+                    <span class="pl-option-text"><strong>Similar tracks</strong> <small>Recommendations based on your listening.</small></span>
                   </label>
                 </div>
                 {#if sourcePlaylistId.startsWith("top:")}
@@ -729,7 +729,7 @@
                   {#if selectedAccount?.providerId === "spotify"}
                     <label class="pl-option" class:active={sourcePlaylistId === "liked-songs"}>
                       <input bind:group={sourcePlaylistId} type="radio" name="playlist-source" value="liked-songs" />
-                      <span class="pl-option-text"><strong>Liked Songs</strong><small>Saved songs from this Spotify account.</small></span>
+                      <span class="pl-option-text"><strong>Liked Songs</strong> <small>Saved songs from this Spotify account.</small></span>
                     </label>
                   {/if}
                   {#each sourcePlaylists as playlist}
@@ -737,7 +737,7 @@
                     <label class="pl-option pl-option-media" class:active={sourcePlaylistId === playlist.id}>
                       <input bind:group={sourcePlaylistId} type="radio" name="playlist-source" value={playlist.id} disabled={alreadyAdded} />
                       <MediaArtwork class="playlist-art" url={playlist.artworkUrl} fallback="♫" />
-                      <span class="pl-option-text"><strong>{playlist.name}</strong><small>{playlist.owner || "Unknown owner"} · {playlist.trackCount == null ? "? songs" : countLabel(playlist.trackCount, "song")}{alreadyAdded ? " · Already in your apps" : ""}</small></span>
+                      <span class="pl-option-text"><strong>{playlist.name}</strong> <small>{playlist.owner || "Unknown owner"} · {playlist.trackCount == null ? "? songs" : countLabel(playlist.trackCount, "song")}{alreadyAdded ? " · Already in your apps" : ""}</small></span>
                     </label>
                   {:else}{#if !loading}<p class="pl-help">No playlists found.</p>{/if}{/each}
                 </div>
@@ -757,17 +757,17 @@
             <div class="pl-options" role="radiogroup" aria-labelledby="playlist-add-import">
               <label class="pl-option" class:active={importMode === "oneTime"}>
                 <input bind:group={importMode} type="radio" name="playlist-import-mode" value="oneTime" disabled={followNewest} />
-                <span class="pl-option-text"><strong>Import once</strong><small>Take a snapshot now and ignore later changes from {sourceName}.</small></span>
+                <span class="pl-option-text"><strong>Import once</strong> <small>Take a snapshot now and ignore later changes from {sourceName}.</small></span>
               </label>
               <label class="pl-option" class:active={importMode === "linked"}>
                 <input bind:group={importMode} type="radio" name="playlist-import-mode" value="linked" />
-                <span class="pl-option-text"><strong>Keep in sync</strong><small>Check {sourceName} for changes on the schedule you choose.</small></span>
+                <span class="pl-option-text"><strong>Keep in sync</strong> <small>Check {sourceName} for changes on the schedule you choose.</small></span>
               </label>
             </div>
             {#if followNewestKind}
               <label class="pl-retention-toggle">
                 <Checkbox checked={followNewest} onCheckedChange={(checked) => { followNewest = checked; if (checked) importMode = "linked"; }} />
-                <span><strong>Follow newest edition</strong><small>Keep this linked playlist up to date with new editions from {sourceName}.</small></span>
+                <span><strong>Follow newest edition</strong> <small>Keep this linked playlist up to date with new editions from {sourceName}.</small></span>
               </label>
             {/if}
           </section>
@@ -778,11 +778,11 @@
             <div class="pl-options pl-options-two" role="radiogroup" aria-labelledby="playlist-add-destination">
               <label class="pl-option" class:active={targetMode === "new"}>
                 <input bind:group={targetMode} type="radio" name="playlist-target-mode" value="new" onchange={() => void chooseTargetMode("new")} />
-                <span class="pl-option-text"><strong>New playlist</strong><small>Shows in your apps using the source name.</small></span>
+                <span class="pl-option-text"><strong>New playlist</strong> <small>Shows in your apps using the source name.</small></span>
               </label>
               <label class="pl-option" class:active={targetMode === "existing"}>
                 <input bind:group={targetMode} type="radio" name="playlist-target-mode" value="existing" disabled={chosenPlaylists.length > 1} onchange={() => void chooseTargetMode("existing")} />
-                <span class="pl-option-text"><strong>Existing playlist</strong><small>Keep the playable songs in a playlist you already manage.</small></span>
+                <span class="pl-option-text"><strong>Existing playlist</strong> <small>Keep the playable songs in a playlist you already manage.</small></span>
               </label>
             </div>
           </section>
@@ -794,7 +794,7 @@
                   <label class="pl-option pl-option-media" class:active={targetId === target.id}>
                     <input type="radio" name="playlist-target" value={target.id} checked={targetId === target.id} onchange={() => void chooseTarget(target.id)} />
                     <ProviderMark id={target.protocol} definition={definition(target.protocol)} />
-                    <span class="pl-option-text"><strong>{target.displayName}</strong><small>{definition(target.protocol)?.name ?? target.protocol}</small></span>
+                    <span class="pl-option-text"><strong>{target.displayName}</strong> <small>{definition(target.protocol)?.name ?? target.protocol}</small></span>
                   </label>
                 {:else}<p class="notice-error">No media server is connected to this music library.</p>{/each}
               </div>
@@ -812,7 +812,7 @@
                   <label class="pl-option pl-option-media" class:active={targetPlaylistId === playlist.id}>
                     <input bind:group={targetPlaylistId} type="radio" name="playlist-target-playlist" value={playlist.id} />
                     <MediaArtwork class="playlist-art" url={playlist.artworkUrl} fallback="♫" />
-                    <span class="pl-option-text"><strong>{playlist.name}</strong><small>{playlist.trackCount == null ? "? songs" : countLabel(playlist.trackCount, "song")}{playlist.description ? ` · ${playlist.description}` : ""}</small></span>
+                    <span class="pl-option-text"><strong>{playlist.name}</strong> <small>{playlist.trackCount == null ? "? songs" : countLabel(playlist.trackCount, "song")}{playlist.description ? ` · ${playlist.description}` : ""}</small></span>
                   </label>
                 {:else}{#if !loading}<p class="pl-help">No playlists you can change were found.</p>{/if}{/each}
               </div>
@@ -827,7 +827,7 @@
           </div>
           <div class="pl-rows">
             <div class="pl-row">
-              <div><strong>Update schedule</strong><small>{importMode === "oneTime" ? `Import once. Later changes from ${sourceName} are ignored.` : `Keep checking ${sourceName} for changes. Times use ${Intl.DateTimeFormat().resolvedOptions().timeZone}.`}</small></div>
+              <div><strong>Update schedule</strong> <small>{importMode === "oneTime" ? `Import once. Later changes from ${sourceName} are ignored.` : `Keep checking ${sourceName} for changes. Times use ${Intl.DateTimeFormat().resolvedOptions().timeZone}.`}</small></div>
               {#if importMode === "linked"}
                 <SelectField bind:value={schedule} label="Update schedule" options={[
                   { value: "hourly", label: "Every hour" },
@@ -841,7 +841,7 @@
             <div class="pl-row pl-row-full">
               <label class="pl-retention-toggle">
                 <Checkbox checked={trackRetention === "keepAll"} onCheckedChange={(checked) => { trackRetention = checked ? "keepAll" : "onDemand"; }} />
-                <span><strong>Keep downloaded copies</strong><small>Save permanent copies of external songs Allstarr can download. Local songs are already permanent.</small></span>
+                <span><strong>Keep downloaded copies</strong> <small>Save permanent copies of external songs Allstarr can download. Local songs are already permanent.</small></span>
               </label>
             </div>
           </div>

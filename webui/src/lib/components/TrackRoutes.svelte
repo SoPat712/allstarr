@@ -42,7 +42,7 @@
 {/snippet}
 
 {#if track.routeKind === "unmatched" || track.routeKind === "unresolved"}
-  <span class="route-summary"><strong>Unresolved</strong><small>Not playable</small></span>
+  <span class="route-summary"><strong>Unresolved</strong> <small>Not playable</small></span>
 {:else if routes.length === 0}
   {@render summary()}
 {:else}
@@ -59,12 +59,12 @@
         </header>
         <ul aria-label={`Mapped providers for ${track.title}`}>
           {#if local}
-            <li><ProviderArtwork class="route-tile" id={backend} definition={findProviderDefinition(providers, backend)} label={name(backend)} decorative /><span><strong>{name(backend)}</strong><small>In your library</small></span></li>
+            <li><ProviderArtwork class="route-tile" id={backend} definition={findProviderDefinition(providers, backend)} label={name(backend)} decorative /><span><strong>{name(backend)}</strong> <small>In your library</small></span></li>
           {/if}
           {#each services as service (service.name)}
             <li>
               <ProviderArtwork class="route-tile" id={service.id} definition={findProviderDefinition(providers, service.id)} label={service.name} decorative />
-              <span><strong>{service.name}</strong><small>{service.pinned ? "Manually chosen" : review ? "Suggested source — check recording" : track.matchState === "accepted" ? "Automatically matched" : "Playback source"}{service.count > 1 ? ` · ${countLabel(service.count, "source")}` : ""}</small></span>
+              <span><strong>{service.name}</strong> <small>{service.pinned ? "Manually chosen" : review ? "Suggested source — check recording" : track.matchState === "accepted" ? "Automatically matched" : "Playback source"}{service.count > 1 ? ` · ${countLabel(service.count, "source")}` : ""}</small></span>
             </li>
           {/each}
         </ul>
@@ -86,7 +86,7 @@
   :global(.track-routes-panel li strong) { display: block; font-weight: 500; }
   :global(.track-routes-panel .route-tile) {
     display: grid; flex: none; width: 2rem; height: 2rem; place-items: center; overflow: hidden;
-    border-radius: .5rem; background: color-mix(in srgb, var(--color-ink) 7%, transparent);
+    border-radius: var(--radius-sm); background: color-mix(in srgb, var(--color-ink) 7%, transparent);
   }
   :global(.track-routes-panel .route-tile .provider-mark) { width: 100%; height: 100%; border: 0; border-radius: 0; background: transparent; }
   :global(.track-routes-panel .route-tile .provider-mark img) { width: 1.25rem; height: 1.25rem; border-radius: .3rem; object-fit: contain; }

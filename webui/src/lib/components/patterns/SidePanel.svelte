@@ -226,7 +226,7 @@
   .panel-title :global([data-dialog-title]) { overflow: hidden; margin: 0; color: var(--color-ink); font-size: 1.05rem; font-weight: 600; line-height: 1.25; text-overflow: ellipsis; white-space: nowrap; }
   .panel-title :global([data-dialog-description]) { overflow: hidden; margin: var(--space-1) 0 0; color: var(--color-ink-muted); font-size: var(--text-xs); line-height: 1.4; text-overflow: ellipsis; white-space: nowrap; }
   .wrap-title .panel-title :global([data-dialog-title]), .wrap-title .panel-title :global([data-dialog-description]) { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; white-space: normal; }
-  .wrap-title .panel-title :global([data-dialog-description]) { font-size: .74rem; }
+  .wrap-title .panel-title :global([data-dialog-description]) { font-size: var(--text-xs); }
   .panel-controls, .panel-navigation { display: flex; align-items: center; gap: 0; }
   .panel-controls :global(button) { display: inline-flex; width: 32px; height: 32px; min-height: var(--touch-target-min, 32px); align-items: center; justify-content: center; padding: 0; color: var(--color-ink-muted); }
   .panel-header-extra { grid-column: 1 / -1; min-width: 0; overflow-wrap: anywhere; color: var(--color-ink-muted); font-size: .8125rem; line-height: 1.4; }

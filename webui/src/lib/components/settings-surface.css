@@ -65,6 +65,6 @@
 .settings-split :is(.settings-content, .settings-stack) > .settings-card:has(> header) > :not(header) { overflow: hidden; background: var(--color-panel); }
 .settings-split :is(.settings-content, .settings-stack) > .settings-card:has(> header) > header + * { border-top: 0; border-radius: 16px 16px 0 0; }
 .settings-split :is(.settings-content, .settings-stack) > .settings-card:has(> header) > :last-child:not(header) { border-bottom-left-radius: 16px; border-bottom-right-radius: 16px; }
-.settings-split :is(.settings-content, .settings-stack) > .settings-card:has(> header) > header + :last-child { border-radius: 16px; }
+.settings-split :is(.settings-content, .settings-stack) > .settings-card:has(> header) > header + :last-child { border-radius: var(--radius-lg); }
 .settings-split .settings-row > div:first-child strong { font-size: 1rem; line-height: 1.5rem; font-weight: 400; }
-.settings-split .settings-row > div:first-child small { font-size: .875rem; line-height: 1.25rem; }
+.settings-split .settings-row > div:first-child small { font-size: var(--text-sm); line-height: 1.25rem; }

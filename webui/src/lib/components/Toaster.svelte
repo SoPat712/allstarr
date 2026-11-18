@@ -49,9 +49,9 @@
 <style>
   :global(:root) { --toast-bottom: max(24px, calc(var(--side-panel-footer-height, 0px) + var(--space-3))); }
   .toaster { position: fixed; z-index: 120; inset: auto 24px var(--toast-bottom) auto; width: min(420px, calc(100vw - 48px)); margin: 0; padding: 0; border: 0; overflow: visible; background: transparent; color: inherit; display: grid; gap: 8px; pointer-events: none; }
-  .toast { pointer-events: auto; display: flex; align-items: center; gap: 8px; padding: 8px 8px 8px 16px; border-radius: 12px; background: var(--md-sys-color-inverse-surface); color: var(--md-sys-color-inverse-on-surface); box-shadow: 0 4px 12px #0003; animation: toast-enter 180ms ease-out; }
+  .toast { pointer-events: auto; display: flex; align-items: center; gap: 8px; padding: 8px 8px 8px 16px; border-radius: var(--radius-md); background: var(--md-sys-color-inverse-surface); color: var(--md-sys-color-inverse-on-surface); box-shadow: var(--shadow-lg); animation: toast-enter 180ms ease-out; }
   .toast p { margin: 0; flex: 1; min-width: 0; overflow-wrap: anywhere; font-size: var(--text-sm); line-height: 1.45; }
-  .toast button { flex: none; min-width: 44px; min-height: 44px; border: 0; border-radius: 8px; color: inherit; background: transparent; cursor: pointer; }
+  .toast button { flex: none; min-width: 44px; min-height: 44px; border: 0; border-radius: var(--radius-sm); color: inherit; background: transparent; cursor: pointer; }
   .toast button:focus-visible { outline: 2px solid currentColor; outline-offset: -2px; }
   .toast-action { color: var(--md-sys-color-inverse-on-surface) !important; font-weight: 650; padding: 0 8px; }
   .toast :global(.toast-busy) { flex: none; animation: signal-boot-spin 1s linear infinite; }

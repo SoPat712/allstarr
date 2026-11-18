@@ -192,7 +192,7 @@
 </script>
 <div class="for-you">
   <div class="section-heading"><h2>{greeting(new Date().getHours(), listenerName)}</h2><div class="page-actions"><Button onclick={() => void startMix()}>Start a mix</Button></div></div>
-  <PageStatus items={[{ label: `${countLabel(cards.filter(card => card.readiness.ready).length, "mix", "mixes")} ready` }, { label: "Mixes refresh every morning" }]} />
+  <PageStatus items={[{ label: !loading || cards.length ? `${countLabel(cards.filter(card => card.readiness.ready).length, "mix", "mixes")} ready` : "Checking your mixes…" }, { label: "Mixes refresh every morning" }]} />
   {#if loading}{#each ["Made for you", "Moods"] as title}<section aria-label={`Loading ${title}`}><h2>{title}</h2><RowsSkeleton count={3} /></section>{/each}
   {:else}
     {#if checklist}<section class="settings-card checklist" aria-label="Get more from your mixes">
@@ -213,7 +213,7 @@
 </div>
 {#if startOpen && StartMixDialog}<StartMixDialog appsAllowed={cards.some(card => card.appsAllowed)} initialQuery={startQuery} onclose={() => startOpen = false} onsaved={async () => { await pending; await load(); }} />{/if}
 <Dialog.Root bind:open={importOpen}><Dialog.Portal><Dialog.Overlay class="dialog-overlay" /><Dialog.Content class="source-dialog">
-  <header><div><Dialog.Title>Bring in your history</Dialog.Title><Dialog.Description>Start your mixes with the music you've already played.</Dialog.Description></div><Dialog.Close type="button" class="icon-button" aria-label="Close history">×</Dialog.Close></header>
+  <header><div><Dialog.Title>Bring in your history</Dialog.Title><Dialog.Description>Start your mixes with the music you've already played.</Dialog.Description></div><Dialog.Close type="button" class="icon-button" aria-label="Close history"><X size={18} aria-hidden="true" /></Dialog.Close></header>
   <IntelligenceHistoryImports onchanged={async () => { await pending; await load(); }} /><footer class="dialog-actions"><Dialog.Close type="button" class={buttonVariants({ variant: "secondary" })}>Done</Dialog.Close></footer>
 </Dialog.Content></Dialog.Portal></Dialog.Root>
 <ConfirmDialog bind:open={addAllOpen} title={`Add ${countLabel(addAllCards.length, "mix", "mixes")} to your apps?`}

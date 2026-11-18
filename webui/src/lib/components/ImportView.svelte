@@ -382,7 +382,7 @@
                 {#each kinds as kind}
                   <label class="import-kind" class:selected={kindChecked(kind.id)}>
                     <Checkbox aria-label={`Bring ${kind.label}`} checked={kindChecked(kind.id)} indeterminate={kindPartial(kind.id)} disabled={busy || !choices.some(item => item.kind === kind.id)} onCheckedChange={value => selectKind(kind.id, value === true)} />
-                    <strong>{unsupported.some(item => item.kind === kind.id) ? "—" : choices.some(item => item.kind === kind.id && item.count == null) ? "?" : kind.count.toLocaleString()}</strong><small>{kind.label}</small>
+                    <strong>{unsupported.some(item => item.kind === kind.id) ? "—" : choices.some(item => item.kind === kind.id && item.count == null) ? "?" : kind.count.toLocaleString()}</strong> <small>{kind.label}</small>
                   </label>
                 {/each}
               </section>
@@ -396,7 +396,7 @@
                 {#each choices as item (item.sourceId)}
                   <div class="import-choice">
                     <label class="import-selection"><Checkbox aria-label={`Select ${collectionName(item.kind, item.name, providerId)}`} checked={!!selected[item.sourceId]} disabled={busy} onCheckedChange={value => selected[item.sourceId] = value === true} />
-                      <MediaArtwork url={item.artworkUrl} /><span><strong>{collectionName(item.kind, item.name, providerId)}</strong><small>{item.count === null ? "Size unknown" : collectionCount(item.count, item.kind)}</small>{#if item.kind === "liked-songs"}<small>Become hearts</small>{/if}</span></label>
+                      <MediaArtwork url={item.artworkUrl} /><span><strong>{collectionName(item.kind, item.name, providerId)}</strong> <small>{item.count === null ? "Size unknown" : collectionCount(item.count, item.kind)}</small>{#if item.kind === "liked-songs"}<small>Become hearts</small>{/if}</span></label>
                     {#if item.kind === "playlist"}<label class="import-sync"><span>Keep in sync</span><Checkbox aria-label={`Keep ${item.name} in sync`} checked={!!sync[item.sourceId]} disabled={busy} onCheckedChange={value => sync[item.sourceId] = value === true} /></label>{/if}
                   </div>
                 {/each}
@@ -423,7 +423,7 @@
         <Progress value={migrationProgress(status)} max={100} aria-label="Music matched" />
         <p>You can leave this page. It keeps going and shows in <a href="#/activity">Activity</a>.</p>
         {#each collections as item}
-          <div><strong>{collectionName(item.collection.kind, item.collection.name, providerId)}</strong><small>{collectionStateLabel(interrupted && item.collection.state !== "applied" ? runState : item.collection.state)} · {item.counts.accepted} of {item.counts.selected} found</small>
+          <div><strong>{collectionName(item.collection.kind, item.collection.name, providerId)}</strong> <small>{collectionStateLabel(interrupted && item.collection.state !== "applied" ? runState : item.collection.state)} · {item.counts.accepted} of {item.counts.selected} found</small>
             {#if item.collection.error}<ErrorState title="This collection needs attention" detail={migrationError(item.collection.error, status.run.providerId)} />{/if}</div>
         {/each}
         {#if status.total.review > 0}<section class="import-unsure" aria-label="Unsure so far"><h3>Unsure so far</h3>
@@ -463,7 +463,7 @@
             expanded[item.id] = event.currentTarget.open;
             if (event.currentTarget.open && !pages[item.id]) void loadPage(item.id);
           }}>
-            <summary><strong>{collectionName(item.collection.kind, item.collection.name, providerId)}</strong><small>{collectionCountsLine(item.counts)}</small></summary>
+            <summary><strong>{collectionName(item.collection.kind, item.collection.name, providerId)}</strong> <small>{collectionCountsLine(item.counts)}</small></summary>
             {#if !pages[item.id]}<div class="import-body"><RowsSkeleton count={3} /></div>{/if}
             {#each (pages[item.id] ?? []).filter(needsReview) as song (song.sourceEntryId)}
               <div class="import-song"><MediaArtwork url={song.metadata.artworkUrl} /><div><strong>{song.metadata.title ?? "Untitled"}</strong>

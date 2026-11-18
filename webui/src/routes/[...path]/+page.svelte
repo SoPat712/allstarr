@@ -351,15 +351,14 @@
     error = "";
     bootMessageIndex = 0;
     try {
-      session = await auth.session();
-      oidc = await adminOidc.status().catch(() => ({ enabled: false }));
+      const current = session = await auth.session();
+      // Sign-in options and setup status don't depend on each other, so the first screen waits for one round trip, not two.
+      [oidc] = await Promise.all([adminOidc.status().catch(() => ({ enabled: false })),
+        current.authenticated ? loadOnboarding(current) : Promise.resolve()]);
       if (new URLSearchParams(window.location.search).get("oidc") === "failed") {
         error = "SSO sign-in failed. Try again, or use your media-server account.";
       }
-      if (session.authenticated) {
-        await loadOnboarding(session);
-        liveUpdates.connect(session.user?.isAdministrator ?? false);
-      }
+      if (current.authenticated) liveUpdates.connect(current.user?.isAdministrator ?? false);
     } catch (cause) {
       bootstrapFailed = true;
       error = cause instanceof Error ? cause.message : "Allstarr is unavailable.";
@@ -758,15 +757,15 @@
           <div class="mobile-menu-actions">
             <button type="button" onclick={cycleTheme}>
               <ThemeIcon aria-hidden="true" />
-              <span><strong>Appearance</strong><small>{themeMode[0].toUpperCase() + themeMode.slice(1)} · switch to {nextTheme}</small></span>
+              <span><strong>Appearance</strong> <small>{themeMode[0].toUpperCase() + themeMode.slice(1)} · switch to {nextTheme}</small></span>
             </button>
             {#if oidc.linked}<button type="button" disabled={authBusy} onclick={() => void disconnectSso()}>
               <UiIcon name="unlink" />
-              <span><strong>Disconnect {oidc.displayName}</strong><small>Your media-server sign-in stays</small></span>
+              <span><strong>Disconnect {oidc.displayName}</strong> <small>Your media-server sign-in stays</small></span>
             </button>{/if}
             <button type="button" disabled={authBusy} onclick={() => void logout()}>
               <UiIcon name="logout" />
-              <span><strong>{authBusy ? "Signing out…" : "Sign out"}</strong><small>End this Allstarr session</small></span>
+              <span><strong>{authBusy ? "Signing out…" : "Sign out"}</strong> <small>End this Allstarr session</small></span>
             </button>
           </div>
         </div>

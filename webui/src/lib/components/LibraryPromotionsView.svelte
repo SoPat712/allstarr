@@ -197,5 +197,5 @@
   .promotion-page { display: grid; min-width: 0; align-content: start; justify-items: start; gap: 18px; }
   .promotion-page > :global(*) { max-width: 100%; }
   h2 { margin: 0; font-size: 1.35rem; font-weight: 600; }
-  .promotion-list { width: 100%; min-width: 0; overflow: hidden; border: 1px solid var(--color-edge); border-radius: 14px; }
+  .promotion-list { width: 100%; min-width: 0; overflow: hidden; border: 1px solid var(--color-edge); border-radius: var(--radius-list); }
 </style>

@@ -352,7 +352,7 @@
         {#if matching.recent.length}
           <section class="history-latest" aria-labelledby="history-latest-heading">
             <h3 id="history-latest-heading">Latest songs</h3>
-            <ul>{#each matching.recent as song, index (index)}<li><div><strong>{song.title}</strong><small>{[song.artist, song.plays > 1 ? countLabel(song.plays, "play") : "", song.found ? "Matched to " + song.found : ""].filter(Boolean).join(" · ")}</small></div><ActivityOutcome state={song.state} label={song.label} /></li>{/each}</ul>
+            <ul>{#each matching.recent as song, index (index)}<li><div><strong>{song.title}</strong> <small>{[song.artist, song.plays > 1 ? countLabel(song.plays, "play") : "", song.found ? "Matched to " + song.found : ""].filter(Boolean).join(" · ")}</small></div><ActivityOutcome state={song.state} label={song.label} /></li>{/each}</ul>
           </section>
         {/if}
       {:else if info.message || info.playlist || info.track}<p>{[info.message, info.playlist, info.track].filter(Boolean).join(" · ")}</p>{/if}

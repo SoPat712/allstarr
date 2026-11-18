@@ -212,7 +212,7 @@
   <ul class="naming-errors" aria-label="Naming errors">{#each items as error}<li><button type="button" onclick={() => showError(error)}>Character {error.position + 1}: {error.message}</button>{#if profile}<code class="error-location">{profile.namingScript.slice(0, error.position)}<mark>{profile.namingScript.slice(error.position, error.position + error.length) || " "}</mark>{profile.namingScript.slice(error.position + error.length)}</code>{/if}</li>{/each}</ul>
 {/snippet}
 {#snippet toggle(key: "fakeLosslessCheck" | "musicBrainzTags" | "replayGain" | "removeKeptCopy", title: string, description: string)}
-  {#if profile}<div class="settings-row"><div><strong>{title}</strong><small>{description}</small></div><span class="settings-toggle"><Switch aria-label={title} checked={profile[key]} onchange={event => update({ [key]: event.currentTarget.checked })} /></span></div>{/if}
+  {#if profile}<div class="settings-row"><div><strong>{title}</strong> <small>{description}</small></div><span class="settings-toggle"><Switch aria-label={title} checked={profile[key]} onchange={event => update({ [key]: event.currentTarget.checked })} /></span></div>{/if}
 {/snippet}
 
 {#if loading}<RowsSkeleton count={4} />
@@ -253,9 +253,9 @@
         {#if folderError}<p role="status" class="muted">{folderError}</p>{/if}
         {#if administrator}<a href="https://github.com/SoPat712/allstarr/blob/dev/docs/user-guide.md#adding-to-your-library" target="_blank" rel="noreferrer">Library setup guide</a>{/if}
       </div>{/if}
-      <div class="settings-row"><div><strong>Default unit</strong><small>What “Add to library” adds from a song</small></div><ThreeDetentSwitch label="Default unit" value={profile.defaultUnit} options={[{ value: "album", label: "Whole album" }, { value: "song", label: "Just the song" }]} onchange={value => update({ defaultUnit: value })} /></div>
+      <div class="settings-row"><div><strong>Default unit</strong> <small>What “Add to library” adds from a song</small></div><ThreeDetentSwitch label="Default unit" value={profile.defaultUnit} options={[{ value: "album", label: "Whole album" }, { value: "song", label: "Just the song" }]} onchange={value => update({ defaultUnit: value })} /></div>
       {@render toggle("removeKeptCopy", "Remove kept copy", "Release the kept copy after Jellyfin confirms the library song")}
-      {#if administrator && scope === "household"}<div class="settings-row"><div><strong>Who adds without approval</strong><small>Everyone else sends a request to an admin</small></div><SelectField label="Who adds without approval" value={household.addWithoutApproval} options={[{ value: "admins-and-trusted-listeners", label: "Admins and trusted listeners" }, { value: "admins", label: "Admins" }]} onchange={value => { if (!household || household.addWithoutApproval === value) return; household = { ...household, addWithoutApproval: value as ApprovalRoles }; dirty.add(scope); scheduleSave(); }} /></div>{/if}
+      {#if administrator && scope === "household"}<div class="settings-row"><div><strong>Who adds without approval</strong> <small>Everyone else sends a request to an admin</small></div><SelectField label="Who adds without approval" value={household.addWithoutApproval} options={[{ value: "admins-and-trusted-listeners", label: "Admins and trusted listeners" }, { value: "admins", label: "Admins" }]} onchange={value => { if (!household || household.addWithoutApproval === value) return; household = { ...household, addWithoutApproval: value as ApprovalRoles }; dirty.add(scope); scheduleSave(); }} /></div>{/if}
     </section>
     <section class="settings-card" aria-labelledby="naming-heading">
       <header class="naming-header"><div><h3 id="naming-heading">How added files are named</h3><p>Drag fields to build the name, or edit the naming script directly (Picard syntax). Autodetect resets folders and filenames to the pattern found in this folder.</p></div>
@@ -268,7 +268,7 @@
             <small>{detected.matched} of {detected.sampled} songs in this folder follow the same pattern</small></div>
             <Button variant="outline" size="sm" onclick={() => update({ namingScript: detected!.script!, libraryRootId: chosenRootId, namingConfirmed: true })}>Use this pattern</Button></div>
         {:else if detected?.script}<p class="naming-match">This pattern matches {detected.matched} of {detected.sampled} sampled songs.</p>{/if}
-        {#if !profile.namingConfirmed}<div class="naming-detected" role="status"><div><strong>Choose a naming pattern before adding songs</strong><small>Review the folders and filenames below, then confirm your choice. Missing song metadata will still block an addition.</small></div><Button variant="outline" size="sm" disabled={previewPending || !!previewError || !validScripts.has(profile.namingScript) || errors.length > 0} onclick={() => update({ libraryRootId: chosenRootId, namingConfirmed: true })}>Use this naming pattern</Button></div>{/if}
+        {#if !profile.namingConfirmed}<div class="naming-detected" role="status"><div><strong>Choose a naming pattern before adding songs</strong> <small>Review the folders and filenames below, then confirm your choice. Missing song metadata will still block an addition.</small></div><Button variant="outline" size="sm" disabled={previewPending || !!previewError || !validScripts.has(profile.namingScript) || errors.length > 0} onclick={() => update({ libraryRootId: chosenRootId, namingConfirmed: true })}>Use this naming pattern</Button></div>{/if}
         <PromotionNamingBuilder script={profile.namingScript} onchange={namingScript => update({ namingScript })} />
         <div class="naming-examples" class:updating={previewPending && preview} aria-label="Live naming examples" aria-busy={previewPending}>
           {#if previewPending && !preview}<p class="muted">Loading examples…</p>
@@ -285,15 +285,15 @@
     </section>
     <div class="promotion-columns">
       <section class="settings-card" aria-labelledby="promotion-quality"><header><h3 id="promotion-quality">Quality of added songs</h3></header>
-        <div class="settings-row"><div><strong>Lowest quality to add</strong><small>Copies below this are never added</small></div><SelectField label="Lowest quality to add" value={floorValue} options={floorOptions} onchange={chooseFloor} /></div>
-        <div class="settings-row"><div><strong>Keep hi-res up to</strong><small>Higher copies are converted down</small></div><SelectField label="Keep hi-res up to" value={ceilingValue} options={ceilingOptions} onchange={chooseCeiling} /></div>
+        <div class="settings-row"><div><strong>Lowest quality to add</strong> <small>Copies below this are never added</small></div><SelectField label="Lowest quality to add" value={floorValue} options={floorOptions} onchange={chooseFloor} /></div>
+        <div class="settings-row"><div><strong>Keep hi-res up to</strong> <small>Higher copies are converted down</small></div><SelectField label="Keep hi-res up to" value={ceilingValue} options={ceilingOptions} onchange={chooseCeiling} /></div>
         {@render toggle("fakeLosslessCheck", "Check lossless copies are real", "Spectrum check for upscaled files")}
-        <div class="settings-row"><div><strong>Allow lossy when nothing else exists</strong><small>Marked as lossy in tags and in Allstarr</small></div><span class="settings-toggle"><Switch aria-label="Allow lossy when nothing else exists" checked={profile.allowLossy} onchange={event => update({ allowLossy: event.currentTarget.checked, ...(!event.currentTarget.checked && profile.qualityFloor.codecFamily !== "lossless" ? { qualityFloor: { codecFamily: "lossless", minBitDepth: 16, minSampleRate: 44100 } } : {}) })} /></span></div>
+        <div class="settings-row"><div><strong>Allow lossy when nothing else exists</strong> <small>Marked as lossy in tags and in Allstarr</small></div><span class="settings-toggle"><Switch aria-label="Allow lossy when nothing else exists" checked={profile.allowLossy} onchange={event => update({ allowLossy: event.currentTarget.checked, ...(!event.currentTarget.checked && profile.qualityFloor.codecFamily !== "lossless" ? { qualityFloor: { codecFamily: "lossless", minBitDepth: 16, minSampleRate: 44100 } } : {}) })} /></span></div>
       </section>
       <section class="settings-card" aria-labelledby="promotion-extras"><header><h3 id="promotion-extras">Tags and extras</h3></header>
         {@render toggle("musicBrainzTags", "MusicBrainz tags", "Release, recording and artist IDs, like Picard")}
         <div class="settings-row"><div><strong>Cover art</strong></div><SelectField label="Cover art" value={profile.coverMode} options={[{ value: "both", label: "cover.jpg and embedded" }, { value: "cover.jpg", label: "cover.jpg" }, { value: "embedded", label: "Embedded" }, { value: "none", label: "Off" }]} onchange={value => update({ coverMode: value as PromotionProfile["coverMode"] })} /></div>
-        <div class="settings-row"><div><strong>Synced lyrics</strong><small>Only when the timing fits the file</small></div><SelectField label="Synced lyrics" value={profile.lyricsMode} options={[{ value: ".lrc", label: ".lrc next to the song" }, { value: "both", label: ".lrc and embedded" }, { value: "embedded", label: "Embedded" }, { value: "off", label: "Off" }]} onchange={value => update({ lyricsMode: value as PromotionProfile["lyricsMode"] })} /></div>
+        <div class="settings-row"><div><strong>Synced lyrics</strong> <small>Only when the timing fits the file</small></div><SelectField label="Synced lyrics" value={profile.lyricsMode} options={[{ value: ".lrc", label: ".lrc next to the song" }, { value: "both", label: ".lrc and embedded" }, { value: "embedded", label: "Embedded" }, { value: "off", label: "Off" }]} onchange={value => update({ lyricsMode: value as PromotionProfile["lyricsMode"] })} /></div>
         {@render toggle("replayGain", "ReplayGain", "Track and album gain (rsgain)")}
       </section>
     </div>

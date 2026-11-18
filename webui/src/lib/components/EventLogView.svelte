@@ -107,7 +107,7 @@
   .activity-content > :global(.segmented-nav) { margin-bottom: var(--space-4); }
   /* Matches the attention banner on Home. */
   .attention-banner { display: flex; align-items: center; gap: 12px; margin-bottom: var(--space-4); padding: 10px 14px; border-radius: var(--radius-md); background: var(--warning-container); color: var(--color-ink); }
-  .attention-banner p { min-width: 0; flex: 1; margin: 0; font-size: .78rem; }
+  .attention-banner p { min-width: 0; flex: 1; margin: 0; font-size: var(--text-xs); }
   .attention-banner strong { color: var(--warning); }
   .attention-banner > :global([data-slot="button"]) { flex: none; }
 

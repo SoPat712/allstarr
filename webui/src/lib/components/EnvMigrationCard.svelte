@@ -103,7 +103,7 @@
 <ServiceAccessRestore />
 <article class="settings-card maintenance-card env-migration-card">
   <header>
-    <div><strong>Import from Allstarr v2</strong><small>Bring settings, accounts, playlists and schedules over from an old <code>.env</code> file. Secrets are never shown.</small></div>
+    <div><strong>Import from Allstarr v2</strong> <small>Bring settings, accounts, playlists and schedules over from an old <code>.env</code> file. Secrets are never shown.</small></div>
     <Badge state={status?.completed ? "healthy" : "suggested"}>
       {status?.completed ? "Imported" : "Optional"}
     </Badge>
@@ -131,7 +131,7 @@
         <summary>Review {countLabel(preview.items.length, "parsed setting")}</summary>
         <ul class="migration-items">
           {#each preview.items as item}
-            <li><strong>{item.key}</strong><small>Line {item.sourceLine} · {item.action}</small><span>{item.reason}</span></li>
+            <li><strong>{item.key}</strong> <small>Line {item.sourceLine} · {item.action}</small><span>{item.reason}</span></li>
           {/each}
         </ul>
       </details>
@@ -147,7 +147,7 @@
   {:else}
     <form onsubmit={(event) => { event.preventDefault(); void inspect(); }}>
       <div class="settings-row">
-        <div><strong>Legacy environment file</strong><small>Nothing is imported until you review a preview.</small></div>
+        <div><strong>Legacy environment file</strong> <small>Nothing is imported until you review a preview.</small></div>
         <FilePicker label="Legacy environment file" onselect={(files) => { file = files[0] ?? null; }} />
       </div>
       <footer><Button variant="secondary" disabled={Boolean(action) || !status?.sourcePresent} onclick={() => void inspect(true)}>Preview mounted settings</Button><Button variant="secondary" type="submit" disabled={!file || Boolean(action)}>{action === "preview" ? "Inspecting…" : status?.completed ? "Preview revision" : "Preview import"}</Button></footer>

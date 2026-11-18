@@ -126,7 +126,7 @@
       </form>
     {/if}
     <section class="settings-card" aria-label="Mixes from sound"><header><h3>Mixes from sound</h3></header>
-      <label class="settings-row"><div><strong>Let listeners add mixes to their apps</strong><small>Each listener picks which mixes show as playlists.</small></div><span class="settings-toggle"><Switch checked={publishEnabled === true} disabled={publishEnabled === null || Boolean(action)} aria-label="Let listeners add mixes to their apps" onchange={event => void setPublishing(event.currentTarget.checked)} /></span></label>
+      <label class="settings-row"><div><strong>Let listeners add mixes to their apps</strong> <small>Each listener picks which mixes show as playlists.</small></div><span class="settings-toggle"><Switch checked={publishEnabled === true} disabled={publishEnabled === null || Boolean(action)} aria-label="Let listeners add mixes to their apps" onchange={event => void setPublishing(event.currentTarget.checked)} /></span></label>
       {#if publishError}<p class="notice-error settings-impact" role="alert">{publishError}</p>{/if}
     </section>
   {/if}

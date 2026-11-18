@@ -115,7 +115,7 @@
             <div class="reason-scroll"><ThreeDetentSwitch label="Problem" options={reportKinds.map(reason => ({ value: reason.value, label: reasonLabels[reason.value] }))} value={kind} disabled={busy} onchange={value => kind = value} /></div>
           </fieldset>
         {:else}
-          <div class="setting-field settings-row"><div><strong>Problem</strong><small>Choose the closest description.</small></div><SelectField label="Problem" value={kind} options={reportKinds} onchange={(value) => kind = value as ReportKind} /></div>
+          <div class="setting-field settings-row"><div><strong>Problem</strong> <small>Choose the closest description.</small></div><SelectField label="Problem" value={kind} options={reportKinds} onchange={(value) => kind = value as ReportKind} /></div>
         {/if}
         <label class="report-note"><strong>What's wrong?</strong><textarea aria-label="What's wrong?" required maxlength="2000" rows="5" bind:value={note}></textarea><small>Include the app and what you tried. Leave out passwords, tokens and private links.</small></label>
         <label class="report-include"><Checkbox aria-label="Include what was playing" checked={Boolean(selector?.playback)} disabled={busy || !attachedSelector?.playback} onCheckedChange={value => void includePlaying(value === true)} /><span>Include what was playing{#if !attachedSelector?.playback}<small>No playback details are available. Report a song from its menu to attach them.</small>{/if}</span></label>

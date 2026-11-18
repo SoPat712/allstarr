@@ -676,7 +676,7 @@
                   {#if bulkMode}<td class="desktop-cell check-cell"><label class="select-target"><input type="checkbox" checked={chosen.has(match.externalSnapshotId)} onchange={() => toggleChosen(match)} aria-label={`Select ${match.title || "song"}`} /></label></td>{/if}
                   <td class="desktop-cell source-cell">
                     <button type="button" class="open-match" aria-label={`Open match for ${match.title || "song"}`} onclick={() => openMatch(match)}></button>
-                    <div class="source-copy"><MediaArtwork url={sourceArtwork(match)} /><div><strong>{match.title}</strong><small>{match.artist}{match.album ? ` · ${match.album}` : ""}</small>{#if rowPlaylists(match).length}<small class="playlist-names">{rowPlaylists(match).join(", ")}</small>{/if}</div></div>
+                    <div class="source-copy"><MediaArtwork url={sourceArtwork(match)} /><div><strong>{match.title}</strong> <small>{match.artist}{match.album ? ` · ${match.album}` : ""}</small>{#if rowPlaylists(match).length}<small class="playlist-names">{rowPlaylists(match).join(", ")}</small>{/if}</div></div>
                   </td>
                   <td class="desktop-cell"><div class="plays-as">{#if target}<span><ProviderMark id={target.providerId === "local" ? backend.toLowerCase() : target.providerId} definition={provider(target.providerId)} />{providerName(target.providerId)}</span>{#if target.title?.trim() && target.title !== match.title}<small>{target.title}</small>{/if}{:else}<span class="no-match">No match yet</span>{/if}</div></td>
                   <td class="desktop-cell"><StatePill tone={state.tone} text={state.text} /></td>
@@ -705,7 +705,7 @@
     onPrevious={visibleMatches.findIndex(item => item.externalSnapshotId === activeId) > 0 ? () => moveSelected(-1) : undefined}
     onNext={visibleMatches.findIndex(item => item.externalSnapshotId === activeId) < visibleMatches.length - 1 ? () => moveSelected(1) : undefined}>
     {#snippet authorities()}{#if selected?.manualAuthorities?.length}<section aria-label="Saved decisions"><h3 class="sec-label">Saved decisions</h3>
-      {#each selected.manualAuthorities as authority}<div class="manual-authority-row"><strong>{authorityLabel(authority)}</strong><small>{authority.reason} · {authorityState(selected, authority)}</small><div>
+      {#each selected.manualAuthorities as authority}<div class="manual-authority-row"><strong>{authorityLabel(authority)}</strong> <small>{authority.reason} · {authorityState(selected, authority)}</small><div>
         <Button variant="text" disabled={Boolean(action) || !canEditAuthority(authority)} onclick={() => confirmAuthority("manual_rematch", selected!, authority)}>Clear {authorityScopeOf(authority)} and rematch</Button>
         <Button variant="text" disabled={Boolean(action) || !canEditAuthority(authority)} onclick={() => confirmAuthority("manual_delete", selected!, authority)}>Clear {authorityScopeOf(authority)}</Button>
       </div></div>{/each}
@@ -740,7 +740,7 @@
   .matches-toolbar :global(.select-trigger) { width: auto; gap: var(--space-2); padding-inline: var(--space-2); font-size: .8125rem; white-space: nowrap; }
   .mapping-rows { min-width: 0; }
   .matches-table { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: .8125rem; }
-  .matches-table th { text-align: left; font-weight: 500; color: var(--color-ink-muted); padding: var(--space-2); font-size: .75rem; border-bottom: 1px solid var(--color-edge); }
+  .matches-table th { text-align: left; font-weight: 500; color: var(--color-ink-muted); padding: var(--space-2); font-size: var(--text-xs); border-bottom: 1px solid var(--color-edge); }
   .matches-table th:nth-last-child(5) { width: 32%; }.matches-table th:nth-last-child(4) { width: 20%; }.matches-table th:nth-last-child(3) { width: 84px; }.matches-table th:last-child { width: 80px; }
   .mapping-row { display: table-row; position: relative; height: 64px; padding: 0; border: 0; color: var(--color-ink); }
   .mapping-row td { padding: var(--space-2); border-bottom: 1px solid var(--color-edge); vertical-align: middle; }
@@ -754,7 +754,7 @@
   .source-copy :global(.media-art) { width: 36px; height: 36px; flex: none; }.source-copy > div { min-width: 0; }
   .source-copy strong, .source-copy small, .plays-as small { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
   .source-copy strong, .plays-as { color: var(--color-ink); }
-  small { color: var(--color-ink-muted); font-size: .75rem; }
+  small { color: var(--color-ink-muted); font-size: var(--text-xs); }
   .plays-as > span { display: flex; gap: var(--space-2); align-items: center; }
   .plays-as .no-match { color: var(--color-ink-muted); }
   .difference-chips { display: flex; flex-wrap: wrap; align-content: start; gap: var(--space-1); max-height: calc(2.8em + 12px + var(--space-1)); overflow: hidden; font-size: .6875rem; line-height: 1.4; }
@@ -767,7 +767,7 @@
   .select-target { display: inline-flex; gap: var(--space-2); min-height: 44px; min-width: 44px; align-items: center; justify-content: center; cursor: pointer; }
   input[type="checkbox"] { accent-color: var(--color-signal); width: 18px; height: 18px; }
   .mapping-select-bar { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; }
-  .mapping-bulk { position: sticky; z-index: var(--layer-control); bottom: var(--space-3); background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); border-radius: var(--radius-lg); padding: var(--space-3); display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); box-shadow: var(--shadow-md); }
+  .mapping-bulk { position: sticky; z-index: var(--layer-control); bottom: var(--space-3); background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); border-radius: var(--radius-lg); padding: var(--space-3); display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); box-shadow: var(--shadow-lg); }
   .mapping-bulk > div { display: flex; flex-wrap: wrap; gap: var(--space-2); }
   .quiet-success :global(.empty-state) { min-height: 0; align-items: flex-start; padding: var(--space-2); text-align: start; }
   .quiet-success :global(h3) { color: var(--success); font-size: .8125rem; font-weight: 400; }

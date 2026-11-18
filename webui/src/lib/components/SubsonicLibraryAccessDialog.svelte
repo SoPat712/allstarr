@@ -77,7 +77,7 @@
       <form class="library-access-form" onsubmit={(event) => { event.preventDefault(); void save(); }}>
         <div class="library-access-copy">
           <span aria-hidden="true"><KeyRound size={20} /></span>
-          <p><strong>Only your Allstarr account can use this credential.</strong><small>It is encrypted, bound to this exact Subsonic identity, and never included in job payloads or logs.</small></p>
+          <p><strong>Only your Allstarr account can use this credential.</strong> <small>It is encrypted, bound to this exact Subsonic identity, and never included in job payloads or logs.</small></p>
         </div>
         <p class="identity-summary"><span>Signed-in listener</span><strong>{target?.displayName ?? "Current listener"}</strong></p>
         <label class="field"><span>Subsonic password</span><input bind:value={password} type="password" autocomplete="current-password" required maxlength="2000" /></label>

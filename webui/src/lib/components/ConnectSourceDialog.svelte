@@ -158,7 +158,7 @@
       {#if !account && step === 1}
         <div class="connection-tiles" role="radiogroup" aria-label="Service">
           {#each choices as choice, index}
-            <button class="connection-tile" type="button" role="radio" aria-checked={providerId === choice.id} tabindex={providerId === choice.id ? 0 : -1} onkeydown={event => tileKey(event, index)} onclick={() => providerId = choice.id}><ProviderMark id={choice.id} definition={choice} decorative /><strong>{choice.name}</strong><small>{sourceOriginLabel(choice)}</small><small>{whatItDoes(choice.categories ?? [])}</small></button>
+            <button class="connection-tile" type="button" role="radio" aria-checked={providerId === choice.id} tabindex={providerId === choice.id ? 0 : -1} onkeydown={event => tileKey(event, index)} onclick={() => providerId = choice.id}><ProviderMark id={choice.id} definition={choice} decorative /><strong>{choice.name}</strong> <small>{sourceOriginLabel(choice)}</small><small>{whatItDoes(choice.categories ?? [])}</small></button>
           {/each}
         </div>
         <footer class="dialog-actions"><Dialog.Close class={buttonVariants({ variant: "text" })}>Cancel</Dialog.Close><Button disabled={!selected} onclick={() => step = 2}>Next</Button></footer>
@@ -167,7 +167,7 @@
           {#if account}
             <div class="provider-select source-dialog-provider">
               <ProviderMark id={selected.id} definition={selected} decorative />
-              <span><strong>{selected.name}</strong><small>{accountSubtitle(account)}</small></span>
+              <span><strong>{selected.name}</strong> <small>{accountSubtitle(account)}</small></span>
             </div>
           {:else}
             <div class="provider-select source-dialog-provider"><ProviderMark id={selected.id} definition={selected} decorative /><strong>{selected.name}</strong></div>
@@ -289,7 +289,7 @@
     resize: vertical;
     padding: 0.75rem 0.9rem;
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    font-size: 0.875rem;
+    font-size: var(--text-sm);
     line-height: 1.4;
   }
 </style>

@@ -80,22 +80,22 @@
 <section class="sync-settings" aria-label="Sync settings" aria-busy={saving}>
   <h3 class="sec-label">Sync</h3>
   {#if playlist.importMode === "linked"}
-    <div class="setting"><div><strong>Keep in sync</strong><small>Follows changes in {sourceName}</small></div><Switch aria-label="Keep in sync" bind:checked={() => schedule?.enabled ?? false, enabled => void changeSchedule({ enabled })} disabled={saving} /></div>
-    <div class="setting"><div><strong>When</strong><small>{schedule ? scheduleCadence(schedule.cronExpression) : "Choose when to check"}</small></div>
+    <div class="setting"><div><strong>Keep in sync</strong> <small>Follows changes in {sourceName}</small></div><Switch aria-label="Keep in sync" bind:checked={() => schedule?.enabled ?? false, enabled => void changeSchedule({ enabled })} disabled={saving} /></div>
+    <div class="setting"><div><strong>When</strong> <small>{schedule ? scheduleCadence(schedule.cronExpression) : "Choose when to check"}</small></div>
       <SelectField bind:value={() => schedule?.cronExpression ?? "0 4 * * *", cronExpression => void changeSchedule({ cronExpression })} label="Sync time" disabled={saving} options={[
         { value: "0 4 * * *", label: "Daily at 4:00 AM" }, { value: "0 3 * * *", label: "Daily at 3:00 AM" },
         { value: "0 * * * *", label: "Every hour" }, { value: "0 3 * * 1", label: "Mondays at 3:00 AM" },
         ...(schedule && !times.includes(schedule.cronExpression) ? [{ value: schedule.cronExpression, label: scheduleCadence(schedule.cronExpression) }] : []),
       ]} />
     </div>
-    <div class="setting"><div><strong>Songs removed in {sourceName}</strong><small>Also leave the {targetName} copy</small></div><span class="locked" title="This playlist requires removed source songs to leave its copy."><LockKeyhole size={14} aria-hidden="true" />{playlist.mirrorStaleEntries === false ? "Off" : "On"}</span></div>
+    <div class="setting"><div><strong>Songs removed in {sourceName}</strong> <small>Also leave the {targetName} copy</small></div><span class="locked" title="This playlist requires removed source songs to leave its copy."><LockKeyhole size={14} aria-hidden="true" />{playlist.mirrorStaleEntries === false ? "Off" : "On"}</span></div>
     <AdvancedFold placement="flush" class="sync-advanced" bind:open={customOpen}><form onsubmit={event => {
       event.preventDefault(); const fields = new FormData(event.currentTarget);
       void changeSchedule({ cronExpression: String(fields.get("cron")), timeZoneId: String(fields.get("zone")) });
     }}><label class="field"><span>Cron schedule</span><input name="cron" bind:value={() => schedule?.cronExpression ?? "0 4 * * *", cronExpression => void changeSchedule({ cronExpression })} required onchange={event => void changeSchedule({ cronExpression: event.currentTarget.value })} /></label><label class="field"><span>Time zone</span><input name="zone" value={schedule?.timeZoneId ?? Intl.DateTimeFormat().resolvedOptions().timeZone} required onchange={event => void changeSchedule({ timeZoneId: event.currentTarget.value })} /></label></form></AdvancedFold>
   {:else}<p>Imported once. Later changes in {sourceName} are ignored.</p>{/if}
-  <div class="setting"><div><strong>Show songs in my library</strong><small>{kindNote}</small></div><Switch aria-label="Show songs in my library" bind:checked={() => playlist.countsTowardLibrary ?? true, checked => void changeLibrary(checked)} disabled={saving} /></div>
-  <div class="setting"><div><strong>Keep downloaded copies</strong><small>Save permanent copies of songs available to download</small></div><Switch aria-label="Keep downloaded copies" bind:checked={() => playlist.trackRetention === "keepAll", checked => void changePlaylist({ trackRetention: checked ? "keepAll" : "onDemand" })} disabled={saving} /></div>
+  <div class="setting"><div><strong>Show songs in my library</strong> <small>{kindNote}</small></div><Switch aria-label="Show songs in my library" bind:checked={() => playlist.countsTowardLibrary ?? true, checked => void changeLibrary(checked)} disabled={saving} /></div>
+  <div class="setting"><div><strong>Keep downloaded copies</strong> <small>Save permanent copies of songs available to download</small></div><Switch aria-label="Keep downloaded copies" bind:checked={() => playlist.trackRetention === "keepAll", checked => void changePlaylist({ trackRetention: checked ? "keepAll" : "onDemand" })} disabled={saving} /></div>
   {#if error}<p class="notice-error" role="alert">{error}</p>{/if}
 </section>
 

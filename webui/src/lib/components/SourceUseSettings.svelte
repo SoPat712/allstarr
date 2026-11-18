@@ -52,9 +52,9 @@
   {#if source}
     <div class="use-settings-rows">
       {#if administrator}
-        <div class="use-setting"><div><strong>Everyone</strong><small>The default for every listener</small></div><SourceUseSwitch label="Use this source for everyone" value={source.householdMode} disabled={busy} onchange={mode => void save(mode, "household")} /></div>
+        <div class="use-setting"><div><strong>Everyone</strong> <small>The default for every listener</small></div><SourceUseSwitch label="Use this source for everyone" value={source.householdMode} disabled={busy} onchange={mode => void save(mode, "household")} /></div>
       {/if}
-      <div class="use-setting"><div><strong>Just you</strong><small>{!source.canChoosePersonal ? "An administrator turned this source off for everyone." : source.personalMode === null ? "Follows the setting for everyone." : source.personalMode === "off" ? "Off: not used or shown anywhere." : "Your own setting."}</small></div>
+      <div class="use-setting"><div><strong>Just you</strong> <small>{!source.canChoosePersonal ? "An administrator turned this source off for everyone." : source.personalMode === null ? "Follows the setting for everyone." : source.personalMode === "off" ? "Off: not used or shown anywhere." : "Your own setting."}</small></div>
         <ThreeDetentSwitch label="Use this source for you" options={personalOptions} value={source.personalMode ?? "follow"} disabled={busy || !source.canChoosePersonal} onchange={mode => void save(mode === "follow" ? null : mode, "personal")} />
       </div>
     </div>

@@ -62,7 +62,7 @@
 
 <article class="settings-card maintenance-card cache-diagnostics-card">
   <header>
-    <div><strong>Cache usage</strong><small>Temporary copies of metadata, artwork and lyrics. Safe to clear at any time.</small></div>
+    <div><strong>Cache usage</strong> <small>Temporary copies of metadata, artwork and lyrics. Safe to clear at any time.</small></div>
     <span class="cache-total">{bytes(totalBytes)}</span>
   </header>
 
@@ -93,7 +93,7 @@
   </dl>
 
   <details class="cache-details">
-    <summary><span><strong>Category budgets</strong><small>{countLabel(snapshot?.categories.length ?? 0, "category", "categories")} with their own limits</small></span><ChevronDown size={18} aria-hidden="true" /></summary>
+    <summary><span><strong>Category budgets</strong> <small>{countLabel(snapshot?.categories.length ?? 0, "category", "categories")} with their own limits</small></span><ChevronDown size={18} aria-hidden="true" /></summary>
     <div class="cache-category-list">
       {#each snapshot?.categories ?? [] as category}
         <article>
@@ -114,7 +114,7 @@
   </details>
 
   <details class="cache-details">
-    <summary><span><strong>Limits and cleanup preview</strong><small>What a cleanup would remove, before anything is deleted</small></span><ChevronDown size={18} aria-hidden="true" /></summary>
+    <summary><span><strong>Limits and cleanup preview</strong> <small>What a cleanup would remove, before anything is deleted</small></span><ChevronDown size={18} aria-hidden="true" /></summary>
     <dl class="cache-preview-grid">
       <div><dt>Artwork entry limit</dt><dd>{bytes(snapshot?.artworkLimits.maximumEntryBytes)}</dd></div>
       <div><dt>Decoded artwork limit</dt><dd>{countLabel(snapshot?.artworkLimits.maximumDecodedPixels ?? 0, "pixel")}</dd></div>

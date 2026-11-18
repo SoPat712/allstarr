@@ -120,8 +120,8 @@
     {#if link}
       <section class="settings-group" aria-label="Update rules"><h3>Update rules</h3>
         <p>{link.materializationMode === "reconcile" ? "Follows the source’s order when updating your music app." : "Recreates the playlist when updating your music app."}</p>
-        <div class="rule"><div><strong>Drop songs the source drops</strong><small>Remove songs that are no longer in the source playlist.</small></div><Switch checked={link.mirrorStaleEntries} disabled={saving} aria-label="Drop songs the source drops" onchange={(event) => void changeRule("mirrorStaleEntries", event.currentTarget.checked)} /></div>
-        <div class="rule"><div><strong>Keep songs added in your app</strong><small>Preserve songs you added yourself.</small></div><Switch checked={link.preserveManualEntries} disabled={saving} aria-label="Keep songs added in your app" onchange={(event) => void changeRule("preserveManualEntries", event.currentTarget.checked)} /></div>
+        <div class="rule"><div><strong>Drop songs the source drops</strong> <small>Remove songs that are no longer in the source playlist.</small></div><Switch checked={link.mirrorStaleEntries} disabled={saving} aria-label="Drop songs the source drops" onchange={(event) => void changeRule("mirrorStaleEntries", event.currentTarget.checked)} /></div>
+        <div class="rule"><div><strong>Keep songs added in your app</strong> <small>Preserve songs you added yourself.</small></div><Switch checked={link.preserveManualEntries} disabled={saving} aria-label="Keep songs added in your app" onchange={(event) => void changeRule("preserveManualEntries", event.currentTarget.checked)} /></div>
       </section>
     {/if}
     {#if saved}<p class="saved" role="status">Saved</p>{/if}

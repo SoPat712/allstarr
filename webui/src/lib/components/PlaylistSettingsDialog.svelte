@@ -209,10 +209,10 @@
             <h3 id="playlist-settings-import">Import behavior</h3>
             <div class="pl-options pl-options-two" role="group" aria-labelledby="playlist-settings-import">
               <div class="pl-option pl-option-static" class:active={importMode === "oneTime"}>
-                <span class="pl-option-text"><strong>Import once{#if importMode === "oneTime"}<span class="pl-chip">Current</span>{/if}</strong><small>Import the source playlist once and ignore later source changes.</small></span>
+                <span class="pl-option-text"><strong>Import once{#if importMode === "oneTime"}<span class="pl-chip">Current</span>{/if}</strong> <small>Import the source playlist once and ignore later source changes.</small></span>
               </div>
               <div class="pl-option pl-option-static" class:active={importMode === "linked"}>
-                <span class="pl-option-text"><strong>Keep in sync{#if importMode === "linked"}<span class="pl-chip">Current</span>{/if}</strong><small>Keep the Allstarr playlist updated on its existing schedule.</small></span>
+                <span class="pl-option-text"><strong>Keep in sync{#if importMode === "linked"}<span class="pl-chip">Current</span>{/if}</strong> <small>Keep the Allstarr playlist updated on its existing schedule.</small></span>
               </div>
             </div>
             <p class="pl-help">Import behavior is fixed after creation. Remove the link and import again to choose different behavior.</p>
@@ -223,11 +223,11 @@
             <div class="pl-options" role="radiogroup" aria-labelledby="playlist-settings-destination">
               <label class="pl-option" class:active={targetMode === "new"}>
                 <input type="radio" name="settings-target-mode" value="new" checked={targetMode === "new"} onchange={() => void chooseTargetMode("new")} />
-                <span class="pl-option-text"><strong>New playlist</strong><small>Create a new playlist in {targetName} and keep it owned by Allstarr.</small></span>
+                <span class="pl-option-text"><strong>New playlist</strong> <small>Create a new playlist in {targetName} and keep it owned by Allstarr.</small></span>
               </label>
               <label class="pl-option" class:active={targetMode === "existing"}>
                 <input type="radio" name="settings-target-mode" value="existing" checked={targetMode === "existing"} onchange={() => void chooseTargetMode("existing")} />
-                <span class="pl-option-text"><strong>Existing playlist</strong><small>Update a playlist you already selected in {targetName}.</small></span>
+                <span class="pl-option-text"><strong>Existing playlist</strong> <small>Update a playlist you already selected in {targetName}.</small></span>
               </label>
             </div>
           </section>
@@ -235,7 +235,7 @@
           <div class="pl-rows">
             {#if targetMode === "existing"}
               <div class="pl-row">
-                <div><strong>{targetName} playlist</strong><small>The playlist Allstarr updates with matched songs.</small></div>
+                <div><strong>{targetName} playlist</strong> <small>The playlist Allstarr updates with matched songs.</small></div>
                 <SelectField
                   bind:value={targetPlaylistId}
                   label={`Playlist in ${targetName}`}
@@ -245,13 +245,13 @@
               </div>
             {/if}
             <div class="pl-row">
-              <div><strong>Update schedule</strong><small>{importMode === "oneTime" ? "Imported once. Later changes are ignored." : details?.schedule ? scheduleCadence(details.schedule.cronExpression) : "Updates only when you ask."}</small></div>
+              <div><strong>Update schedule</strong> <small>{importMode === "oneTime" ? "Imported once. Later changes are ignored." : details?.schedule ? scheduleCadence(details.schedule.cronExpression) : "Updates only when you ask."}</small></div>
               {#if importMode !== "oneTime"}<Button variant="secondary" onclick={() => { open = false; onEditSchedule(); }}>Edit schedule</Button>{/if}
             </div>
             <div class="pl-row pl-row-full">
               <label class="pl-retention-toggle">
                 <Checkbox checked={trackRetention === "keepAll"} onCheckedChange={(checked) => { trackRetention = checked ? "keepAll" : "onDemand"; }} />
-                <span><strong>Keep downloaded copies</strong><small>Save permanent copies of external songs Allstarr can download. Local songs are already permanent.</small></span>
+                <span><strong>Keep downloaded copies</strong> <small>Save permanent copies of external songs Allstarr can download. Local songs are already permanent.</small></span>
               </label>
             </div>
           </div>

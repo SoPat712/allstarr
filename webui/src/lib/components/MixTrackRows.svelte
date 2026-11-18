@@ -12,7 +12,7 @@
   {#each songs as row, index (`${index}:${row.song.id}`)}
     <li out:fade={{ duration: typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 160 }}>
       <MediaArtwork url={artworkUrl(row.song.id)} />
-      <div class="song-info"><strong>{row.song.title}</strong><small>{row.song.artist}{row.song.album ? ` · ${row.song.album}` : ""}</small><small class="reason-chip">{row.reason}</small></div>
+      <div class="song-info"><strong>{row.song.title}</strong> <small>{row.song.artist}{row.song.album ? ` · ${row.song.album}` : ""}</small><small class="reason-chip">{row.reason}</small></div>
       <span class="plays-from">{row.source === "library" ? "Your library" : row.source === "history" ? "Your listening" : row.source === "audiomuse" ? "Similar sound" : row.source === "services" || row.source === "service" ? "Your services" : humanize(row.source)}</span>
       {#if onfeedback || row.song.canonicalRecordingId}<DropdownMenu.Root>
         <DropdownMenu.Trigger class="icon-button" disabled={busy} aria-label={`Actions for ${row.song.title}`}><UiIcon name="more" /></DropdownMenu.Trigger>

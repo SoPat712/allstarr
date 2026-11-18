@@ -578,7 +578,7 @@
     <div class="extension-layout">
       <ProviderArtwork id={item.extensionId} definition={definition(item)} />
       <div class="extension-copy">
-        <span class="extension-title"><strong>{item.displayName}</strong><small>Version {item.version}{item.author ? ` · ${item.author}` : ""}</small></span>
+        <span class="extension-title"><strong>{item.displayName}</strong> <small>Version {item.version}{item.author ? ` · ${item.author}` : ""}</small></span>
         <p>{item.description ? sourceDescription(item.description) : "No description from the publisher."}</p>
         {#if item.state.toLowerCase() === "failed"}<p class="extension-failure" role="status"><CircleAlert size={14} aria-hidden="true" />{extensionFailureReason(item.failureCode)}</p>{/if}
         <div class="source-row-capabilities">{#each item.capabilities ?? [] as capability}<span>{humanize(capability)}</span>{/each}</div>
@@ -643,7 +643,7 @@
                 <li class="extension-row">
                   <ProviderArtwork id={item.id} definition={definition(item)} />
                   <div class="extension-copy">
-                    <span class="extension-title"><strong>{item.displayName}</strong><small>Version {item.version}{item.author ? ` · ${item.author}` : ""}</small></span>
+                    <span class="extension-title"><strong>{item.displayName}</strong> <small>Version {item.version}{item.author ? ` · ${item.author}` : ""}</small></span>
                     <p>{item.description ? sourceDescription(item.description) : "No description from the publisher."}</p>
                   </div>
                   <span></span>
@@ -758,7 +758,7 @@
         {#if reviewPackage}
           <div class="extension-review-summary">
             <ProviderArtwork id={reviewPackage.extensionId} definition={definition(reviewPackage)} />
-            <div><strong>{reviewPackage.displayName}</strong><small>Version {reviewPackage.version}{reviewPackage.author ? ` · ${reviewPackage.author}` : ""}</small>{#if reviewOrigin}<small>From {reviewOrigin}</small>{/if}</div>
+            <div><strong>{reviewPackage.displayName}</strong> <small>Version {reviewPackage.version}{reviewPackage.author ? ` · ${reviewPackage.author}` : ""}</small>{#if reviewOrigin}<small>From {reviewOrigin}</small>{/if}</div>
             <Badge state="suggested">Not running</Badge>
           </div>
           {@render accessSummary(reviewPackage, permissions)}
@@ -805,7 +805,7 @@
             {@const copy = permissionCopy(kind, rest.join(":"))}
             <li class="removed">
               <span class="permission-icon" aria-hidden="true"><X size={18} /></span>
-              <span class="permission-copy"><strong>Removed access</strong><small>No longer asks to {copy.title.charAt(0).toLowerCase() + copy.title.slice(1)}</small></span>
+              <span class="permission-copy"><strong>Removed access</strong> <small>No longer asks to {copy.title.charAt(0).toLowerCase() + copy.title.slice(1)}</small></span>
             </li>
           {/each}
         </ul>
@@ -834,14 +834,14 @@
             <li>
               <label class="bulk-review-choice">
                 <Checkbox bind:checked={entry.approve} aria-label={`Approve and turn on ${entry.item.displayName}`} />
-                <span><strong>{entry.item.displayName}</strong><small>{entry.previous ? `${entry.previous.version} → ${entry.item.version}` : `Version ${entry.item.version}`}</small></span>
+                <span><strong>{entry.item.displayName}</strong> <small>{entry.previous ? `${entry.previous.version} → ${entry.item.version}` : `Version ${entry.item.version}`}</small></span>
               </label>
               {#if added.length}
                 <ul class="extension-permissions">
                   {#each added as item (item.id)}
                     {@const copy = permissionCopy(item.permissionKind, item.permissionValue)}
                     {@const Icon = copy.icon}
-                    <li><span class="permission-icon" aria-hidden="true"><Icon size={18} /></span><span class="permission-copy"><strong>{copy.title}</strong><small>{copy.detail}</small>{#if entry.previous}<span class="permission-tags"><em class="new">New access</em></span>{/if}</span></li>
+                    <li><span class="permission-icon" aria-hidden="true"><Icon size={18} /></span><span class="permission-copy"><strong>{copy.title}</strong> <small>{copy.detail}</small>{#if entry.previous}<span class="permission-tags"><em class="new">New access</em></span>{/if}</span></li>
                   {/each}
                 </ul>
               {:else}<p class="bulk-review-note">{entry.permissions.length ? "No new access" : "Asks for no access"}</p>{/if}

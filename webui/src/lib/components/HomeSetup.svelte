@@ -84,7 +84,7 @@
   header, .tile-heading { display: flex; justify-content: space-between; align-items: center; gap: var(--space-2); }
   header { margin-bottom: var(--space-3); }
   h2 { font-size: 1.125rem; font-weight: 600; }
-  header > span { color: var(--color-ink-muted); font-size: .78rem; }
+  header > span { color: var(--color-ink-muted); font-size: var(--text-xs); }
   .setup-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); grid-auto-rows: 1fr; gap: var(--space-3); }
   .setup-tile { display: flex; min-width: 0; flex-direction: column; gap: 7px; border: 1px solid var(--color-edge); border-radius: var(--radius-list); padding: 14px 16px; background: var(--color-panel); }
   h3 { color: var(--color-ink-muted); font-size: var(--text-sm); font-weight: 500; }
@@ -97,7 +97,7 @@
   .source-dots i { min-width: 0; flex: 1; max-width: 7px; height: 8px; border-radius: 2px; background: var(--success); }
   .source-dots i.failing { background: var(--danger); }
   .source-dots i.slow { background: var(--warning); }
-  p { color: var(--color-ink-muted); font-size: .74rem; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  p { color: var(--color-ink-muted); font-size: var(--text-xs); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
   /* The label lines up with the tile text; the button keeps its padding so its pressed background fits it. */
   .setup-tile :global([data-slot="button"]) { align-self: start; margin-top: auto; margin-inline-start: -0.625rem; }
   @media (max-width: 1050px) { .setup-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }

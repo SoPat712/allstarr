@@ -817,7 +817,7 @@
     {#if source.id === "spicylyrics"}
       <section class="settings-card" aria-label="SpicyLyrics setup">
         <div class="settings-row">
-          <div><strong>Connect a free server key</strong><small>Create your own key, then choose Connect account. Allstarr stores the key encrypted. Testing needs only a Spotify track link.</small></div>
+          <div><strong>Connect a free server key</strong> <small>Create your own key, then choose Connect account. Allstarr stores the key encrypted. Testing needs only a Spotify track link.</small></div>
           <Button variant="secondary" href="https://developers.spicylyrics.org/docs/keys" target="_blank" rel="noopener noreferrer">Get a free API key</Button>
         </div>
       </section>
@@ -826,7 +826,7 @@
     {#if source.id === "audiomuse-ai"}
       <section class="settings-card">
         <div class="settings-row">
-          <div><strong>Sound analysis (AudioMuse)</strong><small>Manage the connection and household mix publishing in Settings.</small></div>
+          <div><strong>Sound analysis (AudioMuse)</strong> <small>Manage the connection and household mix publishing in Settings.</small></div>
           {#if administrator}<Button href="#/settings/discovery">Configure</Button>{/if}
         </div>
       </section>
@@ -852,7 +852,7 @@
               {#if signInNeeded && account.enabled}
                 <div class="account-sign-in" role="status">
                   <LockKeyhole size={20} aria-hidden="true" />
-                  <div><strong>{signInNeeded.title}</strong><small>{signInNeeded.detail}</small></div>
+                  <div><strong>{signInNeeded.title}</strong> <small>{signInNeeded.detail}</small></div>
                   {#if account.canManage}<Button size="sm" onclick={() => signIn(account)}>Sign in</Button>{/if}
                 </div>
               {/if}
@@ -1023,7 +1023,7 @@
               {#each accountSettings(pageSource ?? { id: panelAccount.providerId, name: panelAccount.displayName }) as field}<dt>{field.label}</dt><dd>{accountSettingValue(panelAccount, field)}</dd>{/each}
             </dl>
             {#if panelAccount.canManage}
-              <div class="account-send-setting"><div><strong>{["lastfm", "listenbrainz", "multi-scrobbler", "koito"].includes(panelAccount.providerId) ? "Send listens" : "Use this account"}</strong><small>Pause without removing this account</small></div><Switch checked={panelAccount.enabled} aria-label="Use this account" disabled={Boolean(action)} onclick={event => { event.preventDefault(); void toggle(panelAccount); }} /></div>
+              <div class="account-send-setting"><div><strong>{["lastfm", "listenbrainz", "multi-scrobbler", "koito"].includes(panelAccount.providerId) ? "Send listens" : "Use this account"}</strong> <small>Pause without removing this account</small></div><Switch checked={panelAccount.enabled} aria-label="Use this account" disabled={Boolean(action)} onclick={event => { event.preventDefault(); void toggle(panelAccount); }} /></div>
               <Button variant="outline" onclick={() => configure(panelAccount)}>Reconnect</Button>
             {/if}
             {#if panelAccount.canChangeAudience}<Button variant="text" onclick={() => manageAccess(panelAccount)}>Edit access</Button>{/if}

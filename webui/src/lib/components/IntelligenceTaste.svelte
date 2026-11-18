@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { X } from "@lucide/svelte";
   import AdvancedFold from "$lib/components/patterns/AdvancedFold.svelte";
   import { countLabel } from "$lib/count-label";
   import { onMount } from "svelte";
@@ -94,13 +95,13 @@
       {#if profile.nudges.some(item => item.mode === "never")}<ul>{#each profile.nudges.filter(item => item.mode === "never") as item (`${item.kind}:${item.name}`)}<li><span>{nudgeName(item)}</span><Button variant="text" disabled={action} aria-label={`Undo ${nudgeName(item)}`} onclick={() => update(() => taste.remove(item.kind, item.name))}>Undo</Button></li>{/each}</ul>{:else}<p>Nothing hidden.</p>{/if}
     </section>
     <section class="panel taste-section" aria-label="Active nudges"><h2>Active nudges</h2>
-      <ul>{#each profile.nudges.filter(item => item.mode !== "never") as item (`${item.kind}:${item.name}`)}<li><span>{item.mode === "more" ? "More" : "Less"} {nudgeName(item)} · {item.expiresAt ? "today" : "until I change it"}</span><button class="icon-button" type="button" disabled={action} aria-label={`Remove ${nudgeName(item)}`} onclick={() => update(() => taste.remove(item.kind, item.name))}>×</button></li>{/each}</ul>
+      <ul>{#each profile.nudges.filter(item => item.mode !== "never") as item (`${item.kind}:${item.name}`)}<li><span>{item.mode === "more" ? "More" : "Less"} {nudgeName(item)} · {item.expiresAt ? "today" : "until I change it"}</span><button class="icon-button" type="button" disabled={action} aria-label={`Remove ${nudgeName(item)}`} onclick={() => update(() => taste.remove(item.kind, item.name))}><X size={16} aria-hidden="true" /></button></li>{/each}</ul>
       {#if !profile.nudges.some(item => item.mode !== "never")}<p>No active nudges.</p>{/if}
     </section>
     <section class="settings-card taste-settings"><header><h2>Privacy & learning</h2></header>
       {#key toggleRevision}
       <label class="settings-row"><div><strong>Private listening (pause learning)</strong></div><span class="settings-toggle"><Switch disabled={action} aria-label="Private listening (pause learning)" bind:checked={() => profile?.paused ?? false, paused => void update(() => taste.pause(paused))} /></span></label>
-      <label class="settings-row"><div><strong>Use imported history</strong><small>Imported plays shape your usual taste.</small></div><span class="settings-toggle"><Switch disabled={action} aria-label="Use imported history" bind:checked={() => profile?.useImportedHistory ?? true, enabled => void update(() => taste.importedHistory(enabled))} /></span></label>
+      <label class="settings-row"><div><strong>Use imported history</strong> <small>Imported plays shape your usual taste.</small></div><span class="settings-toggle"><Switch disabled={action} aria-label="Use imported history" bind:checked={() => profile?.useImportedHistory ?? true, enabled => void update(() => taste.importedHistory(enabled))} /></span></label>
       {/key}
       <footer><Button variant="text" class="reset-taste" disabled={action} onclick={() => { clearNudges = false; resetError = ""; resetOpen = true; }}>Reset taste</Button></footer>
     </section>

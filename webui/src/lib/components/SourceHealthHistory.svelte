@@ -285,7 +285,7 @@
 {#if !empty}
 <details class="settings-card check-details" aria-label="Recent diagnostic checks">
   <summary class="settings-row" style="grid-template-columns: minmax(0, 1fr); min-height: var(--control-md); cursor: pointer;">
-    <div><strong>Latest checks</strong><small>{#if history}{history.counts.passed} passed · {history.counts.failed} failed · {history.counts.neutral} neutral{:else if loading}Loading recent checks…{:else}Recent checks unavailable{/if}</small></div>
+    <div><strong>Latest checks</strong> <small>{#if history}{history.counts.passed} passed · {history.counts.failed} failed · {history.counts.neutral} neutral{:else if loading}Loading recent checks…{:else}Recent checks unavailable{/if}</small></div>
   </summary>
   <div class="settings-row" style="grid-template-columns: minmax(0, 1fr);">
     <div><small>The latest recorded checks from the last 30 days. Includes recent attempts from this server session. These samples do not measure every stream.</small></div>
