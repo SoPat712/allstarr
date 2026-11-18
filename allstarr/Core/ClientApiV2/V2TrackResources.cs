@@ -37,7 +37,8 @@ public sealed class V2TrackResources(ItemLyricsReader lyrics, ItemMatchReader ma
             return new V2TrackAppearances(decoded.Recording is { } recording ? V2Ids.Track(recording) : V2Ids.TrackSource(source),
                 result.SongCount, result.Appearances.Select(item => new V2Appearance(item.Kind,
                     item.Kind == "mix" ? V2Ids.Mix(Guid.Parse(item.Id)) : V2Ids.Playlist(item.Id), item.Title, item.Subtitle,
-                    item.CoverUrl, item.MatchedSongCount, item.PlaylistId == null ? null : V2Ids.Playlist(item.PlaylistId))).ToArray());
+                    item.Kind == "mix" ? $"/allstarr/v2/mixes/{V2Ids.Mix(Guid.Parse(item.Id))}/cover" : item.CoverUrl,
+                    item.MatchedSongCount, item.PlaylistId == null ? null : V2Ids.Playlist(item.PlaylistId))).ToArray());
         });
 
     internal static async Task<V2Result> WithSourceAsync<T>(string id, Func<string, Task<T?>> read) where T : class

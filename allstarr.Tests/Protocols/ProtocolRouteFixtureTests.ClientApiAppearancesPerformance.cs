@@ -217,9 +217,10 @@ public sealed partial class ProtocolRouteFixtureTests
         using var large = await client.GetAsync(path);
         large.EnsureSuccessStatusCode();
         Assert.True(reads.Count <= smallReads + 3, $"1 feed used {smallReads} reads; 12 feeds used {reads.Count} reads.");
-        var expected = feeds.Select(feed => new ClientItemAppearance("mix", feed.Id.ToString("D"), feed.Name, "Spotify",
-            $"/allstarr/v1/mixes/{feed.Id}/cover", 2, null)).Append(new("mix", mix.Id.ToString("D"), mix.Name,
-            "Made for you", $"/allstarr/v1/mixes/{mix.Id}/cover", 1, PlaylistVirtualizationService.CreateProtocolId(mix.Id))).ToArray();
+        // Service feeds the listener hasn't added can't be opened as mixes, so only the made-for-you mix appears.
+        Assert.Equal(12, feeds.Length);
+        var expected = new[] { new ClientItemAppearance("mix", mix.Id.ToString("D"), mix.Name,
+            "Made for you", $"/allstarr/v1/mixes/{mix.Id}/cover", 1, PlaylistVirtualizationService.CreateProtocolId(mix.Id)) };
         Assert.Equal(JsonSerializer.Serialize(new ClientItemAppearances("native-mix-song", 1, expected)), await large.Content.ReadAsStringAsync());
         reads.Count = 0;
         using var warm = await client.GetAsync(path);

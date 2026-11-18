@@ -97,7 +97,8 @@ public sealed class ItemAppearancesReader(PersonalMixService mixes, IDbContextFa
         return await readCoalescer.RunAsync(key, async () =>
         {
             if (await cache.GetAsync<MixMembership[]>(key) is { } retained) return retained;
-            var stored = await mixes.ListAsync(execution);
+            // Only mixes the listener can open count: a service feed only once it was added, as the mix list shows them.
+            var stored = (await mixes.ListAsync(execution)).Where(mix => mix.Kind != "external" || mix.Added).ToArray();
             var value = stored.Select(mix => new MixMembership(mix.Id,
                 new("mix", mix.Id.ToString("D"), mix.Name, mix.SourceLabel ?? "Made for you", $"/allstarr/v1/mixes/{mix.Id}/cover", 0,
                     mix.Added && mix.Generation > 0 ? PlaylistVirtualizationService.CreateProtocolId(mix.Id) : null),
