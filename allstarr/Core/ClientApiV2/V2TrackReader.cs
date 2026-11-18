@@ -48,6 +48,11 @@ public sealed class V2TrackReader(
         if (external.Length > 0)
         {
             var known = await identities.ResolveRecordingsAsync(execution.RequireActor(), external, token);
+            // A song from a service that can't play it, such as a ListenBrainz like, reads as its recording.
+            foreach (var id in external)
+                if (known.GetValueOrDefault(id) is { } recording &&
+                    RecordingOnlySongs.IsRecordingOnly(registry, LocalLibraryService.ParseExternalResource(id).provider))
+                    copies[id] = CanonicalRecordingRecord.DefaultPublicId(recording.Id);
             var lookups = external.Where(id => known.GetValueOrDefault(id) != null).Select(id =>
             {
                 var parsed = LocalLibraryService.ParseExternalResource(id);

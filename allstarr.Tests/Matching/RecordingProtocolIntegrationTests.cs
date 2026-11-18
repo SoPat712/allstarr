@@ -135,6 +135,52 @@ public sealed partial class TrackIdentityServiceTests
     }
 
     [Fact]
+    public async Task SongFromAServiceThatCannotPlay_PlaysThroughItsRecording()
+    {
+        var created = await _service.CreateRecordingAsync(Actor(_userA), "listened");
+        await Link(created.Recording.Id, Context(Actor(_userA), "qobuz"), "available");
+        await Link(created.Recording.Id, Context(Actor(_userA), "listenbrainz"), "listen-mbid");
+        var streaming = new Mock<IProviderStreamingCapability>(MockBehavior.Strict);
+        streaming.SetupGet(item => item.ProviderId).Returns("qobuz");
+        streaming.SetupGet(item => item.Capability).Returns(ProviderCapabilityKind.Streaming);
+        streaming.Setup(item => item.GetStreamLeaseAsync(It.IsAny<ProviderExecutionContext>(),
+                It.Is<ProviderStreamLeaseRequest>(request => request.TrackId.Value == "available")))
+            .ReturnsAsync(ProviderOutcome<ProviderStreamLease>.Success(new("lease", new Uri("https://media.example.test/track"),
+                DateTimeOffset.UtcNow.AddMinutes(1), true, true, new("audio/flac", "flac", "flac"),
+                ProviderStreamRetryBehavior.DoNotRetry, (_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new ByteArrayContent([0x66, 0x4c, 0x61, 0x43])
+                }))));
+        var listens = new Mock<IProviderMetadataCapability>();
+        listens.SetupGet(item => item.ProviderId).Returns("listenbrainz");
+        listens.SetupGet(item => item.Capability).Returns(ProviderCapabilityKind.Metadata);
+        var registry = new ProviderRegistry([
+            new ProviderRegistration(new("qobuz", "Qobuz", "Fixture", ProviderOrigin.BuiltIn, "1", "1", [
+                new(ProviderCapabilityKind.Streaming, ProviderCapabilitySupportState.Supported, ProviderAccountRequirement.None, "1", ["getStreamLease"])
+            ], new()), [streaming.Object]),
+            new ProviderRegistration(new("listenbrainz", "ListenBrainz", "Fixture", ProviderOrigin.BuiltIn, "1", "1", [
+                new(ProviderCapabilityKind.Metadata, ProviderCapabilitySupportState.Supported, ProviderAccountRequirement.None, "1", ["searchTracks", "getTrack"])
+            ], new()), [listens.Object])]);
+        var health = new Mock<IProviderRouteHealthSource>();
+        health.Setup(item => item.Get(It.IsAny<string>(), It.IsAny<Guid?>(), It.IsAny<ProviderCapabilityKind>()))
+            .Returns(new ProviderRouteHealthSnapshot(ProviderRouteHealthState.Healthy, false));
+        var router = new ProviderRouter(registry, Mock.Of<IProviderRouteAccountResolver>(MockBehavior.Strict), health.Object,
+            Mock.Of<IProviderRouteSidecarSource>(MockBehavior.Strict), _service);
+        var gateway = new ProtocolProviderGateway(router, registry, Mock.Of<IHttpClientFactory>(MockBehavior.Strict), identities: _service, audioVerifier: FixtureAudioVerifier.Instance);
+        var protocol = new ProtocolExecutionContext(ProtocolKind.Jellyfin, "fixture", _userA.ToString("N"),
+            new AllstarrPrincipal(_userA, "jellyfin", "fixture", _userA.ToString("N"), "User", false), "listen-play",
+            DateTimeOffset.UtcNow.AddMinutes(1), default, new ProtocolClientDescriptor("client", "device"));
+
+        var stream = await gateway.OpenStreamAsync(protocol, "listenbrainz", "listen-mbid", ProviderAudioQuality.Any, null);
+
+        Assert.NotNull(stream);
+        Assert.Equal("qobuz", stream.ServingProviderId);
+        Assert.Equal("available", stream.ServingExternalId);
+        stream.Response.Dispose();
+        streaming.VerifyAll();
+    }
+
+    [Fact]
     public async Task MergedGeneratedId_ResolvesMetadataAndPlaysWithoutRevivingTheLoser()
     {
         var first = await _service.CreateRecordingAsync(Actor(_userA), "first", null, null, "ext-deezer-first");

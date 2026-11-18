@@ -1367,6 +1367,9 @@ public sealed partial class ProtocolProviderGateway(
         if (protocol.IsOriginalDownload) quality = ProviderAudioQuality.Any;
         providerId = NormalizeProvider(providerId);
         var actor = protocol.RequireActor();
+        if (identities != null && RecordingOnlySongs.IsRecordingOnly(registry, providerId) &&
+            await identities.ResolveRecordingAsync(actor, $"ext-{providerId}-song-{externalId}", protocol.CancellationToken) is { } named)
+            (providerId, externalId) = ("allstarr", named.Id.ToString("D"));
         var effectivePolicy = await ResolveEffectivePolicyAsync(protocol);
         if (providerId != "allstarr" && effectivePolicy?.IsEnabled(providerId) == false)
             throw new UnauthorizedAccessException("That source is disabled for this listener.");
