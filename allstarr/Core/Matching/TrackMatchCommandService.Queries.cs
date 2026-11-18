@@ -280,9 +280,8 @@ public sealed partial class TrackMatchCommandService
             return await SharedLibraryAsync(db, $"{libraryKey}|{access.Context.Protocol}|{access.Context.BackendInstanceId}|" +
                 string.Join(',', access.Access.LibraryIds.Order(StringComparer.Ordinal)), () => LoadLibraryAsync(access), cancellationToken);
         }
-        var loadedLibrary = libraryMemo == null
-            ? await LoadLibraryAsync(await libraryAccess.ResolveUserAsync(actor.UserId, cancellationToken))
-            : await libraryMemo.GetAsync(libraryKey, LoadSharedLibraryAsync);
+        // The library and its candidate indexes are shared while the library is unchanged, so a full review list reuses them too.
+        var loadedLibrary = libraryMemo == null ? await LoadSharedLibraryAsync() : await libraryMemo.GetAsync(libraryKey, LoadSharedLibraryAsync);
         var library = loadedLibrary.Tracks.ToList();
         var indexes = loadedLibrary.Indexes;
         foreach (var snapshot in snapshots)
