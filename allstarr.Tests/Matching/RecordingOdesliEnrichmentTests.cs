@@ -366,4 +366,112 @@ public sealed partial class TrackIdentityServiceTests
         registry.VerifyNoOtherCalls();
     }
 
+    [Fact]
+    public async Task Backfill_QueuesOneLookupPerMatchedSongOnlyOnce()
+    {
+        var account = await SeedUserAccount("tidal", _userA);
+        var matched = await SeedSnapshotAsync(account, "42", TrackMatchState.Accepted);
+        await SeedSnapshotAsync(account, "43", TrackMatchState.Unresolved);
+        var options = new DurableJobOptions();
+        var queue = new RecordingOdesliEnrichmentQueue(new DurableJobQueue(_factory, options, new JobPayloadPolicy(options), _clock),
+            _clock, NullLogger<RecordingOdesliEnrichmentQueue>.Instance);
+        async Task<string[]> RunAsync()
+        {
+            using var backfill = new RecordingCrossLinkBackfillService(_factory, queue, _storageState, NullLogger<RecordingCrossLinkBackfillService>.Instance, new Instant());
+            await backfill.StartAsync(default);
+            await backfill.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(10));
+            await using var db = await _factory.CreateDbContextAsync();
+            return await db.Jobs.Where(job => job.Type == RecordingOdesliEnrichmentQueue.JobType).Select(job => job.IdempotencyKey).ToArrayAsync();
+        }
+
+        Assert.Equal([$"backfill1:{matched:N}"], await RunAsync());
+        // A restart, or the next week, finds the song already done.
+        Assert.Equal([$"backfill1:{matched:N}"], await RunAsync());
+    }
+
+    [Fact]
+    public async Task ARematchThatAskedNoService_KeepsAServiceMatchInsteadOfUnmatchingIt()
+    {
+        var account = await SeedUserAccount("tidal", _userA);
+        await SeedSnapshotAsync(account, "42", TrackMatchState.Accepted);
+        Guid snapshotId;
+        await using (var db = await _factory.CreateDbContextAsync())
+            snapshotId = (await db.TrackMatches.SingleAsync()).ExternalSnapshotId;
+        var commands = new TrackMatchCommandService(_factory, new(), new ProviderAccountResolver(_factory), _clock,
+            new TestBackendLibraryAccess(_factory, "music"));
+
+        var result = await commands.RematchSnapshotAsync(new TrackMatchActor(_userA, false), snapshotId, "background");
+
+        Assert.True(result.Succeeded);
+        Assert.Equal("accepted", result.State);
+        await using var verify = await _factory.CreateDbContextAsync();
+        Assert.Equal(TrackMatchState.Accepted, (await verify.TrackMatches.SingleAsync()).State);
+    }
+
+    // The pause between batches passes at once.
+    private sealed class Instant : TimeProvider
+    {
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            ThreadPool.QueueUserWorkItem(_ => callback(state));
+            return new Fired();
+        }
+
+        private sealed class Fired : ITimer
+        {
+            public bool Change(TimeSpan dueTime, TimeSpan period) => true;
+            public void Dispose() { }
+            public ValueTask DisposeAsync() => default;
+        }
+    }
+
+    private async Task<Guid> SeedSnapshotAsync(ProviderAccountRecord account, string id, TrackMatchState state)
+    {
+        await _service.RememberSourceAsync(Context(Actor(_userA), "tidal", account), Track("tidal", id), $"ext-tidal-song-{id}",
+            ProviderIdentityScope.Account);
+        await using var db = await _factory.CreateDbContextAsync();
+        var source = await db.ProviderTrackIdentities.SingleAsync(item => item.ExternalId == id);
+        var snapshotId = Guid.CreateVersion7();
+        db.ExternalMetadataSnapshots.Add(new()
+        {
+            Id = snapshotId,
+            OwnerUserId = _userA,
+            ProviderAccountId = account.Id,
+            ProviderTrackIdentityId = source.Id,
+            BackendInstanceId = "fixture",
+            BackendPrincipalId = _userA.ToString("N"),
+            Protocol = "jellyfin",
+            ProviderId = "tidal",
+            ResourceKind = "track",
+            ExternalIdHash = source.ExternalIdHash,
+            SnapshotVersion = 1,
+            ProviderRevision = "1",
+            PayloadSha256 = source.ExternalIdHash,
+            PayloadJson = "{\"Title\":\"Song\",\"Artist\":\"Artist\"}",
+            CorrelationId = "setup",
+            RetrievedAt = _clock.UtcNow
+        });
+        db.TrackMatches.Add(new TrackMatchRecord
+        {
+            Id = Guid.CreateVersion7(),
+            OwnerUserId = _userA,
+            ExternalSnapshotId = snapshotId,
+            CanonicalRecordingId = source.CanonicalRecordingId,
+            State = state,
+            Confidence = .99,
+            Threshold = .88,
+            DecisionVersion = 1,
+            SourceSnapshotVersion = 1,
+            MatcherVersion = TrackMatchDecisionEngine.AlgorithmVersion,
+            PolicyVersion = "fixture",
+            CandidateResultsJson = "[]",
+            ReasonsJson = "[]",
+            WarningsJson = "[]",
+            CorrelationId = "seed",
+            DecidedAt = _clock.UtcNow
+        });
+        await db.SaveChangesAsync();
+        return source.Id;
+    }
+
 }

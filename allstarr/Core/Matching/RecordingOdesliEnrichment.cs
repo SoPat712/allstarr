@@ -11,14 +11,15 @@ namespace allstarr.Core.Matching;
 public sealed record RecordingOdesliPayload(Guid SourceIdentityId);
 
 /// <summary>
-/// Gives every matched song one cross-service lookup, a few hundred at a time, so songs matched before the lookups ran
-/// for everyone (they once needed the optional link service) still gain their other services' copies.
+/// Gives every matched song one cross-service lookup, so songs matched before the lookups ran for everyone (they once
+/// needed the optional link service) still gain their other services' copies. It tops the queue up only while it is
+/// short, so a listener's own lookups never wait behind thousands, and each song's backfill key is used once, ever.
 /// </summary>
 public sealed class RecordingCrossLinkBackfillService(
     IDbContextFactory<AllstarrDbContext> factory, RecordingOdesliEnrichmentQueue queue, DurableStorageState storageState,
     ILogger<RecordingCrossLinkBackfillService> logger, TimeProvider? timeProvider = null) : BackgroundService
 {
-    private const int Batch = 200;
+    private const int Batch = 100;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -30,6 +31,13 @@ public sealed class RecordingCrossLinkBackfillService(
                 if (storageState.GetSnapshot().Readiness == DurableStorageReadiness.Ready)
                 {
                     await using var db = await factory.CreateDbContextAsync(stoppingToken);
+                    var waiting = await db.Jobs.AsNoTracking().CountAsync(job => job.Type == RecordingOdesliEnrichmentQueue.JobType &&
+                        (job.State == DurableJobState.Pending || job.State == DurableJobState.RetryScheduled), stoppingToken);
+                    if (waiting >= Batch)
+                    {
+                        await Task.Delay(TimeSpan.FromMinutes(2), timeProvider ?? TimeProvider.System, stoppingToken);
+                        continue;
+                    }
                     var sources = await db.ExternalMetadataSnapshots.AsNoTracking()
                         .Where(item => item.ResourceKind == "track" && item.ProviderTrackIdentityId != null &&
                             db.TrackMatches.Any(match => match.ExternalSnapshotId == item.Id && match.State == TrackMatchState.Accepted))
@@ -37,7 +45,7 @@ public sealed class RecordingCrossLinkBackfillService(
                         .Distinct().OrderBy(item => item.Source).Skip(offset).Take(Batch).ToArrayAsync(stoppingToken);
                     if (sources.Length == 0) return;
                     foreach (var source in sources)
-                        await queue.EnqueueAsync(source.OwnerUserId, source.Source, "cross-link-backfill", stoppingToken);
+                        await queue.EnqueueAsync(source.OwnerUserId, source.Source, "cross-link-backfill", stoppingToken, once: true);
                     offset += sources.Length;
                 }
             }
@@ -58,14 +66,14 @@ public sealed class RecordingOdesliEnrichmentQueue(
     public const string JobType = "recording.odesli.enrich";
 
     // Queue optional evidence after the saved decision; the resolver applies the current source policy.
-    public async Task EnqueueAsync(Guid userId, Guid sourceIdentityId, string correlationId, CancellationToken cancellationToken)
+    public async Task EnqueueAsync(Guid userId, Guid sourceIdentityId, string correlationId, CancellationToken cancellationToken, bool once = false)
     {
         try
         {
             var week = clock.UtcNow.ToUnixTimeSeconds() / (7 * 24 * 60 * 60);
             // v2: the lookups first ran without an outside link service, so this week's earlier no-op runs do not count.
             await jobs.EnqueueAsync(new DurableJobEnqueueRequest<RecordingOdesliPayload>(JobType,
-                $"v2:{sourceIdentityId:N}:{week}", new(sourceIdentityId), userId,
+                once ? $"backfill1:{sourceIdentityId:N}" : $"v2:{sourceIdentityId:N}:{week}", new(sourceIdentityId), userId,
                 Priority: -100, MaxAttempts: 3, CorrelationId: correlationId), cancellationToken);
         }
         catch (Exception error)
@@ -163,8 +171,10 @@ public sealed class RecordingOdesliEnrichmentJobHandler(
                      item.VerificationMethod == "cross-service-match"),
                     cancellationToken))
             {
+                // Only service songs are matched; Allstarr's own snapshots of the song would fail as not rematchable.
                 var snapshots = await db.ExternalMetadataSnapshots.Where(item =>
-                        item.ProviderTrackIdentityId == source.Id && item.OwnerUserId == execution.Claim.OwnerUserId)
+                        item.ProviderTrackIdentityId == source.Id && item.OwnerUserId == execution.Claim.OwnerUserId &&
+                        item.ResourceKind == "track" && item.ProviderId != "allstarr")
                     .OrderByDescending(item => item.RetrievedAt).Take(100).Select(item => item.Id).ToArrayAsync(cancellationToken);
                 foreach (var snapshot in snapshots)
                     await jobs.EnqueueAsync(new DurableJobEnqueueRequest<TrackRematchSongPayload>(TrackRematchJobHandler.Type,

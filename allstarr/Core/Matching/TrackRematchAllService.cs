@@ -626,22 +626,12 @@ public sealed class TrackRematchAllJobHandler(
         return rows.Count;
     }
 
-    private async Task<IReadOnlyDictionary<Guid, RuntimeIdentity>> LoadRuntimesAsync(
+    private async Task<IReadOnlyDictionary<Guid, OwnerAccount>> LoadRuntimesAsync(
         IReadOnlyCollection<Guid> ownerUserIds,
         CancellationToken cancellationToken)
     {
         await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
-        var users = await db.Users.AsNoTracking()
-            .Where(item => item.Enabled && ownerUserIds.Contains(item.Id))
-            .ToArrayAsync(cancellationToken);
-        return users.ToDictionary(
-            user => user.Id,
-            user => new RuntimeIdentity(
-                user.BackendType,
-                user.BackendInstanceId,
-                user.BackendPrincipalId,
-                user.DisplayName,
-                user.IsAdmin));
+        return await OwnerAccount.LoadAsync(db, ownerUserIds, cancellationToken);
     }
 
     private async Task<bool> ValidateInitiatorAsync(
@@ -657,38 +647,11 @@ public sealed class TrackRematchAllJobHandler(
 
     private ProtocolExecutionContext? CreateExecution(
         DurableJobExecutionContext context,
-        RuntimeIdentity runtime,
+        OwnerAccount runtime,
         TrackRematchSnapshot snapshot,
-        CancellationToken cancellationToken)
-    {
-        var protocolName = snapshot.Protocol.Trim().ToLowerInvariant();
-        var protocol = protocolName switch
-        {
-            "jellyfin" => ProtocolKind.Jellyfin,
-            "subsonic" or "opensubsonic" => ProtocolKind.Subsonic,
-            _ => (ProtocolKind?)null
-        };
-        if (!protocol.HasValue) return null;
-        var backendType = protocol.Value == ProtocolKind.Jellyfin ? "jellyfin" : "subsonic";
-        if (runtime.BackendType != backendType ||
-            runtime.BackendInstanceId != snapshot.BackendInstanceId ||
-            runtime.BackendPrincipalId != snapshot.BackendPrincipalId)
-            return null;
-        return new(
-            protocol.Value,
-            snapshot.BackendInstanceId,
-            runtime.BackendPrincipalId,
-            new AllstarrPrincipal(
-                snapshot.OwnerUserId,
-                backendType,
-                snapshot.BackendInstanceId,
-                runtime.BackendPrincipalId,
-                runtime.DisplayName,
-                runtime.IsAdministrator),
-            context.Claim.CorrelationId,
-            clock.UtcNow.AddMinutes(2),
-            cancellationToken);
-    }
+        CancellationToken cancellationToken) =>
+        runtime.Execution(snapshot.OwnerUserId, snapshot.Protocol, snapshot.BackendInstanceId, snapshot.BackendPrincipalId,
+            context.Claim.CorrelationId, clock.UtcNow.AddMinutes(2), cancellationToken);
 
     private AuditEventRecord Audit(
         DurableJobExecutionContext context,
@@ -719,13 +682,6 @@ public sealed class TrackRematchAllJobHandler(
         db.AuditEvents.AddRange(audits);
         await db.SaveChangesAsync(cancellationToken);
     }
-
-    private sealed record RuntimeIdentity(
-        string BackendType,
-        string BackendInstanceId,
-        string BackendPrincipalId,
-        string DisplayName,
-        bool IsAdministrator);
 }
 
 public sealed class TrackMatchAlgorithmRolloutService(

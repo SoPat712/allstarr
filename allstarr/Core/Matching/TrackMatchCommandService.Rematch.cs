@@ -101,6 +101,12 @@ public sealed partial class TrackMatchCommandService
             return new(false, TrackMatchCommandFailure.Forbidden, "Track snapshot is outside your account");
         if (snapshot.ResourceKind != "track" || snapshot.ProviderId == "allstarr")
             return new(false, TrackMatchCommandFailure.Invalid, "A track snapshot is required");
+        // Work in the background runs as the song's owner, so their music services are compared as on a request of theirs;
+        // without them only library songs are, and a song matched to a service copy would look unmatched.
+        if (execution == null &&
+            (await OwnerAccount.LoadAsync(db, [snapshot.OwnerUserId], cancellationToken)).GetValueOrDefault(snapshot.OwnerUserId) is { } owner)
+            execution = owner.Execution(snapshot.OwnerUserId, snapshot.Protocol, snapshot.BackendInstanceId, snapshot.BackendPrincipalId,
+                correlationId, clock.UtcNow.AddMinutes(2), cancellationToken);
 
         var catalogActor = CatalogActor(actor, snapshot);
 
@@ -236,6 +242,7 @@ public sealed partial class TrackMatchCommandService
         var effectiveEngine = await DecisionEngineAsync(cancellationToken, snapshot.OwnerUserId);
         var decision = effectiveEngine.Decide(scope, sourceTrack, localCandidates, rejectedOverride);
         PlayableTrackMatch? playable = null;
+        var servicesAsked = false;
         var unavailableIdentities = new HashSet<Guid>();
         if (excludedProviderIdentityId.HasValue) unavailableIdentities.Add(excludedProviderIdentityId.Value);
         var searchAgain = (policyVersion is TrackRematchAllService.RolloutPolicyVersion or TrackRematchAllService.RolloutFallbackPolicyVersion) &&
@@ -247,6 +254,7 @@ public sealed partial class TrackMatchCommandService
             decision.State != TrackMatchReviewState.Pinned &&
             (searchAgain || !effectiveEngine.CanSkipProviderComparison(decision)))
         {
+            servicesAsked = true;
             var cachedRoutes = source == null
                 ? []
                 : await db.ProviderTrackIdentities.AsNoTracking()
@@ -283,6 +291,10 @@ public sealed partial class TrackMatchCommandService
                 return new(false, TrackMatchCommandFailure.ServicesUnavailable,
                     "Some music services didn't answer, so the current match was kept. Try again in a minute.");
         }
+        // When no service was asked, a match to a service copy cannot be judged, so it stays rather than looking unmatched.
+        if (!servicesAsked && automaticSource && manual?.Decision is not ManualOverrideDecision.Reject && rejectedOverride == null &&
+            latestDecision is { LibraryTrackId: null } kept && Strength(decision.State) < Strength(kept.State))
+            return new(true, State: kept.State.ToString().ToLowerInvariant(), Confidence: kept.Confidence, DecisionVersion: latestVersion);
         var selected = decision.SelectedLibraryTrackId.HasValue
             ? candidates.SingleOrDefault(item => item.Id == decision.SelectedLibraryTrackId.Value)
             : null;
