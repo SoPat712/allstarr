@@ -72,6 +72,18 @@ public partial class JellyfinController
         }
     }
 
+    // Jellyfin's stop saves the play with the favorite flag it read when the song started, undoing a heart given
+    // during the song, so that heart is sent again once the stop is saved.
+    private async Task ReapplyFavoriteAsync(string itemId, bool favorite)
+    {
+        var endpoint = $"UserFavoriteItems/{Uri.EscapeDataString(itemId)}";
+        var (body, status) = favorite ? await _proxyService.PostJsonAsync(endpoint, "{}", Request.Headers)
+            : await _proxyService.DeleteAsync(endpoint, Request.Headers);
+        body?.Dispose();
+        if (status is >= 200 and < 300) _logger.LogInformation("Sent the favorite change made during playback of {ItemId} again", itemId);
+        else _logger.LogWarning("Sending the favorite change made during playback of {ItemId} again failed with {StatusCode}", itemId, status);
+    }
+
     private JellyfinSessionKey PlaybackSessionKey(string deviceId)
     {
         var context = HttpContext.RequireProtocolExecutionContext();
@@ -1059,6 +1071,9 @@ public partial class JellyfinController
                     paused: stopDoc.RootElement.TryGetProperty("IsPaused", out var paused) && paused.ValueKind == JsonValueKind.True,
                     failed: sessionEnded || stopDoc.RootElement.TryGetProperty("Failed", out var failed) && failed.ValueKind == JsonValueKind.True);
                 _logger.LogDebug("✓ Playback stop forwarded to Jellyfin ({StatusCode})", statusCode);
+                if (!string.IsNullOrWhiteSpace(deviceId) && !string.IsNullOrWhiteSpace(itemId) &&
+                    _sessionManager.TakeFavoriteChangeDuringPlayback(PlaybackSessionKey(deviceId), itemId) is { } favorite)
+                    await ReapplyFavoriteAsync(itemId, favorite);
                 if (!string.IsNullOrWhiteSpace(deviceId))
                 {
                     if (!string.IsNullOrWhiteSpace(itemId))

@@ -1071,6 +1071,7 @@ public partial class JellyfinController : ControllerBase
 
         if (statusCode is >= 200 and < 300)
         {
+            NoteFavoriteChange(itemId, true);
             await RecordFavoriteEventSafelyAsync(itemId, FavoriteOperation.Favorite);
         }
 
@@ -1116,10 +1117,17 @@ public partial class JellyfinController : ControllerBase
 
         if (statusCode is >= 200 and < 300)
         {
+            NoteFavoriteChange(itemId, false);
             await RecordFavoriteEventSafelyAsync(itemId, FavoriteOperation.Unfavorite);
         }
 
         return HandleProxyResponse(result, statusCode);
+    }
+
+    private void NoteFavoriteChange(string itemId, bool favorite)
+    {
+        if (HttpContext.GetProtocolExecutionContext() is { } context && !string.IsNullOrEmpty(context.VerifiedBackendPrincipalId))
+            _sessionManager.NoteFavoriteChange(context.BackendInstanceId, context.VerifiedBackendPrincipalId, itemId, favorite);
     }
 
     private async Task RecordFavoriteEventSafelyAsync(string itemId, FavoriteOperation operation)
