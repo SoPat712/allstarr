@@ -357,6 +357,11 @@ public sealed class ProviderHealthMigrationTests
         Assert.DoesNotContain(before, row => row.Name == ListeningTrackReferenceIndex.TrackReferenceIndexName);
         Assert.Equal("CREATE INDEX \"IX_listening_events_TrackReference\" ON \"listening_events\" (\"TrackReference\")",
             CollapseSql(Assert.Single(after, row => row.Type == "index" && row.Name == ListeningTrackReferenceIndex.TrackReferenceIndexName).Sql));
+        Assert.DoesNotContain(before, row => row.Name is MatchReviewRevisionIndexes.SnapshotRevisionIndexName or MatchReviewRevisionIndexes.MatchRevisionIndexName);
+        Assert.Equal("CREATE INDEX \"IX_external_metadata_snapshots_SnapshotVersion_RetrievedAt\" ON \"external_metadata_snapshots\" (\"SnapshotVersion\", \"RetrievedAt\")",
+            CollapseSql(Assert.Single(after, row => row.Type == "index" && row.Name == MatchReviewRevisionIndexes.SnapshotRevisionIndexName).Sql));
+        Assert.Equal("CREATE INDEX \"IX_track_matches_Revision_DecidedAt\" ON \"track_matches\" (\"Revision\", \"DecidedAt\")",
+            CollapseSql(Assert.Single(after, row => row.Type == "index" && row.Name == MatchReviewRevisionIndexes.MatchRevisionIndexName).Sql));
         Assert.Equal("CREATE INDEX \"IX_listening_event_scope_time\" ON \"listening_events\" (\"OwnerUserId\", \"Protocol\", \"BackendInstanceId\", coalesce(\"ListenedAt\", \"StartedAt\"), \"Id\")",
             CollapseSql(Assert.Single(after, row => row.Type == "index" && row.Name == ListenerActivityIndex.IndexName).Sql));
         Assert.Equal(CollapseSql($"CREATE INDEX \"IX_home_notable_audits\" ON \"audit_events\" (\"ActorUserId\", \"CreatedAt\", \"Id\") WHERE {HomeActivityPolicy.Audits}"),
@@ -373,7 +378,7 @@ public sealed class ProviderHealthMigrationTests
             .Order(StringComparer.Ordinal)
             .ToArray();
         var newSchema = after
-            .Where(row => row.Name is not publicLinkIndex and not publicSnapshotIndex and not subjectIndex and not "IX_health_smoke_runs_CreatedAt" and not "IX_health_smoke_runs_OwnerUserId" && !keptObjects.Contains(row.Name) && !adoptionObjects.Contains(row.Name) && row.Name != storageIdentity && row.Name != queueTable && row.Name != userDataTable && row.Name != healthTable && !backupObjects.Contains(row.Name) && !reportObjects.Contains(row.Name) && !sharedFavoriteObjects.Contains(row.Name) && !alertObjects.Contains(row.Name) && !promotionObjects.Contains(row.Name) && !profileObjects.Contains(row.Name) && !migrationObjects.Contains(row.Name) && !lyricsRefreshObjects.Contains(row.Name) && !homeActivityIndexes.Contains(row.Name) && row.Name != ListenerActivityIndex.IndexName && row.Name != ListeningTrackReferenceIndex.TrackReferenceIndexName)
+            .Where(row => row.Name is not publicLinkIndex and not publicSnapshotIndex and not subjectIndex and not "IX_health_smoke_runs_CreatedAt" and not "IX_health_smoke_runs_OwnerUserId" && !keptObjects.Contains(row.Name) && !adoptionObjects.Contains(row.Name) && row.Name != storageIdentity && row.Name != queueTable && row.Name != userDataTable && row.Name != healthTable && !backupObjects.Contains(row.Name) && !reportObjects.Contains(row.Name) && !sharedFavoriteObjects.Contains(row.Name) && !alertObjects.Contains(row.Name) && !promotionObjects.Contains(row.Name) && !profileObjects.Contains(row.Name) && !migrationObjects.Contains(row.Name) && !lyricsRefreshObjects.Contains(row.Name) && !homeActivityIndexes.Contains(row.Name) && row.Name != ListenerActivityIndex.IndexName && row.Name != ListeningTrackReferenceIndex.TrackReferenceIndexName && row.Name != MatchReviewRevisionIndexes.SnapshotRevisionIndexName && row.Name != MatchReviewRevisionIndexes.MatchRevisionIndexName)
             .Select(NormalizeSchemaObject)
             .Order(StringComparer.Ordinal)
             .ToArray();
