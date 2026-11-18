@@ -10,6 +10,47 @@ namespace allstarr.Core.Matching;
 
 public sealed record RecordingOdesliPayload(Guid SourceIdentityId);
 
+/// <summary>
+/// Gives every matched song one cross-service lookup, a few hundred at a time, so songs matched before the lookups ran
+/// for everyone (they once needed the optional link service) still gain their other services' copies.
+/// </summary>
+public sealed class RecordingCrossLinkBackfillService(
+    IDbContextFactory<AllstarrDbContext> factory, RecordingOdesliEnrichmentQueue queue, DurableStorageState storageState,
+    ILogger<RecordingCrossLinkBackfillService> logger, TimeProvider? timeProvider = null) : BackgroundService
+{
+    private const int Batch = 200;
+
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        var offset = 0;
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            try
+            {
+                if (storageState.GetSnapshot().Readiness == DurableStorageReadiness.Ready)
+                {
+                    await using var db = await factory.CreateDbContextAsync(stoppingToken);
+                    var sources = await db.ExternalMetadataSnapshots.AsNoTracking()
+                        .Where(item => item.ResourceKind == "track" && item.ProviderTrackIdentityId != null &&
+                            db.TrackMatches.Any(match => match.ExternalSnapshotId == item.Id && match.State == TrackMatchState.Accepted))
+                        .Select(item => new { Source = item.ProviderTrackIdentityId!.Value, item.OwnerUserId })
+                        .Distinct().OrderBy(item => item.Source).Skip(offset).Take(Batch).ToArrayAsync(stoppingToken);
+                    if (sources.Length == 0) return;
+                    foreach (var source in sources)
+                        await queue.EnqueueAsync(source.OwnerUserId, source.Source, "cross-link-backfill", stoppingToken);
+                    offset += sources.Length;
+                }
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { return; }
+            catch (Exception error)
+            {
+                logger.LogWarning("Cross-service link backfill scan failed ({ErrorType})", error.GetType().Name);
+            }
+            await Task.Delay(TimeSpan.FromMinutes(2), timeProvider ?? TimeProvider.System, stoppingToken);
+        }
+    }
+}
+
 public sealed class RecordingOdesliEnrichmentQueue(
     DurableJobQueue jobs, IPlatformClock clock,
     ILogger<RecordingOdesliEnrichmentQueue> logger)
@@ -22,8 +63,9 @@ public sealed class RecordingOdesliEnrichmentQueue(
         try
         {
             var week = clock.UtcNow.ToUnixTimeSeconds() / (7 * 24 * 60 * 60);
+            // v2: the lookups first ran without an outside link service, so this week's earlier no-op runs do not count.
             await jobs.EnqueueAsync(new DurableJobEnqueueRequest<RecordingOdesliPayload>(JobType,
-                $"{sourceIdentityId:N}:{week}", new(sourceIdentityId), userId,
+                $"v2:{sourceIdentityId:N}:{week}", new(sourceIdentityId), userId,
                 Priority: -100, MaxAttempts: 3, CorrelationId: correlationId), cancellationToken);
         }
         catch (Exception error)
