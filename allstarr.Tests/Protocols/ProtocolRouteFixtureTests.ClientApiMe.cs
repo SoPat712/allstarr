@@ -214,7 +214,9 @@ public sealed partial class ProtocolRouteFixtureTests
             foreach (var item in new[] { song, artist, album, Assert.Single(root.GetProperty("newArtists").EnumerateArray()) })
             {
                 Assert.Equal(1, item.GetProperty("playCount").GetInt64());
-                Assert.StartsWith("/allstarr/v1/me/stats/art?artist=", item.GetProperty("artworkUrl").GetString());
+                // A top song that is a library song shows its media server picture instead (artwork null).
+                if (item.GetProperty("artworkUrl").ValueKind != JsonValueKind.Null || !item.Equals(song))
+                    Assert.StartsWith("/allstarr/v1/me/stats/art?artist=", item.GetProperty("artworkUrl").GetString());
             }
             Assert.DoesNotContain(listener.Artist == "Own artist" ? "Other artist" : "Own artist", root.GetRawText());
 

@@ -19,8 +19,11 @@ public sealed class ClientListeningStats(ListeningStats stats)
     public DateTimeOffset? ObservedSince => stats.ObservedSince;
     public long EstimatedTimeFromSongLengthsMilliseconds => stats.EstimatedTimeFromSongLengthsMilliseconds;
     public ListeningStatsCoverage Coverage => stats.Coverage;
+    // Library songs show their media server picture (artwork null); finding art by name skips them.
     public IReadOnlyList<ListeningStatsSong> TopSongs { get; } = stats.TopSongs.Select(item => item with
-    { ArtworkUrl = Artwork(item.Artist, title: item.Title) }).ToArray();
+    {
+        ArtworkUrl = item.ItemId != null && !item.ItemId.StartsWith("ext-", StringComparison.Ordinal) ? null : Artwork(item.Artist, title: item.Title)
+    }).ToArray();
     public IReadOnlyList<ClientStatsArtist> TopArtists { get; } = Artists(stats.TopArtists);
     public IReadOnlyList<ClientStatsAlbum> TopAlbums { get; } = stats.TopAlbums.Select(item =>
         new ClientStatsAlbum(item.Album, item.Artist, item.PlayCount, Artwork(item.Artist, album: item.Album))).ToArray();

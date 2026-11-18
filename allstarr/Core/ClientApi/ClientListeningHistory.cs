@@ -83,8 +83,10 @@ public sealed class ClientListeningHistory(IDbContextFactory<AllstarrDbContext> 
             var id = local ?? (item.CanonicalRecordingId is { } recording && links.Contains(recording)
                 ? recordings.GetValueOrDefault(recording)?.PublicId : null);
             var external = local == null;
+            // A library song has its own picture in the media server, which apps load from the item when artwork is null;
+            // finding art by name skips library songs, so it would come back empty for them.
             return new ClientHistoryPlay(id, item.Title ?? "", item.Artist ?? "", item.Album, item.DurationMilliseconds,
-                string.IsNullOrWhiteSpace(item.Artist) ? null : ClientListeningStats.Artwork(item.Artist, title: item.Title),
+                !external || string.IsNullOrWhiteSpace(item.Artist) ? null : ClientListeningStats.Artwork(item.Artist, title: item.Title),
                 (item.ListenedAt ?? item.StartedAt)!.Value, external, external ? item.ProviderId ?? parsed.provider : null);
         }).ToArray();
         var last = rows.LastOrDefault();

@@ -267,7 +267,10 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.False(plays.Single(item => item.GetProperty("title").GetString() == "Own play").GetProperty("isExternal").GetBoolean());
         Assert.Equal(JsonValueKind.Null, plays.Single(item => item.GetProperty("title").GetString() == "Imported without item").GetProperty("itemId").ValueKind);
         Assert.Equal(at, plays[0].GetProperty("playedAt").GetDateTimeOffset());
-        Assert.All(plays, item => Assert.StartsWith("/allstarr/v1/me/stats/art?", item.GetProperty("artworkUrl").GetString()));
+        // A library play leaves artwork to the media server's own picture; the rest are found by name.
+        Assert.All(plays, item => Assert.True(item.GetProperty("isExternal").GetBoolean()
+            ? item.GetProperty("artworkUrl").GetString()!.StartsWith("/allstarr/v1/me/stats/art?", StringComparison.Ordinal)
+            : item.GetProperty("artworkUrl").ValueKind == JsonValueKind.Null));
         Assert.All(scopes, context => Assert.False(context.Principal!.IsAdministrator));
 
         using var counts = await client.PostAsJsonAsync("/allstarr/v1/items/details", new { ids = new[] { "native", "ext-deezer-song-history", "unplayed", "album" } });
