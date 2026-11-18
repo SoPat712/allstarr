@@ -258,6 +258,11 @@ public sealed partial class ProtocolLyricsResolver
             .ThenByDescending(candidate => candidate.Assessment!.LineCount).FirstOrDefault();
     }
 
+    // Lyrics already stored for another source must not answer for a source the listener chose that is still being asked.
+    private static bool ChosenStillAnswering(AutomaticLookup lookup, ProtocolLyricsCandidate best) =>
+        lookup.Preferred is { } preferred && LyricsVersions.ProviderId(preferred) != LyricsVersions.ProviderId(best.SourceId) &&
+        lookup.Sources.Any(source => !source.Finished && source.Id == LyricsVersions.ProviderId(preferred));
+
     private static bool IsBestPossible(AutomaticLookup lookup, ProtocolLyricsCandidate best)
     {
         if (lookup.Preferred != null && LyricsVersions.ProviderId(best.SourceId) == LyricsVersions.ProviderId(lookup.Preferred)) return true;
@@ -312,7 +317,8 @@ public sealed partial class ProtocolLyricsResolver
                 // A version list asked for until the choice is settled stops where a single read would, so the choice it
                 // reports is the one the lyrics read serves; services still answering are listed as pending.
                 if (timer.IsCancellationRequested || _automaticShutdown.IsCancellationRequested || lookup.Sources.All(source => source.Finished) ||
-                    (!all || untilChosen) && best != null && (lookup.Sources.Any(source => source.Known && source.Id == LyricsVersions.ProviderId(best.SourceId)) || IsBestPossible(lookup, best)))
+                    (!all || untilChosen) && best != null && (lookup.Sources.Any(source => source.Known && source.Id == LyricsVersions.ProviderId(best.SourceId)) &&
+                        !ChosenStillAnswering(lookup, best) || IsBestPossible(lookup, best)))
                 {
                     lookup.Observed = true;
                     ObserveAutomatic(lookup, best);

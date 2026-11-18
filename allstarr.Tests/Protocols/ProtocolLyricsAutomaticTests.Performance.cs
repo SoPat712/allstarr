@@ -48,6 +48,22 @@ public sealed partial class ProtocolLyricsAutomaticTests
     }
 
     [Fact]
+    public async Task ChosenSourceIsWaitedForWhileAnotherSourceAlreadyHasLyrics()
+    {
+        var known = new Source("lrclib") { Cached = Result("lrclib", true) };
+        var chosen = new Source("lrcred");
+        await using var fixture = new Fixture(known, chosen) { Recording = Guid.NewGuid(), Preferred = "lrcred" };
+
+        // The clock never moves, so only the chosen source's answer can end this read.
+        var pending = fixture.FindAsync();
+        await chosen.WaitForCallsAsync(1);
+        Assert.False(pending.IsCompleted);
+        chosen.Completion.TrySetResult(Result("lrcred", true));
+
+        Assert.Equal("lrcred", (await pending.WaitAsync(TimeSpan.FromSeconds(5)))?.Source);
+    }
+
+    [Fact]
     public async Task LyricsUnavailableResultIsSharedAcrossReadsAndExpiresAfterSixHours()
     {
         var source = new Source("lyricsplus", ProviderOutcome<ProviderLyricsResult>.Success(
