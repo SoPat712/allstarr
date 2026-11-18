@@ -117,10 +117,10 @@
         {:else}
           <div class="setting-field settings-row"><div><strong>Problem</strong> <small>Choose the closest description.</small></div><SelectField label="Problem" value={kind} options={reportKinds} onchange={(value) => kind = value as ReportKind} /></div>
         {/if}
-        <label class="report-note"><strong>What's wrong?</strong><textarea aria-label="What's wrong?" required maxlength="2000" rows="5" bind:value={note}></textarea><small>Include the app and what you tried. Leave out passwords, tokens and private links.</small></label>
+        <label class="report-note"><strong>What's wrong?</strong><textarea aria-label="What's wrong?" required maxlength="2000" rows="5" bind:value={note}></textarea><span class="report-note-help"><small>Include the app and what you tried. Leave out passwords, tokens and private links.</small><small class="report-note-count">{note.length}/2000</small></span></label>
         <label class="report-include"><Checkbox aria-label="Include what was playing" checked={Boolean(selector?.playback)} disabled={busy || !attachedSelector?.playback} onCheckedChange={value => void includePlaying(value === true)} /><span>Include what was playing{#if !attachedSelector?.playback}<small>No playback details are available. Report a song from its menu to attach them.</small>{/if}</span></label>
         {#if error}<ErrorState title="The report could not be saved." detail={error} />{/if}
-        <footer><span class="report-note-hint">{#if !selector}Reporting one song? Use its report action to include the song details.<br />{/if}{note.length}/2000</span><Button type="submit" disabled={blocked || !note.trim()}>{busy ? "Saving…" : "Send report"}</Button></footer>
+        <footer><span class="report-note-hint">{#if !selector}Reporting one song? Use its report action to include the song details.{/if}</span><Button type="submit" disabled={blocked || !note.trim()}>{busy ? "Saving…" : "Send report"}</Button></footer>
       </fieldset>
     </form>
   {/if}
@@ -131,16 +131,20 @@
   .report-view { min-width: 0; }
   .report-view > :global(.panel-heading) { padding-inline: 0; border: 0; }
   .report-view form { min-width: 0; }
-  .report-note { display: grid; gap: var(--space-2); padding: var(--surface-gutter); font-size: var(--text-sm); }
+  /* Each row starts where the settings rows above it do. */
+  .report-note { display: grid; gap: var(--space-2); padding: var(--space-4) var(--space-6); font-size: var(--text-sm); }
+  .report-note-help { display: flex; justify-content: space-between; gap: var(--space-4); }
+  .report-note-count { flex: none; font-variant-numeric: tabular-nums; }
   .report-note textarea { width: 100%; min-width: 0; min-height: 8rem; padding: var(--space-3); border: 1px solid var(--color-edge); border-radius: var(--radius-md); background: transparent; color: var(--color-ink); font: inherit; resize: vertical; }
   .report-note small, .report-include small { display: block; color: var(--color-ink-muted); font-size: var(--text-xs); }
-  .report-include { display: flex; align-items: center; gap: var(--space-2); padding-inline: var(--surface-gutter); font-size: var(--text-sm); }
+  .report-include { display: flex; align-items: center; gap: var(--space-2); padding-inline: var(--space-6); font-size: var(--text-sm); }
   .reason-scroll { min-width: 0; overflow-x: auto; }
   .reason-scroll :global(.seg) { width: max-content; flex-wrap: nowrap; }
   .report-reasons { display: grid; gap: var(--space-2); margin: 0; border: 0; padding: var(--surface-gutter); border-bottom: 1px solid var(--color-edge); }
   .report-reasons legend { float: left; width: 100%; padding: 0; font-size: var(--text-sm); font-weight: 600; }
   .report-reasons p { margin: 0; color: var(--color-ink-muted); font-size: var(--text-sm); }
   .report-note-hint { color: var(--color-ink-muted); font-size: var(--text-xs); line-height: 1.5; }
-  .settings-fields > footer { gap: var(--space-3); }
+  /* The send button closes the form; space, not a rule, sets it apart. */
+  .settings-fields > footer { gap: var(--space-3); border-top: 0; padding-top: var(--space-5); }
   @media (max-width: 599px) { .settings-fields > footer { align-items: stretch; flex-direction: column; } }
 </style>
