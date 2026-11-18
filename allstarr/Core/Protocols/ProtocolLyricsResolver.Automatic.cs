@@ -145,11 +145,14 @@ public sealed partial class ProtocolLyricsResolver
                 {
                     using var timer = new CancellationTokenSource(LookupOptions.SourceTimeout, LyricsClock);
                     using var attempt = CancellationTokenSource.CreateLinkedTokenSource(lookup.Token, timer.Token);
-                    source.Read = source.Prepare == null ? null : await source.Prepare(attempt.Token).WaitAsync(attempt.Token);
+                    using (allstarr.Core.Operations.RequestTiming.Current?.Stage("resolve"))
+                        source.Read = source.Prepare == null ? null : await source.Prepare(attempt.Token).WaitAsync(attempt.Token);
                     if (source.Read == null) { source.Deferred = false; return; }
                     lock (bindings)
                         if (!bindings.Add(source.Read.Binding.ProviderId)) return;
-                    var cached = await gateway.ExecuteAsync(source.Read, LyricsCompletionMode.CacheOnly, attempt.Token).WaitAsync(attempt.Token);
+                    allstarr.Core.Capabilities.ProviderLyricsResult? cached;
+                    using (allstarr.Core.Operations.RequestTiming.Current?.Stage("fetch"))
+                        cached = await gateway.ExecuteAsync(source.Read, LyricsCompletionMode.CacheOnly, attempt.Token).WaitAsync(attempt.Token);
                     if (HasLyrics(cached))
                     {
                         source.Deferred = false;
