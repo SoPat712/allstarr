@@ -264,12 +264,15 @@ internal sealed partial class RankedSearchSnapshots(string query, int limit, IRe
     };
 
     // The listed row keeps its place and names every copy in alsoOn, its own first and one entry per service.
+    // A copy from a source already listed adds nothing, so a row joined only by its own service's copies has no alsoOn.
     private static void Join(RankedSearchRow listed, RankedSearchRow copy)
     {
-        if (listed.Item["alsoOn"] is not JsonArray also) listed.Item["alsoOn"] = also = [Entry(listed)];
+        var listedAlso = listed.Item["alsoOn"] as JsonArray;
+        var also = listedAlso ?? [Entry(listed)];
         foreach (var entry in copy.Item["alsoOn"] is JsonArray copies ? copies.OfType<JsonObject>().Select(part => part.DeepClone().AsObject()) : [Entry(copy)])
             if (!also.OfType<JsonObject>().Any(known => known["source"]?.GetValue<string>() == entry["source"]?.GetValue<string>()))
                 also.Add(entry);
+        if (listedAlso == null && also.Count > 1) listed.Item["alsoOn"] = also;
     }
 
     private static JsonObject Entry(RankedSearchRow row) => new()

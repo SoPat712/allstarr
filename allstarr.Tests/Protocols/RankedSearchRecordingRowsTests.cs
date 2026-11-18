@@ -30,6 +30,19 @@ public sealed class RankedSearchRecordingRowsTests
     }
 
     [Fact]
+    public async Task OneServicesCopiesOfARecordingAreOneRowWithoutAlsoOn()
+    {
+        await using var search = new Search(["songs"]);
+        await search.AddAsync("apple", Song("ext-apple-song-1", "apple", "Into The Walls", "Vertigo", 188, "GBAHT2400001"),
+            Song("ext-apple-song-2", "apple", "Into The Walls", "Vertigo (Tour Edition)", 188, "GBAHT2400001"));
+
+        var row = Assert.Single((await search.FinalAsync())["sections"]!["songs"]!.AsArray())!;
+
+        Assert.Equal("ext-apple-song-1", Id(row));
+        Assert.Null(row["alsoOn"]);
+    }
+
+    [Fact]
     public async Task LibraryCopyTakesThePlaceOfEveryServiceRowProvenToBeIt()
     {
         await using var search = new Search(["songs"]);
