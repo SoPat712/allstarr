@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
@@ -21,6 +22,9 @@ public sealed partial class V2ServiceLyricsSearch(IHttpClientFactory clients, IA
     private static readonly TimeSpan MatchBudget = TimeSpan.FromSeconds(5);
     // One hit's search keeps the services that answered in time; waiting for the slowest would pass the whole budget.
     private static readonly TimeSpan SongSearchBudget = TimeSpan.FromSeconds(3);
+    // A song search the time limit cut off keeps going; the next ask for the same line takes its answer instead of starting over.
+    private static readonly ConcurrentDictionary<string, Task<string?>> Searching = new(StringComparer.Ordinal);
+    private static readonly TimeSpan BackgroundBudget = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan Kept = TimeSpan.FromMinutes(30);
     // An answer missing a service is kept briefly, so a repeated line is quick without hiding the service for long.
     private static readonly TimeSpan KeptPartly = TimeSpan.FromMinutes(2);
@@ -166,7 +170,7 @@ public sealed partial class V2ServiceLyricsSearch(IHttpClientFactory clients, IA
         var open = Enumerable.Range(0, hits.Length).Where(index => states[index] == Pending).ToArray();
         if (open.Length > 0)
         {
-            await FindAsync(execution, hits, open, ids, states);
+            await FindAsync(execution, hits, open, ids, states, key);
             await cache.SetAsync(key, new Matching(ids, states), states.Contains(Pending) || !Complete(asked) ? KeptPartly : Kept);
         }
         var wanted = ids.OfType<string>().Distinct(StringComparer.Ordinal).ToArray();
@@ -178,7 +182,7 @@ public sealed partial class V2ServiceLyricsSearch(IHttpClientFactory clients, IA
         return (found, states.Select((state, index) => state == Matched && found[index] == null ? Unmatched : state).ToArray());
     }
 
-    private async Task FindAsync(ProtocolExecutionContext execution, IReadOnlyList<Found> hits, int[] open, string?[] ids, string[] states)
+    private async Task FindAsync(ProtocolExecutionContext execution, IReadOnlyList<Found> hits, int[] open, string?[] ids, string[] states, string key)
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(execution.CancellationToken);
         deadline.CancelAfter(MatchBudget);
@@ -199,7 +203,8 @@ public sealed partial class V2ServiceLyricsSearch(IHttpClientFactory clients, IA
                 // A service search still running at the deadline is left to finish on its own; the answer doesn't wait.
                 try
                 {
-                    ids[index] = await ServiceCopyAsync(execution, hit).WaitAsync(deadline.Token);
+                    var slot = key + ":" + index.ToString(CultureInfo.InvariantCulture);
+                    ids[index] = await Searching.GetOrAdd(slot, _ => Search(execution, hit, key, index, slot)).WaitAsync(deadline.Token);
                     states[index] = ids[index] == null ? Unmatched : Matched;
                 }
                 // A song that can't be matched in time stays pending for the next request.
@@ -224,6 +229,31 @@ public sealed partial class V2ServiceLyricsSearch(IHttpClientFactory clients, IA
         var titles = await LibraryTrackAccess.Query(db, execution, access)
             .Select(track => new LibraryCopy(track.BackendItemId, track.Title, track.Artist)).ToArrayAsync(token);
         return titles.Where(track => keys.Contains(SongKey(track.Title))).ToArray();
+    }
+
+    // Runs apart from the request, so it can finish after the answer was sent; its result then waits for the next ask.
+    private Task<string?> Search(ProtocolExecutionContext execution, Found hit, string key, int index, string slot)
+    {
+        var budget = new CancellationTokenSource(BackgroundBudget);
+        var search = ServiceCopyAsync(V2AutoplayReader.Bounded(execution, DateTimeOffset.UtcNow.Add(BackgroundBudget), budget.Token), hit);
+        _ = search.ContinueWith(async done =>
+        {
+            budget.Dispose();
+            if (!done.IsCompletedSuccessfully)
+            {
+                Searching.TryRemove(slot, out _);
+                return;
+            }
+            if (await cache.GetAsync<Matching>(key) is { } kept && index < kept.States.Length && kept.States[index] == Pending)
+            {
+                kept.Ids[index] = done.Result;
+                kept.States[index] = done.Result == null ? Unmatched : Matched;
+                await cache.SetAsync(key, kept, KeptPartly);
+            }
+            await Task.Delay(TimeSpan.FromMinutes(2));
+            Searching.TryRemove(slot, out _);
+        }, TaskScheduler.Default).Unwrap();
+        return search;
     }
 
     private async Task<string?> ServiceCopyAsync(ProtocolExecutionContext execution, Found hit)
