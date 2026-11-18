@@ -2,7 +2,6 @@ using allstarr.Core.Capabilities;
 using allstarr.Core.Music;
 using allstarr.Core.Protocols;
 using allstarr.Models.Settings;
-using Microsoft.Extensions.Options;
 
 namespace allstarr.Core.Playback;
 
@@ -12,7 +11,7 @@ public interface IUpcomingTrackPreparation
 }
 
 public sealed class UpcomingSongPreparation(
-    IUpcomingTrackPreparation preparation, IOptions<PlaybackSettings> settings, TimeProvider? timeProvider = null,
+    IUpcomingTrackPreparation preparation, TimeProvider? timeProvider = null,
     IPlaybackDeliveryActivitySource? activity = null) : BackgroundService
 {
     private readonly object gate = new();
@@ -23,7 +22,7 @@ public sealed class UpcomingSongPreparation(
 
     public void RememberQueue(ProtocolExecutionContext context, string? current, IReadOnlyList<string> next)
     {
-        if (!settings.Value.PrepareUpcomingSongs || Key(context, null) is not { } key) return;
+        if (Key(context, null) is not { } key) return;
         lock (gate)
         {
             var state = Get(key);
@@ -47,7 +46,7 @@ public sealed class UpcomingSongPreparation(
         if (Key(context, deviceId) is not { } key) return;
         lock (gate)
         {
-            if (transition is PlaybackTransition.Stop or PlaybackTransition.InferredStop || !settings.Value.PrepareUpcomingSongs)
+            if (transition is PlaybackTransition.Stop or PlaybackTransition.InferredStop)
             {
                 if (devices.Remove(key, out var stopped)) stopped.Cancel();
                 return;
@@ -95,8 +94,7 @@ public sealed class UpcomingSongPreparation(
             var now = clock.GetUtcNow();
             foreach (var (key, state) in devices.ToArray())
             {
-                if (!settings.Value.PrepareUpcomingSongs ||
-                    state.Context != null && now - state.ObservedAt >= TimeSpan.FromMinutes(2) ||
+                if (state.Context != null && now - state.ObservedAt >= TimeSpan.FromMinutes(2) ||
                     state.Context == null && now - state.ObservedAt >= TimeSpan.FromMinutes(10))
                 {
                     state.Cancel();

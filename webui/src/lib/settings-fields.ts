@@ -39,7 +39,6 @@ export const settingHelp: Record<string, string> = {
   LISTENERS_CAN_CONNECT_OWN_ACCOUNTS: "Let listeners connect personal accounts. Existing connections stay usable.",
   DOWNLOAD_MODE: "Save just the song, or its whole album.",
   PLAYBACK_START_PREFERENCE: "Balanced favors quality when starts stay under 3 seconds.",
-  PLAYBACK_PREPARE_UPCOMING_SONGS: "Prepare the next Apple song after 30 seconds of playback. Uses cache space.",
   PLAYBACK_LASTFM_SIMILAR_ENABLED: "Use a connected Last.fm account when a service has no suggestions.",
   PLAYBACK_LISTENBRAINZ_SIMILAR_ENABLED: "Use ListenBrainz when the service and Last.fm have no suggestions.",
   SCROBBLING_LOCAL_TRACKS_ENABLED: "Leave off when your server's own scrobbler (like Jellyfin's Last.fm plugin) sends them. Streamed songs always scrobble.",

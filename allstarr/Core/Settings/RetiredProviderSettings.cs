@@ -17,7 +17,8 @@ internal static class RetiredProviderSettings
         {
             if (row.Key.Split(':').Any(IsRetired) ||
                 row.Key.Equals("SpotifyApi:Enabled", StringComparison.OrdinalIgnoreCase) ||
-                row.Key.Equals("MusicBrainz:Enabled", StringComparison.OrdinalIgnoreCase))
+                row.Key.Equals("MusicBrainz:Enabled", StringComparison.OrdinalIgnoreCase) ||
+                row.Key.StartsWith("Playback:PrepareUpcoming", StringComparison.OrdinalIgnoreCase))
             {
                 db.RuntimeSettings.Remove(row);
                 continue;

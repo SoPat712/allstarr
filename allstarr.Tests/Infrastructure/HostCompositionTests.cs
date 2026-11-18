@@ -405,12 +405,8 @@ public sealed class HostCompositionTests
         var schema = Assert.IsType<AdminUiSchemaResponse>(
             Assert.IsType<OkObjectResult>(await controller.GetSchema()).Value);
         var general = Assert.Single(schema.ConfigSections, item => item.Id == "general");
-        var prepare = Assert.Single(general.Fields, item => item.Key == "PLAYBACK_PREPARE_UPCOMING_SONGS");
-        Assert.Equal("toggle", prepare.Type);
-        Assert.Equal("Prepare the next song early", prepare.Label);
-        Assert.Equal("Off by default. After 30 seconds of playback, prepare the next Apple song reported by your player. Uses audio cache space.", prepare.HelpText);
-        Assert.Equal("playback.prepareUpcomingSongs", prepare.ValuePath);
-        Assert.DoesNotContain(general.Fields, item => item.Key == "PLAYBACK_PREPARE_UPCOMING_COUNT");
+        // Preparing the next song is part of playback, not a setting.
+        Assert.DoesNotContain(general.Fields, item => item.Key.StartsWith("PLAYBACK_PREPARE_UPCOMING", StringComparison.Ordinal));
 
 
         Assert.Collection(

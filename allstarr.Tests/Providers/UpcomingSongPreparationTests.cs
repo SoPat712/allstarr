@@ -10,20 +10,6 @@ namespace allstarr.Tests;
 
 public sealed class UpcomingSongPreparationTests
 {
-    [Fact]
-    public void UpcomingPreparationIsOffByDefaultWithOneSongWhenEnabled()
-    {
-        var settings = new PlaybackSettings();
-        Assert.False(settings.PrepareUpcomingSongs);
-        Assert.Equal(1, settings.PrepareUpcomingCount);
-        var probe = new PreparationProbe();
-        using var service = Service(probe, settings);
-        service.Observe(Context(), PlaybackTransition.Progress, "current", "device", null,
-            TimeSpan.FromSeconds(30).Ticks, ["next"]);
-        service.ProcessPending();
-        Assert.Empty(probe.Items);
-    }
-
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -44,8 +30,7 @@ public sealed class UpcomingSongPreparationTests
             new(response, lease, "apple-musickit", "next"));
         response.Dispose();
         var probe = new PreparationProbe();
-        using var service = new UpcomingSongPreparation(probe,
-            Options.Create(new PlaybackSettings { PrepareUpcomingSongs = true, PrepareUpcomingCount = 2 }), activity: activity);
+        using var service = new UpcomingSongPreparation(probe, activity: activity);
         service.Observe(context, PlaybackTransition.Progress, "current", "device", null,
             TimeSpan.FromSeconds(30).Ticks, ["next", "last"]);
         service.ProcessPending();
@@ -207,7 +192,7 @@ public sealed class UpcomingSongPreparationTests
     {
         var clock = new PreparationClock();
         var probe = new PreparationProbe();
-        using var service = new UpcomingSongPreparation(probe, Options.Create(new PlaybackSettings { PrepareUpcomingSongs = true }), clock);
+        using var service = new UpcomingSongPreparation(probe, clock);
         service.RememberQueue(Context(), "current", ["next"]);
         service.Observe(Context(), PlaybackTransition.Start, "current", "device", null, null);
         clock.Now += TimeSpan.FromSeconds(29);
@@ -224,15 +209,13 @@ public sealed class UpcomingSongPreparationTests
         probe.Release.TrySetResult();
     }
 
-    [Theory]
-    [InlineData(false, false)]
-    [InlineData(true, true)]
-    public void DisabledOrPausedPlaybackDoesNotPrepare(bool enabled, bool paused)
+    [Fact]
+    public void PausedPlaybackDoesNotPrepare()
     {
         var probe = new PreparationProbe();
-        using var service = Service(probe, new() { PrepareUpcomingSongs = enabled });
+        using var service = Service(probe);
         service.Observe(Context(), PlaybackTransition.Progress, "current", "device", null,
-            TimeSpan.FromSeconds(30).Ticks, ["next"], paused);
+            TimeSpan.FromSeconds(30).Ticks, ["next"], paused: true);
         service.ProcessPending();
         Assert.Empty(probe.Items);
     }
@@ -244,7 +227,7 @@ public sealed class UpcomingSongPreparationTests
     {
         var clock = new PreparationClock();
         var probe = new PreparationProbe();
-        using var service = new UpcomingSongPreparation(probe, Options.Create(new PlaybackSettings { PrepareUpcomingSongs = true }), clock);
+        using var service = new UpcomingSongPreparation(probe, clock);
         var context = Context();
         service.Observe(context, PlaybackTransition.Progress, "current", "device", null, TimeSpan.FromSeconds(30).Ticks, ["next"]);
         service.ProcessPending();
@@ -259,7 +242,7 @@ public sealed class UpcomingSongPreparationTests
     public async Task CountOneAndRepeatedReportsDoNotRepeatPreparation()
     {
         var probe = new PreparationProbe();
-        using var service = Service(probe, new() { PrepareUpcomingSongs = true, PrepareUpcomingCount = 1 });
+        using var service = Service(probe);
         service.Observe(Context(), PlaybackTransition.Progress, "current", "device", null, TimeSpan.FromSeconds(30).Ticks, ["next", "last"]);
         service.ProcessPending();
         await probe.WaitForCountAsync(1);
@@ -331,25 +314,11 @@ public sealed class UpcomingSongPreparationTests
         activity.StreamOpened(context, "current", allstarr.Core.Capabilities.ProviderAudioQuality.DataSaver,
             new(response, lease, "apple-musickit", "current"));
         var probe = new PreparationProbe();
-        using var service = new UpcomingSongPreparation(probe, Options.Create(new PlaybackSettings { PrepareUpcomingSongs = true }), activity: activity);
+        using var service = new UpcomingSongPreparation(probe, activity: activity);
         service.Observe(context, PlaybackTransition.Progress, "current", context.Client.DeviceId ?? context.Client.ClientId,
             null, TimeSpan.FromSeconds(30).Ticks, ["next"]);
         service.ProcessPending();
         Assert.Empty(probe.Items);
-    }
-
-    [Fact]
-    public async Task TurningTheSettingOffCancelsPendingPreparation()
-    {
-        var settings = new PlaybackSettings { PrepareUpcomingSongs = true };
-        var probe = new PreparationProbe();
-        using var service = Service(probe, settings);
-        service.Observe(Context(), PlaybackTransition.Progress, "current", "device", null, TimeSpan.FromSeconds(30).Ticks, ["next"]);
-        service.ProcessPending();
-        await probe.WaitForCountAsync(1);
-        settings.PrepareUpcomingSongs = false;
-        service.ProcessPending();
-        Assert.True(probe.Items["next"].IsCancellationRequested);
     }
 
     [Theory]
@@ -387,8 +356,7 @@ public sealed class UpcomingSongPreparationTests
             "jellyfin", "backend", "principal", "Listener", false), "upcoming-test", DateTimeOffset.UtcNow.AddMinutes(1),
         CancellationToken.None, new ProtocolClientDescriptor("client", device));
 
-    private static UpcomingSongPreparation Service(PreparationProbe probe, PlaybackSettings? settings = null) =>
-        new(probe, Options.Create(settings ?? new() { PrepareUpcomingSongs = true, PrepareUpcomingCount = 2 }));
+    private static UpcomingSongPreparation Service(PreparationProbe probe) => new(probe);
 
     private sealed class PreparationClock : TimeProvider
     {

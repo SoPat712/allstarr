@@ -29,8 +29,7 @@ public sealed partial class ProtocolRouteFixtureTests
         preparation.Setup(service => service.PrepareAsync(It.IsAny<ProtocolExecutionContext>(), QueueSongB))
             .Callback<ProtocolExecutionContext, string>((context, _) => prepared.TrySetResult(context))
             .Returns(Task.CompletedTask);
-        using var upcoming = new UpcomingSongPreparation(preparation.Object,
-            Options.Create(new PlaybackSettings { PrepareUpcomingSongs = true }), clock);
+        using var upcoming = new UpcomingSongPreparation(preparation.Object, clock);
         var gateway = QueueGateway();
         using var factory = SubsonicPlaybackFactory(format, recorded, relayed, configure: services =>
         {

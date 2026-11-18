@@ -83,7 +83,7 @@
   const pickPath = (pattern: RegExp) => fields.filter(field => pattern.test(field.valuePath ?? ""));
   const qualityGroups = $derived([
     group("audio-quality", "Quality", pick("AUDIO_QUALITY")),
-    group("starting-songs", "Starting songs", pick("PLAYBACK_START_PREFERENCE", "PLAYBACK_PREPARE_UPCOMING_SONGS")),
+    group("starting-songs", "Starting songs", pick("PLAYBACK_START_PREFERENCE")),
     group("your-copy", "Your copy or a service's", pick("MATCHING_LOCAL_PREFERENCE_PERCENT")),
   ].filter(item => item.fields.length));
   const libraryGroups = $derived([

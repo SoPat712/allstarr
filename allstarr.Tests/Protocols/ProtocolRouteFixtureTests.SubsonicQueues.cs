@@ -36,8 +36,7 @@ public sealed partial class ProtocolRouteFixtureTests
         preparation.Setup(service => service.PrepareAsync(It.IsAny<ProtocolExecutionContext>(), QueueSongB))
             .Callback<ProtocolExecutionContext, string>((context, _) => prepared.TrySetResult(context.CancellationToken))
             .Returns(Task.CompletedTask);
-        using var upcoming = new UpcomingSongPreparation(preparation.Object,
-            Options.Create(new PlaybackSettings { PrepareUpcomingSongs = true }));
+        using var upcoming = new UpcomingSongPreparation(preparation.Object);
         using var factory = QueueFactory(QueueGateway(), services =>
         {
             SonicServices(audioMuse.Object)(services);
@@ -73,8 +72,7 @@ public sealed partial class ProtocolRouteFixtureTests
         preparation.Setup(service => service.PrepareAsync(It.IsAny<ProtocolExecutionContext>(), QueueSongB))
             .Callback<ProtocolExecutionContext, string>((_, id) => prepared.TrySetResult(id))
             .Returns(Task.CompletedTask);
-        using var upcoming = new UpcomingSongPreparation(preparation.Object,
-            Options.Create(new PlaybackSettings { PrepareUpcomingSongs = true }));
+        using var upcoming = new UpcomingSongPreparation(preparation.Object);
         using var factory = QueueFactory(gateway, services =>
         {
             SonicServices(audioMuse.Object)(services);

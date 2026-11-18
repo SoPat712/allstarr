@@ -215,10 +215,6 @@ public static class RuntimeSettingCatalog
             Choices: new HashSet<string>(["heart", "keep", "addToLibrary"], StringComparer.Ordinal)));
         items.Add(new(ListeningPreferenceKeys.MyLibraries, RuntimeSettingValueType.String,
             ListeningPreferenceKeys.MyLibraries, AllowEmpty: true, MaximumLength: 4000, DefaultValue: ""));
-        items.Add(new("Playback:PrepareUpcomingSongs", RuntimeSettingValueType.Boolean,
-            "Playback:PrepareUpcomingSongs", DefaultValue: "false"));
-        items.Add(new("Playback:PrepareUpcomingCount", RuntimeSettingValueType.Integer,
-            "Playback:PrepareUpcomingCount", Minimum: 1, Maximum: 2, DefaultValue: "1"));
         items.Add(new("Playback:LastFmSimilarEnabled", RuntimeSettingValueType.Boolean,
             "Playback:LastFmSimilarEnabled", DefaultValue: "true"));
         items.Add(new("Playback:ListenBrainzSimilarEnabled", RuntimeSettingValueType.Boolean,
@@ -1035,8 +1031,6 @@ public sealed class RuntimeSettingsLiveOptions
             case "Scrobbling:SyntheticLocalPlayedSignalEnabled": _scrobbling.SyntheticLocalPlayedSignalEnabled = (bool)value; break;
             case "Scrobbling:LastFm:Enabled": _scrobbling.LastFm.Enabled = (bool)value; break;
             case "Scrobbling:ListenBrainz:Enabled": _scrobbling.ListenBrainz.Enabled = (bool)value; break;
-            case "Playback:PrepareUpcomingSongs": _playback.PrepareUpcomingSongs = (bool)value; break;
-            case "Playback:PrepareUpcomingCount": _playback.PrepareUpcomingCount = (int)value; break;
             case "Playback:LastFmSimilarEnabled": _playback.LastFmSimilarEnabled = (bool)value; break;
             case "Playback:ListenBrainzSimilarEnabled": _playback.ListenBrainzSimilarEnabled = (bool)value; break;
             case "Library:EnableExternalPlaylists": SetBoth(item => item.EnableExternalPlaylists = (bool)value, item => item.EnableExternalPlaylists = (bool)value); break;
