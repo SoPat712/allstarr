@@ -122,7 +122,9 @@ public sealed class V2SearchEndpoints(V2SearchStream stream, V2TrackReader track
             "track" => hit with { Track = track, AlsoOn = Copies(V2IdKind.Track, V2Ids.TrackSource) },
             "album" => hit with
             {
-                Album = new(id, name, V2TrackReader.Refs(item, "AlbumArtists"), V2TrackReader.Int(item, "ProductionYear"), external, artwork),
+                Album = new(id, row.Edition == null ? name : $"{name} ({row.Edition})", V2TrackReader.Refs(item, "AlbumArtists"),
+                    V2TrackReader.Int(item, "ProductionYear"), external, artwork)
+                { Explicit = row.Album?.IsExplicit },
                 AlsoOn = Copies(V2IdKind.Album, V2Ids.Album)
             },
             "artist" => hit with

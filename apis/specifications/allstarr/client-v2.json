@@ -6849,6 +6849,13 @@
                 "type": "null"
               }
             ]
+          },
+          "explicit": {
+            "type": [
+              "null",
+              "boolean"
+            ],
+            "description": "True for a service\u0027s explicit edition, false for its clean one; absent when unknown."
           }
         }
       },

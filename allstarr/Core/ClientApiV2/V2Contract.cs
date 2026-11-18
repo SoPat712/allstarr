@@ -137,7 +137,12 @@ public sealed record V2AlbumSummary(
     [property: JsonPropertyName("artists")] IReadOnlyList<V2Ref> Artists,
     [property: JsonPropertyName("year")] int? Year,
     [property: JsonPropertyName("isExternal")] bool IsExternal,
-    [property: JsonPropertyName("artwork")] V2Artwork? Artwork);
+    [property: JsonPropertyName("artwork")] V2Artwork? Artwork)
+{
+    [JsonPropertyName("explicit"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull),
+     Description("True for a service's explicit edition, false for its clean one; absent when unknown.")]
+    public bool? Explicit { get; init; }
+}
 
 public sealed record V2AlbumResponse([property: JsonPropertyName("album")] V2AlbumSummary Album)
 {

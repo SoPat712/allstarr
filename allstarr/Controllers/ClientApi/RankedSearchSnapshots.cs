@@ -14,6 +14,8 @@ internal sealed record RankedSearchRow(JsonObject Item, string Section, Song? So
     internal Dictionary<string, double> Scores { get; } = new(StringComparer.Ordinal);
     /// <summary>The library song Allstarr matched this service song to, which proves the two are one recording.</summary>
     internal string? LibraryCopy { get; init; }
+    /// <summary>"Explicit" or "Clean" once both editions of this album are listed.</summary>
+    internal string? Edition { get; set; }
     private string? recordingTitle;
     internal string RecordingTitle => recordingTitle ??= SearchRelevanceRanker.RecordingTitle(Song?.Title ?? Native!.Name,
         Song?.Artist ?? Native?.ArtistText, Song?.AlbumArtist ?? Native?.AlbumArtistText);
@@ -282,6 +284,28 @@ internal sealed partial class RankedSearchSnapshots(string query, int limit, IRe
         ["id"] = row.Item["Id"]?.DeepClone()
     };
 
+    // Explicit and clean editions stay separate rows; once both are listed each says which it is, as artist pages do.
+    private void LabelEditions()
+    {
+        if (!sections.TryGetValue("albums", out var albums)) return;
+        foreach (var family in albums.Where(row => row.Native == null && row.Album?.IsExplicit != null)
+                     .GroupBy(row => MusicAlbumReleases.FamilyKey(row.Album!), StringComparer.Ordinal))
+        {
+            if (!family.Any(row => row.Album!.IsExplicit == true) || !family.Any(row => row.Album!.IsExplicit == false)) continue;
+            foreach (var row in family.Where(row => row.Edition == null &&
+                         !EditionSuffix().IsMatch(row.Album!.Title)))
+            {
+                row.Edition = row.Album!.IsExplicit == true ? "Explicit" : "Clean";
+                if (row.Item["Name"]?.GetValue<string>() is { } name)
+                    row.Item["Name"] = name.EndsWith(" [A]", StringComparison.Ordinal)
+                        ? $"{name[..^4]} ({row.Edition}) [A]" : $"{name} ({row.Edition})";
+            }
+        }
+    }
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"[\(\[](?:explicit|clean)[\)\]]\s*$", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
+    private static partial System.Text.RegularExpressions.Regex EditionSuffix();
+
     private void Replace(RankedSearchRow listed, RankedSearchRow library)
     {
         Join(library, listed);
@@ -298,6 +322,7 @@ internal sealed partial class RankedSearchSnapshots(string query, int limit, IRe
         var all = sections.Values.SelectMany(rows => rows).ToArray();
         if (refresh != null) await refresh(all, token);
         token.ThrowIfCancellationRequested();
+        LabelEditions();
         var knownDurationTitles = all.Where(row => (row.Song?.PreciseDuration?.TotalSeconds ?? row.Song?.Duration ?? row.Native?.DurationSeconds) is > 0)
             .Select(row => row.RecordingTitle).ToHashSet(StringComparer.Ordinal);
         var added = fresh.ToHashSet(ReferenceEqualityComparer.Instance);

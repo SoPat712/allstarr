@@ -92,11 +92,29 @@ public sealed class RankedSearchRecordingRowsTests
         Assert.Equal([("apple", "ext-apple-album-1"), ("deezer", "ext-deezer-album-2")], Copies(albums.Single(row => Id(row) == "ext-apple-album-1")!));
     }
 
+    [Fact]
+    public async Task ExplicitAndCleanEditionsStayApartAndSayWhichIsWhich()
+    {
+        const string title = "I Just Got A Lot On My Shoulders";
+        await using var search = new Search(["albums"]);
+        var explicitEdition = Album("ext-apple-album-1", "apple", title, true);
+        explicitEdition.Item["Name"] = title + " [A]";
+        await search.AddAsync("apple", explicitEdition, Album("ext-apple-album-2", "apple", title, false));
+        // Another service's explicit edition joins Apple's explicit one; an album with one edition listed keeps its title.
+        await search.AddAsync("deezer", Album("ext-deezer-album-3", "deezer", title, true), Album("ext-deezer-album-4", "deezer", "Other", true));
+
+        var albums = (await search.FinalAsync())["sections"]!["albums"]!.AsArray();
+
+        Assert.Equal([("ext-apple-album-1", title + " (Explicit) [A]"), ("ext-apple-album-2", title + " (Clean)"), ("ext-deezer-album-4", "Other")],
+            albums.Select(row => (Id(row), row!["Name"]!.GetValue<string>())).OrderBy(row => row.Item1, StringComparer.Ordinal).ToArray());
+        Assert.Equal([("apple", "ext-apple-album-1"), ("deezer", "ext-deezer-album-3")], Copies(albums.Single(row => Id(row) == "ext-apple-album-1")!));
+    }
+
     private static RankedSearchRow Song(string id, string source, string title, string album, int duration, string? isrc = null) =>
         Row(id, source, "songs", new Song { Id = id, Title = title, Artist = "Griff", Album = album, Duration = duration, Isrc = isrc }, null);
 
-    private static RankedSearchRow Album(string id, string source, string title) =>
-        Row(id, source, "albums", null, new Album { Id = id, Title = title, Artist = "AT Musica", Year = 2025, SongCount = 1 });
+    private static RankedSearchRow Album(string id, string source, string title, bool? isExplicit = null) =>
+        Row(id, source, "albums", null, new Album { Id = id, Title = title, Artist = "AT Musica", Year = 2025, SongCount = 1, IsExplicit = isExplicit });
 
     private static RankedSearchRow Row(string id, string source, string section, Song? song, Album? album) => new(new JsonObject
     {

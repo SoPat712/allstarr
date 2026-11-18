@@ -107,7 +107,8 @@ public sealed class V2AlbumEndpoints(V2TrackReader tracks, IProtocolProviderGate
         if (artists.Length == 0 && !string.IsNullOrWhiteSpace(album.Artist))
             artists = [new(album.ArtistId is { } id && V2Ids.IsValidSource(id, V2IdKind.Artist) ? V2Ids.Artist(id) : null, album.Artist)];
         return new(V2Ids.Album(source), album.Title, artists, album.Year, true,
-            V2ArtworkUrls.For(source, JellyfinItemArtwork.AlbumImageTag(source, false)));
+            V2ArtworkUrls.For(source, JellyfinItemArtwork.AlbumImageTag(source, false)))
+        { Explicit = album.IsExplicit };
     }
 
     internal async Task<IReadOnlyList<V2AlbumSummary>> LibraryAlbumsAsync(HttpContext http, ProtocolExecutionContext execution,
