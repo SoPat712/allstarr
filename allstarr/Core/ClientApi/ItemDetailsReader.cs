@@ -31,6 +31,28 @@ public sealed class ItemDetailsReader(
     IProtocolProviderGateway? gateway = null, ILibraryIndexService? libraryIndex = null, LyricsRefreshStore? refreshStore = null,
     ILogger<ItemDetailsReader>? logger = null)
 {
+    // Every snapshot column but the payload, the largest by far.
+    private static readonly System.Linq.Expressions.Expression<Func<ExternalMetadataSnapshotRecord, ExternalMetadataSnapshotRecord>> WithoutPayload =
+        item => new ExternalMetadataSnapshotRecord
+        {
+            Id = item.Id,
+            OwnerUserId = item.OwnerUserId,
+            ProviderAccountId = item.ProviderAccountId,
+            ProviderTrackIdentityId = item.ProviderTrackIdentityId,
+            SourceJobId = item.SourceJobId,
+            BackendInstanceId = item.BackendInstanceId,
+            BackendPrincipalId = item.BackendPrincipalId,
+            Protocol = item.Protocol,
+            ProviderId = item.ProviderId,
+            ResourceKind = item.ResourceKind,
+            ExternalIdHash = item.ExternalIdHash,
+            SnapshotVersion = item.SnapshotVersion,
+            ProviderRevision = item.ProviderRevision,
+            PayloadSha256 = item.PayloadSha256,
+            CorrelationId = item.CorrelationId,
+            RetrievedAt = item.RetrievedAt
+        };
+
     public async Task<ItemDetailsResponse> ReadAsync(HttpContext http, ProtocolExecutionContext execution, string[] ids,
         IReadOnlyDictionary<string, Song>? observedSongs = null) =>
         (await ReadWithSongsAsync(http, execution, ids, resolveServingProvider: true, observedSongs)).Response;
@@ -101,14 +123,15 @@ public sealed class ItemDetailsReader(
             (item.ResourceKind == "track" || item.ResourceKind == "playback-metadata") &&
             (item.ProviderAccountId == null || db.ProviderAccounts.Any(account => account.Id == item.ProviderAccountId &&
                 account.Enabled && (account.OwnerUserId == null || account.OwnerUserId == owner))));
+        // A song has many snapshots, mostly of plays, and only the chosen one's payload is read, so payloads load later.
         var found = new List<ExternalMetadataSnapshotRecord>();
         if (hashes.Length > 0)
-            found.AddRange(await Visible(db.ExternalMetadataSnapshots.AsNoTracking().Where(item => hashes.Contains(item.ExternalIdHash))).ToArrayAsync(token));
+            found.AddRange(await Visible(db.ExternalMetadataSnapshots.AsNoTracking().Where(item => hashes.Contains(item.ExternalIdHash))).Select(WithoutPayload).ToArrayAsync(token));
         if (linkedIdentities.Length > 0)
             found.AddRange(await Visible(db.ExternalMetadataSnapshots.AsNoTracking()
-                .Where(item => item.ProviderTrackIdentityId.HasValue && linkedIdentities.Contains(item.ProviderTrackIdentityId.Value))).ToArrayAsync(token));
+                .Where(item => item.ProviderTrackIdentityId.HasValue && linkedIdentities.Contains(item.ProviderTrackIdentityId.Value))).Select(WithoutPayload).ToArrayAsync(token));
         if (decidedSnapshots.Length > 0)
-            found.AddRange(await Visible(db.ExternalMetadataSnapshots.AsNoTracking().Where(item => decidedSnapshots.Contains(item.Id))).ToArrayAsync(token));
+            found.AddRange(await Visible(db.ExternalMetadataSnapshots.AsNoTracking().Where(item => decidedSnapshots.Contains(item.Id))).Select(WithoutPayload).ToArrayAsync(token));
         var snapshots = found.DistinctBy(item => item.Id).ToArray();
         Step("snapshots");
         var snapshotIds = snapshots.Select(item => item.Id).ToArray();
@@ -182,6 +205,7 @@ public sealed class ItemDetailsReader(
                                                               where (recordingIds.Contains(recording.Id) || recording.MergedIntoId.HasValue && recordingIds.Contains(recording.MergedIntoId.Value)) &&
                                                                   file.IsManaged && file.RemovedAt == null && file.OwnerUserId == null && file.SourceJobId == null && file.Length > 0
                                                               select new { RecordingId = recording.MergedIntoId ?? recording.Id, File = file, Artifact = artifact }).ToArrayAsync(token);
+        Step("favourite states");
         var placement = http.RequestServices.GetRequiredService<FilePlacementService>();
         retained = retained.Where(item => AvailableFile(placement, item.File, token)).ToArray();
         var fileIds = retained.Select(item => item.File.Id).ToArray();
@@ -191,23 +215,33 @@ public sealed class ItemDetailsReader(
             (item.OwnerUserId == owner || item.OwnerUserId == null) &&
             (item.SecretReferenceId == null || db.SecretReferences.Any(secret => secret.Id == item.SecretReferenceId && secret.RevokedAt == null)))
             .ToArrayAsync(token);
+        Step("kept files");
         var songs = new Dictionary<string, Song>(StringComparer.Ordinal);
         var selectedSnapshots = new Dictionary<string, ExternalMetadataSnapshotRecord>(StringComparer.Ordinal);
+        ExternalMetadataSnapshotRecord? Choose(string id, string provider, string externalId)
+        {
+            var recording = resolved.GetValueOrDefault(id);
+            var candidates = provider == "allstarr" && recording != null
+                ? snapshots.Where(snapshot => links.Any(link => link.CanonicalRecordingId == recording.Id && link.ProviderId == snapshot.ProviderId && link.ExternalIdHash == snapshot.ExternalIdHash) ||
+                    decisions.Any(match => match.ExternalSnapshotId == snapshot.Id && match.CanonicalRecordingId == recording.Id))
+                : snapshots.Where(snapshot => registry.ResolveProviderId(snapshot.ProviderId) == provider && snapshot.ExternalIdHash == CanonicalCatalogKeys.Hash(externalId));
+            return candidates.OrderByDescending(item => item.ResourceKind == "track").ThenByDescending(item => item.RetrievedAt)
+                .ThenByDescending(item => item.SnapshotVersion).FirstOrDefault();
+        }
+        var chosen = external.Where(source => !native.ContainsKey(source.Id)).Select(source => Choose(source.Id, source.Provider, source.ExternalId))
+            .OfType<ExternalMetadataSnapshotRecord>().Select(item => item.Id).Distinct().ToArray();
+        var payloads = chosen.Length == 0 ? new Dictionary<Guid, string>() : await db.ExternalMetadataSnapshots.AsNoTracking()
+            .Where(item => chosen.Contains(item.Id)).ToDictionaryAsync(item => item.Id, item => item.PayloadJson, token);
         foreach (var source in external)
         {
             if (native.ContainsKey(source.Id)) continue;
             var recording = resolved.GetValueOrDefault(source.Id);
-            var candidates = source.Provider == "allstarr" && recording != null
-                ? snapshots.Where(snapshot => links.Any(link => link.CanonicalRecordingId == recording.Id && link.ProviderId == snapshot.ProviderId && link.ExternalIdHash == snapshot.ExternalIdHash) ||
-                    decisions.Any(match => match.ExternalSnapshotId == snapshot.Id && match.CanonicalRecordingId == recording.Id))
-                : snapshots.Where(snapshot => registry.ResolveProviderId(snapshot.ProviderId) == source.Provider && snapshot.ExternalIdHash == CanonicalCatalogKeys.Hash(source.ExternalId));
-            var snapshot = candidates.OrderByDescending(item => item.ResourceKind == "track").ThenByDescending(item => item.RetrievedAt)
-                .ThenByDescending(item => item.SnapshotVersion).FirstOrDefault();
+            var snapshot = Choose(source.Id, source.Provider, source.ExternalId);
             Song? song = null;
             if (snapshot != null)
             {
                 var externalId = source.Provider == "allstarr" ? links.FirstOrDefault(link => link.ProviderId == snapshot.ProviderId && link.ExternalIdHash == snapshot.ExternalIdHash)?.ExternalId ?? "" : source.ExternalId;
-                try { song = TrackIdentityService.ReadDisplaySong(snapshot.PayloadJson, snapshot.ProviderId, externalId); }
+                try { song = TrackIdentityService.ReadDisplaySong(payloads.GetValueOrDefault(snapshot.Id) ?? "{}", snapshot.ProviderId, externalId); }
                 catch (JsonException) { }
             }
             if (source.Provider != "allstarr") song ??= await ReadCachedSongAsync(execution.RequireActor(), source.Provider, source.ExternalId, accounts, token);
@@ -231,8 +265,10 @@ public sealed class ItemDetailsReader(
             songs[source.Id] = song;
             if (snapshot != null) selectedSnapshots[source.Id] = snapshot;
         }
+        Step("songs");
         if (identities is ITrackMediaFactsStore mediaFacts)
             await mediaFacts.ApplyStoredMediaFactsAsync(execution.RequireActor(), songs.Values.ToArray(), token);
+        Step("media facts");
         // Each song's playback route is planned on its own, so a playlist's songs are planned a few at a time.
         using var routeGate = new SemaphoreSlim(Math.Clamp(Environment.ProcessorCount / 2, 1, 4));
         var servingProviders = (await Task.WhenAll(external.Where(source => resolveServingProvider && source.Provider == "allstarr" && songs.ContainsKey(source.Id))
@@ -242,6 +278,7 @@ public sealed class ItemDetailsReader(
                 try { return (source.Id, Provider: gateway == null ? null : await gateway.GetStreamingProviderAsync(execution, source.Provider, source.ExternalId)); }
                 finally { routeGate.Release(); }
             }))).ToDictionary(item => item.Id, item => item.Provider, StringComparer.Ordinal);
+        Step("serving routes");
         var providers = new Dictionary<string, ItemDetailsProvider?>(StringComparer.Ordinal);
         var providerIds = songs.Values.Select(item => item.ExternalProvider!).Concat(servingProviders.Values.OfType<string>()).Distinct(StringComparer.Ordinal).ToArray();
         var icons = await ProviderArtworkResolver.ResolveIconsAsync(http.RequestServices, providerIds, token);
@@ -255,6 +292,7 @@ public sealed class ItemDetailsReader(
         var lyricsEndpoint = (await settings.GetAsync("LyricsPlus:BaseUrl", token)).NormalizedValue;
         var retainedLyrics = refreshStore == null ? new Dictionary<Guid, allstarr.Models.Lyrics.LyricsInfo>() :
             await refreshStore.RetainedAsync(execution, recordingIds);
+        Step("lyrics choices");
         var libraryProvider = native.Count > 0 ? await http.RequestServices.GetRequiredService<LibraryProviderResolver>().ResolveAsync(http, execution) : null;
         // Each song's match and lyrics reads stand alone, so a batch reads a few songs at once instead of one after another.
         using var gate = new SemaphoreSlim(Math.Clamp(Environment.ProcessorCount / 2, 1, 4));
