@@ -63,7 +63,7 @@ public sealed class ItemDetailsReader(
     {
         using var building = RequestTiming.Current?.Stage("build");
         var started = System.Diagnostics.Stopwatch.GetTimestamp();
-        long matchTicks = 0, lyricsTicks = 0;
+        long matchTicks = 0, lyricsTicks = 0, lookupTicks = 0, fileTicks = 0, countTicks = 0, itemTicks = 0;
         var steps = new List<string>();
         var mark = started;
         void Step(string name)
@@ -308,21 +308,31 @@ public sealed class ItemDetailsReader(
         var built = await Task.WhenAll(requested.Select(async id =>
         {
             using (RequestTiming.Current?.Stage("lock")) await gate.WaitAsync(token);
+            var itemStarted = System.Diagnostics.Stopwatch.GetTimestamp();
             try { return (Id: id, Details: await ReadItemAsync(id)); }
-            finally { gate.Release(); }
+            finally
+            {
+                Interlocked.Add(ref itemTicks, System.Diagnostics.Stopwatch.GetElapsedTime(itemStarted).Ticks);
+                gate.Release();
+            }
         }));
         var items = built.Where(item => item.Details != null).ToDictionary(item => item.Id, item => item.Details!, StringComparer.Ordinal);
-        logger?.LogInformation("Item details timing: prepare {Prepare} ms ({PrepareSteps} ms), songs {Songs} ms, matches {Matches} ms ({MatchSteps} ms) and lyrics {Lyrics} ms summed over {Count} songs",
+        logger?.LogInformation("Item details timing: prepare {Prepare} ms ({PrepareSteps} ms), songs {Songs} ms, matches {Matches} ms ({MatchSteps} ms), lyrics {Lyrics} ms, lookups {Lookups} ms, files {Files} ms and counts {Counts} ms of {Items} ms summed over {Count} songs",
             (int)System.Diagnostics.Stopwatch.GetElapsedTime(started, prepared).TotalMilliseconds, string.Join(", ", steps),
             (int)System.Diagnostics.Stopwatch.GetElapsedTime(prepared).TotalMilliseconds,
             (int)TimeSpan.FromTicks(Interlocked.Read(ref matchTicks)).TotalMilliseconds, matchTiming,
-            (int)TimeSpan.FromTicks(Interlocked.Read(ref lyricsTicks)).TotalMilliseconds, requested.Length);
+            (int)TimeSpan.FromTicks(Interlocked.Read(ref lyricsTicks)).TotalMilliseconds,
+            (int)TimeSpan.FromTicks(Interlocked.Read(ref lookupTicks)).TotalMilliseconds,
+            (int)TimeSpan.FromTicks(Interlocked.Read(ref fileTicks)).TotalMilliseconds,
+            (int)TimeSpan.FromTicks(Interlocked.Read(ref countTicks)).TotalMilliseconds,
+            (int)TimeSpan.FromTicks(Interlocked.Read(ref itemTicks)).TotalMilliseconds, requested.Length);
         using var serialization = RequestTiming.Current?.Stage("serialize");
         return (new(ids.Where(items.ContainsKey).Select(id => items[id]).ToArray(), ids.Where(id => !items.ContainsKey(id)).ToArray()), songs);
 
         async Task<ItemDetails?> ReadItemAsync(string id)
         {
             using var matching = RequestTiming.Current?.Stage("match");
+            var lookupStarted = System.Diagnostics.Stopwatch.GetTimestamp();
             var song = songs.GetValueOrDefault(id);
             if (song == null && !native.ContainsKey(id)) return null;
             var local = library.FirstOrDefault(item => SameNativeId(item.BackendItemId, localIds.GetValueOrDefault(id) ?? id));
@@ -338,6 +348,7 @@ public sealed class ItemDetailsReader(
             var decision = snapshot == null ? null : decisions.Where(item => item.ExternalSnapshotId == snapshot.Id)
                 .OrderByDescending(item => item.DecisionVersion).ThenByDescending(item => item.DecidedAt).FirstOrDefault();
             var authority = snapshot == null ? null : layers[snapshot.Id];
+            Interlocked.Add(ref lookupTicks, System.Diagnostics.Stopwatch.GetElapsedTime(lookupStarted).Ticks);
             var match = snapshot == null || decision == null && authority?.Effective == null ? null : new ItemDetailsMatch(
                 authority?.Effective is { } effective ? effective.Decision == ManualOverrideDecision.Pin ? "pinned" : "rejected" : decision!.State.ToString().ToLowerInvariant(),
                 decision != null && double.IsFinite(decision.Confidence) ? Math.Clamp(decision.Confidence, 0, 1) : null, authority?.EffectiveScope ?? "automatic");
@@ -349,6 +360,7 @@ public sealed class ItemDetailsReader(
                 Interlocked.Add(ref matchTicks, System.Diagnostics.Stopwatch.GetElapsedTime(matchStarted).Ticks);
                 if (effectiveMatch != null) match = new(effectiveMatch.State, effectiveMatch.Confidence, effectiveMatch.Authority);
             }
+            var filesStarted = System.Diagnostics.Stopwatch.GetTimestamp();
             var state = states.FirstOrDefault(item => item.ItemId == id && item.IsFavorite);
             var storedFile = retained.FirstOrDefault(item => item.RecordingId == recordingId && File.Exists(item.File.CanonicalPath));
             var kept = state == null ? null : retained.FirstOrDefault(item => item.RecordingId == recordingId &&
@@ -356,6 +368,7 @@ public sealed class ItemDetailsReader(
             var action = state == null ? null : actions.FirstOrDefault(item => item.EventId == state.LastEventId);
             var keep = kept != null ? new ItemDetailsKeep("kept", null) : new ItemDetailsKeep(action?.State switch
             { FavoriteActionState.Pending or FavoriteActionState.Running => "inProgress", FavoriteActionState.Failed => "failed", _ => "none" }, null);
+            Interlocked.Add(ref fileTicks, System.Diagnostics.Stopwatch.GetElapsedTime(filesStarted).Ticks);
             var choice = choices.Where(item => item.CanonicalRecordingId == recordingId).OrderByDescending(item => item.OwnerUserId == owner).FirstOrDefault();
             var lyricsSong = song ?? (local == null ? null : new Song
             {
@@ -383,9 +396,11 @@ public sealed class ItemDetailsReader(
                 audio = new(artifact.Codec, artifact.BitDepth, artifact.SampleRate, artifact.Bitrate);
             var explicitContent = (song?.ExplicitContentLyrics ?? native.GetValueOrDefault(id)?.Rating) switch { 1 => true, 0 or 3 => false, _ => (bool?)null };
             explicitContent ??= recordingId.HasValue ? recordings.GetValueOrDefault(recordingId.Value)?.IsExplicit : null;
+            var countStarted = System.Diagnostics.Stopwatch.GetTimestamp();
             var counted = playCounts.Where(item => recordingId.HasValue && item.Key.CanonicalRecordingId == recordingId ||
                 local != null && item.Key.LibraryTrackId == local.Id || item.Key.TrackReference == id ||
                 SameNativeId(item.Key.TrackReference, localIds.GetValueOrDefault(id) ?? id)).ToArray();
+            Interlocked.Add(ref countTicks, System.Diagnostics.Stopwatch.GetElapsedTime(countStarted).Ticks);
             var isSong = song != null || local != null || native.GetValueOrDefault(id)?.IsSong == true;
             return new ItemDetails(id, song != null, recordingId?.ToString("D"), identity?.Isrc ?? song?.Isrc ?? local?.Isrc ?? identifiers.FirstOrDefault(item => item.RecordingId == recordingId)?.Value,
                 song == null ? libraryProvider : providers.GetValueOrDefault(servingProviders.GetValueOrDefault(id) ?? song.ExternalProvider!), audio, explicitContent,
