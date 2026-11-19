@@ -153,9 +153,17 @@ public sealed partial class ProtocolRouteFixtureTests
         var gateway = V2BatchGateway();
         gateway.Setup(item => item.GetStoredArtistAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "9"))
             .ReturnsAsync(new Artist { Id = source, Name = "Service artist", Genres = ["Pop"] });
-        gateway.Setup(item => item.GetArtistAlbumsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "9", 50)).ReturnsAsync([
+        gateway.Setup(item => item.GetArtistAlbumsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "9")).ReturnsAsync([
             new Album { Id = "ext-deezer-album-7", Title = "First album", Artist = "Service artist", ArtistId = source },
             new Album { Id = "ext-deezer-album-7", Title = "First album", Artist = "Service artist", ArtistId = source }]);
+        // The same artist on another service shares First album, so its other album joins the page.
+        gateway.Setup(item => item.SearchAsync(It.IsAny<ProtocolExecutionContext>(), "Service artist", 0, 0, 20, null)).ReturnsAsync(new allstarr.Models.Search.SearchResult
+        {
+            Artists = [new Artist { Id = "ext-qobuz-artist-q9", Name = "Service artist", ExternalProvider = "qobuz", ExternalId = "q9" }]
+        });
+        gateway.Setup(item => item.GetArtistAlbumsAsync(It.IsAny<ProtocolExecutionContext>(), "qobuz", "q9")).ReturnsAsync([
+            new Album { Id = "ext-qobuz-album-1", Title = "First album", Artist = "Service artist", ExternalProvider = "qobuz" },
+            new Album { Id = "ext-qobuz-album-2", Title = "Second album", Artist = "Service artist", ExternalProvider = "qobuz" }]);
         gateway.Setup(item => item.GetArtistTracksAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "9", 20)).ReturnsAsync([V2BatchSong("known")]);
         using var factory = ClientDetailsFactory(request =>
         {
@@ -196,7 +204,8 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.Equal(external ? null : "artist1", body["artist"]!["libraryId"]?.GetValue<string>());
         Assert.Equal("Pop", Assert.Single(body["artist"]!["genres"]!.AsArray())!.GetValue<string>());
         Assert.False(body["artist"]!["following"]!.GetValue<bool>());
-        Assert.Equal(V2Ids.Album(external ? "ext-deezer-album-7" : "album1"), Assert.Single(body["albums"]!.AsArray())!["id"]!.GetValue<string>());
+        Assert.Equal(external ? [V2Ids.Album("ext-deezer-album-7"), V2Ids.Album("ext-qobuz-album-2")] : [V2Ids.Album("album1")],
+            body["albums"]!.AsArray().Select(album => album!["id"]!.GetValue<string>()));
         Assert.Single(body["tracks"]!.AsArray());
         var batch = await ReadV2Batch(client, path);
         Assert.Equal(200, batch["status"]!.GetValue<int>());

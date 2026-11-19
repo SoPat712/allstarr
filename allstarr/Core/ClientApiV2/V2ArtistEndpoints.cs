@@ -1,6 +1,8 @@
 using System.Text.Json;
 using allstarr.Core.ClientApi;
+using allstarr.Core.Music;
 using allstarr.Core.Protocols;
+using allstarr.Models.Domain;
 using allstarr.Services.Jellyfin;
 using allstarr.Services.Local;
 using static allstarr.Core.ClientApiV2.V2TrackReader;
@@ -9,7 +11,7 @@ namespace allstarr.Core.ClientApiV2;
 
 /// <summary>Native artist reads shared by the standalone route and batch dispatcher.</summary>
 public sealed class V2ArtistEndpoints(V2TrackReader tracks, IProtocolProviderGateway providers, V2AlbumEndpoints albums, ReleaseReader releases,
-    V2LibraryArtists? libraryArtists = null)
+    V2LibraryArtists? libraryArtists = null, StreamingArtistCatalog? catalog = null)
 {
     private const int AlbumLimit = 50;
     private const int TrackLimit = 20;
@@ -36,10 +38,13 @@ public sealed class V2ArtistEndpoints(V2TrackReader tracks, IProtocolProviderGat
                 artist = new(V2Ids.Artist(source), metadata.Name, true,
                     V2ArtworkUrls.For(source, JellyfinItemArtwork.PrimaryImageTag(source, false)), metadata.Genres, following)
                 { Provider = libraryArtists?.ServiceProvider(V2Ids.Artist(source), V2IdKind.Artist) };
+                // A service artist's page also lists the same artist's albums from the listener's other services.
                 if (included.Contains("albums"))
-                    artistAlbums = (await providers.GetArtistAlbumsAsync(execution, parsed.provider!, parsed.externalId!, AlbumLimit))
+                    artistAlbums = (catalog != null
+                            ? await catalog.AlbumsAsync(execution, parsed.provider!, parsed.externalId!, Task.FromResult<Artist?>(metadata))
+                            : await providers.GetArtistAlbumsAsync(execution, parsed.provider!, parsed.externalId!, AlbumLimit))
                         .Where(item => V2Ids.IsValidSource(item.Id, V2IdKind.Album)).Select(item => V2AlbumEndpoints.Summary(item.Id, item))
-                        .DistinctBy(item => item.Id).ToArray();
+                        .DistinctBy(item => item.Id).Take(AlbumLimit).ToArray();
                 if (included.Contains("tracks"))
                     songIds = (await providers.GetArtistTracksAsync(execution, parsed.provider!, parsed.externalId!, TrackLimit))
                         .Where(song => execution.Policy?.Includes(song) != false).Select(song => song.Id).ToArray();

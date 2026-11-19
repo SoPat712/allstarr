@@ -13,6 +13,6 @@ public sealed class ArtistsController(V2ArtistEndpoints artists) : ClientApiV2Co
     [ProducesResponseType<V2ArtistResponse>(200)]
     [ProducesResponseType(304)]
     public async Task<IActionResult> Get(string id,
-        [FromQuery, Description("`albums` adds up to 50 of the artist's albums; `tracks` adds up to 20 top songs as native track shapes.")] string? include) =>
+        [FromQuery, Description("`albums` adds up to 50 of the artist's albums, for a service artist also its albums from the listener's other services; `tracks` adds up to 20 top songs as native track shapes.")] string? include) =>
         Respond(await artists.GetAsync(HttpContext, Execution, id, include));
 }

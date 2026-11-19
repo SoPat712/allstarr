@@ -24,22 +24,32 @@ public sealed class StreamingArtistCatalog(IProtocolProviderGateway providers, T
     public async Task<List<Album>> AlbumsAsync(ProtocolExecutionContext context, string provider, string artistId,
         Task<Artist?> artistTask)
     {
-        var own = MusicAlbumReleases.Collapse(await providers.GetArtistAlbumsAsync(context, provider, artistId));
-        // An artist that opens to nothing is left out of later searches.
-        emptyArtists?.Record(provider, artistId, own.Count);
+        var ownTask = OwnAsync(context, provider, artistId);
         Artist? artist;
         try { artist = await artistTask; }
         catch (Exception error) when (error is not OperationCanceledException) { artist = null; }
-        if (artist == null || string.IsNullOrWhiteSpace(artist.Name) || own.Count == 0) return own;
-        var linked = await LinkedAsync(context, provider, artistId, artist.Name, own);
+        // The other services are asked while this one answers, so the first visit waits for the slower of the two.
+        var linkedTask = artist == null || string.IsNullOrWhiteSpace(artist.Name) || emptyArtists?.IsEmpty(artist) == true
+            ? null : LinkedAsync(context, provider, artistId, artist.Name, ownTask);
+        var own = await ownTask;
+        if (linkedTask == null || artist == null || own.Count == 0) return own;
+        var linked = await linkedTask;
         if (linked.Count == 0) return own;
         var pageId = string.IsNullOrWhiteSpace(artist.Id) ? $"ext-{provider}-artist-{artistId}" : artist.Id;
         var others = await Task.WhenAll(linked.Select(link => OtherAlbumsAsync(context, link, pageId, artist.Name)));
         return MusicAlbumReleases.WithoutServiceRepeats(MusicAlbumReleases.Collapse(own.Concat(others.SelectMany(found => found))));
     }
 
+    private async Task<List<Album>> OwnAsync(ProtocolExecutionContext context, string provider, string artistId)
+    {
+        var own = MusicAlbumReleases.Collapse(await providers.GetArtistAlbumsAsync(context, provider, artistId));
+        // An artist that opens to nothing is left out of later searches.
+        emptyArtists?.Record(provider, artistId, own.Count);
+        return own;
+    }
+
     private async Task<IReadOnlyList<Link>> LinkedAsync(ProtocolExecutionContext context, string provider, string artistId,
-        string name, IReadOnlyList<Album> own)
+        string name, Task<List<Album>> own)
     {
         var key = $"{context.Actor?.EffectiveUserId}|{Service(provider)}|{artistId}";
         var now = (clock ?? TimeProvider.System).GetUtcNow();
@@ -62,18 +72,22 @@ public sealed class StreamingArtistCatalog(IProtocolProviderGateway providers, T
     }
 
     private async Task<IReadOnlyList<Link>> DiscoverAsync(ProtocolExecutionContext context, string provider, string name,
-        IReadOnlyList<Album> own)
+        Task<List<Album>> ownTask)
     {
         var artistKey = FuzzyMatcher.NormalizeForMatching(name);
         var service = Service(provider);
-        var titles = own.Select(album => FuzzyMatcher.NormalizeForMatching(album.Title)).ToHashSet(StringComparer.Ordinal);
-        var barcodes = own.Select(album => MusicAlbumReleases.NormalizeUpc(album.Upc)).OfType<string>().ToHashSet(StringComparer.Ordinal);
         var candidates = (await providers.SearchAsync(context, name, 0, 0, 20)).Artists
             .Where(artist => !string.IsNullOrEmpty(artist.ExternalId) && !string.IsNullOrEmpty(artist.ExternalProvider) &&
                              Service(artist.ExternalProvider) != service && FuzzyMatcher.NormalizeForMatching(artist.Name) == artistKey)
             .GroupBy(artist => Service(artist.ExternalProvider))
             .Select(group => group.OrderByDescending(artist => artist.AlbumCount ?? 0).Take(CandidatesPerService).ToArray());
         var failed = false;
+        var own = new Lazy<Task<(HashSet<string> Titles, HashSet<string> Barcodes)>>(async () =>
+        {
+            var albums = await ownTask;
+            return (albums.Select(album => FuzzyMatcher.NormalizeForMatching(album.Title)).ToHashSet(StringComparer.Ordinal),
+                albums.Select(album => MusicAlbumReleases.NormalizeUpc(album.Upc)).OfType<string>().ToHashSet(StringComparer.Ordinal));
+        });
         var found = await Task.WhenAll(candidates.Select(async group =>
         {
             foreach (var candidate in group)
@@ -81,6 +95,7 @@ public sealed class StreamingArtistCatalog(IProtocolProviderGateway providers, T
                 List<Album> albums;
                 try { albums = await providers.GetArtistAlbumsAsync(context, candidate.ExternalProvider!, candidate.ExternalId!); }
                 catch (Exception error) when (error is not OperationCanceledException) { failed = true; continue; }
+                var (titles, barcodes) = await own.Value;
                 if (albums.Any(album => MusicAlbumReleases.NormalizeUpc(album.Upc) is { } upc && barcodes.Contains(upc) ||
                         titles.Contains(FuzzyMatcher.NormalizeForMatching(album.Title))))
                     return new Link(candidate.ExternalProvider!, candidate.ExternalId!);

@@ -59,6 +59,24 @@ public sealed class StreamingArtistCatalogTests
         Assert.Equal(3, (await catalog.AlbumsAsync(_context, "deezer", "grimes", Grimes())).Count);
     }
 
+    [Fact]
+    public async Task TheOtherServicesAreAskedWhileThisServiceAnswers()
+    {
+        var gateway = Gateway();
+        var own = new TaskCompletionSource<List<Album>>();
+        gateway.Setup(item => item.GetArtistAlbumsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "grimes")).Returns(own.Task);
+        gateway.Setup(item => item.GetArtistAlbumsAsync(It.IsAny<ProtocolExecutionContext>(), "applemusic", "apple"))
+            .ReturnsAsync([Album("applemusic", "a1", "Visions"), Album("applemusic", "a2", "Miss Anthropocene")]);
+        gateway.Setup(item => item.GetArtistAlbumsAsync(It.IsAny<ProtocolExecutionContext>(), "qobuz", "namesake")).ReturnsAsync([]);
+
+        var pending = new StreamingArtistCatalog(gateway.Object).AlbumsAsync(_context, "deezer", "grimes", Grimes());
+
+        gateway.Verify(item => item.SearchAsync(It.IsAny<ProtocolExecutionContext>(), "Grimes", 0, 0, 20, null), Times.Once);
+        Assert.False(pending.IsCompleted);
+        own.SetResult([Album("deezer", "dz1", "Visions"), Album("deezer", "dz2", "Art Angels")]);
+        Assert.Equal(["ext-deezer-album-dz1", "ext-deezer-album-dz2", "ext-applemusic-album-a2"], (await pending).Select(album => album.Id));
+    }
+
     private static Task<Artist?> Grimes() => Task.FromResult<Artist?>(
         new Artist { Id = "ext-deezer-artist-grimes", Name = "Grimes", ExternalProvider = "deezer", ExternalId = "grimes" });
 

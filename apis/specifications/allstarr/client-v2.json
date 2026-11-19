@@ -705,7 +705,7 @@
           {
             "name": "include",
             "in": "query",
-            "description": "\u0060albums\u0060 adds up to 50 of the artist\u0027s albums; \u0060tracks\u0060 adds up to 20 top songs as native track shapes.",
+            "description": "\u0060albums\u0060 adds up to 50 of the artist\u0027s albums, for a service artist also its albums from the listener\u0027s other services; \u0060tracks\u0060 adds up to 20 top songs as native track shapes.",
             "schema": {
               "type": "string"
             }
