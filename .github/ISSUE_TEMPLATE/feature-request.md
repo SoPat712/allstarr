@@ -23,27 +23,10 @@ A clear and concise description of any alternative solutions or workarounds you'
 
 Add any other context or screenshots about the feature request here.
 
-## Relevant integrations
+## Where it applies
 
-- Backend: [Jellyfin / Navidrome / other Subsonic server / any]
-- Providers or sidecars involved:
-- Should this work per user, per library, or globally?
-
-## Safe diagnostics from Allstarr (optional)
-
-- Sensitive values stay redacted in this block.
-- Allstarr Version: [e.g. v3.1.0-beta.1]
-- Backend Type: [e.g. Jellyfin]
-- Capability and provider involved: [e.g. recommendations / Last.fm]
-- Provider account scope: [global / user / library / not applicable]
-- Storage Mode: [e.g. Cache]
-- Download Mode: [e.g. Track]
-- Storage: [SQLite readiness state and local data mount]
-- SQLite readiness: [Ready / Degraded / Unavailable]
-- Playlist mode, if relevant: [virtual / materialized / hybrid]
-- Scrobbling or intelligence enabled: [e.g. Disabled]
-- Provider readiness: [Ready / Needs Config / Degraded / Unknown]
-- Backend URL: [Configured (redacted) or Not configured]
-- Client: [e.g. Firefox 149 on macOS]
-- Generated At (UTC): [e.g. 2026-04-19T02:18:52.483Z]
-- Browser Time Zone: [e.g. America/New_York]
+- Media server: [Jellyfin / Navidrome / other Subsonic server / any]
+- Music app, if relevant:
+- Services, extensions or optional extras involved:
+- Who should it apply to? [just me / everyone in the household / administrators only]
+- Allstarr version you're using: [e.g. 3.1.0-beta.1]

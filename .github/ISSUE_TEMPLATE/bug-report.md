@@ -7,6 +7,8 @@ assignees: SoPat712
 
 ---
 
+Remove passwords, tokens, cookies, signed links and private addresses before posting.
+
 ## Describe the bug
 
 A clear and concise description of what the bug is.
@@ -20,41 +22,36 @@ Steps to reproduce the behavior:
 3. Scroll down to '...'
 4. See error
 
-## Deployment
-
-- Install type: [Compose release / Compose source / local development / other]
-- Allstarr image tag or commit:
-- Host architecture: [amd64 / arm64]
-- Backend: [Jellyfin / Navidrome / other Subsonic server]
-- Install history: [fresh version 3 install / imported reviewed 2.x settings / upgraded from version 3 tag]
-
 ## Expected behavior
 
 A clear and concise description of what you expected to happen.
 
+## Deployment
+
+- Install type: [Compose release / Compose source / local development / other]
+- Allstarr version: [shown at the bottom of the Settings list, or the image tag]
+- Host architecture: [amd64 / arm64]
+- Media server and version: [e.g. Jellyfin 10.11 / Navidrome / other Subsonic server]
+- Install history: [fresh version 3 install / upgraded from version 2 / updated from an earlier version 3 image]
+- Optional extras enabled: [none / apple / sessions] (`./allstarr.sh status` lists them)
+
+## Where it happens
+
+- Music app and version, if relevant: [e.g. Feishin 1.0 on macOS]
+- Browser, if it's a dashboard problem: [e.g. Firefox 149 on macOS]
+- Service involved, if any: [e.g. Deezer, Spotify, an extension]
+- Account scope, if a service is involved: [Personal / Shared / not applicable]
+- Activity details, if any: [the job or entry from Activity, with its time]
+
+For a playback problem, open **Activity → Plays**, choose the play and use **Copy diagnostics**. Paste the result below after checking it.
+
+```text
+
+```
+
 ## Additional context
 
 Add any other context, screenshots, or surrounding details here.
-
-## Safe diagnostics from Allstarr
-
-- Sensitive values stay redacted in this block.
-- Allstarr Version: [image tag or commit]
-- Backend Type: [e.g. Jellyfin]
-- Capability and provider involved: [e.g. playlist / Spotify]
-- Provider account scope: [global / user / library / not applicable]
-- Provider readiness: [Ready / Needs Config / Degraded / Unknown]
-- Storage Mode: [e.g. Cache]
-- Download Mode: [e.g. Track]
-- Storage: [SQLite readiness state and local data mount]
-- SQLite readiness: [Ready / Degraded / Unavailable]
-- Relevant job or correlation ID:
-- Playlist mode, if relevant: [virtual / materialized / hybrid]
-- Scrobbling or intelligence enabled: [e.g. Disabled]
-- Backend URL: [Configured (redacted) or Not configured]
-- Client: [e.g. Firefox 149 on macOS]
-- Generated At (UTC): [e.g. 2026-04-19T02:18:52.483Z]
-- Browser Time Zone: [e.g. America/New_York]
 
 ## Rendered Compose configuration (optional)
 

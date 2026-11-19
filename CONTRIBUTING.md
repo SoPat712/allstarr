@@ -4,7 +4,7 @@ Contributions are welcome. Allstarr sits in the middle of authentication, person
 
 ## Development Setup
 
-Clone the repository and install the .NET SDK version pinned by the project. Use the developer script to build the full durable stack from source:
+Clone the repository and install the .NET 10 SDK (CI uses 10.0.301) and Node.js 22 or later for the WebUI. Use the developer script to build and run the full stack from source:
 
 ```bash
 git clone https://github.com/SoPat712/allstarr.git
@@ -13,7 +13,9 @@ cd allstarr
 ./tools/develop.sh up
 ```
 
-Deployment overrides in `.env` are optional. Choose and verify the backend in the dashboard on first startup. `BACKEND_TYPE` and `JELLYFIN_URL` or `SUBSONIC_URL` are optional startup defaults; a saved connection takes precedence. The developer script combines the standard Compose file with its source-build overlay. See [deployment](docs/operations/deployment-profiles.md).
+The developer script combines the standard Compose file with `tools/docker-compose.source.yml`. `./tools/develop.sh up` builds the current checkout. `./tools/develop.sh update` requires a clean tracked tree on a tracked branch, fast-forwards it and builds before recreating the containers. Return to published images with `./tools/develop.sh mode release`. Optional profiles saved with `./allstarr.sh enable` work in source mode too.
+
+Deployment overrides in `.env` are optional. Choose and verify the backend in the dashboard on first startup. `BACKEND_TYPE` and `JELLYFIN_URL` or `SUBSONIC_URL` are optional startup defaults; a saved connection takes precedence. See [deployment](docs/operations/deployment-profiles.md).
 
 For a direct application run, set `Storage__DataDirectory` to a disposable local folder. Follow [docs/operations/storage.md](docs/operations/storage.md).
 
@@ -41,7 +43,8 @@ Read [README.md](README.md) for supported behavior, the [documentation map](docs
 | `allstarr/Core/Playlists/` | Playlist ingestion, projection, and synchronization |
 | `allstarr/Core/Playback/` | Playback observations and client sessions |
 | `allstarr/Core/ListeningHistory/` | Listening-history imports and retention |
-| `allstarr/Core/AudioMuse/` | Shelved AudioMuse connection and previews |
+| `allstarr/Core/AudioMuse/` | AudioMuse connection and mixes built from how songs sound |
+| `allstarr/Core/Migrations/` | Library Import: moving a Spotify or Apple Music collection into Allstarr |
 | `allstarr/Shelved/Intelligence/` | Development-only recommendation workspace |
 | `allstarr/Core/ClientApi/`, `allstarr/Core/ClientApiV2/` | Client contracts and resource readers |
 | `allstarr/Core/Jobs/` | Durable jobs, schedules, restart recovery, and retries |
@@ -53,6 +56,7 @@ Read [README.md](README.md) for supported behavior, the [documentation map](docs
 | `webui/tests/` | Browser behavior and responsive coverage |
 | `tools/tests/` | Qualification, timing, and live smoke tools |
 | `sidecars/apple-gateway/` | Bounded Apple/GAMDL compatibility gateway |
+| `sidecars/session-verifier/` | Optional extension sign-in renewal service |
 | `docs/` | User, operator, architecture, protocol, and extension documentation |
 
 Keep responsibilities modular. Extend the existing owner instead of creating a second matching, routing, playlist, credential, cache, or background-work system.
@@ -119,7 +123,7 @@ Migration, backup, restore, and destructive behavior require an isolated disposa
 
 Follow [DESIGN.md](DESIGN.md). Reuse the existing Svelte, Bits UI, Tailwind, Lucide, and shared component system before adding a dependency or page-specific control. Keep the interface dense where comparison matters and explanatory where setup or empty state needs guidance.
 
-Integrations owns Services, Accounts, Extensions and Routing. For you owns mixes, releases, taste, Recap and history imports. AudioMuse and the older Intelligence workspace are shelved; retain their existing boundaries. Settings owns deployment and operator behavior.
+The page map lives in `webui/src/routes/[...path]/+page.svelte` and the Settings categories in `webui/src/lib/components/SettingsView.svelte`. Sources owns Services (including **Add extension**) and Accounts. Library owns Playlists, Matches, Cached, Kept, To library and Import. For you owns mixes, New releases, Your taste, Recap and listening-history imports. Settings is one list of categories grouped as You, Everyone and This server; source order lives in **Settings → Music sources**, and the AudioMuse connection in **Settings → Mixes and discovery**. The older Intelligence workspace appears only with the `development` release profile; keep its boundary. When you move a setting, update `webui/src/lib/settings-search.ts` so **Find a setting** still finds it, and keep old addresses redirecting to the new page.
 
 Run these checks from `webui/`:
 
@@ -147,12 +151,13 @@ Update the owner document when behavior changes. Keep README and the user guide 
 
 Documentation ownership:
 
-- `README.md`: product behavior and installation.
+- `README.md`: what Allstarr is, installation, first run and the documentation map.
 - `docs/user-guide.md`: dashboard and common workflows.
 - `docs/operations/`: deployment and recovery procedures.
 - `docs/architecture/`: durable boundaries and code ownership.
 - `docs/extensions/`: public extension contract.
 - `docs/api/`: versioned client API guides.
+- `docs/contributing/`: maintainer procedures, such as the [release checklist](docs/contributing/release-checklist.md).
 - Module README files: specialized code and tools beside their implementation.
 
 Do not commit local design-tool state, generated test reports, private deployment details, or duplicate working documents.

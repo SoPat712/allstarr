@@ -4,22 +4,40 @@
 [![Docker Image](https://img.shields.io/badge/docker-ghcr.io%2Fsopat712%2Fallstarr-blue)](https://github.com/SoPat712/allstarr/pkgs/container/allstarr)
 [![License](https://img.shields.io/badge/license-GPL--3.0-green)](LICENSE)
 
-Allstarr is a self-hosted music gateway for Jellyfin and Subsonic/OpenSubsonic clients. It sits in front of an existing media server, preserves normal local-library behavior, and adds provider-neutral search, matching, playback, playlists, lyrics, scrobbling, listening history, and discovery.
+Allstarr is a self-hosted music server that sits in front of your Jellyfin or Subsonic/OpenSubsonic server. Your music apps connect to Allstarr instead of the media server. Your own library keeps working as before, and Allstarr adds music services, playlists, mixes, lyrics, scrobbling and listening history on top.
 
-> **Beta status:** `3.1.0-beta.1` is intended for testing. In-place upgrades from version 2 are supported by the runtime, but release qualification is still in progress. Save the previous image, configuration and stopped data folders before upgrading. Run one version at a time against any shared media paths.
+Each installation fronts one server type, Jellyfin or Subsonic, and serves one household. Every music service is optional. With none connected, your apps behave as they do against the media server. Allstarr is not a replacement for Jellyfin, Navidrome or another media server.
 
-## What Allstarr owns
+```text
+music apps ──► Allstarr (port 5274) ──► Jellyfin or Subsonic server
+                    │
+                    └──► music services, lyrics, scrobbling
 
-- SQLite stores users, encrypted account references, jobs, matches, playlist state, listening data and audit records in a local data folder. Current provider health stays in memory.
-- Audio and artwork remain ordinary files in mounted cache, download, kept, and managed-library folders.
-- The encryption key ring remains a separate file that must be backed up with the database.
-- The original backend library is treated as read-only input.
+dashboard: http://localhost:5275
+```
 
-Allstarr does not put songs in the database and is not a replacement for Jellyfin, Navidrome, or another media server.
+> **Beta:** `3.1.0-beta.1` is a beta for testing. Back up before you upgrade, and never run two Allstarr versions against the same data or media folders.
+
+What it does:
+
+- Connect music services such as Spotify, Deezer, Qobuz and Apple Music with your own accounts, or install extensions. Search results combine your library with the services that can search and play.
+- Each song is matched to your library and to the services that have it, with evidence you can review and correct.
+- Provider playlists can be imported once or kept in sync. You can keep downloaded copies of their songs.
+- Lyrics come from many sources, including word-timed lyrics.
+- Plays can be scrobbled to Last.fm and ListenBrainz, and kept for personal stats and mixes.
+- Each listener can set each service to On, Manual only or Off for themselves.
+- Imports, matching, downloads, playlist changes and other long work run as jobs you can follow in Activity.
+- Third-party extensions are installed only after checksum verification and a permission review.
+
+Allstarr keeps its database, encryption key ring and the music it saves in one data folder. It treats your media server's files as read-only.
+
+## Requirements
+
+- Docker with the Compose plugin, on a 64-bit x86 or ARM host.
+- A Jellyfin server, or a Subsonic or OpenSubsonic server such as Navidrome, with an administrator account.
+- A private network, VPN or authenticated proxy. Allstarr holds access to your media server and service accounts, so don't expose it directly to the internet.
 
 ## Quick start
-
-Requirements: Docker with Compose, a Jellyfin or Subsonic/OpenSubsonic backend, and a private network or authenticated access proxy.
 
 ```bash
 git clone https://github.com/SoPat712/allstarr.git
@@ -27,86 +45,105 @@ cd allstarr
 docker compose up -d
 ```
 
-The default stack is one container. It stores its database, encryption key ring, kept music and cache in `./data`. No `.env` file or host setup script is required to start it. Music clients use port 5274; the dashboard is at `http://localhost:5275` and binds to loopback by default.
+This starts one container. No `.env` file or setup script is needed. Allstarr keeps its data in `./data`.
 
-Choose Jellyfin or Subsonic / OpenSubsonic in the dashboard and verify a media-server administrator. Use an address reachable from inside the container, such as `http://host.docker.internal:8096` for Jellyfin on the Docker host. Allstarr saves the connection in the data folder, discards the password and restarts. Sign in and follow the setup guide to review sources and household settings. Optional startup defaults are listed in `.env.example`.
-
-One deployment serves one household. Backend administrators manage deployment settings and Shared provider accounts; listeners manage their own playlists, Personal accounts, match choices, and listening preferences. Listener account connections are enabled by default and can be disabled by an administrator without removing existing accounts.
-
-The dashboard binds to loopback by default. LAN or reverse-proxy access requires an explicit trusted-network policy; see [configuration](docs/operations/configuration.md). Keep Allstarr behind a private network, VPN, or authenticated proxy because it can access media-server and provider accounts.
-
-Read the [user guide](docs/user-guide.md) for the dashboard map, setup order, playlist modes, matching, cache, listening stats, history imports, and discovery.
-
-## Upgrade or recover
-
-An existing version 2 installation can keep its Compose file and `.env` unchanged. When its configured image reference receives version 3, pull and recreate only `allstarr`. Without a data mount, the runtime stores SQLite and its key ring under the existing cache mount at `/app/cache/allstarr-v3`. Native proxying stays available while you review the legacy settings import. The new default Compose file is for new installations; do not replace a working v2 layout during the upgrade. See [deployment and rollback](docs/operations/deployment-profiles.md).
-
-For a normal update, save a backup, then run `./allstarr.sh update`. It pulls the configured application image and preserves enabled Apple services. An unchanged v2 deployment should use its own Compose commands instead.
-
-Settings → Backups creates and restores verified database-and-key-ring backups. For a complete offline backup, stop Allstarr and copy the whole data folder, along with any external media roots and optional Apple volumes. Database archives exclude music and optional provider sessions. After a stopped folder copy, Allstarr verifies owned songs in a durable job before resuming file work. Review its status in Settings → Storage and verify playback before retiring the original folder. See [storage operations](docs/operations/storage.md) for backup, restore and rollback instructions.
-
-Source builds use the developer entry point:
+Open the dashboard at `http://localhost:5275`. It only listens on the host's loopback address. On a headless server, open an SSH tunnel from your own computer and then browse to `http://localhost:5275`:
 
 ```bash
-./tools/develop.sh mode source
-./tools/develop.sh up
+ssh -L 5275:127.0.0.1:5275 you@your-server
 ```
 
-Use `./tools/develop.sh update` for later source updates. It requires a clean tracked tree on a tracked branch and fast-forwards before building. Return to published images with `./tools/develop.sh mode release`.
+To open the dashboard from other machines on your network instead, see [private dashboard access](docs/operations/webui-access.md).
 
-## Product map
+## First-run setup
 
-- **Home** shows current playback, listeners, health, storage, work, and recent activity.
-- **Library** owns provider playlists, match review, cached audio, and kept audio.
-- **Integrations** owns Services, encrypted Accounts, extension packages, health, and provider Routing.
-- **For you** owns personal mixes, new releases, taste controls, Recap and history imports.
-- **Activity** explains completed and failed work with correlation details.
-- **Settings** owns operator behavior, cache policy, maintenance, backup, and recovery. Routing, playback quality and matching policy live in Integrations.
+1. **Connect your media server.** Choose Jellyfin or Subsonic and enter an address that works from inside the container. For a server on the same host, use `http://host.docker.internal:8096` for Jellyfin or `http://host.docker.internal:4533` for Navidrome. `localhost` inside the container means Allstarr itself. Sign in with a media-server administrator account. Allstarr verifies it, saves the connection, discards the password and restarts.
+2. **Sign in and follow the setup guide.** Everyone signs in with their usual media-server account. Administrators come from the media server. The setup guide walks through sources and household settings. Reopen it any time from **Settings → Backups and health → Setup guide**. Nothing is reset.
+3. **Connect services.** Add service accounts in **Sources → Accounts**, and extensions in **Sources → Services → Add extension**. An account is **Shared** (used for the whole household) or **Personal** (one listener's). Listeners can connect their own accounts unless an administrator turns that off in **Settings → Music sources**. Source order for search, downloads, streaming, playlists and lyrics is also in **Settings → Music sources**.
+4. **Set up apps.** In **Settings → Apps**, set the **Music-client address** your listeners will use, for example `http://192.168.1.10:5274` or your HTTPS hostname. Apps built for Allstarr's own client API need **Client API for apps** turned on there. It is off by default.
 
-For you is available to signed-in listeners. AudioMuse is shelved: its code remains in the build, but Sounds is hidden from the normal dashboard. See [AudioMuse status](docs/operations/audiomuse.md).
+The [user guide](docs/user-guide.md) covers the dashboard in detail.
 
-## Capabilities
+## Connect music apps
 
-- Presents one selected Jellyfin or Subsonic/OpenSubsonic surface while relaying native backend behavior.
-- Merges local results with configured metadata and playable providers.
-- Matches one recording to a local item and multiple provider identities with reviewable evidence.
-- Imports personal provider playlists once or keeps them linked, with per-user credentials and an explicit option to retain every resolved downloadable song in owner-scoped kept storage.
-- Routes streaming, download, lyrics, and artwork through typed, account-aware capabilities.
-- Supports personal Automatic, Manual only and Off source preferences, including a built-in manual-only ArtistGrid catalog for explicitly selected versions.
-- Runs imports, matching, downloads, playlist changes, scrobbling, and other long work as durable inspectable jobs.
-- Installs verified third-party provider extensions through an explicit registry, permission review, staged activation.
+Point your app at Allstarr's address, `http://<allstarr-host>:5274`, instead of your media server. Sign in with your usual media-server username and password. Use the Jellyfin or Subsonic option in the app, whichever matches your server.
 
-Provider availability depends on connected accounts, optional sidecars, permissions, and health. Missing optional services reduce only the affected capability.
+The dashboard's **Connect apps** page shows the address and step-by-step setup for each app it lists:
 
-## Optional services
+- Jellyfin: Finer Player, Musiver, Feishin, Finamp, Jellyfin Web and Symfonium.
+- Subsonic: Feishin, Tempo and Symfonium.
 
-Apple/GAMDL download support uses an optional Compose profile.
+See [client compatibility](docs/operations/client-compatibility.md) for known limits. Listeners can send problems to their administrator from **Report a problem**.
+
+## Optional extras
+
+- **Apple Music playback and downloads:** upload a legally obtained Apple Music APK or APKM in **Sources → Services → Apple Music** (**Sign in to Apple Music → Advanced setup**), then run `./allstarr.sh enable apple`. Allstarr does not distribute Apple code. See [Apple download provider](docs/operations/apple-download-provider.md).
+- **Automatic extension sign-in renewal:** `./allstarr.sh enable sessions` adds an optional Chromium service that renews approved `api.zarz.moe` extension sign-ins when they expire. See [session verifier](sidecars/session-verifier/README.md).
+- **Adding songs to your Jellyfin library:** mount your music folder into the container at the same path Jellyfin uses, then choose it in **Settings → Library → Where added songs go**. See [storage operations](docs/operations/storage.md).
+- **Mixes from sound:** connect AudioMuse in **Settings → Mixes and discovery**. See [AudioMuse](docs/operations/audiomuse.md).
+- **Alerts:** **Settings → Alerts** can send problems to ntfy, Discord or a webhook.
+- **HTTPS, remote apps and single sign-on:** see [HTTPS, private dashboard access and SSO](docs/operations/webui-access.md).
+
+## Update and back up
+
+Back up first. **Settings → Backups and health** makes verified backups of your settings, accounts and history, and restores them. These backups don't include music files. For a complete copy, stop Allstarr and copy the whole data folder. Use `sudo cp -a` if Docker created the files as root.
 
 ```bash
-./allstarr.sh enable apple x86_64
+docker compose stop allstarr
+cp -a ./data ../allstarr-data-backup
+docker compose up -d --no-deps allstarr
 ```
 
-Spotify lyrics run inside Allstarr using a selected Spotify account. The Apple profile requires a legally obtained compatible APK/APKM supplied by the operator. Allstarr does not distribute Apple binaries. Follow the [Apple provider](docs/operations/apple-download-provider.md) and [Spotify lyrics](docs/operations/spotify-lyrics.md) guides.
+Then update:
 
-For automatic renewal of approved `api.zarz.moe` extension sign-ins, run
-`./allstarr.sh enable sessions`. This optional Chromium service completes fresh
-verification when the upstream session reaches its lifetime cap. See the
-[session verifier](sidecars/session-verifier/README.md) for setup and recovery.
+```bash
+./allstarr.sh update
+```
+
+This pulls the image named in Compose and restarts Allstarr with any optional extras you enabled. To move to a different release, set `ALLSTARR_IMAGE` in `.env` first. Run `./allstarr.sh help` for the other commands. See [storage operations](docs/operations/storage.md) for restore and rollback.
+
+## Deployment settings
+
+Most settings live in the dashboard. A few values are needed before Allstarr starts, and these go in an optional `.env` file next to `docker-compose.yml`. Copy `.env.example` to start. Recreate the container after a change with `./allstarr.sh up` or `docker compose up -d`.
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `ALLSTARR_IMAGE` | `ghcr.io/sopat712/allstarr:3.1.0-beta.1` | Image to run. |
+| `ALLSTARR_DATA_PATH` | `./data` | Host folder or named volume for the data folder. |
+| `ALLSTARR_RELEASE_PROFILE` | `core` | Feature set. Leave it at `core`. |
+| `PROXY_BIND_ADDRESS`, `PROXY_PORT` | `0.0.0.0`, `5274` | Where music apps connect. |
+| `ADMIN_BIND_ADDRESS`, `ADMIN_PORT` | `127.0.0.1`, `5275` | Where the dashboard listens on the host. |
+| `ADMIN_BIND_ANY_IP`, `ADMIN_TRUSTED_SUBNETS` | `false`, empty | Allow the dashboard from other machines on the networks you list. |
+| `ADMIN_BASE_PATH` | empty | Serve the dashboard under a path such as `/allstarr` behind a reverse proxy. |
+| `BACKEND_TYPE`, `JELLYFIN_URL`, `SUBSONIC_URL` | `Jellyfin`, empty, empty | Optional first-run defaults. The connection saved in the dashboard wins. |
+| `SESSION_VERIFIER_URL` | empty | Address of the sign-in renewal service. `./allstarr.sh enable sessions` sets it for you. |
+
+See [configuration](docs/operations/configuration.md) for the rest.
 
 ## Documentation
 
 | Need | Start here |
 | --- | --- |
 | Use the dashboard | [User guide](docs/user-guide.md) |
-| Install and configure | [Configuration](docs/operations/configuration.md) |
-| Back up, restore, or move | [Storage runbook](docs/operations/storage.md) |
-| Check a client | [Client compatibility](docs/operations/client-compatibility.md) |
-| Build a client | [Client API](docs/api/README.md), [v2](docs/api/v2.md), [v1](docs/api/v1.md) |
-| Understand the system | [Architecture overview](docs/architecture/overview.md) |
+| Configure Allstarr | [Configuration](docs/operations/configuration.md) |
+| Install, update and add optional services | [Deployment profiles](docs/operations/deployment-profiles.md) |
+| Back up, restore or move | [Storage operations](docs/operations/storage.md) |
+| Use HTTPS, remote access or SSO | [HTTPS, private dashboard access and SSO](docs/operations/webui-access.md) |
+| Check a music app | [Client compatibility](docs/operations/client-compatibility.md) |
+| Set up lyrics | [Lyrics sources](docs/operations/lyrics.md) |
+| Fix scrobbling | [Scrobble delivery and recovery](docs/operations/scrobbling.md) |
+| Build an app | [Client API](docs/api/README.md) |
 | Build an extension | [Extension SDK](docs/extensions/sdk-v1.md) |
-| Contribute code | [Contributing](CONTRIBUTING.md) |
 
 The complete index is in [docs/README.md](docs/README.md).
+
+## Upgrading from version 2
+
+Keep your existing Compose file, `.env` and folders, and follow the version 2 upgrade steps in [deployment profiles](docs/operations/deployment-profiles.md) and the [legacy `.env` import](docs/operations/legacy-env-import.md) guide.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for building from source, tests and the code layout.
 
 ## License
 

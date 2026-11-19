@@ -2,42 +2,43 @@
 
 Start with the guide for your task. These pages describe the current implementation.
 
-## Start here
+## Run Allstarr
 
-- [User guide](user-guide.md): dashboard, setup, playlists, cache and For you.
-- [Client API](api/README.md): authentication, versions, errors and limits.
-  [v2](api/v2.md) is the native API for new clients; [v1](api/v1.md) covers existing integrations.
-- [Architecture overview](architecture/overview.md): runtime boundaries and code ownership.
-- [Music ecosystem reference ledger](architecture/reference-projects.md): pinned upstream projects, reusable lessons, license boundaries, and rejected ideas.
-- [Configuration](operations/configuration.md): deployment-owned values, durable settings, and secrets.
-- [Deployment profiles](operations/deployment-profiles.md): install, update, optional services, backup, and restore.
-- [Storage](operations/storage.md): SQLite ownership, data folders, backup, and recovery.
-- [Scrobble delivery and recovery](operations/scrobbling.md): saved destinations, retries and uncertain-send repair.
-- [Extension SDK v1](extensions/sdk-v1.md): package, capability, permission, and account contracts.
+- [User guide](user-guide.md): the dashboard, first setup, playlists, matches, cache and For you.
+- [Configuration](operations/configuration.md): deployment values, dashboard settings and saved secrets.
+- [Deployment profiles](operations/deployment-profiles.md): install, update, optional services, backup and rollback.
+- [Storage](operations/storage.md): the data folder, backups, restore and moving an installation.
+- [HTTPS, private dashboard access and SSO](operations/webui-access.md): reverse proxies, remote music apps and single sign-on.
+- [Legacy `.env` import](operations/legacy-env-import.md): bringing settings over from version 2.
+- [Lyrics sources](operations/lyrics.md): where lyrics come from and how to set their order.
+- [Scrobble delivery and recovery](operations/scrobbling.md): Last.fm and ListenBrainz delivery, retries and repair.
+- [Client compatibility](operations/client-compatibility.md): which music apps work and their known limits.
+- [Apple download provider](operations/apple-download-provider.md): optional Apple Music playback and downloads.
+- [Apple download gateway](../sidecars/apple-gateway/README.md): the optional gateway service behind Apple downloads.
+- [Extension session verifier](../sidecars/session-verifier/README.md): optional automatic renewal of extension sign-ins.
+- [AudioMuse](operations/audiomuse.md): optional AudioMuse connection for mixes built from how songs sound.
 
-## Operator guides
+## Build on Allstarr
 
-- [Release checklist](operations/release-checklist.md)
-- [HTTPS, private dashboard access and SSO](operations/webui-access.md)
-- [Legacy `.env` import](operations/legacy-env-import.md)
-- [Apple download provider](operations/apple-download-provider.md)
-- [Lyrics sources](operations/lyrics.md)
-- [Spotify lyrics service](operations/spotify-lyrics.md)
-- [Client compatibility](operations/client-compatibility.md)
-- [Jellyfin v12 music surface](operations/jellyfin-music-surface-v12.md)
-- [AudioMuse status](operations/audiomuse.md): shelved integration, retained in the build and hidden from the normal dashboard.
+- [Client API](api/README.md): authentication, versions, errors and limits for apps built for Allstarr.
+  [v2](api/v2.md) is the native API for new apps; [v1](api/v1.md) covers existing integrations.
+- [Extension SDK v1](extensions/sdk-v1.md): package, capability, permission and account contracts for extensions.
+- [Jellyfin music surface](operations/jellyfin-music-surface-v12.md): the Jellyfin requests Allstarr allows and how it answers them.
 
-## Contributor guides
+## Contributors and maintainers
 
-- [Contributing](../CONTRIBUTING.md)
+- [Contributing](../CONTRIBUTING.md): building from source, tests and the code layout.
 - [WebUI design system](../DESIGN.md)
-- [Test and qualification tools](../tools/tests/README.md)
+- [Architecture overview](architecture/overview.md): runtime boundaries and code ownership.
+- [Music ecosystem reference ledger](architecture/reference-projects.md): upstream projects, reuse and license notices, and rejected ideas.
 - [Provider capability module](../allstarr/Providers/Contracts/README.md)
+- [Test and qualification tools](../tools/tests/README.md)
+- [Release checklist](contributing/release-checklist.md)
 
 ## Documentation rules
 
-1. Describe current behavior. Mark shelved functionality plainly.
-2. Link to the owning code instead of duplicating long lists that can drift.
-3. Keep deployment choices in operator guides and unfinished work out of public user documentation.
-4. SQLite is the durable store. Redis and Valkey are not required. Legacy imports require an explicit preview and confirmation. Source builds use the overlay under `tools/`.
-5. When code and documentation disagree, fix the documentation in the same completed implementation chunk.
+1. Describe current behavior. Mark shelved or development-only functionality plainly.
+2. Use the names the dashboard shows today for pages, tabs and settings.
+3. Link to the owning code or page instead of copying long lists that can drift.
+4. Keep deployment choices in operator guides, and keep unfinished work out of user documentation.
+5. When code and documentation disagree, fix the documentation in the same change.

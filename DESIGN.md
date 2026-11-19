@@ -24,6 +24,7 @@ Use Google Material 3 as the interaction and visual grammar, adapted to Allstarr
 
 - Keep the existing Svelte, Bits UI, Tailwind, shadcn-style primitives, and Lucide stack. Do not add Material Web and duplicate the control layer.
 - Routes compose shared Button, Checkbox, Select, Dialog, Menu, Tabs, Badge, Progress, Skeleton, Tooltip, and table patterns. They do not restyle raw controls.
+- Page-level patterns such as side panels, page status bars, empty and error states, advanced folds and row skeletons live in `webui/src/lib/components/patterns/`. Reuse them before writing route CSS.
 - Provider identity uses the existing provider mark and artwork components.
 - Creative canvas effects require a GPL-compatible implementation or license. Canvas UI is not vendored because its Commons Clause adds distribution restrictions that conflict with this repository's GPL terms.
 
@@ -35,7 +36,7 @@ Use Google Material 3 as the interaction and visual grammar, adapted to Allstarr
 - Peer dashboard cards use equal columns unless the task hierarchy documents a deliberate primary surface. A single grid item expands to the available track instead of retaining an empty half-column.
 - Regular controls use the 44px `--control-md` baseline. Labels, controls, helper text, and footer actions align within a shared field grid.
 - The compact bottom navigation reserves `--mobile-nav-height` on the scrolling workspace so terminal content and actions remain fully visible above it.
-- The compact bottom navigation keeps Home, Library, For you, Activity, and **More** in equal-width tracks derived from its contents. Integrations, Settings, appearance, and session controls live in the More sheet instead of crowding the primary bar.
+- The compact bottom navigation keeps Home, Library, For you, Activity, and **More** in equal-width tracks derived from its contents. Listening settings, Sources, Connect apps, Settings (for administrators), Report a problem, appearance, and session controls live in the More sheet instead of crowding the primary bar.
 - Only one primary navigation is visible at a time: the sidebar above 760px, or bottom navigation at 760px and below. Desktop sidebar styles must not target the mobile navigation. The More sheet closes when leaving the compact layout and restores focus to a visible navigation control.
 - The desktop sidebar stays fixed to the viewport while the page scrolls. In short windows, its destination list scrolls independently so the logo, collapse control and profile remain reachable.
 - Data surfaces grow with sparse content and cap their height only when a real list needs internal scrolling. Empty viewport-filling panels are not used as decoration.
@@ -43,11 +44,11 @@ Use Google Material 3 as the interaction and visual grammar, adapted to Allstarr
 ## Information architecture
 
 - **Home:** current playback and listeners first; source route, scrobble delivery, health, and work follow.
-- **Library:** playlists, mappings, cached files, and kept files share one task vocabulary and aligned tables.
-- **For you:** owns mixes, New releases, Your taste and Recap. Listening-history import belongs under Recap. AudioMuse's Sounds page is shelved and hidden. The older Intelligence workspace requires the explicit development composition.
-- **Integrations:** Services owns provider configuration and diagnostics. Extensions owns package lifecycle. Accounts and Routing explain their scope in plain language.
+- **Library:** Playlists, Matches, Cached, Kept, To library and Import share one task vocabulary and aligned tables. Listeners see Playlists, Matches, To library and Import.
+- **For you:** owns mixes, New releases, Your taste and Recap. Listening-history import belongs under Recap. AudioMuse has no page of its own; its connection lives in **Settings → Mixes and discovery**. The older Intelligence workspace requires the explicit development composition.
+- **Sources:** Services owns service configuration, diagnostics and extension packages (**Add extension**). Accounts explains each account's scope, Personal or Shared, in plain language. Source order lives in **Settings → Music sources**.
 - **Activity:** outcome, actor, target, duration, and time are primary; technical payloads are progressive detail.
-- **Settings:** deployment and operator controls only. User-scoped controls stay near the data they affect.
+- **Settings:** one list of categories grouped as You, Everyone and This server, each with a line saying what's set, and one page per category. Listeners see only their own categories. Each page carries one scope chip (Just you or Everyone). Changes save as they are made, with Undo for ordinary values. Controls for one playlist, match or account stay near the data they affect.
 
 ## Interaction rules
 
