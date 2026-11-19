@@ -6912,6 +6912,13 @@
               "null",
               "string"
             ]
+          },
+          "playlistLibraryId": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "description": "The media server\u0027s id for the playlist, which /Playlists routes take."
           }
         }
       },
@@ -8599,6 +8606,23 @@
           },
           "coverUrl": {
             "type": "string"
+          },
+          "albumLibraryId": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "description": "The media server album when it is in the library."
+          },
+          "albumAliases": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "The older service id of an album that is not in the library, which the media-server routes accept."
           }
         }
       },
@@ -8624,6 +8648,23 @@
               "null",
               "string"
             ]
+          },
+          "libraryId": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "description": "The media server artist when it is in the library."
+          },
+          "aliases": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "The older service id of an artist that is not in the library, which the media-server routes accept."
           }
         }
       },
@@ -9202,6 +9243,23 @@
                 "type": "null"
               }
             ]
+          },
+          "libraryId": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "description": "The media server album when it is in the library."
+          },
+          "aliases": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "The older service id of an album that is not in the library, which the media-server routes accept."
           }
         }
       },
