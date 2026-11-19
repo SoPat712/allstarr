@@ -28,6 +28,8 @@ public sealed class ListeningLibraries(
     public const string Key = "listening";
     private static readonly TimeSpan Remembered = TimeSpan.FromSeconds(30);
     private readonly ConcurrentDictionary<Guid, (DateTimeOffset At, IReadOnlyList<string>? Selected)> chosen = new();
+    // A listener's libraries rarely change, and asking the media server took about 75 ms on every preferences read.
+    private readonly ConcurrentDictionary<(ProtocolKind, string, string), (DateTimeOffset At, BackendMusicLibrary[] Named)> listed = new();
 
     public async Task<BackendLibraryAccess> ResolveAsync(ProtocolExecutionContext context, CancellationToken cancellationToken = default) =>
         Narrow(await inner.ResolveAsync(context, cancellationToken), await SelectedAsync(Owner(context), cancellationToken));
@@ -38,8 +40,11 @@ public sealed class ListeningLibraries(
         return access with { Access = Narrow(access.Access, await SelectedAsync(userId, cancellationToken)) };
     }
 
-    public Task InvalidateAsync(ProtocolKind protocol, string backendInstanceId, string backendPrincipalId) =>
-        inner.InvalidateAsync(protocol, backendInstanceId, backendPrincipalId);
+    public Task InvalidateAsync(ProtocolKind protocol, string backendInstanceId, string backendPrincipalId)
+    {
+        listed.TryRemove((protocol, backendInstanceId, backendPrincipalId), out _);
+        return inner.InvalidateAsync(protocol, backendInstanceId, backendPrincipalId);
+    }
 
     /// <summary>A choice that no longer matches any library the listener can open falls back to all of them.</summary>
     internal static BackendLibraryAccess Narrow(BackendLibraryAccess access, IReadOnlyList<string>? selected)
@@ -101,6 +106,8 @@ public sealed class ListeningLibraries(
 
     private async Task<IReadOnlyList<BackendMusicLibrary>?> AvailableAsync(ProtocolExecutionContext context, CancellationToken cancellationToken)
     {
+        var key = (context.Protocol, context.BackendInstanceId, context.VerifiedBackendPrincipalId);
+        if (listed.TryGetValue(key, out var known) && clock.GetUtcNow() - known.At < Remembered) return Allowed(known.Named, context.Protocol);
         try
         {
             using var request = await permissions.CreateRequestAsync(context, cancellationToken);
@@ -118,14 +125,22 @@ public sealed class ListeningLibraries(
             }
             using var document = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync(cancellationToken), cancellationToken: cancellationToken);
             var named = BackendMusicLibraries.ReadNamed(context.Protocol, document.RootElement);
-            var allowed = BackendMusicLibraries.Select(named.Select(library => library.Id), configuration, context.Protocol).ToHashSet(StringComparer.Ordinal);
-            return named.Where(library => allowed.Contains(library.Id)).DistinctBy(library => library.Id).ToArray();
+            if (listed.Count >= 1024) listed.Clear();
+            listed[key] = (clock.GetUtcNow(), named);
+            return Allowed(named, context.Protocol);
         }
         catch (Exception exception) when (exception is HttpRequestException or JsonException or InvalidOperationException or UnauthorizedAccessException)
         {
             logger?.LogWarning(exception, "Music libraries could not be read");
             return null;
         }
+    }
+
+    // The household's choice of libraries applies on every read, so a change to it shows at once.
+    private BackendMusicLibrary[] Allowed(BackendMusicLibrary[] named, ProtocolKind protocol)
+    {
+        var allowed = BackendMusicLibraries.Select(named.Select(library => library.Id), configuration, protocol).ToHashSet(StringComparer.Ordinal);
+        return named.Where(library => allowed.Contains(library.Id)).DistinctBy(library => library.Id).ToArray();
     }
 
     private static Guid? Owner(ProtocolExecutionContext context) => context.Actor?.EffectiveUserId ?? context.Principal?.UserId;
