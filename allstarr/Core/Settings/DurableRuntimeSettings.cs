@@ -1038,6 +1038,8 @@ public sealed class RuntimeSettingsLiveOptions
             case "Library:DownloadMode": SetBoth(item => item.DownloadMode = Enum.Parse<DownloadMode>((string)value), item => item.DownloadMode = Enum.Parse<DownloadMode>((string)value)); break;
             case "Library:StorageMode": SetBoth(item => item.StorageMode = Enum.Parse<StorageMode>((string)value), item => item.StorageMode = Enum.Parse<StorageMode>((string)value)); break;
             case "Library:CacheDurationHours": SetBoth(item => item.CacheDurationHours = (int)value, item => item.CacheDurationHours = (int)value); break;
+            // Library reads take the choice from configuration on every request, so it applies without a restart.
+            case "Backend:MusicLibraryIds": _configuration["Backend:MusicLibraryIds"] = (string)value; break;
         }
     }
 

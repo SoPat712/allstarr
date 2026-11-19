@@ -2,6 +2,7 @@ using allstarr.Core.Playback;
 using allstarr.Core.Providers;
 using System.Text.Json;
 using allstarr.Core.Operations;
+using allstarr.Core.Protocols;
 using allstarr.Core.Settings;
 using allstarr.Core.Storage;
 using allstarr.Core.Identity;
@@ -397,7 +398,7 @@ public sealed class DurableRuntimeSettingsTests : IAsyncLifetime
         await CreateService([]).ApplyBatchAsync([new(key, raw)], "webui", _userId);
         var saved = await CreateService([]).GetAsync(key);
         Assert.Equal(raw, saved.NormalizedValue);
-        Assert.Equal(key != "Storage:BackupRetentionCount", RuntimeSettingCatalog.Require(key).RequiresRestart);
+        Assert.Equal(key is not ("Storage:BackupRetentionCount" or "Backend:MusicLibraryIds"), RuntimeSettingCatalog.Require(key).RequiresRestart);
     }
 
     [Theory]
@@ -534,6 +535,20 @@ public sealed class DurableRuntimeSettingsTests : IAsyncLifetime
         var audit = await db.AuditEvents.SingleAsync();
         Assert.Equal("runtime-settings.batch-apply", audit.Action);
         Assert.DoesNotContain("12", audit.DetailsJson, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task TheHouseholdLibraryChoiceAppliesWithoutARestart()
+    {
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>()).Build();
+        var service = new DurableRuntimeSettingsService(_factory, configuration, _clock,
+            new RuntimeSettingsChangeSignal(), LiveOptions(configuration, new PlaybackSettings()),
+            NullLogger<DurableRuntimeSettingsService>.Instance);
+
+        await service.ApplyBatchAsync([new("Backend:MusicLibraryIds", "library-b")], "webui", _userId);
+
+        Assert.False(RuntimeSettingCatalog.Require("Backend:MusicLibraryIds").RequiresRestart);
+        Assert.Equal(["library-b"], BackendMusicLibraries.Select(["library-a", "library-b"], configuration, ProtocolKind.Jellyfin));
     }
 
     [Fact]
