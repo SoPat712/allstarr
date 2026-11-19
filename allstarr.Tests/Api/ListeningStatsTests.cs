@@ -27,7 +27,8 @@ public sealed class ListeningStatsTests : IAsyncLifetime
     {
         database = await SqliteTestDatabase.CreateAsync();
         factory = new(database.Options);
-        stats = new(factory, clock);
+        // Visits here wait for every read, so each sees the plays just added.
+        stats = new(factory, clock) { FreshWait = TimeSpan.FromMinutes(1) };
         await using var db = factory.CreateDbContext();
         db.Users.Add(new()
         {
@@ -54,7 +55,7 @@ public sealed class ListeningStatsTests : IAsyncLifetime
                 ImmutableHashSet<string>.Empty, "lossless", .07)
             { Preferences = new(filter), PreferenceRevision = filter });
         stats.Dispose();
-        stats = new(factory, clock, policies: policies.Object);
+        stats = new(factory, clock, policies: policies.Object) { FreshWait = TimeSpan.FromMinutes(1) };
         foreach (var rating in new bool?[] { false, true, null })
         {
             var play = Play("2026-10-01T12:00:00Z");
@@ -352,6 +353,44 @@ public sealed class ListeningStatsTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task AVisitDuringASlowReadAfterNewPlaysShowsTheLastRecapAndTheReadIsKeptForTheNext()
+    {
+        stats.Dispose();
+        stats = new(factory, clock) { FreshWait = TimeSpan.FromMilliseconds(50) };
+        Factory.Visiting.Value = true;
+        await Add(Play("2025-01-01T12:00:00Z"));
+        var first = await stats.GetAsync(Session(), null, 2025, default);
+        await Add(Play("2025-02-01T12:00:00Z"));
+        factory.Hold = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        Assert.Same(first, await stats.GetAsync(Session(), null, 2025, default));
+        Assert.Same(first, await stats.GetAsync(Session(), null, 2025, default));
+        factory.Hold.SetResult();
+        await stats.WarmAsync(default);
+
+        Assert.Equal(2, (await stats.GetAsync(Session(), null, 2025, default)).PlayCount);
+        Assert.Equal(2, factory.Reads);
+    }
+
+    [Fact]
+    public async Task AVisitThatGivesUpLeavesItsReadForTheNextVisit()
+    {
+        Factory.Visiting.Value = true;
+        await Add(Play("2025-01-01T12:00:00Z"));
+        factory.Hold = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var gaveUp = new CancellationTokenSource();
+
+        var visit = stats.GetAsync(Session(), null, 2025, gaveUp.Token);
+        await factory.Reached.Task;
+        gaveUp.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => visit);
+        factory.Hold.SetResult();
+
+        Assert.Equal(1, (await stats.GetAsync(Session(), null, 2025, default)).PlayCount);
+        Assert.Equal(1, factory.Reads);
+    }
+
+    [Fact]
     public async Task RecapsNotOpenedForADayOrPushedOutByNewerOnesAreNotReadAgain()
     {
         await Add(Play("2025-01-01T12:00:00Z"));
@@ -548,6 +587,23 @@ public sealed class ListeningStatsTests : IAsyncLifetime
     private sealed class Clock : IPlatformClock { public DateTimeOffset UtcNow { get; set; } }
     private sealed class Factory(DbContextOptions<AllstarrDbContext> options) : IDbContextFactory<AllstarrDbContext>
     {
+        // Recap reads run apart from the visit that asked, so a test marks its visits and can hold the reads.
+        public static readonly AsyncLocal<bool> Visiting = new();
+        public TaskCompletionSource? Hold { get; set; }
+        public TaskCompletionSource Reached { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int reads;
+        public int Reads => reads;
         public AllstarrDbContext CreateDbContext() => new(options);
+
+        public async Task<AllstarrDbContext> CreateDbContextAsync(CancellationToken cancellationToken = default)
+        {
+            if (!Visiting.Value)
+            {
+                Interlocked.Increment(ref reads);
+                Reached.TrySetResult();
+                if (Hold is { } hold) await hold.Task.WaitAsync(cancellationToken);
+            }
+            return new(options);
+        }
     }
 }

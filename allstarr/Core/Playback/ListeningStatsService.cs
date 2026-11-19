@@ -57,12 +57,20 @@ public sealed partial class ListeningStatsService(IDbContextFactory<AllstarrDbCo
     private const int TopLimit = 50;
     public static readonly TimeSpan WarmEvery = TimeSpan.FromMinutes(1);
     private static readonly TimeSpan KeptFor = TimeSpan.FromMinutes(10);
+    // A visit waits this long for a recap read after new plays, then answers from the last one while the read finishes.
+    internal TimeSpan FreshWait { get; init; } = TimeSpan.FromMilliseconds(750);
+    private static readonly TimeSpan StaleFor = TimeSpan.FromMinutes(30);
+    private static readonly TimeSpan BuildLimit = TimeSpan.FromMinutes(2);
     // Recaps opened lately are read again in the background; the list is bounded so odd years cannot pile up work.
     private const int RememberedRecaps = 24;
     private static readonly TimeSpan RememberedFor = TimeSpan.FromDays(1);
     private sealed record OpenedRecap(IntelligenceScope Scope, string? Period, int? Year, TimeZoneInfo Zone);
+    private sealed record RecapKey(IntelligenceScope Scope, ListeningStatsPeriod Interval, bool Synthetic, bool CleanOnly, string? Revision);
+    private sealed record KeptRecap(ListeningStats Stats, long Plays, long Finished, DateTimeOffset FreshUntil);
     private readonly MemoryCache cache = new(new MemoryCacheOptions { SizeLimit = 256 });
     private readonly ConcurrentDictionary<OpenedRecap, DateTimeOffset> opened = new();
+    private readonly ConcurrentDictionary<(RecapKey Recap, long Plays, long Finished), Lazy<Task<ListeningStats>>> building = new();
+    private readonly CancellationTokenSource stopping = new();
 
     public Task<ListeningStats> GetAsync(AdminAuthSession session, string? period, int? year, CancellationToken token, string? timeZoneId = null)
     {
@@ -96,7 +104,7 @@ public sealed partial class ListeningStatsService(IDbContextFactory<AllstarrDbCo
         var interval = CreatePeriod(period, year, clock.UtcNow, zone);
         opened[new(scope, period, year, zone)] = clock.UtcNow;
         if (opened.Count > RememberedRecaps) opened.TryRemove(opened.MinBy(item => item.Value));
-        return await CachedAsync(db, scope, interval, zone, actor, TimeSpan.Zero, token);
+        return await CachedAsync(db, scope, interval, zone, actor, TimeSpan.Zero, true, token);
     }
 
     // A recap opened lately is read again once the listener's plays changed or its answer is about to expire, so the next
@@ -118,12 +126,12 @@ public sealed partial class ListeningStatsService(IDbContextFactory<AllstarrDbCo
                 continue;
             }
             var interval = CreatePeriod(recap.Period, recap.Year, clock.UtcNow, recap.Zone);
-            await CachedAsync(db, recap.Scope, interval, recap.Zone, listener, 2 * WarmEvery, token);
+            await CachedAsync(db, recap.Scope, interval, recap.Zone, listener, 2 * WarmEvery, false, token);
         }
     }
 
     private async Task<ListeningStats> CachedAsync(AllstarrDbContext db, IntelligenceScope scope, ListeningStatsPeriod interval,
-        TimeZoneInfo zone, UserRecord listener, TimeSpan ahead, CancellationToken token)
+        TimeZoneInfo zone, UserRecord listener, TimeSpan ahead, bool visit, CancellationToken token)
     {
         // Reading a long history takes a moment, so an answer is kept until the listener's plays change.
         var owner = scope.OwnerUserId;
@@ -134,18 +142,53 @@ public sealed partial class ListeningStatsService(IDbContextFactory<AllstarrDbCo
             { Plays = group.LongCount(), Finished = group.LongCount(item => item.State == ListeningEventState.Completed) }).SingleOrDefaultAsync(token);
         var plays = stamp?.Plays ?? 0;
         var finished = stamp?.Finished ?? 0;
-        var key = (scope, interval, listener.IsSynthetic, plays, finished, cleanOnly, policy?.PreferenceRevision);
-        if (!cleanOnly && cache.TryGetValue(key, out (ListeningStats Stats, DateTimeOffset ExpiresAt) cached) && cached.ExpiresAt > clock.UtcNow + ahead)
-        { RequestTiming.Current?.NoteCache(true); artwork?.Queue(listener, cached.Stats); return cached.Stats; }
+        var key = new RecapKey(scope, interval, listener.IsSynthetic, cleanOnly, policy?.PreferenceRevision);
+        var last = cleanOnly ? null : cache.Get<KeptRecap>(key);
+        if (last != null && last.Plays == plays && last.Finished == finished && last.FreshUntil > clock.UtcNow + ahead)
+        { RequestTiming.Current?.NoteCache(true); artwork?.Queue(listener, last.Stats); return last.Stats; }
         RequestTiming.Current?.NoteCache(false);
-        var result = await ReadAsync(db, scope, interval, zone, token, clock.UtcNow, tags, cleanOnly, jellyfin, libraryAccess, http?.HttpContext?.Request.Headers);
-        cache.Set(key, (result, clock.UtcNow + KeptFor), new MemoryCacheEntryOptions
+        var read = Read(key, plays, finished, zone, listener, http?.HttpContext?.Request.Headers);
+        // While listening, every play makes a new read; a visit shows the last recap rather than wait on it.
+        if (visit && last != null && last.FreshUntil - KeptFor + StaleFor > clock.UtcNow)
         {
-            Size = 1,
-            AbsoluteExpirationRelativeToNow = KeptFor
+            try { return await read.WaitAsync(FreshWait, token); }
+            catch (TimeoutException) { artwork?.Queue(listener, last.Stats); return last.Stats; }
+        }
+        return await read.WaitAsync(token);
+    }
+
+    // One read per recap and play count, apart from the visit that asked: a visit that gives up leaves it running, and the
+    // next one shares it instead of starting over.
+    private Task<ListeningStats> Read(RecapKey key, long plays, long finished, TimeZoneInfo zone, UserRecord listener, IHeaderDictionary? requestHeaders)
+    {
+        var headers = requestHeaders == null ? null
+            : new HeaderDictionary(requestHeaders.ToDictionary(item => item.Key, item => item.Value, StringComparer.OrdinalIgnoreCase));
+        Lazy<Task<ListeningStats>>? mine = null;
+        mine = new(() =>
+        {
+            using (ExecutionContext.SuppressFlow()) return Task.Run(() => RunAsync(mine!));
         });
-        artwork?.Queue(listener, result);
-        return result;
+        return building.GetOrAdd((key, plays, finished), mine).Value;
+
+        async Task<ListeningStats> RunAsync(Lazy<Task<ListeningStats>> self)
+        {
+            try
+            {
+                using var limit = CancellationTokenSource.CreateLinkedTokenSource(stopping.Token);
+                limit.CancelAfter(BuildLimit);
+                await using var db = await factory.CreateDbContextAsync(limit.Token);
+                var result = await ReadAsync(db, key.Scope, key.Interval, zone, limit.Token, clock.UtcNow, tags,
+                    key.CleanOnly, jellyfin, libraryAccess, headers);
+                cache.Set(key, new KeptRecap(result, plays, finished, clock.UtcNow + KeptFor), new MemoryCacheEntryOptions
+                {
+                    Size = 1,
+                    AbsoluteExpirationRelativeToNow = StaleFor
+                });
+                artwork?.Queue(listener, result);
+                return result;
+            }
+            finally { building.TryRemove(KeyValuePair.Create((key, plays, finished), self)); }
+        }
     }
 
     internal static ListeningStatsPeriod CreatePeriod(string? period, int? year, DateTimeOffset now, TimeZoneInfo zone)
@@ -367,5 +410,10 @@ public sealed partial class ListeningStatsService(IDbContextFactory<AllstarrDbCo
     private sealed record StatsPlay(DateTimeOffset At, string TrackReference, Guid? CanonicalRecordingId,
         string? RecordingMusicBrainzId, string? Title, string? Artist, string? Album, string? AlbumArtist, long? DurationMilliseconds, bool Imported);
 
-    public void Dispose() => cache.Dispose();
+    public void Dispose()
+    {
+        stopping.Cancel();
+        stopping.Dispose();
+        cache.Dispose();
+    }
 }
