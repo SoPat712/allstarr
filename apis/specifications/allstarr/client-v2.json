@@ -7228,6 +7228,23 @@
               }
             ]
           },
+          "libraryId": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "description": "The media server album when it is in the library."
+          },
+          "aliases": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "The older service id of an album that is not in the library, which the media-server routes use."
+          },
           "explicit": {
             "type": [
               "null",
@@ -7571,6 +7588,16 @@
               "string"
             ],
             "description": "The media server artist when it is in the library."
+          },
+          "aliases": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "The older service id of an artist that is not in the library, which the media-server routes use."
           },
           "provider": {
             "type": [
@@ -9633,6 +9660,23 @@
             "items": {
               "$ref": "#/components/schemas/V2Ref"
             }
+          },
+          "libraryId": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "description": "The media server artist when it is in the library."
+          },
+          "aliases": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "The older service id of an artist that is not in the library, which the media-server routes use."
           }
         }
       },
@@ -9777,6 +9821,23 @@
                 "type": "null"
               }
             ]
+          },
+          "libraryId": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "description": "The media server playlist when it is the listener\u0027s own."
+          },
+          "aliases": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "The older service id of a service\u0027s playlist, which the media-server routes use."
           }
         }
       },
@@ -9862,6 +9923,23 @@
           },
           "id": {
             "type": "string"
+          },
+          "libraryId": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "description": "The media server item when this copy is the library\u0027s."
+          },
+          "aliases": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "The older service id of a service\u0027s copy, which the media-server routes use."
           }
         }
       },

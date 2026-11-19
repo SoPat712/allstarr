@@ -85,6 +85,9 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.Equal([V2Ids.TrackSource("ext-deezer-song-1"), V2Ids.TrackSource("ext-qobuz-song-2")],
             walk["alsoOn"]!.AsArray().Select(entry => entry!["id"]!.GetValue<string>()).ToArray());
         Assert.Equal(V2Ids.TrackSource("ext-deezer-song-3"), songs.Single(hit => hit!["alsoOn"] == null)!["id"]!.GetValue<string>());
+        // Each copy also carries the older id its own pages open by.
+        Assert.Equal(["ext-deezer-song-1", "ext-qobuz-song-2"],
+            walk["alsoOn"]!.AsArray().Select(entry => Assert.Single(entry!["aliases"]!.AsArray())!.GetValue<string>()).ToArray());
     }
 
     [Fact]
@@ -136,6 +139,15 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.Contains(sections["albums"]!.AsArray(), hit => hit!["album"]!["id"]!.GetValue<string>() == V2Ids.Album("ext-deezer-album-7"));
         Assert.Contains(sections["albums"]!.AsArray(), hit => hit!["album"]!["year"]?.GetValue<int>() == 2021);
         Assert.Contains(sections["artists"]!.AsArray(), hit => hit!["artist"]!["id"]!.GetValue<string>() == V2Ids.Artist("ext-deezer-artist-9"));
+        // Albums, artists and playlists carry the id their pages open by: the media server's, or the service's older one.
+        Assert.Equal("ext-deezer-album-7", Assert.Single(sections["albums"]!.AsArray().Single(hit =>
+            hit!["album"]!["id"]!.GetValue<string>() == V2Ids.Album("ext-deezer-album-7"))!["album"]!["aliases"]!.AsArray())!.GetValue<string>());
+        Assert.Equal("ext-deezer-artist-9", Assert.Single(sections["artists"]!.AsArray().Single(hit =>
+            hit!["artist"]!["id"]!.GetValue<string>() == V2Ids.Artist("ext-deezer-artist-9"))!["artist"]!["aliases"]!.AsArray())!.GetValue<string>());
+        foreach (var kind in new[] { "album", "artist", "playlist" })
+            Assert.All(sections[kind + "s"]!.AsArray().Select(hit => hit![kind]!.AsObject()), item =>
+                Assert.True(item["isExternal"]!.GetValue<bool>() ? item["aliases"]!.AsArray().Count == 1 && !item.ContainsKey("libraryId")
+                    : item["libraryId"] != null && !item.ContainsKey("aliases"), item.ToJsonString()));
         var playlist = sections["playlists"]!.AsArray().Single(hit => hit!["playlist"]!["isExternal"]!.GetValue<bool>())!["playlist"]!;
         Assert.Equal("Stored playlist", playlist["name"]!.GetValue<string>());
         Assert.Equal("Curator", playlist["curator"]!.GetValue<string>());
@@ -246,6 +258,9 @@ public sealed partial class ProtocolRouteFixtureTests
             var parts = library["artist"]!["alsoOn"]!.AsArray();
             Assert.Equal(new[] { V2Ids.Artist("library-artist"), V2Ids.Artist("ext-deezer-artist-same") }, parts.Select(part => part!["id"]!.GetValue<string>()));
             Assert.Equal(new[] { "jellyfin", "deezer" }, parts.Select(part => part!["source"]!.GetValue<string>()));
+            Assert.Equal("library-artist", parts[0]!["libraryId"]!.GetValue<string>());
+            Assert.Equal("ext-deezer-artist-same", Assert.Single(parts[1]!["aliases"]!.AsArray())!.GetValue<string>());
+            Assert.Equal("library-artist", library["artist"]!["libraryId"]!.GetValue<string>());
             Assert.All(parts, part => Assert.False(string.IsNullOrWhiteSpace(part!["sourceName"]!.GetValue<string>())));
         }
         else
@@ -255,6 +270,8 @@ public sealed partial class ProtocolRouteFixtureTests
             Assert.Equal("deezer", service["source"]!.GetValue<string>());
             Assert.Equal("jellyfin", library["source"]!.GetValue<string>());
             Assert.Equal(V2Ids.Artist("library-artist"), Assert.Single(service["artist"]!["namesakes"]!.AsArray())!["id"]!.GetValue<string>());
+            Assert.Equal("library-artist", Assert.Single(service["artist"]!["namesakes"]!.AsArray())!["libraryId"]!.GetValue<string>());
+            Assert.Equal("ext-deezer-artist-same", Assert.Single(service["artist"]!["aliases"]!.AsArray())!.GetValue<string>());
             Assert.Empty(service["artist"]!["alsoOn"]!.AsArray());
         }
         AssertSearchV2CamelCase(SearchV2Lines(text)[^1]);

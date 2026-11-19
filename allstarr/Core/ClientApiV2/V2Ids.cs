@@ -35,6 +35,20 @@ public static class V2Ids
 
     public static string Mix(Guid mixId) => "mix_" + mixId.ToString("N");
 
+    /// <summary>The kind a v2 id says it is by its prefix, or null for an older spelling.</summary>
+    public static V2IdKind? KindOf(string? value)
+    {
+        foreach (var (prefix, kind) in Prefixes)
+            if (value?.StartsWith(prefix, StringComparison.Ordinal) == true) return kind;
+        return null;
+    }
+
+    /// <summary>The media server id inside a v2 id of whatever kind it is.</summary>
+    public static string? LibrarySource(string? value) => KindOf(value) is { } kind ? LibrarySource(value, kind) : null;
+
+    /// <summary>The older service id inside a v2 id of whatever kind it is.</summary>
+    public static string? ServiceSource(string? value) => KindOf(value) is { } kind ? ServiceSource(value, kind) : null;
+
     /// <summary>The media server id inside a v2 id of this kind, or null when it names a service item or nothing.</summary>
     public static string? LibrarySource(string? value, V2IdKind kind) =>
         TryDecode(value, kind, out var id) && id.Recording == null && id.Source is { } source &&
