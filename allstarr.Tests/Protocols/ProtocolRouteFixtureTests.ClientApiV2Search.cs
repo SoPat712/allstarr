@@ -305,6 +305,27 @@ public sealed partial class ProtocolRouteFixtureTests
     }
 
     [Fact]
+    public async Task ClientApiV2_LyricsSearchKeepsAServiceSongNobodyHasPlayedYet()
+    {
+        using var factory = SearchV2Factory(SearchV2Gateway());
+        using var icons = new ProviderIconFiles();
+        using var client = CreateClientApiClient(factory);
+        icons.Use(factory.Services);
+        client.DefaultRequestHeaders.Authorization = new("Bearer", "listener-token");
+        // Its lyrics were stored, but nothing about the song itself was: the hit names it.
+        await StoreSearchV2Lyrics(factory, "listener", "unplayed", "Copper sky tonight");
+
+        using var response = await client.GetAsync("/allstarr/v2/search/lyrics?q=copper%20sky");
+        var text = await response.Content.ReadAsStringAsync();
+
+        Assert.True(response.StatusCode == HttpStatusCode.OK, text);
+        var track = Assert.Single(JsonNode.Parse(text)!["results"]!.AsArray())!["track"]!;
+        Assert.Equal(V2Ids.TrackSource("ext-deezer-song-unplayed"), track["id"]!.GetValue<string>());
+        Assert.Equal("Stored song", track["title"]!.GetValue<string>());
+        Assert.Equal("Stored artist", track["artists"]![0]!["name"]!.GetValue<string>());
+    }
+
+    [Fact]
     public async Task ClientApiV2_SearchFirstSnapshotMatchesV1SpeedWithDelayedProviderAndDetailReads()
     {
         var gateway = SearchV2Gateway(new() { Songs = [V2BatchSong("known")] }, delayMs: 1100);

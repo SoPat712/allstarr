@@ -2,6 +2,8 @@ using System.Text.Json;
 using allstarr.Controllers.ClientApi;
 using allstarr.Core.ClientApi;
 using allstarr.Core.Protocols;
+using allstarr.Models.Domain;
+using allstarr.Services.Local;
 using Microsoft.AspNetCore.Mvc;
 
 namespace allstarr.Core.ClientApiV2;
@@ -60,6 +62,25 @@ public sealed class V2SearchEndpoints(V2SearchStream stream, V2TrackReader track
         var result = await lyrics.ReadAsync(http, execution, query, limit);
         var found = await tracks.ReadAsync(http, execution, result.Results.Select(hit => hit.ItemId).ToArray(), false);
         var byId = Index(found.Tracks);
+        // A service song whose lyrics were found before anyone played it has no stored details yet; its hit names it.
+        var named = result.Results.Where(hit => hit.IsExternal && !byId.ContainsKey(hit.ItemId))
+            .Select(hit => (Hit: hit, Parsed: LocalLibraryService.ParseExternalResource(hit.ItemId)))
+            .Where(item => item.Parsed is { isExternal: true, type: "song", provider: not null, externalId: not null })
+            .DistinctBy(item => item.Hit.ItemId)
+            .ToDictionary(item => item.Hit.ItemId, item => new Song
+            {
+                Id = item.Hit.ItemId,
+                Title = item.Hit.Title,
+                Artist = item.Hit.Artist,
+                Artists = [item.Hit.Artist],
+                Album = item.Hit.Album ?? "",
+                AlbumId = item.Hit.AlbumId,
+                ExternalProvider = item.Parsed.provider,
+                ExternalId = item.Parsed.externalId
+            }, StringComparer.Ordinal);
+        if (named.Count > 0)
+            foreach (var pair in Index((await tracks.ReadWithSourcesAsync(http, execution, named.Keys.ToArray(), false, named)).Response.Tracks))
+                byId.TryAdd(pair.Key, pair.Value);
         var hits = result.Results.Where(hit => byId.ContainsKey(hit.ItemId)).Select(hit =>
             new V2LyricsSearchHit(byId[hit.ItemId], hit.Line, hit.Highlights, hit.Score, hit.Source)).ToArray();
         return new(200, new V2LyricsSearchResponse(hits, result.Truncated));
