@@ -1453,6 +1453,40 @@ public sealed class TrackMatchDecisionEngineTests(ITestOutputHelper output)
     }
 
     [Fact]
+    public void LibraryCopiesOfOneSongThatDifferOnlyBySecondsAreNotRivals()
+    {
+        var scope = Scope();
+        // A play imported with only a title and an artist: nothing in it could choose between the listener's copies.
+        var source = Source() with { Title = "Aaj Se TerI", Artist = "Arijit Singh", Album = null, AlbumArtist = null, DurationMilliseconds = null, Isrc = null };
+        var own = Candidate(scope) with
+        {
+            Title = "Aaj Se Teri",
+            Artist = "Arijit Singh",
+            Album = "Padman",
+            AlbumArtist = "Amit Trivedi",
+            DurationMilliseconds = 321_750,
+            Isrc = null
+        };
+        var others = Enumerable.Range(0, 3).Select(index => own with
+        {
+            LibraryTrackId = Guid.CreateVersion7(),
+            BackendItemId = "another-library-" + index,
+            CanonicalRecordingId = null,
+            Title = "Aaj Se Teri -",
+            DurationMilliseconds = 312_228
+        }).ToArray();
+
+        var decision = new TrackMatchDecisionEngine().Decide(scope, source, [own, .. others]);
+
+        Assert.Equal(TrackMatchReviewState.Accepted, decision.State);
+        Assert.Contains(decision.SelectedLibraryTrackId, others.Append(own).Select(copy => (Guid?)copy.LibraryTrackId));
+        Assert.DoesNotContain("ambiguous_top_candidates", decision.Warnings);
+        // Another cut of the song, a minute longer, is still a rival a person has to choose between.
+        var extended = others[0] with { Title = "Aaj Se Teri", DurationMilliseconds = 381_750 };
+        Assert.Equal(TrackMatchReviewState.Ambiguous, new TrackMatchDecisionEngine().Decide(scope, source, [own, extended]).State);
+    }
+
+    [Fact]
     public void MultipleAcceptanceQualifiedLocalRecordingsRemainAmbiguous()
     {
         var scope = Scope();

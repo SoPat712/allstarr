@@ -592,6 +592,7 @@ public sealed class TrackMatchDecisionEngine
              visible.Single(candidate => candidate.LibraryTrackId == score.LibraryTrackId) is var rival &&
              FuzzyMatcher.CarriesSourceAlbumMarkers(source.Title, source.Album, rival.Title, rival.Album)) &&
             !SameLibraryRecording(selected, visible.Single(candidate => candidate.LibraryTrackId == score.LibraryTrackId)) &&
+            !SameSongInLibrary(selected, visible.Single(candidate => candidate.LibraryTrackId == score.LibraryTrackId)) &&
             !SameRecordingIdentity(
                 selected,
                 visible.Single(candidate => candidate.LibraryTrackId == score.LibraryTrackId), source.Artist) &&
@@ -805,6 +806,31 @@ public sealed class TrackMatchDecisionEngine
                FuzzyMatcher.SplitCredits(left.Artist).Select(FuzzyMatcher.NormalizeForMatching).ToHashSet(StringComparer.Ordinal)
                    .SetEquals(FuzzyMatcher.SplitCredits(right.Artist).Select(FuzzyMatcher.NormalizeForMatching));
     }
+
+    // Two rips of a song differ by seconds; an edit or an extended version differs by far more.
+    private const int SameSongSeconds = 12;
+
+    /// <summary>
+    /// Two library copies of one song: the same title, artists, version and explicitness, and about the same length.
+    /// When they tie there is nothing left that could choose between them, so neither is a rival and the first in the
+    /// listener's own order is taken. Copies whose lengths are far apart stay rivals, as one is another cut of the song,
+    /// and so do copies whose own codes say they are different recordings.
+    /// </summary>
+    internal static bool SameSongInLibrary(LocalTrackMatchCandidate left, LocalTrackMatchCandidate right) =>
+        left.IsLocal && right.IsLocal &&
+        !(left.Isrc is { Length: > 0 } && right.Isrc is { Length: > 0 } && !FuzzyMatcher.IdentifiersEqual(left.Isrc, right.Isrc)) &&
+        !(TrackMatchSignals.RecordingIdentity(left) is { Length: > 0 } leftId && TrackMatchSignals.RecordingIdentity(right) is { Length: > 0 } rightId &&
+          !FuzzyMatcher.IdentifiersEqual(leftId, rightId)) &&
+        FuzzyMatcher.RecordingVersionsMatch(left.Title, left.Album, right.Title, right.Album) &&
+        FuzzyMatcher.TitleAnnotationsMatch(left.Title, left.Artist, right.Title, right.Artist) &&
+        !(TrackMatchSignals.Explicitness(left).HasValue && TrackMatchSignals.Explicitness(right).HasValue &&
+          TrackMatchSignals.Explicitness(left) != TrackMatchSignals.Explicitness(right)) &&
+        !(left.DurationMilliseconds is > 0 && right.DurationMilliseconds is > 0 &&
+          Math.Abs(left.DurationMilliseconds.Value - right.DurationMilliseconds.Value) > SameSongSeconds * 1000L) &&
+        FuzzyMatcher.NormalizeTitleForMatching(left.Title, left.Artist, right.Artist) ==
+        FuzzyMatcher.NormalizeTitleForMatching(right.Title, right.Artist, left.Artist) &&
+        FuzzyMatcher.SplitCredits(left.Artist).Select(FuzzyMatcher.NormalizeForMatching).ToHashSet(StringComparer.Ordinal)
+            .SetEquals(FuzzyMatcher.SplitCredits(right.Artist).Select(FuzzyMatcher.NormalizeForMatching));
 
     internal static bool SameRecordingIdentity(
         LocalTrackMatchCandidate left,
