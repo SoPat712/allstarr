@@ -303,6 +303,15 @@ public sealed class ItemDetailsReader(
             .DistinctBy(item => item.Id).ToDictionary(item => item.Id, item => item.Recording, StringComparer.Ordinal), libraryMemo);
         var matchTiming = new ItemMatchTiming();
         http.Items[typeof(ItemMatchTiming)] = matchTiming;
+        // Each song finds its snapshot and decision through these instead of scanning every snapshot against every
+        // decision and link, which cost about ten milliseconds a song on a mix.
+        var snapshotOrder = snapshots.Select((item, index) => (item.Id, index)).ToDictionary(item => item.Id, item => item.index);
+        var snapshotsById = snapshots.ToDictionary(item => item.Id);
+        var snapshotsByKey = snapshots.ToLookup(item => (item.ProviderId, item.ExternalIdHash));
+        var snapshotsDecidedFor = decisions.Where(item => item.CanonicalRecordingId.HasValue)
+            .ToLookup(item => item.CanonicalRecordingId!.Value, item => item.ExternalSnapshotId);
+        var linkedKeys = links.ToLookup(link => link.CanonicalRecordingId, link => (link.ProviderId, link.ExternalIdHash));
+        var decisionsBySnapshot = decisions.ToLookup(item => item.ExternalSnapshotId);
         Step("states and choices");
         var prepared = System.Diagnostics.Stopwatch.GetTimestamp();
         var built = await Task.WhenAll(requested.Select(async id =>
@@ -340,12 +349,12 @@ public sealed class ItemDetailsReader(
                 ? resolved.GetValueOrDefault(localRecording.ToString("D")) : resolved.GetValueOrDefault(id);
             var recordingId = identity?.Id ?? song?.CanonicalRecordingId;
             var snapshot = selectedSnapshots.GetValueOrDefault(id);
-            if (snapshot == null && recordingId.HasValue)
-                snapshot = snapshots.Where(item => decisions.Any(match => match.ExternalSnapshotId == item.Id && match.CanonicalRecordingId == recordingId) ||
-                        links.Any(link => link.CanonicalRecordingId == recordingId && link.ProviderId == item.ProviderId && link.ExternalIdHash == item.ExternalIdHash))
+            if (snapshot == null && recordingId is { } wanted)
+                snapshot = snapshotsDecidedFor[wanted].Select(snapshotsById.GetValueOrDefault).OfType<ExternalMetadataSnapshotRecord>()
+                    .Concat(linkedKeys[wanted].SelectMany(key => snapshotsByKey[key])).DistinctBy(item => item.Id)
                     .OrderByDescending(item => item.ResourceKind == "track").ThenByDescending(item => item.RetrievedAt)
-                    .ThenByDescending(item => item.SnapshotVersion).FirstOrDefault();
-            var decision = snapshot == null ? null : decisions.Where(item => item.ExternalSnapshotId == snapshot.Id)
+                    .ThenByDescending(item => item.SnapshotVersion).ThenBy(item => snapshotOrder[item.Id]).FirstOrDefault();
+            var decision = snapshot == null ? null : decisionsBySnapshot[snapshot.Id]
                 .OrderByDescending(item => item.DecisionVersion).ThenByDescending(item => item.DecidedAt).FirstOrDefault();
             var authority = snapshot == null ? null : layers[snapshot.Id];
             Interlocked.Add(ref lookupTicks, System.Diagnostics.Stopwatch.GetElapsedTime(lookupStarted).Ticks);
