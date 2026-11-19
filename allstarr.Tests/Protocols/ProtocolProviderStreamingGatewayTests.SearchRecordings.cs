@@ -15,7 +15,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
     [InlineData(ProtocolKind.Subsonic, "Housewife", "Tate McRae", "Housewife", 208, "B0HMZ6W375", "B0HMZ6W376")]
     [InlineData(ProtocolKind.Jellyfin, "Starving Artist", "ADÉLA", "PRIMA", 180, "B0HHC1HLZZ", "B0H9P8D5Z9")]
     [InlineData(ProtocolKind.Subsonic, "Starving Artist", "ADÉLA", "PRIMA", 180, "B0HHC1HLZZ", "B0H9P8D5Z9")]
-    public async Task SearchCombinesMultipleSparseAmazonCopiesUnderAKnownRecording(ProtocolKind protocol,
+    public async Task SearchKeepsCopiesWithoutALengthOrAlbumAsTheirOwnRows(ProtocolKind protocol,
         string title, string artist, string album, int seconds, string firstId, string secondId)
     {
         var anchor = RecordingSearchTrack("deezer", "known", title, artist, seconds, album);
@@ -24,12 +24,11 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         var (gateway, _) = SearchRankingGateway("spotiflac-amazon,deezer", "spotiflac-amazon,deezer",
             RecordingSearchCapability("spotiflac-amazon", sparse), RecordingSearchCapability("deezer", anchor));
 
-        var song = Assert.Single((await gateway.SearchAsync(SearchRankingContext(protocol), $"{title} {artist}", 20, 0, 0)).Songs);
+        var songs = (await gateway.SearchAsync(SearchRankingContext(protocol), $"{title} {artist}", 20, 0, 0)).Songs;
 
-        Assert.Equal("known", song.ExternalId);
-        Assert.Equal(seconds, song.Duration);
-        Assert.Equal(album, song.Album);
-        Assert.Equal(new[] { firstId, secondId, "known" }.Order(), song.SearchRoutes.Select(route => route.Value).Order());
+        // A name alone proves nothing, so every copy is listed and can still be played.
+        Assert.Equal(new[] { firstId, secondId, "known" }.Order(), songs.Select(song => song.ExternalId).Order());
+        Assert.All(songs, song => Assert.Single(song.SearchRoutes));
     }
 
     [Theory]
@@ -51,10 +50,10 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
 
         var songs = (await gateway.SearchAsync(SearchRankingContext(protocol), "Housewife Tate McRae", 20, 0, 0)).Songs;
 
-        Assert.Equal(6, songs.Count);
-        foreach (var id in new[] { "first", "different-duration", "different-album", "live", "remix", "other-artist" })
+        Assert.Equal(8, songs.Count);
+        foreach (var id in new[] { "first", "sparse-one", "sparse-two", "different-duration", "different-album", "live", "remix", "other-artist" })
             Assert.Contains(songs, song => song.ExternalId == id);
-        Assert.Equal(3, Assert.Single(songs, song => song.ExternalId == "first").SearchRoutes.Count);
+        Assert.Single(Assert.Single(songs, song => song.ExternalId == "first").SearchRoutes);
     }
 
     [Theory]
@@ -196,10 +195,11 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         Assert.Equal(3, result.Songs.Count(song => genuine.Contains(song.ExternalId)));
         if (query.Contains("Daft Punk", StringComparison.Ordinal))
             Assert.All(result.Songs.Take(3), song => Assert.Contains(song.ExternalId, genuine));
-        Assert.Equal(20, result.Songs.Count);
+        // A copy with no length can't be proven to be the album recording, so it keeps its own row below it.
+        Assert.Equal(21, result.Songs.Count);
         Assert.Contains(result.Songs, song => song.ExternalId == "unknown-prefixed");
-        Assert.DoesNotContain(result.Songs, song => song.ExternalId == "unknown");
-        Assert.Contains(result.Songs[0].SearchRoutes, route => route.Value == "unknown");
+        Assert.Contains(result.Songs, song => song.ExternalId == "unknown");
+        Assert.DoesNotContain(result.Songs[0].SearchRoutes, route => route.Value == "unknown");
 
         var merged = MusicSearchService.Merge<object>(query, [], result.Songs, [], [], [], null);
         Assert.Equal(result.Songs.Select(song => song.ExternalId), merged.Songs.Select(row => row.Song!.ExternalId));
@@ -350,9 +350,9 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
     {
         var (gateway, _) = SearchRankingGateway("youtube,deezer", "youtube,deezer",
             RecordingSearchCapability("youtube", RecordingSearchTrack("youtube", "first",
-                "Get Lucky (feat. Pharrell Williams and Nile Rodgers)", "Daft Punk", 370)),
+                "Get Lucky (feat. Pharrell Williams and Nile Rodgers)", "Daft Punk", 370, "Random Access Memories")),
             RecordingSearchCapability("deezer", RecordingSearchTrack("deezer", "album",
-                "Get Lucky (Album Version) - 2013 Remaster", "Daft Punk, Pharrell Williams & Nile Rodgers", 369,
+                "Get Lucky (Album Version)", "Daft Punk, Pharrell Williams & Nile Rodgers", 369,
                 "Random Access Memories")));
 
         var song = Assert.Single((await gateway.SearchAsync(SearchRankingContext(protocol), "Get Lucky Daft Punk", 25, 0, 0)).Songs);
@@ -363,6 +363,39 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         Assert.Equal("album", song.ExternalId);
         Assert.Equal("Random Access Memories", song.Album);
         Assert.Equal(["album", "first"], song.SearchRoutes.Select(route => route.Value).Order());
+    }
+
+    [Theory]
+    [InlineData(ProtocolKind.Jellyfin)]
+    [InlineData(ProtocolKind.Subsonic)]
+    public async Task SearchWithoutAlbumOrIsrcProofOrWithADifferentRemasterKeepsBothRows(ProtocolKind protocol)
+    {
+        var (gateway, _) = SearchRankingGateway("youtube,deezer,qobuz", "youtube,deezer,qobuz",
+            RecordingSearchCapability("youtube", RecordingSearchTrack("youtube", "first",
+                "Get Lucky (feat. Pharrell Williams and Nile Rodgers)", "Daft Punk", 370)),
+            RecordingSearchCapability("deezer", RecordingSearchTrack("deezer", "album",
+                "Get Lucky", "Daft Punk", 369, "Random Access Memories")),
+            RecordingSearchCapability("qobuz", RecordingSearchTrack("qobuz", "remaster",
+                "Get Lucky - 2023 Remaster", "Daft Punk", 369, "Random Access Memories")));
+
+        var songs = (await gateway.SearchAsync(SearchRankingContext(protocol), "Get Lucky Daft Punk", 25, 0, 0)).Songs;
+
+        Assert.Equal(["album", "first", "remaster"], songs.Select(song => song.ExternalId).Order());
+    }
+
+    [Theory]
+    [InlineData(ProtocolKind.Jellyfin)]
+    [InlineData(ProtocolKind.Subsonic)]
+    public async Task OneServicesAlbumAndSingleCopiesOfARecordingAreOneRow(ProtocolKind protocol)
+    {
+        var (gateway, _) = SearchRankingGateway("deezer", "deezer",
+            RecordingSearchCapability("deezer",
+                RecordingSearchTrack("deezer", "ep", "Into the Walls", "Boundaries", 219, "Boundaries - EP", "DKF851800106"),
+                RecordingSearchTrack("deezer", "single", "Into the Walls", "Boundaries", 219, "Into the Walls - Single", "DKF851800106")));
+
+        var song = Assert.Single((await gateway.SearchAsync(SearchRankingContext(protocol), "Into the Walls", 25, 0, 0)).Songs);
+
+        Assert.Equal(["ep", "single"], song.SearchRoutes.Select(route => route.Value).Order());
     }
 
     [Theory]
@@ -435,13 +468,12 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
 
         var songs = (await gateway.SearchAsync(SearchRankingContext(ProtocolKind.Jellyfin), "Get Lucky", 25, 0, 0)).Songs;
 
-        Assert.Equal(2, songs.Count);
+        Assert.Equal(3, songs.Count);
         Assert.Contains(songs, song => song.ExternalId == "last");
     }
 
     [Theory]
     [InlineData("Get Lucky", 371)]
-    [InlineData("Get Lucky (Remastered)", 369)]
     [InlineData("Get Lucky (Album Version)", 369)]
     public async Task SearchWithoutIsrcCombinesGenuineAnnotationsWithinTwoSeconds(string title, double seconds)
     {

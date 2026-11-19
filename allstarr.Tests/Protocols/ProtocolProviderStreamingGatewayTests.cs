@@ -523,10 +523,10 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         {
             ["deezer"] =
             [
-                new(new("deezer", ProviderResourceKind.Track, "d-1"), "Song", [new("Artist")], isrc: "US-RC1-76-07839"),
-                new(new("deezer", ProviderResourceKind.Track, "d-2"), "Song (single)", [new("Artist")], isrc: "USRC17607839")
+                new(new("deezer", ProviderResourceKind.Track, "d-1"), "Song", [new("Artist")], duration: TimeSpan.FromSeconds(200), isrc: "US-RC1-76-07839"),
+                new(new("deezer", ProviderResourceKind.Track, "d-2"), "Song (single)", [new("Artist")], duration: TimeSpan.FromSeconds(200), isrc: "USRC17607839")
             ],
-            ["qobuz"] = [new(new("qobuz", ProviderResourceKind.Track, "q-1"), "Song", [new("Artist")], isrc: "usrc17607839")],
+            ["qobuz"] = [new(new("qobuz", ProviderResourceKind.Track, "q-1"), "Song", [new("Artist")], duration: TimeSpan.FromSeconds(201), isrc: "usrc17607839")],
             ["apple-musickit"] = [new(new("apple-musickit", ProviderResourceKind.Track, "a-1"), "Song (live)", [new("Artist")], isrc: "GBAYE0000001")]
         };
         var metadata = providerIds.Select(providerId =>
@@ -575,7 +575,8 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
             };
         var songs = (await gateway.SearchAsync(context, "Song", 10, 0, 0)).Songs;
 
-        Assert.Equal(manual ? ["a-1", "d-1", "d-2", "q-1"] : ["a-1", "q-1"],
+        // A shared ISRC proves one recording only with the same title; "Song (single)" may be another edit.
+        Assert.Equal(manual ? ["a-1", "d-1", "d-2", "q-1"] : ["a-1", "d-2", "q-1"],
             songs.Select(song => song.ExternalId!).Order().ToArray());
         if (manual)
             Assert.All(songs.Where(song => song.ExternalProvider == "deezer"), song =>
@@ -590,10 +591,10 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         {
             ["deezer"] =
             [
-                new(new("deezer", ProviderResourceKind.Track, "d-1"), "Song", [new("Artist")], isrc: "US-RC1-76-07839"),
-                new(new("deezer", ProviderResourceKind.Track, "d-2"), "Song (single)", [new("Artist")], isrc: "USRC17607839")
+                new(new("deezer", ProviderResourceKind.Track, "d-1"), "Song", [new("Artist")], duration: TimeSpan.FromSeconds(200), isrc: "US-RC1-76-07839"),
+                new(new("deezer", ProviderResourceKind.Track, "d-2"), "Song (single)", [new("Artist")], duration: TimeSpan.FromSeconds(200), isrc: "USRC17607839")
             ],
-            ["qobuz"] = [new(new("qobuz", ProviderResourceKind.Track, "q-1"), "Song", [new("Artist")], isrc: "usrc17607839")],
+            ["qobuz"] = [new(new("qobuz", ProviderResourceKind.Track, "q-1"), "Song", [new("Artist")], duration: TimeSpan.FromSeconds(201), isrc: "usrc17607839")],
             ["apple-musickit"] = [new(new("apple-musickit", ProviderResourceKind.Track, "a-1"), "Song (live)", [new("Artist")], isrc: "GBAYE0000001")]
         };
         var metadata = providerIds.Select(providerId =>

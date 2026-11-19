@@ -622,7 +622,10 @@ public sealed partial class ProtocolProviderGateway(
         foreach (var group in automaticSongs.Where(groupBySong.ContainsKey).GroupBy(song => (
                      Identity: groupBySong[song], Version: SearchVersionKey(song),
                      Mixed: FuzzyMatcher.IsContinuousMixExcerpt(song.Title, song.Album))))
-            foreach (var members in PartitionSearchTracks(group, (left, right) => SearchDurationsCompatible(left, right)))
+            // A shared ISRC proves one recording only when artist, title, version and length agree as well.
+            foreach (var members in PartitionSearchTracks(group, (left, right) =>
+                         group.Key.Identity.StartsWith("recording:", StringComparison.Ordinal)
+                             ? SearchDurationsCompatible(left, right) : MusicSearchService.SameSearchRecording(left, right)))
             {
                 var linked = group.Key.Identity.StartsWith("recording:", StringComparison.Ordinal);
                 var best = linked && members.Any(song => !string.IsNullOrWhiteSpace(song.AlbumId))
@@ -637,18 +640,12 @@ public sealed partial class ProtocolProviderGateway(
                         best.CanonicalRecordingId = known.CanonicalRecordingId;
                     }
                 }
-                // An ISRC alone only merges across providers; same-provider duplicates (album and single,
-                // for example) stay separate rows unless an accepted link already proves they're one recording.
-                if (!linked && members.Select(song => NormalizeProvider(song.ExternalProvider)).Distinct().Count() < 2)
-                    continue;
+                // The album and single copies of one recording on one service are one row too.
+                if (members.Count < 2) continue;
                 best.SearchRoutes = SearchRoutes(members);
                 evidence[best] = members;
                 foreach (var song in members)
-                {
-                    if (ReferenceEquals(song, best)) continue;
-                    if (linked || NormalizeProvider(song.ExternalProvider) != NormalizeProvider(best.ExternalProvider))
-                        hidden.Add(song);
-                }
+                    if (!ReferenceEquals(song, best)) hidden.Add(song);
             }
         return CollapseMetadataSearchTracks(songs.Where(song => !hidden.Contains(song)).ToArray(),
             providerOrder, policy, protocol, evidence);

@@ -291,12 +291,15 @@ public sealed partial class ProtocolProviderGateway
         var eligible = songs.Where(song => IsAutomaticProvider(NormalizeProvider(song.ExternalProvider), policy));
         var replacements = new Dictionary<Song, Song>(ReferenceEqualityComparer.Instance);
         var hidden = new HashSet<Song>(ReferenceEqualityComparer.Instance);
-        foreach (var group in MusicSearchService.PartitionMetadataRecordings(eligible, (left, right) =>
-                     evidence.GetValueOrDefault(left, [left]).All(first =>
-                         evidence.GetValueOrDefault(right, [right]).All(second =>
-                             SearchDurationsCompatible(first, second) &&
-                             (SearchDuration(left) is > 0 && SearchDuration(right) is > 0 ||
-                              MusicSearchService.MetadataRecordingsMatch(first, second, allowSparse: true)))))
+        // Copies are one row only on proof (see MusicSearchService.SameSearchRecording); anything less stays its own row. A
+        // copy proven to be any copy already in a row joins it while its length agrees with all of them. Proof needs the same
+        // artist and title, so only songs sharing those are compared.
+        foreach (var group in eligible.GroupBy(MusicSearchService.RecordingKey, StringComparer.Ordinal).SelectMany(named =>
+                     PartitionProvenTracks(named,
+                         (left, right) => evidence.GetValueOrDefault(left, [left]).Any(first =>
+                             evidence.GetValueOrDefault(right, [right]).Any(second => MusicSearchService.SameSearchRecording(first, second))),
+                         (left, right) => evidence.GetValueOrDefault(left, [left]).All(first =>
+                             evidence.GetValueOrDefault(right, [right]).All(second => SearchDurationsCompatible(first, second)))))
                  .Where(group => group.Count > 1))
         {
             var chosen = ChooseDisplaySource(protocol, group.Where(song => SearchDuration(song) is > 0).ToArray(), providerOrder);
@@ -310,6 +313,20 @@ public sealed partial class ProtocolProviderGateway
         }
         return songs.Where(song => !hidden.Contains(song))
             .Select(song => replacements.GetValueOrDefault(song, song)).ToArray();
+    }
+
+    private static List<List<Song>> PartitionProvenTracks(IEnumerable<Song> songs, Func<Song, Song, bool> proven,
+        Func<Song, Song, bool> compatible)
+    {
+        var groups = new List<List<Song>>();
+        foreach (var song in songs)
+        {
+            var group = groups.FirstOrDefault(members => members.Any(member => proven(member, song)) &&
+                members.All(member => compatible(member, song)));
+            if (group == null) groups.Add([song]);
+            else group.Add(song);
+        }
+        return groups;
     }
 
     private static List<List<Song>> PartitionSearchTracks(IEnumerable<Song> songs, Func<Song, Song, bool> compatible)
