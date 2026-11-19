@@ -16,6 +16,8 @@ public sealed class V2StatsWarmUp(V2MeEndpoints me, IBackendLibraryPermissionSou
         using var authentication = await permissions.CreateRequestAsync(execution, token);
         if (authentication == null) return;
         var http = new DefaultHttpContext { RequestServices = services };
+        // The warm-up works the rows out afresh; listeners' own reads answer from what it found.
+        http.Items[V2MeEndpoints.FreshRows] = true;
         foreach (var header in authentication.Headers) http.Request.Headers[header.Key] = header.Value.ToArray();
         foreach (var period in Periods)
         {

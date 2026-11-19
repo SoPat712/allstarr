@@ -10,8 +10,12 @@ namespace allstarr.Core.ClientApiV2;
 
 public sealed class V2MeEndpoints(ClientListeningHistory history, ListeningHistoryImportService imports,
     ListeningHistoryResolution resolution, ListeningStatsService stats, TasteService taste, SoundProfileService sound,
-    IDurableRuntimeSettings settings, V2TrackReader tracks, ListeningLibraries libraries, V2RowIds rowIds, V2RowRefs? rowRefs = null)
+    IDurableRuntimeSettings settings, V2TrackReader tracks, ListeningLibraries libraries, V2RowIds rowIds, V2RowRefs? rowRefs = null,
+    V2RowIdMemo? rowIdMemo = null)
 {
+    /// <summary>Set on a warm-up's own request: its rows are worked out afresh, for listeners' reads to answer from.</summary>
+    internal static readonly object FreshRows = new();
+
     internal async Task<V2Result> ReadAsync(HttpContext http, ProtocolExecutionContext execution, string resource)
     {
         var query = http.Request.Query;
@@ -62,8 +66,8 @@ public sealed class V2MeEndpoints(ClientListeningHistory history, ListeningHisto
                         year = parsed;
                     }
                     var listening = await stats.GetAsync(execution, Value("period"), year, token, Value("timeZoneId"));
-                    // Top songs are light rows, as history is: a recap reads them on every open.
-                    var songRows = await RowsAsync(http, execution, listening.TopSongs.Select(song => song.ItemId));
+                    // Top songs are light rows, as history is: a recap reads them on every open, so their ids are remembered.
+                    var songRows = await RowsAsync(http, execution, listening.TopSongs.Select(song => song.ItemId), remembered: true);
                     return new(200, new V2ListeningStats(listening, listening.TopSongs.Select(song =>
                     {
                         var byName = V2ListeningStats.Artwork(song.Artist, title: song.Title);
@@ -146,10 +150,21 @@ public sealed class V2MeEndpoints(ClientListeningHistory history, ListeningHisto
     // artists, album and picture from one media-server read; only the few service songs need a whole track read. Songs
     // repeat from read to read, so each song's refs are kept for a while. A song neither read returns is left out.
     private async Task<Dictionary<string, (V2RowId Id, V2RowRefs.Entry Refs)>> RowsAsync(HttpContext http, ProtocolExecutionContext execution,
-        IEnumerable<string?> itemIds)
+        IEnumerable<string?> itemIds, bool remembered = false)
     {
-        var ids = await rowIds.ResolveAsync(execution, itemIds.OfType<string>().Where(id => V2Ids.TryDecode(id, V2IdKind.Track, out _)));
         var owner = execution.RequireActor().EffectiveUserId!.Value;
+        var wanted = itemIds.OfType<string>().Where(id => V2Ids.TryDecode(id, V2IdKind.Track, out _)).Distinct(StringComparer.Ordinal).ToArray();
+        IReadOnlyDictionary<string, V2RowId> ids;
+        var memo = remembered && rowIdMemo != null && !http.Items.ContainsKey(FreshRows)
+            ? wanted.Select(id => (Id: id, Row: rowIdMemo.Get(owner, id))).ToArray() : null;
+        if (memo != null && memo.All(item => item.Row != null))
+            ids = memo.ToDictionary(item => item.Id, item => item.Row!, StringComparer.Ordinal);
+        else
+        {
+            ids = await rowIds.ResolveAsync(execution, wanted);
+            if (remembered && rowIdMemo != null)
+                foreach (var (source, id) in ids) rowIdMemo.Set(owner, source, id);
+        }
         var refs = new Dictionary<string, V2RowRefs.Entry?>(StringComparer.Ordinal);
         // Kept per song and library copy, so a song added to the library since is read again as that copy.
         string Kept(string source) => source + "\n" + ids[source].LibraryItemId;

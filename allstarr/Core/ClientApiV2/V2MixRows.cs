@@ -122,6 +122,28 @@ public sealed class V2RowRefs(TimeProvider? clock = null)
     }
 }
 
+/// <summary>
+/// The track ids last worked out for each listener's songs. Working them out again after every play means matching
+/// the whole library afresh, which takes most of a second, so a recap answers from these and the warm-up, which runs
+/// right after a play, works them out again behind it.
+/// </summary>
+public sealed class V2RowIdMemo(TimeProvider? clock = null)
+{
+    private static readonly TimeSpan Kept = TimeSpan.FromMinutes(30);
+    private const int MaximumEntries = 50_000;
+    private readonly TimeProvider time = clock ?? TimeProvider.System;
+    private readonly ConcurrentDictionary<(Guid, string), (DateTimeOffset At, V2RowId Id)> entries = new();
+
+    public V2RowId? Get(Guid owner, string source) =>
+        entries.TryGetValue((owner, source), out var kept) && time.GetUtcNow() - kept.At < Kept ? kept.Id : null;
+
+    public void Set(Guid owner, string source, V2RowId id)
+    {
+        if (entries.Count >= MaximumEntries) entries.Clear();
+        entries[(owner, source)] = (time.GetUtcNow(), id);
+    }
+}
+
 /// <summary>A mix's songs as light rows read from the stored mix, for apps that read listener facts separately.</summary>
 public sealed class V2MixRowsReader(MixReader mixes, V2RowIds rowIds, LibraryProviderResolver libraryProviders)
 {
