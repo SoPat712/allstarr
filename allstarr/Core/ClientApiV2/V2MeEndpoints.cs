@@ -10,7 +10,7 @@ namespace allstarr.Core.ClientApiV2;
 
 public sealed class V2MeEndpoints(ClientListeningHistory history, ListeningHistoryImportService imports,
     ListeningHistoryResolution resolution, ListeningStatsService stats, TasteService taste, SoundProfileService sound,
-    IDurableRuntimeSettings settings, V2TrackReader tracks, ListeningLibraries libraries, V2RowIds rowIds)
+    IDurableRuntimeSettings settings, V2TrackReader tracks, ListeningLibraries libraries, V2RowIds rowIds, V2RowRefs? rowRefs = null)
 {
     internal async Task<V2Result> ReadAsync(HttpContext http, ProtocolExecutionContext execution, string resource)
     {
@@ -110,27 +110,36 @@ public sealed class V2MeEndpoints(ClientListeningHistory history, ListeningHisto
 
     // Plays as light rows: the ids a track read gives each song, beside what the play recorded, so a long history shows
     // at once and listener facts come from /tracks/facts. Library songs take their artists, album and picture from one
-    // media-server read; only the few service songs need a whole track read.
+    // media-server read; only the few service songs need a whole track read. Recent plays repeat from read to read, so
+    // each song's refs are kept for a while.
     private async Task<V2HistoryRows> HistoryRowsAsync(HttpContext http, ProtocolExecutionContext execution, ClientHistoryPage page)
     {
         var ids = await rowIds.ResolveAsync(execution, page.Plays.Select(play => play.ItemId).OfType<string>());
-        var library = await tracks.LibraryRefsAsync(http, execution, ids.Values.Select(id => id.LibraryItemId).OfType<string>()
-            .Distinct(StringComparer.Ordinal).ToArray());
-        var services = await TrackMapAsync(http, execution, ids.Where(pair => pair.Value.LibraryItemId == null).Select(pair => pair.Key));
+        var owner = execution.RequireActor().EffectiveUserId!.Value;
+        var refs = new Dictionary<string, V2RowRefs.Entry?>(StringComparer.Ordinal);
+        foreach (var source in ids.Keys)
+            if (rowRefs?.Get(owner, source) is { } known) refs[source] = known;
+        var library = ids.Where(pair => pair.Value.LibraryItemId != null && !refs.ContainsKey(pair.Key)).ToArray();
+        var read = await tracks.LibraryRefsAsync(http, execution, library.Select(pair => pair.Value.LibraryItemId!).Distinct(StringComparer.Ordinal).ToArray());
+        foreach (var (source, id) in library)
+            refs[source] = read.GetValueOrDefault(id.LibraryItemId!) is { } local ? new(local.Artists, local.Album, local.Artwork) : null;
+        var services = ids.Where(pair => pair.Value.LibraryItemId == null && !refs.ContainsKey(pair.Key)).Select(pair => pair.Key).ToArray();
+        var serviceTracks = await TrackMapAsync(http, execution, services);
+        foreach (var source in services)
+            refs[source] = serviceTracks.GetValueOrDefault(source) is { } track ? new(track.Artists, track.Album, track.Artwork) : null;
+        foreach (var (source, entry) in refs)
+            if (entry != null) rowRefs?.Set(owner, source, entry);
         return new(page.Plays.Select(play =>
         {
             var row = play.ItemId == null ? null : ids.GetValueOrDefault(play.ItemId);
-            var local = row?.LibraryItemId is { } item ? library.GetValueOrDefault(item) : null;
-            var track = row != null && row.LibraryItemId == null ? services.GetValueOrDefault(play.ItemId!) : null;
-            if (local == null && track == null)
+            var entry = play.ItemId == null ? null : refs.GetValueOrDefault(play.ItemId);
+            var byName = string.IsNullOrWhiteSpace(play.Artist) ? null : V2ListeningStats.Artwork(play.Artist, title: play.Title);
+            if (row == null || entry == null)
                 return new V2HistoryRow(null, [], null, play.Title, string.IsNullOrWhiteSpace(play.Artist) ? [] : [new(null, play.Artist)],
-                    string.IsNullOrWhiteSpace(play.Album) ? null : new(null, play.Album), play.DurationMs,
-                    string.IsNullOrWhiteSpace(play.Artist) ? null : V2ListeningStats.Artwork(play.Artist, title: play.Title),
-                    play.PlayedAt, play.IsExternal, play.Provider);
-            return new V2HistoryRow(local != null ? row!.Id : track!.Id, local != null ? row!.Aliases : track!.Aliases, row!.LibraryItemId,
-                play.Title, local?.Artists ?? track!.Artists, local != null ? local.Album : track!.Album, play.DurationMs,
-                local != null ? local.Artwork : track!.Artwork ?? (string.IsNullOrWhiteSpace(play.Artist) ? null : V2ListeningStats.Artwork(play.Artist, title: play.Title)),
-                play.PlayedAt, local == null, local == null ? play.Provider : null);
+                    string.IsNullOrWhiteSpace(play.Album) ? null : new(null, play.Album), play.DurationMs, byName, play.PlayedAt, play.IsExternal, play.Provider);
+            var inLibrary = row.LibraryItemId != null;
+            return new V2HistoryRow(row.Id, row.Aliases, row.LibraryItemId, play.Title, entry.Artists, entry.Album, play.DurationMs,
+                inLibrary ? entry.Artwork : entry.Artwork ?? byName, play.PlayedAt, !inLibrary, inLibrary ? null : play.Provider);
         }).ToArray(), page.Next);
     }
 

@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.ComponentModel;
 using System.Text.Json.Serialization;
 using allstarr.Core.Capabilities;
@@ -94,6 +95,29 @@ public sealed class V2RowIds(ITrackIdentityService identities, ILibraryIndexServ
     internal static bool IsExternal(string id) => id.StartsWith("ext-", StringComparison.Ordinal);
 
     private static string NativeKey(string id) => Guid.TryParse(id, out var parsed) ? parsed.ToString("N") : id;
+}
+
+/// <summary>
+/// Each listener's recently read row refs: a song's artists, album and picture as a track read gives them. They
+/// rarely change, and reading them again costs a media-server read or a whole track read, so they are kept for a while.
+/// </summary>
+public sealed class V2RowRefs(TimeProvider? clock = null)
+{
+    public sealed record Entry(IReadOnlyList<V2Ref> Artists, V2AlbumRef? Album, V2Artwork? Artwork);
+
+    private static readonly TimeSpan Kept = TimeSpan.FromMinutes(30);
+    private const int MaximumEntries = 20_000;
+    private readonly TimeProvider time = clock ?? TimeProvider.System;
+    private readonly ConcurrentDictionary<(Guid, string), (DateTimeOffset At, Entry Entry)> entries = new();
+
+    public Entry? Get(Guid owner, string source) =>
+        entries.TryGetValue((owner, source), out var kept) && time.GetUtcNow() - kept.At < Kept ? kept.Entry : null;
+
+    public void Set(Guid owner, string source, Entry entry)
+    {
+        if (entries.Count >= MaximumEntries) entries.Clear();
+        entries[(owner, source)] = (time.GetUtcNow(), entry);
+    }
 }
 
 /// <summary>A mix's songs as light rows read from the stored mix, for apps that read listener facts separately.</summary>
