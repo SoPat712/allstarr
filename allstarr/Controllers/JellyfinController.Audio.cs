@@ -25,10 +25,12 @@ public partial class JellyfinController
         }
 
         var (isExternal, provider, externalId) = _localLibraryService.ParseSongId(itemId);
+        var query = Request.QueryString.Value ?? "";
         if (isExternal && await ResolvePlayableNativeTrackAsync(itemId) is { } nativeId)
         {
             itemId = nativeId;
             isExternal = false;
+            query = NativeQuery(nativeId);
         }
 
         if (!isExternal)
@@ -36,11 +38,7 @@ public partial class JellyfinController
             var endpoint = Request.Path.Value?.Contains("/File", StringComparison.OrdinalIgnoreCase) == true
                 ? "File"
                 : "Download";
-            var fullPath = $"Items/{itemId}/{endpoint}";
-            if (Request.QueryString.HasValue)
-            {
-                fullPath = $"{fullPath}{Request.QueryString.Value}";
-            }
+            var fullPath = $"Items/{itemId}/{endpoint}{query}";
 
             return await ProxyJellyfinStream(fullPath, itemId);
         }
@@ -62,10 +60,12 @@ public partial class JellyfinController
         }
 
         var (isExternal, provider, externalId) = _localLibraryService.ParseSongId(itemId);
+        var query = Request.QueryString.Value ?? "";
         if (isExternal && await ResolvePlayableNativeTrackAsync(itemId) is { } nativeId)
         {
             itemId = nativeId;
             isExternal = false;
+            query = NativeQuery(nativeId);
         }
 
         if (!isExternal)
@@ -74,12 +74,7 @@ public partial class JellyfinController
                 ? $"Audio/{itemId}/stream"
                 : $"Audio/{itemId}/stream.{container}";
 
-            if (Request.QueryString.HasValue)
-            {
-                fullPath = $"{fullPath}{Request.QueryString.Value}";
-            }
-
-            return await ProxyJellyfinStream(fullPath, itemId);
+            return await ProxyJellyfinStream(fullPath + query, itemId);
         }
 
         var delivery = ProviderAudioDeliveryRequests.Jellyfin(Request.Query, container: container);
@@ -263,19 +258,17 @@ public partial class JellyfinController
         }
 
         var (isExternal, provider, externalId) = _localLibraryService.ParseSongId(itemId);
+        var query = Request.QueryString.Value ?? "";
         if (isExternal && await ResolvePlayableNativeTrackAsync(itemId) is { } nativeId)
         {
             itemId = nativeId;
             isExternal = false;
+            query = NativeQuery(nativeId);
         }
 
         if (!isExternal)
         {
-            var fullPath = $"Audio/{itemId}/universal";
-            if (Request.QueryString.HasValue)
-            {
-                fullPath = $"{fullPath}{Request.QueryString.Value}";
-            }
+            var fullPath = $"Audio/{itemId}/universal{query}";
 
             return await ProxyJellyfinStream(fullPath, itemId);
         }

@@ -144,7 +144,7 @@ public partial class JellyfinController
     {
         var (isExternal, provider, type, externalId) = _localLibraryService.ParseExternalId(itemId);
         if (isExternal && type == "song" && await ResolveKnownNativeTrackAsync(itemId) is { } nativeId)
-            return await ProxyPlaybackInfoAsync($"Items/{Uri.EscapeDataString(nativeId)}/PlaybackInfo{Request.QueryString}");
+            return await ProxyPlaybackInfoAsync($"Items/{Uri.EscapeDataString(nativeId)}/PlaybackInfo{NativeQuery(nativeId)}");
         if (!isExternal)
         {
             var upstream = BuildCurrentEndpoint();

@@ -13,13 +13,15 @@ public partial class JellyfinController
     public async Task<IActionResult> HlsAudio(string itemId, [FromServices] ProviderHlsSessions sessions)
     {
         var (external, provider, externalId) = _localLibraryService.ParseSongId(itemId);
+        var query = Request.QueryString.Value ?? "";
         if (external && await ResolvePlayableNativeTrackAsync(itemId) is { } nativeId)
         {
             itemId = nativeId;
             external = false;
+            query = NativeQuery(nativeId);
         }
         if (!external)
-            return await ProxyJellyfinStream($"Audio/{itemId}/main.m3u8{Request.QueryString}", itemId);
+            return await ProxyJellyfinStream($"Audio/{itemId}/main.m3u8{query}", itemId);
 
         try
         {

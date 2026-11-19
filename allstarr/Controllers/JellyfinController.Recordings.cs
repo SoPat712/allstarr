@@ -34,4 +34,13 @@ public partial class JellyfinController
         }
         return await ResolveKnownNativeTrackAsync(publicId);
     }
+
+    // An app that asked for a service song names that song as its media source too. The media server reads that value
+    // as one of its own ids and fails on anything else, so a request passed on for the library copy names the copy.
+    private string NativeQuery(string nativeId)
+    {
+        if (!Request.QueryString.HasValue) return "";
+        return QueryString.Create(Request.Query.SelectMany(pair => pair.Value.Select(value => new KeyValuePair<string, string?>(pair.Key,
+            pair.Key.Equals("MediaSourceId", StringComparison.OrdinalIgnoreCase) && !Guid.TryParse(value, out _) ? nativeId : value)))).Value ?? "";
+    }
 }

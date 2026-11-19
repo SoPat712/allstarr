@@ -34,6 +34,11 @@ public sealed partial class ProtocolRouteFixtureTests
             {
                 Assert.Equal("/Audio/native-track/stream", path);
                 Assert.Contains("fixture-key", request.RequestUri.Query, StringComparison.Ordinal);
+                // The app named the service song as its media source; the media server fails on any id but its own.
+                var sent = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(request.RequestUri.Query);
+                Assert.Equal("native-track", sent["MediaSourceId"].ToString());
+                Assert.Equal("true", sent["static"].ToString());
+                Assert.DoesNotContain(publicId, request.RequestUri.Query, StringComparison.Ordinal);
             }
             else
             {
@@ -53,7 +58,7 @@ public sealed partial class ProtocolRouteFixtureTests
         });
         using var client = factory.CreateClient();
         using var response = await client.GetAsync(backend == "Jellyfin"
-            ? $"/Audio/{publicId}/stream?api_key=fixture-key"
+            ? $"/Audio/{publicId}/stream?api_key=fixture-key&static=true&MediaSourceId={publicId}"
             : $"/rest/stream?u=listener&p=secret&v=1.16.1&c=fixture&id={publicId}");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal(new byte[] { 0x66, 0x4c, 0x61, 0x43 }, await response.Content.ReadAsByteArrayAsync());
