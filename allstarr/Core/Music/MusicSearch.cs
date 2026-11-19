@@ -441,7 +441,8 @@ public sealed partial class MusicSearchService(
     {
         if (artistLinks == null || context.Actor?.EffectiveUserId is not { } owner) return;
         var shown = artists.Where(artist => !IsEmptyArtist(artist)).ToArray();
-        try { await artistLinks.RecordCandidatesAsync(owner, names, shown, token); }
+        // This runs once the search has answered, when the app has often hung up already; its leaving stops nothing here.
+        try { await artistLinks.RecordCandidatesAsync(owner, names, shown, CancellationToken.None); }
         catch (Exception error) when (error is not OperationCanceledException) { }
         // Their albums are checked against the library's in the background, so the next search can list a proven one as
         // the library artist.
