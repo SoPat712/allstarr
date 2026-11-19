@@ -48,6 +48,7 @@ public sealed class V2SessionReader(IDurableRuntimeSettings settings)
                 ["lyricsSearchServicesResolve"] = true,
                 ["playbackRequestStatus"] = true,
                 ["tracksFacts"] = true,
+                ["mixRows"] = true,
                 // A service song's measured loudness arrives as trackGainDb, announced by track.updated with changed ["loudness"].
                 ["trackLoudness"] = true
             }, string.IsNullOrEmpty(address) ? null : new(address)));

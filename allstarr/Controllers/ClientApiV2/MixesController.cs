@@ -25,6 +25,13 @@ public sealed class MixesController(V2LibraryEndpoints library, MixReader reader
     [ProducesResponseType(304)]
     public async Task<IActionResult> Tracks(string id) => Respond(await library.MixTracksAsync(HttpContext, Execution, id));
 
+    [HttpGet("{id}/rows")]
+    [EndpointName("listV2MixRows")]
+    [EndpointDescription("Reads a mix's songs as light rows from the stored mix, in stored order and with the same track ids as /tracks, for apps that read listener facts through /tracks/facts (session feature mixRows). Hidden mixes return 404. Also available in batch.")]
+    [ProducesResponseType<V2MixRows>(200)]
+    [ProducesResponseType(304)]
+    public async Task<IActionResult> Rows(string id) => Respond(await library.MixRowsAsync(HttpContext, Execution, id));
+
     [HttpGet("{id}/cover")]
     [EndpointName("getV2MixCover")]
     [EndpointDescription("Serves an authorized mix's cover. The version in the mix's cover URL enables immutable caching.")]

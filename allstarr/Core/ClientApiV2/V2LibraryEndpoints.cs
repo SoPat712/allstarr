@@ -33,6 +33,11 @@ public sealed class V2LibraryEndpoints(MixReader mixes, ReleaseReader releases, 
             match.Groups["tag"].Success ? Uri.UnescapeDataString(match.Groups["tag"].Value) : null)?.Url : null;
     }
 
+    // Rows come straight from the stored mix, as fast as the media-server list, for apps that read facts separately.
+    public Task<V2Result> MixRowsAsync(HttpContext http, ProtocolExecutionContext execution, string id) => ExecuteAsync(async () =>
+        TryMixId(id, out var mixId) ? new(200, await http.RequestServices.GetRequiredService<V2MixRowsReader>().ReadAsync(http, execution, mixId))
+            : new(400, null));
+
     public Task<V2Result> MixTracksAsync(HttpContext http, ProtocolExecutionContext execution, string id) => ExecuteAsync(async () =>
     {
         if (!TryMixId(id, out var mixId)) return new(400, null);

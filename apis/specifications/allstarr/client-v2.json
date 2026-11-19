@@ -2793,6 +2793,114 @@
         }
       }
     },
+    "/allstarr/v2/mixes/{id}/rows": {
+      "get": {
+        "tags": [
+          "Mixes"
+        ],
+        "description": "Reads a mix\u0027s songs as light rows from the stored mix, in stored order and with the same track ids as /tracks, for apps that read listener facts through /tracks/facts (session feature mixRows). Hidden mixes return 404. Also available in batch.",
+        "operationId": "listV2MixRows",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "If-None-Match",
+            "in": "header",
+            "description": "The stored ETag; a matching representation returns 304 without a body.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "headers": {
+              "ETag": {
+                "description": "Representation validator, also returned by the batch entry.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V2MixRows"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Not Modified",
+            "headers": {
+              "ETag": {
+                "description": "Representation validator, also returned by the batch entry.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/allstarr/v2/mixes/{id}/cover": {
       "get": {
         "tags": [
@@ -8096,6 +8204,126 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/V2Mix"
+            }
+          }
+        }
+      },
+      "V2MixRow": {
+        "required": [
+          "id",
+          "aliases",
+          "libraryItemId",
+          "title",
+          "artists",
+          "album",
+          "durationMs",
+          "artwork",
+          "isExternal",
+          "provider"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "aliases": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "libraryItemId": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "description": "The media server item when the song is in the library."
+          },
+          "title": {
+            "type": "string"
+          },
+          "artists": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/V2Ref"
+            }
+          },
+          "album": {
+            "type": [
+              "null",
+              "object"
+            ],
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/V2AlbumRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "durationMs": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int64"
+          },
+          "artwork": {
+            "type": [
+              "null",
+              "object"
+            ],
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/V2Artwork"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "isExternal": {
+            "type": "boolean"
+          },
+          "provider": {
+            "type": [
+              "null",
+              "object"
+            ],
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/V2Provider"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "V2MixRows": {
+        "required": [
+          "id",
+          "updatedAt",
+          "rows"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "date-time"
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/V2MixRow"
             }
           }
         }

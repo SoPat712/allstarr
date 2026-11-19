@@ -87,6 +87,16 @@ public sealed partial class ProtocolRouteFixtureTests
             Assert.False(song.TryGetProperty("itemId", out _));
         });
         Assert.Equal(["Service song", "Library song"], songs.Select(song => song.GetProperty("title").GetString()));
+        // Light rows from the stored mix carry the same track and library ids, in the same order.
+        var rowsPath = $"/allstarr/v2/mixes/{V2Ids.Mix(mix.Id)}/rows";
+        using var rowsResponse = await client.GetAsync(rowsPath);
+        Assert.Equal(HttpStatusCode.OK, rowsResponse.StatusCode);
+        var rows = (await rowsResponse.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("rows").EnumerateArray().ToArray();
+        Assert.Equal(songs.Select(song => song.GetProperty("id").GetString()), rows.Select(row => row.GetProperty("id").GetString()));
+        Assert.Equal(songs.Select(song => song.GetProperty("libraryItemId").ToString()), rows.Select(row => row.GetProperty("libraryItemId").ToString()));
+        Assert.Equal(["Service song", "Library song"], rows.Select(row => row.GetProperty("title").GetString()));
+        Assert.All(rows, row => Assert.False(row.TryGetProperty("saved", out _)));
+        await AssertV2LibraryBatchAsync(client, rowsPath, rowsResponse);
         await AssertV2LibraryBatchAsync(client, path, tracks);
         client.DefaultRequestHeaders.Authorization = new("Bearer", "other-token");
         using var denied = await client.GetAsync(path);

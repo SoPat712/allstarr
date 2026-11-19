@@ -523,6 +523,7 @@ builder.Services.AddScoped<V2SessionReader>();
 builder.Services.AddScoped<V2AlbumEndpoints>();
 builder.Services.AddScoped<V2ArtistEndpoints>();
 builder.Services.AddScoped<V2LibraryEndpoints>();
+builder.Services.AddScoped<V2MixRowsReader>();
 builder.Services.AddSingleton<V2ServingStreams>();
 builder.Services.AddScoped<V2PlaybackStatusReader>();
 builder.Services.AddScoped<LyricsTranslation>();
