@@ -184,6 +184,28 @@
     purgeOpen = false;
   }
   onMount(() => { void refresh(); const unsubscribe = liveUpdates.subscribe(scheduler.schedule); return () => { unsubscribe(); scheduler.cancel(); }; });
+
+  // The categories scroll on their own, in the part of the window they have; the page beside them scrolls separately.
+  function ownScroll(node: HTMLElement) {
+    const fit = () => node.style.setProperty("--categories-height", `${Math.max(240, window.innerHeight - Math.max(node.getBoundingClientRect().top, 16) - 16)}px`);
+    const observer = new ResizeObserver(fit);
+    observer.observe(document.body);
+    window.addEventListener("scroll", fit, { passive: true });
+    window.addEventListener("resize", fit);
+    fit();
+    return { destroy() { observer.disconnect(); window.removeEventListener("scroll", fit); window.removeEventListener("resize", fit); } };
+  }
+  let categories = $state<HTMLElement>();
+  // A page opened from a link or the search keeps its category in view.
+  $effect(() => {
+    void active;
+    const item = categories?.querySelector<HTMLElement>('a[aria-current="page"]');
+    if (!item || !categories) return;
+    // Only the list moves; scrollIntoView would move the page as well.
+    if (item.offsetTop < categories.scrollTop) categories.scrollTop = item.offsetTop - 8;
+    else if (item.offsetTop + item.offsetHeight > categories.scrollTop + categories.clientHeight)
+      categories.scrollTop = item.offsetTop + item.offsetHeight - categories.clientHeight + 8;
+  });
 </script>
 
 {#snippet findSetting()}
@@ -210,7 +232,7 @@
 
 <SettingsRestartNotice />
 <section class="settings-workspace settings-split settings-surface" class:list-only={listOnly} aria-busy={refreshing}>
-  <nav class="settings-categories" aria-label="Settings categories">
+  <nav class="settings-categories" aria-label="Settings categories" bind:this={categories} use:ownScroll>
     {@render findSetting()}
     {#each groups as navGroup (navGroup.label)}
       <p>{navGroup.label}</p>
@@ -314,7 +336,7 @@
 <style>
   /* List-detail: categories on the left, the chosen page on the right; on a phone, the list first, then the page. */
   .settings-split { display: grid; grid-template-columns: 19rem minmax(0, 1fr); align-items: start; gap: 0 var(--space-8, 2rem); }
-  .settings-categories { position: sticky; top: var(--space-4); display: grid; gap: 2px; align-content: start; }
+  .settings-categories { position: sticky; top: var(--space-4); display: grid; gap: 2px; align-content: start; max-height: var(--categories-height, calc(100dvh - 2 * var(--space-4))); margin: -4px; padding: 4px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
   .settings-categories > p { margin: var(--space-4) 0 var(--space-1); padding-inline: var(--space-4); color: var(--color-signal-text, var(--color-signal)); font-size: var(--text-sm); font-weight: 500; }
   .settings-categories > a { display: grid; grid-template-columns: 24px minmax(0, 1fr); align-items: center; gap: var(--space-4); min-height: 56px; padding: var(--space-2) var(--space-4); border-radius: var(--radius-2xl); color: var(--color-ink); text-decoration: none; }
   .settings-categories > a :global(svg) { color: var(--color-ink-muted); }
@@ -342,7 +364,7 @@
   @media (max-width: 900px) {
     .settings-split { grid-template-columns: minmax(0, 1fr); }
     .settings-split:not(.list-only) .settings-categories, .settings-split.list-only > .settings-content { display: none; }
-    .settings-categories { position: static; }
+    .settings-categories { position: static; max-height: none; margin: 0; padding: 0; overflow: visible; }
     .list-only .settings-categories > a[aria-current] { background: transparent; }
     .list-only .settings-categories > a[aria-current] :is(strong, small, :global(svg)) { color: inherit; }
     .settings-back { display: inline-flex; align-items: center; gap: var(--space-2); justify-self: start; min-height: 44px; color: var(--color-ink-muted); text-decoration: none; }

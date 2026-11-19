@@ -212,6 +212,29 @@ test("Settings search results open above the section links", async ({ page }) =>
   }
 });
 
+test("Settings categories scroll on their own, apart from the page", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 560 });
+  await fixture(page);
+  await page.goto("/#/settings/library");
+  const categories = page.getByRole("navigation", { name: "Settings categories" });
+  await expect(categories.getByRole("link").first()).toBeVisible();
+  // The list is taller than the window, so it fits the window and scrolls inside itself.
+  expect(await categories.evaluate(node => node.scrollHeight > node.clientHeight)).toBe(true);
+  const box = (await categories.boundingBox())!;
+  expect(box.y + box.height).toBeLessThanOrEqual(560);
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.wheel(0, 300);
+  await expect.poll(() => categories.evaluate(node => node.scrollTop)).toBeGreaterThan(0);
+  expect(await page.evaluate(() => window.scrollY)).toBe(0);
+  // Reaching the end of the list leaves the page beside it where it was.
+  await page.mouse.wheel(0, 5000);
+  await expect(categories.getByRole("link").last()).toBeInViewport();
+  if (process.env.UI_SHOTS) await page.screenshot({ path: "test-results/settings-categories-scrolled.png" });
+  await page.mouse.wheel(0, 600);
+  await page.waitForTimeout(150);
+  expect(await page.evaluate(() => window.scrollY)).toBe(0);
+});
+
 test("Single sign-on fields stay folded until needed and browser origins live under Apps", async ({ page }) => {
   await fixture(page);
   await page.goto("/#/settings/people");
