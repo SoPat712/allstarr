@@ -8,15 +8,34 @@ using static allstarr.Core.ClientApiV2.V2TrackReader;
 namespace allstarr.Core.ClientApiV2;
 
 /// <summary>
-/// Says which library album a service album is. Albums join on proof only: songs of the service album that are the
-/// listener's own songs on one library album of that title, or the same artist, title, edition and a song count both
-/// sides state. A library album that only shares the artist and title is offered as one it could be, such as another
-/// edition.
+/// Says which library album a service album is. Albums join on their songs only: songs of the service album that are
+/// the listener's own songs on a library album of that title, by recording, or every song of the shorter of the two
+/// found on the other by title and length. Titles and song counts alone prove nothing (an artist can have two albums
+/// of one name), so a library album that only shares the artist and title is offered as one it could be.
 /// </summary>
 public sealed class V2LibraryAlbums(ListeningLibraries? libraries = null)
 {
     private const int Candidates = 20;
     private const int Offered = 5;
+    private const int SameSongSeconds = 3;
+
+    private sealed record LibrarySong(string Title, string Artist, long? Milliseconds);
+
+    private sealed record Candidate(Album Album, string? Tag)
+    {
+        /// <summary>Songs of the service album that are the listener's own songs on this album, by recording.</summary>
+        public int Owned { get; set; }
+
+        /// <summary>This album's songs found on the service album by title and length, and how many it has.</summary>
+        public int Matched { get; set; }
+
+        public int? Songs { get; set; }
+
+        /// <summary>Whether its songs were read with their lengths, so they could be compared.</summary>
+        public bool Compared { get; set; }
+
+        public bool Proven { get; set; }
+    }
 
     internal async Task<(V2LibraryAlbumRef? Library, IReadOnlyList<V2LibraryAlbumRef>? CouldBe)> IdentifyAsync(HttpContext http,
         ProtocolExecutionContext execution, V2AlbumEndpoints albums, Album album, Func<Task<(Album Album, IReadOnlyList<V2Track> Tracks)>> songs)
@@ -25,7 +44,7 @@ public sealed class V2LibraryAlbums(ListeningLibraries? libraries = null)
         var artistKey = FuzzyMatcher.NormalizeForMatching(FuzzyMatcher.SplitCredits(album.Artist).FirstOrDefault() ??
             album.Artists.FirstOrDefault()?.Name ?? "");
         if (string.IsNullOrWhiteSpace(title) || artistKey.Length == 0) return (null, null);
-        var owned = new List<(Album Album, string? Tag)>();
+        var owned = new List<Candidate>();
         try
         {
             // Only the libraries the listener chose to listen from, as search reads them.
@@ -50,52 +69,102 @@ public sealed class V2LibraryAlbums(ListeningLibraries? libraries = null)
                         String(item, "Name") is not { Length: > 0 } name || !MusicCatalogMerge.IsSameAlbum(album.Title, name)) continue;
                     var artist = String(item, "AlbumArtist") ?? Refs(item, "AlbumArtists").FirstOrDefault()?.Name ?? "";
                     if (!MusicCatalogMerge.LeadArtistMatches(artist, artistKey)) continue;
-                    owned.Add((new Album
+                    owned.Add(new(new Album
                     {
                         Id = id,
                         Title = name,
                         Artist = artist,
                         IsLocal = true,
                         Year = Int(item, "ProductionYear"),
-                        SongCount = Int(item, "ChildCount") is > 0 and var count ? count : null,
-                        IsExplicit = String(item, "OfficialRating")?.ToLowerInvariant() switch { "explicit" => true, "clean" or "cleaned" => false, _ => null }
+                        SongCount = Int(item, "ChildCount") is > 0 and var count ? count : null
                     }, item.TryGetProperty("ImageTags", out var tags) && tags.ValueKind == JsonValueKind.Object ? String(tags, "Primary") : null));
                 }
             }
+            if (owned.Count == 0) return (null, null);
+
+            // The album as the service gives it, with its songs. The listener's own songs among them, by recording or
+            // ISRC, name their library album outright.
+            var (full, tracks) = await songs();
+            foreach (var group in tracks.Where(track => track.LibraryItemId != null && track.Album?.LibraryId != null)
+                         .GroupBy(track => Key(track.Album!.LibraryId!), StringComparer.Ordinal))
+                if (owned.FirstOrDefault(item => Key(item.Album.Id) == group.Key) is { } mine) mine.Owned = group.Count();
+            // Otherwise the songs themselves are compared: every song of the shorter album must be on the other.
+            foreach (var item in owned.Take(Offered))
+            {
+                var own = await LibrarySongsAsync(http, execution, albums, item.Album.Id);
+                item.Songs = own.Count > 0 ? own.Count : item.Album.SongCount;
+                item.Compared = own.Any(song => song.Milliseconds is > 0);
+                var left = full.Songs.ToList();
+                foreach (var song in own)
+                    if (left.FindIndex(candidate => SameSong(song, candidate)) is >= 0 and var found)
+                    {
+                        left.RemoveAt(found);
+                        item.Matched++;
+                    }
+                item.Proven = item.Owned > 0 || item.Matched > 0 && item.Matched == Math.Min(own.Count, full.Songs.Count);
+            }
+            V2LibraryAlbumRef Shape(Candidate item) => new(V2Ids.Album(item.Album.Id), item.Album.Title, V2ArtworkUrls.For(item.Album.Id, item.Tag))
+            {
+                Year = item.Album.Year,
+                SongCount = item.Songs ?? item.Album.SongCount
+            };
+            var proven = owned.Where(item => item.Proven).ToArray();
+            if (proven.Length == 1)
+                return (Shape(proven[0]) with
+                {
+                    By = proven[0].Owned > 0 ? "songs" : "titles",
+                    OwnedSongs = Math.Max(proven[0].Owned, proven[0].Matched)
+                }, null);
+            // Several library albums fit, or only the name does: a person can tell them apart, so they are offered, the closest first.
+            var here = full.SongCount is > 0 ? full.SongCount : full.Songs.Count > 0 ? full.Songs.Count : null;
+            var timed = full.Songs.Any(song => song.Duration is > 0);
+            return (null, owned.OrderByDescending(item => item.Proven).ThenByDescending(item => Math.Max(item.Owned, item.Matched)).Take(Offered)
+                .Select(item => Shape(item) with { Reason = Reason(item, here, proven.Length > 1, timed) }).ToArray());
         }
         // The library not answering leaves the album without a pointer; it never fails the album read.
         catch (Exception error) when (error is HttpRequestException or JsonException) { return (null, null); }
-        if (owned.Count == 0) return (null, null);
-        V2LibraryAlbumRef Shape((Album Album, string? Tag) item) => new(V2Ids.Album(item.Album.Id), item.Album.Title,
-            V2ArtworkUrls.For(item.Album.Id, item.Tag))
-        { Year = item.Album.Year, SongCount = item.Album.SongCount };
-
-        // The listener's own songs among this album's, by recording or ISRC, name their library album outright. The
-        // album as the service gives it, with its songs, also settles how many it has.
-        var (full, tracks) = await songs();
-        var here = full.SongCount is > 0 ? full.SongCount : full.Songs.Count > 0 ? full.Songs.Count : null;
-        var bySongs = tracks.Where(track => track.LibraryItemId != null && track.Album?.LibraryId != null)
-            .GroupBy(track => Key(track.Album!.LibraryId!), StringComparer.Ordinal)
-            .Select(group => (Owned: owned.FirstOrDefault(item => Key(item.Album.Id) == group.Key), Songs: group.Count()))
-            .Where(item => item.Owned.Album != null).OrderByDescending(item => item.Songs).ToArray();
-        if (bySongs.Length == 1) return (Shape(bySongs[0].Owned) with { By = "songs", OwnedSongs = bySongs[0].Songs }, null);
-        var same = owned.Where(item => MusicAlbumReleases.Compatible(item.Album, full)).ToArray();
-        // An unknown song count on either side proves nothing: a few owned songs of a long album are not that album.
-        if (bySongs.Length == 0 && same.Length == 1 && here is > 0 && same[0].Album.SongCount == here)
-            return (Shape(same[0]) with { By = "album" }, null);
-        // Several library albums fit, or only the name does: a person can tell them apart, so they are offered, the closest first.
-        return (null, owned.OrderByDescending(item => bySongs.FirstOrDefault(entry => entry.Owned.Album == item.Album).Songs)
-            .ThenByDescending(item => same.Contains(item)).Take(Offered)
-            .Select(item => Shape(item) with { Reason = Reason(item.Album, here, same.Length > 1 || bySongs.Length > 1) }).ToArray());
     }
+
+    private static async Task<IReadOnlyList<LibrarySong>> LibrarySongsAsync(HttpContext http, ProtocolExecutionContext execution,
+        V2AlbumEndpoints albums, string albumId)
+    {
+        using var document = await albums.LibraryAsync(http, execution, new()
+        {
+            ["parentId"] = albumId,
+            ["includeItemTypes"] = "Audio",
+            ["recursive"] = "true",
+            ["enableUserData"] = "false",
+            ["limit"] = "300"
+        });
+        return V2AlbumEndpoints.Items(document).Where(item => String(item, "Type") == "Audio" && String(item, "Name") is { Length: > 0 })
+            .Select(item => new LibrarySong(String(item, "Name")!,
+                string.Join(", ", Refs(item, "ArtistItems").Select(artist => artist.Name)) is { Length: > 0 } artists ? artists : String(item, "AlbumArtist") ?? "",
+                item.TryGetProperty("RunTimeTicks", out var ticks) && ticks.TryGetInt64(out var value) && value > 0 ? value / TimeSpan.TicksPerMillisecond : null))
+            .ToArray();
+    }
+
+    // The same title, the same version of it and the same length: a live take, a remix or a re-recording is another song.
+    private static bool SameSong(LibrarySong own, Song song) =>
+        own.Milliseconds is > 0 && song.Duration is > 0 &&
+        Math.Abs(own.Milliseconds.Value - song.Duration.Value * 1000L) <= SameSongSeconds * 1000L &&
+        FuzzyMatcher.RecordingVersionsMatch(own.Title, null, song.Title, null) &&
+        FuzzyMatcher.TitleAnnotationsMatch(own.Title, own.Artist, song.Title, song.Artist) &&
+        FuzzyMatcher.NormalizeTitleForMatching(own.Title, own.Artist, song.Artist) ==
+        FuzzyMatcher.NormalizeTitleForMatching(song.Title, song.Artist, own.Artist);
 
     private static string Key(string id) => Guid.TryParse(id, out var parsed) ? parsed.ToString("N") : id;
 
     // One line under a name on a phone.
-    private static string Reason(Album owned, int? here, bool several)
+    private static string Reason(Candidate item, int? here, bool several, bool timed)
     {
-        if (owned.SongCount is > 0 && here is > 0 && owned.SongCount != here)
-            return $"Same title and artist. {owned.SongCount} songs there, {here} here.";
-        return several ? "Same album. Your library has it more than once." : "Same title and artist. May be another edition.";
+        if (item.Proven && several) return "Same album. Your library has it more than once.";
+        if (item.Songs is > 0 && item.Matched > 0) return $"Same title and artist. Shares {item.Matched} of its {Songs(item.Songs.Value)}.";
+        // Only where the songs could be compared is finding none of them worth saying.
+        if (item.Compared && timed) return "Same title and artist. None of its songs match by title and length.";
+        return item.Songs is > 0 && here is > 0 && item.Songs != here
+            ? $"Same title and artist. {Songs(item.Songs.Value)} there, {here} here."
+            : "Same title and artist.";
     }
+
+    private static string Songs(int count) => count == 1 ? "1 song" : $"{count} songs";
 }

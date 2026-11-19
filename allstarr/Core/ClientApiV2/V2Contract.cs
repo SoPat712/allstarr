@@ -160,11 +160,11 @@ public sealed record V2LibraryAlbumRef(
     public int? SongCount { get; init; }
 
     [JsonPropertyName("by"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull),
-     Description("On libraryAlbum, why they are the same: `songs` (songs of this album are the listener's own songs on it) or `album` (same artist, title, edition and song count).")]
+     Description("On libraryAlbum, why they are the same: `songs` (songs of this album are the listener's own songs on it, by recording) or `titles` (every song of the shorter of the two is on the other, by title and length).")]
     public string? By { get; init; }
 
     [JsonPropertyName("ownedSongs"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull),
-     Description("With `by: songs`, how many of this album's songs are on the library album.")]
+     Description("How many songs the two albums share.")]
     public int? OwnedSongs { get; init; }
 
     [JsonPropertyName("reason"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull),
@@ -179,7 +179,7 @@ public sealed record V2AlbumResponse([property: JsonPropertyName("album")] V2Alb
     public V2LibraryAlbumRef? LibraryAlbum { get; init; }
 
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull), JsonPropertyName("couldBe"),
-     Description("For a service album: up to five library albums with the same artist and title that nothing else ties it to, such as another edition.")]
+     Description("For a service album: up to five library albums with the same artist and title whose songs do not prove them the same, or several that do.")]
     public IReadOnlyList<V2LibraryAlbumRef>? CouldBe { get; init; }
 
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull), JsonPropertyName("tracks")]

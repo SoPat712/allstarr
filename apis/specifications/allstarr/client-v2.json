@@ -7145,7 +7145,7 @@
             "items": {
               "$ref": "#/components/schemas/V2LibraryAlbumRef"
             },
-            "description": "For a service album: up to five library albums with the same artist and title that nothing else ties it to, such as another edition."
+            "description": "For a service album: up to five library albums with the same artist and title whose songs do not prove them the same, or several that do."
           },
           "tracks": {
             "type": [
@@ -8313,14 +8313,14 @@
               "null",
               "string"
             ],
-            "description": "On libraryAlbum, why they are the same: \u0060songs\u0060 (songs of this album are the listener\u0027s own songs on it) or \u0060album\u0060 (same artist, title, edition and song count)."
+            "description": "On libraryAlbum, why they are the same: \u0060songs\u0060 (songs of this album are the listener\u0027s own songs on it, by recording) or \u0060titles\u0060 (every song of the shorter of the two is on the other, by title and length)."
           },
           "ownedSongs": {
             "type": [
               "null",
               "integer"
             ],
-            "description": "With \u0060by: songs\u0060, how many of this album\u0027s songs are on the library album.",
+            "description": "How many songs the two albums share.",
             "format": "int32"
           },
           "reason": {
