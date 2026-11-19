@@ -7780,7 +7780,7 @@
           "aliases",
           "libraryItemId",
           "title",
-          "artist",
+          "artists",
           "album",
           "durationMs",
           "artwork",
@@ -7811,15 +7811,29 @@
             "description": "The media server item when the song is in the library."
           },
           "title": {
-            "type": "string"
+            "type": "string",
+            "description": "The title the play recorded."
           },
-          "artist": {
-            "type": "string"
+          "artists": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/V2Ref"
+            },
+            "description": "The song\u0027s artists with the ids their pages open by; the recorded artist, without an id, when the song is unavailable."
           },
           "album": {
             "type": [
               "null",
-              "string"
+              "object"
+            ],
+            "anyOf": [
+              {
+                "description": "The song\u0027s album with the id its page opens by; the recorded album, without an id, when the song is unavailable.",
+                "$ref": "#/components/schemas/V2AlbumRef"
+              },
+              {
+                "type": "null"
+              }
             ]
           },
           "durationMs": {

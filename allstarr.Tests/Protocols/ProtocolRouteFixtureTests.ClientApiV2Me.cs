@@ -130,8 +130,12 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.Equal(resolved.GetProperty("artwork").GetProperty("url").GetString(), row.GetProperty("artwork").GetProperty("url").GetString());
         Assert.False(row.GetProperty("isExternal").GetBoolean());
         Assert.False(row.TryGetProperty("track", out _));
+        Assert.Equal(resolved.GetProperty("track").GetProperty("artists").GetRawText(), row.GetProperty("artists").GetRawText());
+        Assert.Equal(resolved.GetProperty("track").GetProperty("album").GetRawText(), row.GetProperty("album").GetRawText());
         var unresolvedRow = rows.Single(item => item.GetProperty("title").GetString() == "Unresolved import");
         Assert.Equal(JsonValueKind.Null, unresolvedRow.GetProperty("trackId").ValueKind);
+        Assert.Equal("Recorded artist", Assert.Single(unresolvedRow.GetProperty("artists").EnumerateArray()).GetProperty("name").GetString());
+        Assert.Equal("Recorded album", unresolvedRow.GetProperty("album").GetProperty("name").GetString());
         Assert.StartsWith("/allstarr/v2/me/stats/art?", unresolvedRow.GetProperty("artwork").GetProperty("url").GetString());
         using var stats = await client.GetAsync("/allstarr/v2/me/stats?period=all");
         Assert.Equal(HttpStatusCode.OK, stats.StatusCode);
@@ -144,6 +148,54 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.Contains("Private other play", otherBody);
         Assert.DoesNotContain("Unresolved import", otherBody);
         Assert.DoesNotContain("Recorded title", otherBody);
+    }
+
+    [Fact]
+    public async Task ClientApiV2_HistoryOfMoreThanOneHundredLibrarySongsReadsEveryTrack()
+    {
+        // The media server answers at most `limit` items, as Jellyfin does with 100.
+        using var factory = ClientDetailsFactory(request =>
+        {
+            if (request.RequestUri!.AbsolutePath == "/Users/Me") return Json(200, """{"Id":"listener"}""");
+            var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(request.RequestUri.Query);
+            var ids = query["ids"].ToString().Split(',', StringSplitOptions.RemoveEmptyEntries)
+                .Take(int.TryParse(query["limit"], out var limit) ? limit : int.MaxValue);
+            return Json(200, JsonSerializer.Serialize(new { Items = ids.Select(id => new { Id = id, Type = "Audio", Name = "Library song " + id }) }));
+        });
+        using var client = CreateClientApiClient(factory);
+        var owner = (await factory.Services.GetRequiredService<BackendIdentityResolver>().ResolveAsync(new("Jellyfin", "listener")))!.UserId;
+        await using (var db = await factory.Services.GetRequiredService<IDbContextFactory<AllstarrDbContext>>().CreateDbContextAsync())
+        {
+            for (var index = 0; index < 150; index++)
+                db.ListeningEvents.Add(new()
+                {
+                    Id = Guid.CreateVersion7(),
+                    OwnerUserId = owner,
+                    Protocol = "jellyfin",
+                    BackendInstanceId = "primary",
+                    OccurrenceKey = Guid.NewGuid().ToString("N"),
+                    State = ListeningEventState.Completed,
+                    ListenedAt = DateTimeOffset.Parse("2026-01-02T03:04:05Z").AddMinutes(-index),
+                    UpdatedAt = DateTimeOffset.UtcNow,
+                    SourceKind = "protocol",
+                    TrackReference = "native" + index,
+                    Title = "Recorded " + index,
+                    Artist = "Recorded artist",
+                    DurationMilliseconds = 120000
+                });
+            await db.SaveChangesAsync();
+        }
+        client.DefaultRequestHeaders.Authorization = new("Bearer", "listener-token");
+        using var response = await client.GetAsync("/allstarr/v2/me/history?limit=150");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var plays = body.RootElement.GetProperty("plays").EnumerateArray().ToArray();
+        Assert.Equal(150, plays.Length);
+        Assert.All(plays, play => Assert.Equal(JsonValueKind.Object, play.GetProperty("track").ValueKind));
+        using var rowsResponse = await client.GetAsync("/allstarr/v2/me/history/rows?limit=150");
+        using var rowsBody = JsonDocument.Parse(await rowsResponse.Content.ReadAsStringAsync());
+        Assert.Equal(plays.Select(play => play.GetProperty("track").GetProperty("id").GetString()),
+            rowsBody.RootElement.GetProperty("plays").EnumerateArray().Select(row => row.GetProperty("trackId").GetString()));
     }
 
     [Theory]

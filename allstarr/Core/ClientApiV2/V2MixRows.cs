@@ -27,8 +27,8 @@ public sealed record V2MixRows(
     [property: JsonPropertyName("updatedAt")] DateTimeOffset? UpdatedAt,
     [property: JsonPropertyName("rows")] IReadOnlyList<V2MixRow> Rows);
 
-/// <summary>A song's ids as a full track read gives them, and its stored picture tag when it is in the library.</summary>
-public sealed record V2RowId(string Id, IReadOnlyList<string> Aliases, string? LibraryItemId, string? LibraryImageTag);
+/// <summary>A song's ids as a full track read gives them.</summary>
+public sealed record V2RowId(string Id, IReadOnlyList<string> Aliases, string? LibraryItemId);
 
 /// <summary>
 /// Works out the track id a full read gives each song without reading the songs: its recording when one is known, the
@@ -62,24 +62,22 @@ public sealed class V2RowIds(ITrackIdentityService identities, ILibraryIndexServ
         if (lookups.Length > 0)
             foreach (var pair in await libraryIndex.FindKnownRecordingTracksAsync(execution, lookups, token)) targets[pair.Key] = pair.Value;
         var native = sources.Select(id => targets.GetValueOrDefault(id) ?? id).Where(id => !IsExternal(id)).Distinct(StringComparer.Ordinal).ToArray();
-        var stored = await LibraryTracksAsync(execution, native, token);
+        var stored = await LibraryRecordingsAsync(execution, native, token);
         var result = new Dictionary<string, V2RowId>(StringComparer.Ordinal);
         foreach (var source in sources)
         {
             var target = targets.GetValueOrDefault(source) ?? source;
             var inLibrary = !IsExternal(target);
-            (Guid? Recording, string? ImageTag)? track = inLibrary && stored.TryGetValue(NativeKey(target), out var found) ? found : null;
-            var recording = track?.Recording ?? known.GetValueOrDefault(source)?.Id;
+            var recording = (inLibrary && stored.TryGetValue(NativeKey(target), out var owned) ? owned : null) ?? known.GetValueOrDefault(source)?.Id;
             var id = recording is { } value ? V2Ids.Track(value) : V2Ids.TrackSource(target);
             var aliases = new[] { source, target, recording is { } canonical ? CanonicalRecordingRecord.DefaultPublicId(canonical) : null }
                 .OfType<string>().Where(alias => alias != id).Distinct(StringComparer.Ordinal).ToArray();
-            result[source] = new(id, aliases, inLibrary ? target : null, track?.ImageTag);
+            result[source] = new(id, aliases, inLibrary ? target : null);
         }
         return result;
     }
 
-    private async Task<Dictionary<string, (Guid? Recording, string? ImageTag)>> LibraryTracksAsync(ProtocolExecutionContext execution,
-        string[] ids, CancellationToken token)
+    private async Task<Dictionary<string, Guid?>> LibraryRecordingsAsync(ProtocolExecutionContext execution, string[] ids, CancellationToken token)
     {
         if (ids.Length == 0 || execution.Actor?.EffectiveUserId is not { } owner) return [];
         var lookupIds = ids.SelectMany(id => Guid.TryParse(id, out var parsed) ? new[] { id, parsed.ToString("N"), parsed.ToString("D") } : [id])
@@ -88,10 +86,9 @@ public sealed class V2RowIds(ITrackIdentityService identities, ILibraryIndexServ
         await using var db = await factory.CreateDbContextAsync(token);
         var rows = await db.LibraryTracks.AsNoTracking().Where(item => item.OwnerUserId == owner && item.Protocol == protocol &&
                 item.BackendInstanceId == execution.BackendInstanceId && lookupIds.Contains(item.BackendItemId))
-            .Select(item => new { item.BackendItemId, item.CanonicalRecordingId, item.CoverArtReference }).ToArrayAsync(token);
+            .Select(item => new { item.BackendItemId, item.CanonicalRecordingId }).ToArrayAsync(token);
         return rows.GroupBy(item => NativeKey(item.BackendItemId)).ToDictionary(group => group.Key,
-            group => (group.Select(item => item.CanonicalRecordingId).FirstOrDefault(item => item != null), group.Select(item => item.CoverArtReference).FirstOrDefault(item => item != null)),
-            StringComparer.Ordinal);
+            group => group.Select(item => item.CanonicalRecordingId).FirstOrDefault(item => item != null), StringComparer.Ordinal);
     }
 
     internal static bool IsExternal(string id) => id.StartsWith("ext-", StringComparison.Ordinal);

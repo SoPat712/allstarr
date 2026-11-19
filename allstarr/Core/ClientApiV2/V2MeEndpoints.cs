@@ -109,22 +109,28 @@ public sealed class V2MeEndpoints(ClientListeningHistory history, ListeningHisto
     }
 
     // Plays as light rows: the ids a track read gives each song, beside what the play recorded, so a long history shows
-    // at once and listener facts come from /tracks/facts.
+    // at once and listener facts come from /tracks/facts. Library songs take their artists, album and picture from one
+    // media-server read; only the few service songs need a whole track read.
     private async Task<V2HistoryRows> HistoryRowsAsync(HttpContext http, ProtocolExecutionContext execution, ClientHistoryPage page)
     {
         var ids = await rowIds.ResolveAsync(execution, page.Plays.Select(play => play.ItemId).OfType<string>());
-        // Most library songs carry their own picture tag in the index; the rest show their album's, which only the media server knows.
-        var unknown = ids.Values.Where(id => id.LibraryItemId != null && id.LibraryImageTag == null).Select(id => id.LibraryItemId!)
-            .Distinct(StringComparer.Ordinal).ToArray();
-        var pictures = await tracks.LibraryArtworkAsync(http, execution, unknown);
+        var library = await tracks.LibraryRefsAsync(http, execution, ids.Values.Select(id => id.LibraryItemId).OfType<string>()
+            .Distinct(StringComparer.Ordinal).ToArray());
+        var services = await TrackMapAsync(http, execution, ids.Where(pair => pair.Value.LibraryItemId == null).Select(pair => pair.Key));
         return new(page.Plays.Select(play =>
         {
             var row = play.ItemId == null ? null : ids.GetValueOrDefault(play.ItemId);
-            var library = row?.LibraryItemId;
-            var artwork = library == null ? null : V2ArtworkUrls.For(library, row!.LibraryImageTag) ?? pictures.GetValueOrDefault(library);
-            artwork ??= library != null || string.IsNullOrWhiteSpace(play.Artist) ? null : V2ListeningStats.Artwork(play.Artist, title: play.Title);
-            return new V2HistoryRow(row?.Id, row?.Aliases ?? [], library, play.Title, play.Artist, play.Album, play.DurationMs, artwork,
-                play.PlayedAt, library == null, library == null ? play.Provider : null);
+            var local = row?.LibraryItemId is { } item ? library.GetValueOrDefault(item) : null;
+            var track = row != null && row.LibraryItemId == null ? services.GetValueOrDefault(play.ItemId!) : null;
+            if (local == null && track == null)
+                return new V2HistoryRow(null, [], null, play.Title, string.IsNullOrWhiteSpace(play.Artist) ? [] : [new(null, play.Artist)],
+                    string.IsNullOrWhiteSpace(play.Album) ? null : new(null, play.Album), play.DurationMs,
+                    string.IsNullOrWhiteSpace(play.Artist) ? null : V2ListeningStats.Artwork(play.Artist, title: play.Title),
+                    play.PlayedAt, play.IsExternal, play.Provider);
+            return new V2HistoryRow(local != null ? row!.Id : track!.Id, local != null ? row!.Aliases : track!.Aliases, row!.LibraryItemId,
+                play.Title, local?.Artists ?? track!.Artists, local != null ? local.Album : track!.Album, play.DurationMs,
+                local != null ? local.Artwork : track!.Artwork ?? (string.IsNullOrWhiteSpace(play.Artist) ? null : V2ListeningStats.Artwork(play.Artist, title: play.Title)),
+                play.PlayedAt, local == null, local == null ? play.Provider : null);
         }).ToArray(), page.Next);
     }
 

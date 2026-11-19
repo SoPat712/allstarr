@@ -188,8 +188,7 @@ public sealed class V2TrackReader(
         var externalIds = new Dictionary<string, string>(StringComparer.Ordinal);
         if (item.Isrc is { Length: > 0 } isrc) externalIds["isrc"] = isrc;
         if (local.MusicBrainzRecording is { } musicBrainz) externalIds["musicbrainzRecording"] = musicBrainz;
-        var album = local.AlbumId is { } albumId && V2Ids.IsValidSource(albumId, V2IdKind.Album) && local.Album is { } albumName
-            ? new V2AlbumRef(V2Ids.Album(albumId), albumName) : null;
+        var album = LibraryAlbum(local);
         var albumArtwork = V2ArtworkUrls.For(local.AlbumId, local.AlbumImageTag);
         if (album != null && albums != null)
             albums.TryAdd(album.Id!, new(album.Id!, album.Name, local.AlbumArtists, local.Year, false, albumArtwork));
@@ -243,10 +242,17 @@ public sealed class V2TrackReader(
             new(container, codec?.ToLowerInvariant(), bitrate, sampleRate, bitDepth, channels,
                 codec == null ? null : LosslessCodecs.Contains(codec));
 
-    /// <summary>Each library song's picture as a track read shows it: its own, else its album's.</summary>
-    internal async Task<IReadOnlyDictionary<string, V2Artwork?>> LibraryArtworkAsync(HttpContext http, ProtocolExecutionContext execution, string[] ids) =>
-        ids.Length == 0 ? new Dictionary<string, V2Artwork?>() : (await ReadLibraryAsync(http, execution, ids)).ToDictionary(pair => pair.Key,
-            pair => V2ArtworkUrls.For(pair.Key, pair.Value.ImageTag) ?? V2ArtworkUrls.For(pair.Value.AlbumId, pair.Value.AlbumImageTag), StringComparer.Ordinal);
+    internal sealed record LibraryRefs(IReadOnlyList<V2Ref> Artists, V2AlbumRef? Album, V2Artwork? Artwork);
+
+    /// <summary>Each library song's artists, album and picture as a track read shows them, from one media-server read.</summary>
+    internal async Task<IReadOnlyDictionary<string, LibraryRefs>> LibraryRefsAsync(HttpContext http, ProtocolExecutionContext execution, string[] ids) =>
+        ids.Length == 0 ? new Dictionary<string, LibraryRefs>() : (await ReadLibraryAsync(http, execution, ids)).ToDictionary(pair => pair.Key,
+            pair => new LibraryRefs(pair.Value.Artists, LibraryAlbum(pair.Value),
+                V2ArtworkUrls.For(pair.Key, pair.Value.ImageTag) ?? V2ArtworkUrls.For(pair.Value.AlbumId, pair.Value.AlbumImageTag)), StringComparer.Ordinal);
+
+    private static V2AlbumRef? LibraryAlbum(LibraryItem local) =>
+        local.AlbumId is { } albumId && V2Ids.IsValidSource(albumId, V2IdKind.Album) && local.Album is { } albumName
+            ? new V2AlbumRef(V2Ids.Album(albumId), albumName) : null;
 
     private async Task<Dictionary<string, LibraryItem>> ReadLibraryAsync(HttpContext http, ProtocolExecutionContext execution, string[] ids)
     {
