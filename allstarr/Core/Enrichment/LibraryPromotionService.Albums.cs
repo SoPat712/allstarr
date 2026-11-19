@@ -616,8 +616,9 @@ public sealed partial class LibraryPromotionService
         if (profile.MusicBrainzTags)
         {
             foreach (var key in new[] { "musicbrainz_recordingid", "musicbrainz_releaseid", "musicbrainz_releasegroupid", "musicbrainz_artistid" }) tags[key] = "";
-            foreach (var pair in song.ProviderIds.Where(pair => pair.Key is "musicbrainz_recordingid" or "musicbrainz_releaseid" or
-                         "musicbrainz_releasegroupid" or "musicbrainz_artistid" or "originaldate")) tags[pair.Key] = pair.Value;
+            // Everything the release says about the song, as a music tagger writes it.
+            foreach (var pair in song.ProviderIds.Where(pair => pair.Value.Length > 0 && TagLibManagedTagFileMutator.ReleaseTags.Contains(pair.Key)))
+                tags[pair.Key] = pair.Value;
         }
         foreach (var key in new[] { "track", "totaltracks", "year", "date" })
             if (tags[key] is "" or "0") tags.Remove(key);

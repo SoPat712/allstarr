@@ -195,7 +195,7 @@ public sealed partial class LibraryPromotionTests
                     new Song { ExternalProvider = "apple-download", ExternalId = "track", Isrc = isrc, Track = 3 }
                 ]
             });
-        var catalog = new PromotionCatalog(factory, identities.Object, providers.Object, Mock.Of<IMusicBrainzCatalogClient>(MockBehavior.Strict));
+        var catalog = new PromotionCatalog(factory, identities.Object, providers.Object, Mock.Of<IMusicBrainzCatalogClient>());
 
         var album = await catalog.ResolveAsync(Context, recordingId, "album", default);
         var single = await catalog.ResolveAsync(Context, recordingId, "song", default);
@@ -245,6 +245,169 @@ public sealed partial class LibraryPromotionTests
         var failure = await Assert.ThrowsAsync<PromotionException>(() => catalog.ResolveAsync(Context, recordingId, "song", default));
         Assert.Equal(PromotionFailure.ReleaseMetadataUnavailable, failure.Failure);
         Assert.All(tracks, track => Assert.Null(track.CanonicalRecordingId));
+    }
+
+    [Theory]
+    // One song, then the whole EP: the service's songs keep the ids that play them and take the release's names.
+    [InlineData("song", true, true)]
+    [InlineData("album", true, true)]
+    // A release where one of the album's songs sits elsewhere tags none of them, so the album is never tagged two ways.
+    [InlineData("album", false, false)]
+    public async Task PromotionCatalog_FindsTheReleaseByIsrcAndNamesTheServicesSongsFromIt(string unit, bool secondFits, bool named)
+    {
+        var recordingMbid = Guid.NewGuid().ToString("D");
+        var otherMbid = Guid.NewGuid().ToString("D");
+        var releaseId = Guid.NewGuid().ToString("D");
+        var vinylId = Guid.NewGuid().ToString("D");
+        var groupId = Guid.NewGuid().ToString("D");
+        var artistId = Guid.NewGuid().ToString("D");
+        Song Service(string id, string title, int place) => new()
+        {
+            Title = title,
+            Artist = "Ashnikko",
+            Album = "Hi, It's Me - EP",
+            AlbumId = "ext-apple-download-album-1",
+            ExternalProvider = "apple-download",
+            ExternalId = id,
+            Track = place,
+            ReleaseDate = "2019-07-12",
+            Year = 2019
+        };
+        var song = Service("track", "Working Bitch", 2);
+        song.CanonicalRecordingId = recordingId;
+        song.Isrc = "GBAYE1900594";
+        var first = Service("first", secondFits ? "Hi, It's Me" : "Another Song", 1);
+        first.CanonicalRecordingId = Guid.NewGuid();
+        var identities = CatalogIdentities(song);
+        var providers = new Mock<IProtocolProviderGateway>();
+        providers.Setup(item => item.GetAlbumAsync(It.IsAny<ProtocolExecutionContext>(), "apple-download", "1"))
+            .ReturnsAsync(new Album { Title = "Hi, It's Me - EP", SongCount = 2, Songs = [first, song] });
+        var credit = new List<MusicBrainzArtistCredit> { new() { Name = "Ashnikko", Artist = new() { Id = artistId, Name = "Ashnikko", SortName = "Ashnikko" } } };
+        var musicBrainz = new Mock<IMusicBrainzCatalogClient>();
+        musicBrainz.Setup(item => item.LookupByIsrcAsync("GBAYE1900594", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MusicBrainzRecording { Id = recordingMbid, Title = "Working Bitch", Isrcs = ["GBAYE1900594"] });
+        // The releases a recording is on come with the recording itself, not with the ISRC read.
+        musicBrainz.Setup(item => item.LookupByMbidAsync(recordingMbid, It.IsAny<CancellationToken>())).ReturnsAsync(new MusicBrainzRecording
+        {
+            Id = recordingMbid,
+            Title = "Working Bitch",
+            Releases =
+            [
+                // Another album the song is on, a bootleg of this one, and a pressing with more songs are all passed over.
+                new() { Id = Guid.NewGuid().ToString("D"), Title = "Demidevil", Status = "Official", Date = "2021-01-15" },
+                new() { Id = Guid.NewGuid().ToString("D"), Title = "Hi, It's Me", Status = "Bootleg", Date = "2019-07-12" },
+                new() { Id = vinylId, Title = "Hi, It's Me", Status = "Official", Date = "2019-07-12", Country = "GB" },
+                new() { Id = releaseId, Title = "Hi, It's Me", Status = "Official", Date = "2019-07-12", Country = "XW" }
+            ]
+        });
+        MusicBrainzRelease Release(string id, params (string Mbid, string Title)[] tracks) => new()
+        {
+            Id = id,
+            Title = "Hi, It's Me",
+            Date = "2019-07-12",
+            Country = "XW",
+            Status = "Official",
+            Barcode = "190295416812",
+            ArtistCredit = credit,
+            LabelInfo = [new() { CatalogNumber = "DP019", Label = new() { Name = "Digital Picnic" } }],
+            ReleaseGroup = new() { Id = groupId, PrimaryType = "EP", FirstReleaseDate = "2019-07-12" },
+            Media =
+            [
+                new()
+                {
+                    Position = 1,
+                    Format = "Digital Media",
+                    TrackCount = tracks.Length,
+                    Tracks = tracks.Select((track, index) => new MusicBrainzReleaseTrack
+                    {
+                        Id = Guid.NewGuid().ToString("D"),
+                        Position = index + 1,
+                        Title = track.Title,
+                        Recording = new() { Id = track.Mbid },
+                        ArtistCredit = credit
+                    }).ToList()
+                }
+            ]
+        };
+        musicBrainz.Setup(item => item.LookupReleaseByMbidAsync(releaseId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Release(releaseId, (otherMbid, "Hi, It's Me"), (recordingMbid, "Working Bitch")));
+        musicBrainz.Setup(item => item.LookupReleaseByMbidAsync(vinylId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Release(vinylId, (otherMbid, "Hi, It's Me"), (recordingMbid, "Working Bitch"), (Guid.NewGuid().ToString("D"), "Bonus")));
+        var catalog = new PromotionCatalog(factory, identities.Object, providers.Object, musicBrainz.Object);
+
+        var resolved = await catalog.ResolveAsync(Context, recordingId, unit, default);
+
+        Assert.Equal(unit == "song" ? 1 : 2, resolved.Count);
+        var added = resolved.Single(item => item.ExternalId == "track");
+        // The song still plays from the service's own id.
+        Assert.Equal("apple-download", added.ExternalProvider);
+        Assert.Equal(recordingId, added.CanonicalRecordingId);
+        if (!named)
+        {
+            Assert.All(resolved, item => Assert.Equal("Hi, It's Me - EP", item.Album));
+            Assert.All(resolved, item => Assert.DoesNotContain("musicbrainz_releaseid", item.ProviderIds.Keys));
+            return;
+        }
+        Assert.All(resolved, item => Assert.Equal("Hi, It's Me", item.Album));
+        Assert.All(resolved, item => Assert.Equal(releaseId, item.ProviderIds["musicbrainz_releaseid"]));
+        Assert.Equal(recordingMbid, added.ProviderIds["musicbrainz_recordingid"]);
+        Assert.Equal(groupId, added.ProviderIds["musicbrainz_releasegroupid"]);
+        Assert.Equal(artistId, added.ProviderIds["musicbrainz_artistid"]);
+        Assert.Equal(artistId, added.ProviderIds["musicbrainz_albumartistid"]);
+        Assert.True(Guid.TryParse(added.ProviderIds["musicbrainz_releasetrackid"], out _));
+        Assert.Equal("190295416812", added.ProviderIds["barcode"]);
+        Assert.Equal("Digital Picnic", added.ProviderIds["label"]);
+        Assert.Equal("DP019", added.ProviderIds["catalognumber"]);
+        Assert.Equal("Digital Media", added.ProviderIds["media"]);
+        Assert.Equal("XW", added.ProviderIds["releasecountry"]);
+        Assert.Equal("official", added.ProviderIds["releasestatus"]);
+        Assert.Equal("ep", added.ProviderIds["releasetype"]);
+        Assert.Equal("2019-07-12", added.ProviderIds["originaldate"]);
+        Assert.Equal("2019", added.ProviderIds["originalyear"]);
+        Assert.Equal("Ashnikko", added.ProviderIds["artists"]);
+        Assert.Equal("Ashnikko", added.ProviderIds["artistsort"]);
+        Assert.Equal(2, added.Track);
+        Assert.Equal(2, added.TotalTracks);
+        Assert.Equal(1, added.TotalDiscs);
+    }
+
+    [Fact]
+    public async Task PromotionCatalog_KeepsTheServicesTagsWhenMusicBrainzDoesNotAnswerOrDoesNotKnowTheAlbum()
+    {
+        var song = new Song
+        {
+            CanonicalRecordingId = recordingId,
+            Title = "Song",
+            Artist = "Artist",
+            Album = "Album - Single",
+            ExternalProvider = "deezer",
+            ExternalId = "track",
+            AlbumId = "album",
+            Isrc = "USAT21900001",
+            Track = 1,
+            Year = 2020
+        };
+        var providers = new Mock<IProtocolProviderGateway>();
+        providers.Setup(item => item.GetAlbumAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "album")).ReturnsAsync(new Album { SongCount = 1, Songs = [song] });
+        var failing = new Mock<IMusicBrainzCatalogClient>();
+        failing.Setup(item => item.LookupByIsrcAsync("USAT21900001", It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new MusicBrainzLookupException("unavailable", "MusicBrainz is unavailable.", true));
+        Assert.Equal("Album - Single", Assert.Single(await new PromotionCatalog(factory, CatalogIdentities(song).Object, providers.Object, failing.Object)
+            .ResolveAsync(Context, recordingId, "song", default)).Album);
+
+        // The recording is known, but only on an album of another name: nothing is guessed.
+        var elsewhere = new Mock<IMusicBrainzCatalogClient>(MockBehavior.Strict);
+        var known = Guid.NewGuid().ToString("D");
+        elsewhere.Setup(item => item.LookupByIsrcAsync("USAT21900001", It.IsAny<CancellationToken>())).ReturnsAsync(new MusicBrainzRecording { Id = known });
+        elsewhere.Setup(item => item.LookupByMbidAsync(known, It.IsAny<CancellationToken>())).ReturnsAsync(new MusicBrainzRecording
+        {
+            Id = known,
+            Releases = [new() { Id = Guid.NewGuid().ToString("D"), Title = "Greatest Hits", Status = "Official" }]
+        });
+        var kept = Assert.Single(await new PromotionCatalog(factory, CatalogIdentities(song).Object, providers.Object, elsewhere.Object)
+            .ResolveAsync(Context, recordingId, "song", default));
+        Assert.Equal("Album - Single", kept.Album);
+        Assert.DoesNotContain("musicbrainz_releaseid", kept.ProviderIds.Keys);
     }
 
     private Mock<ITrackIdentityService> CatalogIdentities(Song song, string? mbid = null)

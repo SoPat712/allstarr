@@ -40,6 +40,36 @@ public sealed class PromotionCoverTests
     }
 
     [Fact]
+    public void ReleaseTagsAreWrittenUnderTheNamesTaggersUse()
+    {
+        var tag = new TagLib.Ogg.XiphComment();
+        TagLibManagedTagFileMutator.ApplyTags(tag, new Dictionary<string, string>
+        {
+            ["musicbrainz_albumartistid"] = "6dee6b6f-aa72-424c-9c8c-0d31ba5ff673",
+            ["musicbrainz_releasetrackid"] = "23c40af4-035d-47ee-9f79-9452c8228a99",
+            ["artists"] = "Doja Cat;Tyga",
+            ["artistsort"] = "Doja Cat & Tyga",
+            ["albumartistsort"] = "Doja Cat",
+            ["barcode"] = "886447753231",
+            ["label"] = "Kemosabe",
+            ["catalognumber"] = "G010004101434I",
+            ["media"] = "Digital Media",
+            ["releasecountry"] = "XW",
+            ["releasestatus"] = "official",
+            ["releasetype"] = "single",
+            ["originalyear"] = "2019"
+        });
+        Assert.Equal(["Doja Cat", "Tyga"], tag.GetField("ARTISTS"));
+        Assert.Equal("6dee6b6f-aa72-424c-9c8c-0d31ba5ff673", tag.GetFirstField("MUSICBRAINZ_ALBUMARTISTID"));
+        Assert.Equal("23c40af4-035d-47ee-9f79-9452c8228a99", tag.GetFirstField("MUSICBRAINZ_RELEASETRACKID"));
+        Assert.Equal("Doja Cat & Tyga", tag.GetFirstField("ARTISTSORT"));
+        Assert.Equal("Doja Cat", tag.GetFirstField("ALBUMARTISTSORT"));
+        foreach (var (field, value) in new[] { ("BARCODE", "886447753231"), ("LABEL", "Kemosabe"), ("CATALOGNUMBER", "G010004101434I"),
+                     ("MEDIA", "Digital Media"), ("RELEASECOUNTRY", "XW"), ("RELEASESTATUS", "official"), ("RELEASETYPE", "single"), ("ORIGINALYEAR", "2019") })
+            Assert.Equal(value, tag.GetFirstField(field));
+    }
+
+    [Fact]
     public void EmptyCover_RemovesCopiedEmbeddedArtwork()
     {
         var tag = new TagLib.Ogg.XiphComment { Pictures = [new TagLib.Picture(new TagLib.ByteVector(new byte[] { 1, 2, 3 }))] };

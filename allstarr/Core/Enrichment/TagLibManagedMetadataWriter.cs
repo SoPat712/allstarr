@@ -28,6 +28,29 @@ public sealed class TagLibManagedTagFileMutator : IManagedTagFileMutator
         return tags.All(pair => TagMatches(file.Tag, pair.Key, pair.Value));
     }
 
+    /// <summary>The tags a release gives a song, beyond its title and place: identities, sort names and release facts.</summary>
+    internal static readonly IReadOnlySet<string> ReleaseTags = new HashSet<string>(StringComparer.Ordinal)
+    {
+        "musicbrainz_recordingid", "musicbrainz_releaseid", "musicbrainz_releasegroupid", "musicbrainz_artistid", "originaldate",
+        "musicbrainz_albumartistid", "artistsort", "albumartistsort", "releasecountry",
+        "musicbrainz_releasetrackid", "releasestatus", "releasetype", "media", "barcode", "label", "catalognumber", "artists", "originalyear"
+    };
+
+    // Fields with no place of their own in the tag library, written under the names music taggers use in FLAC and Ogg
+    // files. Other formats name them differently and are left without them.
+    private static readonly IReadOnlyDictionary<string, string> XiphFields = new Dictionary<string, string>(StringComparer.Ordinal)
+    {
+        ["musicbrainz_releasetrackid"] = "MUSICBRAINZ_RELEASETRACKID",
+        ["releasestatus"] = "RELEASESTATUS",
+        ["releasetype"] = "RELEASETYPE",
+        ["media"] = "MEDIA",
+        ["barcode"] = "BARCODE",
+        ["label"] = "LABEL",
+        ["catalognumber"] = "CATALOGNUMBER",
+        ["artists"] = "ARTISTS",
+        ["originalyear"] = "ORIGINALYEAR"
+    };
+
     public static void ApplyTags(Tag tag, IReadOnlyDictionary<string, string> tags)
     {
         if (tags.TryGetValue("title", out var title)) tag.Title = title;
@@ -54,6 +77,15 @@ public sealed class TagLibManagedTagFileMutator : IManagedTagFileMutator
         if (tags.TryGetValue("musicbrainz_releaseid", out var releaseId)) tag.MusicBrainzReleaseId = releaseId;
         if (tags.TryGetValue("musicbrainz_releasegroupid", out var releaseGroupId)) tag.MusicBrainzReleaseGroupId = releaseGroupId;
         if (tags.TryGetValue("musicbrainz_artistid", out var artistId)) tag.MusicBrainzArtistId = artistId;
+        if (tags.TryGetValue("musicbrainz_albumartistid", out var albumArtistId)) tag.MusicBrainzReleaseArtistId = albumArtistId;
+        if (tags.TryGetValue("releasecountry", out var country)) tag.MusicBrainzReleaseCountry = country;
+        if (tags.TryGetValue("artistsort", out var artistSort)) tag.PerformersSort = [artistSort];
+        if (tags.TryGetValue("albumartistsort", out var albumArtistSort)) tag.AlbumArtistsSort = [albumArtistSort];
+        foreach (var (key, field) in XiphFields)
+            if (tags.TryGetValue(key, out var value))
+                foreach (var xiph in Components(tag).OfType<TagLib.Ogg.XiphComment>())
+                    // Several artists are several fields, as taggers write them.
+                    xiph.SetField(field, key == "artists" ? value.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) : [value]);
         if (tags.TryGetValue("cover", out var cover))
             tag.Pictures = cover.Length == 0 ? [] : [new Picture(new ByteVector(Convert.FromBase64String(cover))) { Type = PictureType.FrontCover }];
     }
@@ -83,12 +115,20 @@ public sealed class TagLibManagedTagFileMutator : IManagedTagFileMutator
         "musicbrainz_releaseid" => tag.MusicBrainzReleaseId ?? string.Empty,
         "musicbrainz_releasegroupid" => tag.MusicBrainzReleaseGroupId ?? string.Empty,
         "musicbrainz_artistid" => tag.MusicBrainzArtistId ?? string.Empty,
+        "musicbrainz_albumartistid" => tag.MusicBrainzReleaseArtistId ?? string.Empty,
+        "releasecountry" => tag.MusicBrainzReleaseCountry ?? string.Empty,
+        "artistsort" => tag.PerformersSort.FirstOrDefault() ?? string.Empty,
+        "albumartistsort" => tag.AlbumArtistsSort.FirstOrDefault() ?? string.Empty,
+        _ when XiphFields.TryGetValue(key, out var field) => string.Join(';', Components(tag).OfType<TagLib.Ogg.XiphComment>()
+            .Select(xiph => xiph.GetField(field)).FirstOrDefault() ?? []),
         "cover" => tag.Pictures.FirstOrDefault() is { } picture ? Convert.ToBase64String(picture.Data.Data) : string.Empty,
         _ => string.Empty
     };
 
     private static bool TagMatches(Tag tag, string key, string expected)
     {
+        // A field only FLAC and Ogg files carry has nothing to be checked against elsewhere.
+        if (XiphFields.ContainsKey(key) && !Components(tag).OfType<TagLib.Ogg.XiphComment>().Any()) return true;
         var actual = ReadTag(tag, key);
         if (!key.StartsWith("REPLAYGAIN_", StringComparison.Ordinal))
             return actual.Equals(expected, StringComparison.Ordinal);
