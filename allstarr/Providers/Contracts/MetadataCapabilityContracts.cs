@@ -115,11 +115,11 @@ public sealed record ProviderTrackMetadata
         TrackNumber = trackNumber;
         DiscNumber = discNumber;
         TotalTracks = totalTracks;
-        Year = year;
         Genre = ProviderContractValidation.OptionalText(genre, nameof(genre), 300);
         Bpm = bpm;
         SpotifyId = ProviderContractValidation.OptionalText(spotifyId, nameof(spotifyId), 300);
         ReleaseDate = ProviderContractValidation.OptionalText(releaseDate, nameof(releaseDate), 40);
+        Year = ProviderContractValidation.ReleaseYear(year, ReleaseDate);
         AlbumArtist = ProviderContractValidation.OptionalText(albumArtist, nameof(albumArtist), 500);
         Composer = ProviderContractValidation.OptionalText(composer, nameof(composer), 1000);
         Label = ProviderContractValidation.OptionalText(label, nameof(label), 500);
@@ -281,7 +281,7 @@ public sealed record ProviderAlbumMetadata
             nameof(snapshotVersion),
             300);
         ReleaseDate = ProviderContractValidation.OptionalText(releaseDate, nameof(releaseDate), 40);
-        Year = year;
+        Year = ProviderContractValidation.ReleaseYear(year, ReleaseDate);
         Genre = ProviderContractValidation.OptionalText(genre, nameof(genre), 300);
         Label = ProviderContractValidation.OptionalText(label, nameof(label), 500);
         Notes = ProviderContractValidation.OptionalContent(notes, nameof(notes), int.MaxValue);

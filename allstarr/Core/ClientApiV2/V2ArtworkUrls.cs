@@ -47,6 +47,7 @@ public static class V2ArtworkUrls
         return ($"/Items/{Uri.EscapeDataString(parts[0])}/Images/Primary", query);
     }
 
+    // Some services' ids carry a colon (an extension's "deezer:12108"), and an item's tag carries its id.
     private static bool IsSafeTag(string tag) =>
-        tag.Length <= MaximumTagLength && tag.All(character => char.IsAsciiLetterOrDigit(character) || character is '-' or '_' or '.');
+        tag.Length <= MaximumTagLength && tag.All(character => char.IsAsciiLetterOrDigit(character) || character is '-' or '_' or '.' or ':');
 }

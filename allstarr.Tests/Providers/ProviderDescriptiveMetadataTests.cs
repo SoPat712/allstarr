@@ -9,6 +9,22 @@ namespace allstarr.Tests;
 
 public sealed class ProviderDescriptiveMetadataTests
 {
+    [Theory]
+    [InlineData(null, "2011-06-03", 2011)]
+    [InlineData(2009, "2011-06-03", 2009)]
+    [InlineData(null, "unknown", null)]
+    [InlineData(null, null, null)]
+    public void AReleaseDateGivesTheYearWhenTheSourceSendsNone(int? year, string? releaseDate, int? expected)
+    {
+        var album = new ProviderAlbumMetadata(new("deezer", ProviderResourceKind.Album, "album-1"), "Night Shades", [new("Cobra Starship")],
+            year: year, releaseDate: releaseDate);
+        var track = new ProviderTrackMetadata(new("deezer", ProviderResourceKind.Track, "track-1"), "You Make Me Feel...", [new("Cobra Starship")],
+            year: year, releaseDate: releaseDate);
+
+        Assert.Equal(expected, album.Year);
+        Assert.Equal(expected, track.Year);
+    }
+
     [Fact]
     public void TrackRoundTrip_PreservesActualAlbumCreditsAndIdentifiers()
     {

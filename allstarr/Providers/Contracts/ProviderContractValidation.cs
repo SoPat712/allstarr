@@ -8,6 +8,11 @@ internal static partial class ProviderContractValidation
 
     internal static bool IsLocalLyricsSource(string id) => id is "backend" or "kept";
 
+    // A source that gives only a release date ("2011-06-03") still gives the year.
+    internal static int? ReleaseYear(int? year, string? releaseDate) =>
+        year ?? (releaseDate is { Length: >= 4 } && int.TryParse(releaseDate.AsSpan(0, 4), System.Globalization.NumberStyles.None,
+            System.Globalization.CultureInfo.InvariantCulture, out var parsed) && parsed is >= 1000 and <= 2999 ? parsed : null);
+
     public static string ProviderId(string value, string parameterName)
     {
         var candidate = RequiredText(value, parameterName, MaximumIdentifierLength);

@@ -85,6 +85,16 @@ public sealed class V2IdsTests
         Assert.Equal("?tag=songtag&maxWidth=600&quality=90", V2ArtworkUrls.Resolve(key, null)!.Value.Query.Value);
     }
 
+    [Fact]
+    public void ArtworkWorksForServiceIdsThatCarryAColon()
+    {
+        const string artist = "ext-spotiflac-deezer-artist-deezer:12108";
+        var artwork = V2ArtworkUrls.For(artist, artist + "-art-v3");
+        Assert.NotNull(artwork);
+        var resolved = V2ArtworkUrls.Resolve(artwork.Url[V2ArtworkUrls.PathPrefix.Length..], null);
+        Assert.Equal("/Items/" + Uri.EscapeDataString(artist) + "/Images/Primary", resolved!.Value.Path);
+    }
+
     [Theory]
     [InlineData("native1", "tag with space")]
     [InlineData("native/1", "tag")]
