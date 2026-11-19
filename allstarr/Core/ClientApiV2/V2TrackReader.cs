@@ -243,6 +243,11 @@ public sealed class V2TrackReader(
             new(container, codec?.ToLowerInvariant(), bitrate, sampleRate, bitDepth, channels,
                 codec == null ? null : LosslessCodecs.Contains(codec));
 
+    /// <summary>Each library song's picture as a track read shows it: its own, else its album's.</summary>
+    internal async Task<IReadOnlyDictionary<string, V2Artwork?>> LibraryArtworkAsync(HttpContext http, ProtocolExecutionContext execution, string[] ids) =>
+        ids.Length == 0 ? new Dictionary<string, V2Artwork?>() : (await ReadLibraryAsync(http, execution, ids)).ToDictionary(pair => pair.Key,
+            pair => V2ArtworkUrls.For(pair.Key, pair.Value.ImageTag) ?? V2ArtworkUrls.For(pair.Value.AlbumId, pair.Value.AlbumImageTag), StringComparer.Ordinal);
+
     private async Task<Dictionary<string, LibraryItem>> ReadLibraryAsync(HttpContext http, ProtocolExecutionContext execution, string[] ids)
     {
         var result = new Dictionary<string, LibraryItem>(StringComparer.Ordinal);

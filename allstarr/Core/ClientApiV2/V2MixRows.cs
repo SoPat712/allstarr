@@ -27,19 +27,21 @@ public sealed record V2MixRows(
     [property: JsonPropertyName("updatedAt")] DateTimeOffset? UpdatedAt,
     [property: JsonPropertyName("rows")] IReadOnlyList<V2MixRow> Rows);
 
+/// <summary>A song's ids as a full track read gives them, and its stored picture tag when it is in the library.</summary>
+public sealed record V2RowId(string Id, IReadOnlyList<string> Aliases, string? LibraryItemId, string? LibraryImageTag);
+
 /// <summary>
-/// A mix's songs as light rows read from the stored mix, for apps that read listener facts separately. Each row carries
-/// the track id a full read gives the same song: its recording when one is known, the library copy of a service song the
-/// listener owns, and otherwise the song's own id.
+/// Works out the track id a full read gives each song without reading the songs: its recording when one is known, the
+/// library copy of a service song the listener owns, and otherwise the song's own id. Light rows use it so their ids
+/// match the tracks an app reads later.
 /// </summary>
-public sealed class V2MixRowsReader(MixReader mixes, ITrackIdentityService identities, ILibraryIndexService libraryIndex,
-    IProviderRegistry registry, IDbContextFactory<AllstarrDbContext> factory, LibraryProviderResolver libraryProviders)
+public sealed class V2RowIds(ITrackIdentityService identities, ILibraryIndexService libraryIndex, IProviderRegistry registry,
+    IDbContextFactory<AllstarrDbContext> factory)
 {
-    public async Task<V2MixRows> ReadAsync(HttpContext http, ProtocolExecutionContext execution, Guid mixId)
+    public async Task<IReadOnlyDictionary<string, V2RowId>> ResolveAsync(ProtocolExecutionContext execution, IEnumerable<string> ids)
     {
         var token = execution.CancellationToken;
-        var mix = await mixes.ItemsAsync(http, execution, mixId);
-        var sources = mix.Items.Select(item => item.ItemId).Distinct(StringComparer.Ordinal).ToArray();
+        var sources = ids.Distinct(StringComparer.Ordinal).ToArray();
         var external = sources.Where(IsExternal).ToArray();
         IReadOnlyDictionary<string, CanonicalRecordingIdentity?> known = external.Length == 0
             ? new Dictionary<string, CanonicalRecordingIdentity?>()
@@ -60,27 +62,24 @@ public sealed class V2MixRowsReader(MixReader mixes, ITrackIdentityService ident
         if (lookups.Length > 0)
             foreach (var pair in await libraryIndex.FindKnownRecordingTracksAsync(execution, lookups, token)) targets[pair.Key] = pair.Value;
         var native = sources.Select(id => targets.GetValueOrDefault(id) ?? id).Where(id => !IsExternal(id)).Distinct(StringComparer.Ordinal).ToArray();
-        var nativeRecordings = await NativeRecordingsAsync(execution, native, token);
-        var libraryProvider = native.Length == 0 ? null : await libraryProviders.ResolveAsync(http, execution);
-        var rows = new List<V2MixRow>();
-        foreach (var item in mix.Items)
+        var stored = await LibraryTracksAsync(execution, native, token);
+        var result = new Dictionary<string, V2RowId>(StringComparer.Ordinal);
+        foreach (var source in sources)
         {
-            var target = targets.GetValueOrDefault(item.ItemId) ?? item.ItemId;
+            var target = targets.GetValueOrDefault(source) ?? source;
             var inLibrary = !IsExternal(target);
-            Guid? recording = inLibrary && nativeRecordings.TryGetValue(NativeKey(target), out var owned) ? owned : known.GetValueOrDefault(item.ItemId)?.Id;
+            (Guid? Recording, string? ImageTag)? track = inLibrary && stored.TryGetValue(NativeKey(target), out var found) ? found : null;
+            var recording = track?.Recording ?? known.GetValueOrDefault(source)?.Id;
             var id = recording is { } value ? V2Ids.Track(value) : V2Ids.TrackSource(target);
-            var aliases = new[] { item.ItemId, target, recording is { } canonical ? CanonicalRecordingRecord.DefaultPublicId(canonical) : null }
+            var aliases = new[] { source, target, recording is { } canonical ? CanonicalRecordingRecord.DefaultPublicId(canonical) : null }
                 .OfType<string>().Where(alias => alias != id).Distinct(StringComparer.Ordinal).ToArray();
-            var provider = inLibrary ? libraryProvider : item.Provider;
-            rows.Add(new(id, aliases, inLibrary ? target : null, item.Title,
-                string.IsNullOrWhiteSpace(item.Artist) ? [] : [new(Valid(item.ArtistId, V2IdKind.Artist) ? V2Ids.Artist(item.ArtistId!) : null, item.Artist)],
-                string.IsNullOrWhiteSpace(item.Album) ? null : new(Valid(item.AlbumId, V2IdKind.Album) ? V2Ids.Album(item.AlbumId!) : null, item.Album),
-                item.DurationMs, Artwork(item.ArtworkUrl), !inLibrary, provider == null ? null : Provider(provider)));
+            result[source] = new(id, aliases, inLibrary ? target : null, track?.ImageTag);
         }
-        return new(V2Ids.Mix(mixId), mix.UpdatedAt, rows);
+        return result;
     }
 
-    private async Task<Dictionary<string, Guid>> NativeRecordingsAsync(ProtocolExecutionContext execution, string[] ids, CancellationToken token)
+    private async Task<Dictionary<string, (Guid? Recording, string? ImageTag)>> LibraryTracksAsync(ProtocolExecutionContext execution,
+        string[] ids, CancellationToken token)
     {
         if (ids.Length == 0 || execution.Actor?.EffectiveUserId is not { } owner) return [];
         var lookupIds = ids.SelectMany(id => Guid.TryParse(id, out var parsed) ? new[] { id, parsed.ToString("N"), parsed.ToString("D") } : [id])
@@ -88,9 +87,38 @@ public sealed class V2MixRowsReader(MixReader mixes, ITrackIdentityService ident
         var protocol = execution.Protocol.ToString().ToLowerInvariant();
         await using var db = await factory.CreateDbContextAsync(token);
         var rows = await db.LibraryTracks.AsNoTracking().Where(item => item.OwnerUserId == owner && item.Protocol == protocol &&
-                item.BackendInstanceId == execution.BackendInstanceId && lookupIds.Contains(item.BackendItemId) && item.CanonicalRecordingId != null)
-            .Select(item => new { item.BackendItemId, item.CanonicalRecordingId }).ToArrayAsync(token);
-        return rows.GroupBy(item => NativeKey(item.BackendItemId)).ToDictionary(group => group.Key, group => group.First().CanonicalRecordingId!.Value, StringComparer.Ordinal);
+                item.BackendInstanceId == execution.BackendInstanceId && lookupIds.Contains(item.BackendItemId))
+            .Select(item => new { item.BackendItemId, item.CanonicalRecordingId, item.CoverArtReference }).ToArrayAsync(token);
+        return rows.GroupBy(item => NativeKey(item.BackendItemId)).ToDictionary(group => group.Key,
+            group => (group.Select(item => item.CanonicalRecordingId).FirstOrDefault(item => item != null), group.Select(item => item.CoverArtReference).FirstOrDefault(item => item != null)),
+            StringComparer.Ordinal);
+    }
+
+    internal static bool IsExternal(string id) => id.StartsWith("ext-", StringComparison.Ordinal);
+
+    private static string NativeKey(string id) => Guid.TryParse(id, out var parsed) ? parsed.ToString("N") : id;
+}
+
+/// <summary>A mix's songs as light rows read from the stored mix, for apps that read listener facts separately.</summary>
+public sealed class V2MixRowsReader(MixReader mixes, V2RowIds rowIds, LibraryProviderResolver libraryProviders)
+{
+    public async Task<V2MixRows> ReadAsync(HttpContext http, ProtocolExecutionContext execution, Guid mixId)
+    {
+        var mix = await mixes.ItemsAsync(http, execution, mixId);
+        var ids = await rowIds.ResolveAsync(execution, mix.Items.Select(item => item.ItemId));
+        var libraryProvider = ids.Values.Any(id => id.LibraryItemId != null) ? await libraryProviders.ResolveAsync(http, execution) : null;
+        var rows = new List<V2MixRow>();
+        foreach (var item in mix.Items)
+        {
+            var row = ids[item.ItemId];
+            var inLibrary = row.LibraryItemId != null;
+            var provider = inLibrary ? libraryProvider : item.Provider;
+            rows.Add(new(row.Id, row.Aliases, row.LibraryItemId, item.Title,
+                string.IsNullOrWhiteSpace(item.Artist) ? [] : [new(Valid(item.ArtistId, V2IdKind.Artist) ? V2Ids.Artist(item.ArtistId!) : null, item.Artist)],
+                string.IsNullOrWhiteSpace(item.Album) ? null : new(Valid(item.AlbumId, V2IdKind.Album) ? V2Ids.Album(item.AlbumId!) : null, item.Album),
+                item.DurationMs, Artwork(item.ArtworkUrl), !inLibrary, provider == null ? null : Provider(provider)));
+        }
+        return new(V2Ids.Mix(mixId), mix.UpdatedAt, rows);
     }
 
     // A stored cover is the media server's image address for an item; the native form names the same item and tag.
@@ -114,8 +142,4 @@ public sealed class V2MixRowsReader(MixReader mixes, ITrackIdentityService ident
     }
 
     private static bool Valid(string? id, V2IdKind kind) => !string.IsNullOrWhiteSpace(id) && V2Ids.IsValidSource(id, kind);
-
-    private static bool IsExternal(string id) => id.StartsWith("ext-", StringComparison.Ordinal);
-
-    private static string NativeKey(string id) => Guid.TryParse(id, out var parsed) ? parsed.ToString("N") : id;
 }

@@ -11,6 +11,23 @@ public sealed record V2HistoryPage(
     [property: JsonPropertyName("plays")] IReadOnlyList<V2HistoryPlay> Plays,
     [property: JsonPropertyName("next")] string? Next);
 
+public sealed record V2HistoryRows(
+    [property: JsonPropertyName("plays")] IReadOnlyList<V2HistoryRow> Plays,
+    [property: JsonPropertyName("next")] string? Next);
+
+public sealed record V2HistoryRow(
+    [property: JsonPropertyName("trackId"), Description("The id a track read gives this song, or null when the recorded song is unavailable.")] string? TrackId,
+    [property: JsonPropertyName("aliases")] IReadOnlyList<string> Aliases,
+    [property: JsonPropertyName("libraryItemId"), Description("The media server item when the song is in the library.")] string? LibraryItemId,
+    [property: JsonPropertyName("title")] string Title,
+    [property: JsonPropertyName("artist")] string Artist,
+    [property: JsonPropertyName("album")] string? Album,
+    [property: JsonPropertyName("durationMs")] long? DurationMs,
+    [property: JsonPropertyName("artwork")] V2Artwork? Artwork,
+    [property: JsonPropertyName("playedAt")] DateTimeOffset PlayedAt,
+    [property: JsonPropertyName("isExternal")] bool IsExternal,
+    [property: JsonPropertyName("provider")] string? Provider);
+
 public sealed record V2HistoryPlay(
     [property: JsonPropertyName("track"), Description("Current track, or null when the recorded song is unavailable.")] V2Track? Track,
     [property: JsonPropertyName("title")] string Title,

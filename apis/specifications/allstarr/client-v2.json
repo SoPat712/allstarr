@@ -1708,6 +1708,126 @@
         }
       }
     },
+    "/allstarr/v2/me/history/rows": {
+      "get": {
+        "tags": [
+          "Me"
+        ],
+        "description": "Reads this listener\u0027s qualified plays as light rows, newest first: each play\u0027s recorded facts with the track id, aliases and library item a track read gives the song, for apps that read listener facts through /tracks/facts (session feature historyRows). Unavailable songs have a null trackId. Uses the same cursor as /history. Can be batched.",
+        "operationId": "getMyHistoryRowsV2",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Plays per page, from 1 to 200; defaults to 50.",
+            "schema": {
+              "maximum": 200,
+              "minimum": 1,
+              "type": "integer",
+              "format": "int32",
+              "default": 50
+            }
+          },
+          {
+            "name": "before",
+            "in": "query",
+            "description": "Opaque next cursor from the previous page.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "If-None-Match",
+            "in": "header",
+            "description": "The stored ETag; a matching representation returns 304 without a body.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "headers": {
+              "ETag": {
+                "description": "Representation validator, also returned by the batch entry.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V2HistoryRows"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Not Modified",
+            "headers": {
+              "ETag": {
+                "description": "Representation validator, also returned by the batch entry.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/allstarr/v2/me/history/imports": {
       "get": {
         "tags": [
@@ -7651,6 +7771,111 @@
           "plays": {
             "type": "integer",
             "format": "int32"
+          }
+        }
+      },
+      "V2HistoryRow": {
+        "required": [
+          "trackId",
+          "aliases",
+          "libraryItemId",
+          "title",
+          "artist",
+          "album",
+          "durationMs",
+          "artwork",
+          "playedAt",
+          "isExternal",
+          "provider"
+        ],
+        "type": "object",
+        "properties": {
+          "trackId": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "description": "The id a track read gives this song, or null when the recorded song is unavailable."
+          },
+          "aliases": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "libraryItemId": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "description": "The media server item when the song is in the library."
+          },
+          "title": {
+            "type": "string"
+          },
+          "artist": {
+            "type": "string"
+          },
+          "album": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "durationMs": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int64"
+          },
+          "artwork": {
+            "type": [
+              "null",
+              "object"
+            ],
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/V2Artwork"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "playedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "isExternal": {
+            "type": "boolean"
+          },
+          "provider": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
+      "V2HistoryRows": {
+        "required": [
+          "plays",
+          "next"
+        ],
+        "type": "object",
+        "properties": {
+          "plays": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/V2HistoryRow"
+            }
+          },
+          "next": {
+            "type": [
+              "null",
+              "string"
+            ]
           }
         }
       },

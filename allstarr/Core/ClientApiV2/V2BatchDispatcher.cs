@@ -109,6 +109,7 @@ public sealed class V2BatchDispatcher(IServiceScopeFactory scopes, ILogger<V2Bat
                 await tracks.AutoplayAsync(http, execution, id, Value(query, "cursor"), limit),
             ["tracks", _, "autoplay"] => new(400, null),
             ["me", "history"] when Allowed(query, ["limit", "before"]) => await scope.ServiceProvider.GetRequiredService<V2MeEndpoints>().ReadAsync(http, execution, "history"),
+            ["me", "history", "rows"] when Allowed(query, ["limit", "before"]) => await scope.ServiceProvider.GetRequiredService<V2MeEndpoints>().ReadAsync(http, execution, "history/rows"),
             ["me", "history", "imports"] when Allowed(query, []) => await scope.ServiceProvider.GetRequiredService<V2MeEndpoints>().ReadAsync(http, execution, "history/imports"),
             ["me", "history", "imports", "recheck"] when Allowed(query, []) => await scope.ServiceProvider.GetRequiredService<V2MeEndpoints>().ReadAsync(http, execution, "history/imports/recheck"),
             ["me", "stats"] when Allowed(query, ["period", "year", "timeZoneId"]) => await scope.ServiceProvider.GetRequiredService<V2MeEndpoints>().ReadAsync(http, execution, "stats"),
@@ -121,7 +122,7 @@ public sealed class V2BatchDispatcher(IServiceScopeFactory scopes, ILogger<V2Bat
                 System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var servicesLimit) &&
                 bool.TryParse(Value(query, "resolve") ?? "true", out var resolveServices) =>
                 await scope.ServiceProvider.GetRequiredService<V2ServiceLyricsSearch>().SearchAsync(http, execution, Value(query, "q"), servicesLimit, resolveServices),
-            ["me", "history"] or ["me", "history", "imports"] or ["me", "history", "imports", "recheck"] or
+            ["me", "history"] or ["me", "history", "rows"] or ["me", "history", "imports"] or ["me", "history", "imports", "recheck"] or
                 ["me", "stats" or "sound" or "taste" or "preferences"] or ["search", "lyrics"] or ["search", "lyrics", "services"] => new(400, null),
             ["tracks"] or ["tracks", _] or ["albums", _] => new(400, null),
             _ => new(404, null)

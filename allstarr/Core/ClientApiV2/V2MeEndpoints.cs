@@ -10,14 +10,14 @@ namespace allstarr.Core.ClientApiV2;
 
 public sealed class V2MeEndpoints(ClientListeningHistory history, ListeningHistoryImportService imports,
     ListeningHistoryResolution resolution, ListeningStatsService stats, TasteService taste, SoundProfileService sound,
-    IDurableRuntimeSettings settings, V2TrackReader tracks, ListeningLibraries libraries)
+    IDurableRuntimeSettings settings, V2TrackReader tracks, ListeningLibraries libraries, V2RowIds rowIds)
 {
     internal async Task<V2Result> ReadAsync(HttpContext http, ProtocolExecutionContext execution, string resource)
     {
         var query = http.Request.Query;
         var allowed = resource switch
         {
-            "history" => new[] { "limit", "before" },
+            "history" or "history/rows" => new[] { "limit", "before" },
             "stats" => ["period", "year", "timeZoneId"],
             _ => []
         };
@@ -38,6 +38,9 @@ public sealed class V2MeEndpoints(ClientListeningHistory history, ListeningHisto
                         .Zip(page.Plays, (track, play) => new V2HistoryPlay(track, play.Title, play.Artist, play.Album, play.DurationMs,
                             track?.Artwork ?? (string.IsNullOrWhiteSpace(play.Artist) ? null : V2ListeningStats.Artwork(play.Artist, title: play.Title)),
                             play.PlayedAt, play.IsExternal, play.Provider)).ToArray(), page.Next));
+                case "history/rows":
+                    if (!int.TryParse(Value("limit") ?? "50", NumberStyles.None, CultureInfo.InvariantCulture, out var rowLimit)) return new(400, null);
+                    return new(200, await HistoryRowsAsync(http, execution, await history.ReadAsync(execution, rowLimit, Value("before"))));
                 case "history/imports":
                     return new(200, await imports.ListAsync(new(owner, execution.Protocol.ToString().ToLowerInvariant(), execution.BackendInstanceId), 50, token));
                 case "history/imports/recheck":
@@ -103,6 +106,26 @@ public sealed class V2MeEndpoints(ClientListeningHistory history, ListeningHisto
         catch (HttpRequestException) { choice = null; }
         return new(heart, choice == null ? null
             : new(choice.Selected, choice.Available.Select(library => new V2MusicLibrary(library.Id, library.Name)).ToArray(), choice.Revision));
+    }
+
+    // Plays as light rows: the ids a track read gives each song, beside what the play recorded, so a long history shows
+    // at once and listener facts come from /tracks/facts.
+    private async Task<V2HistoryRows> HistoryRowsAsync(HttpContext http, ProtocolExecutionContext execution, ClientHistoryPage page)
+    {
+        var ids = await rowIds.ResolveAsync(execution, page.Plays.Select(play => play.ItemId).OfType<string>());
+        // Most library songs carry their own picture tag in the index; the rest show their album's, which only the media server knows.
+        var unknown = ids.Values.Where(id => id.LibraryItemId != null && id.LibraryImageTag == null).Select(id => id.LibraryItemId!)
+            .Distinct(StringComparer.Ordinal).ToArray();
+        var pictures = await tracks.LibraryArtworkAsync(http, execution, unknown);
+        return new(page.Plays.Select(play =>
+        {
+            var row = play.ItemId == null ? null : ids.GetValueOrDefault(play.ItemId);
+            var library = row?.LibraryItemId;
+            var artwork = library == null ? null : V2ArtworkUrls.For(library, row!.LibraryImageTag) ?? pictures.GetValueOrDefault(library);
+            artwork ??= library != null || string.IsNullOrWhiteSpace(play.Artist) ? null : V2ListeningStats.Artwork(play.Artist, title: play.Title);
+            return new V2HistoryRow(row?.Id, row?.Aliases ?? [], library, play.Title, play.Artist, play.Album, play.DurationMs, artwork,
+                play.PlayedAt, library == null, library == null ? play.Provider : null);
+        }).ToArray(), page.Next);
     }
 
     private async Task<Dictionary<string, V2Track>> TrackMapAsync(HttpContext http, ProtocolExecutionContext execution, IEnumerable<string?> ids)

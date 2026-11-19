@@ -22,6 +22,16 @@ public sealed class MeController(V2MeEndpoints me, RecapArtworkReader artwork, J
         [FromQuery, Description("Opaque next cursor from the previous page.")] string? before = null) =>
         Respond(await me.ReadAsync(HttpContext, Execution, "history"));
 
+    [HttpGet("history/rows")]
+    [EndpointName("getMyHistoryRowsV2")]
+    [EndpointDescription("Reads this listener's qualified plays as light rows, newest first: each play's recorded facts with the track id, aliases and library item a track read gives the song, for apps that read listener facts through /tracks/facts (session feature historyRows). Unavailable songs have a null trackId. Uses the same cursor as /history. Can be batched.")]
+    [ProducesResponseType<V2HistoryRows>(200)]
+    [ProducesResponseType(304)]
+    public async Task<IActionResult> HistoryRows(
+        [FromQuery, Range(1, 200), Description("Plays per page, from 1 to 200; defaults to 50.")] int limit = 50,
+        [FromQuery, Description("Opaque next cursor from the previous page.")] string? before = null) =>
+        Respond(await me.ReadAsync(HttpContext, Execution, "history/rows"));
+
     [HttpGet("history/imports")]
     [EndpointName("getMyHistoryImportsV2")]
     [EndpointDescription("Reads this listener's latest 50 import previews, counts and job status without changing them. Can be batched.")]

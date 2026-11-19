@@ -119,6 +119,20 @@ public sealed partial class ProtocolRouteFixtureTests
             resolved.GetProperty("artwork").GetProperty("url").GetString());
         Assert.StartsWith("/allstarr/v2/me/stats/art?", plays.Single(item => item.GetProperty("title").GetString() == "Unresolved import")
             .GetProperty("artwork").GetProperty("url").GetString());
+        // Light rows give the same track id and picture beside the recorded facts, without the track itself.
+        using var rowsResponse = await client.GetAsync("/allstarr/v2/me/history/rows?limit=5");
+        Assert.Equal(HttpStatusCode.OK, rowsResponse.StatusCode);
+        using var rowsBody = JsonDocument.Parse(await rowsResponse.Content.ReadAsStringAsync());
+        var rows = rowsBody.RootElement.GetProperty("plays").EnumerateArray().ToArray();
+        var row = rows.Single(item => item.GetProperty("title").GetString() == "Recorded title");
+        Assert.Equal(resolved.GetProperty("track").GetProperty("id").GetString(), row.GetProperty("trackId").GetString());
+        Assert.Equal("native1", row.GetProperty("libraryItemId").GetString());
+        Assert.Equal(resolved.GetProperty("artwork").GetProperty("url").GetString(), row.GetProperty("artwork").GetProperty("url").GetString());
+        Assert.False(row.GetProperty("isExternal").GetBoolean());
+        Assert.False(row.TryGetProperty("track", out _));
+        var unresolvedRow = rows.Single(item => item.GetProperty("title").GetString() == "Unresolved import");
+        Assert.Equal(JsonValueKind.Null, unresolvedRow.GetProperty("trackId").ValueKind);
+        Assert.StartsWith("/allstarr/v2/me/stats/art?", unresolvedRow.GetProperty("artwork").GetProperty("url").GetString());
         using var stats = await client.GetAsync("/allstarr/v2/me/stats?period=all");
         Assert.Equal(HttpStatusCode.OK, stats.StatusCode);
         using var statsBody = JsonDocument.Parse(await stats.Content.ReadAsStringAsync());
