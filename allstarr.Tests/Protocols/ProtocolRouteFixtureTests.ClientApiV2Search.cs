@@ -428,7 +428,10 @@ public sealed partial class ProtocolRouteFixtureTests
         var owner = (await factory.Services.GetRequiredService<BackendIdentityResolver>().ResolveAsync(new("Jellyfin", listener)))!.UserId;
         var execution = new ProtocolExecutionContext(ProtocolKind.Jellyfin, "primary", listener,
             new AllstarrPrincipal(owner, "jellyfin", "primary", listener, listener, false), "search-fixture", DateTimeOffset.UtcNow.AddMinutes(1), default);
-        await factory.Services.GetRequiredService<LyricsSearchIndex>().StoreAsync(execution, V2BatchSong(id), null,
+        // Each stored song is its own recording: identical details would make two of them one hit.
+        var song = V2BatchSong(id);
+        song.Album = "Stored album " + id;
+        await factory.Services.GetRequiredService<LyricsSearchIndex>().StoreAsync(execution, song, null,
             new(new("kept", "Kept lyrics"), "line", [new(1000, 2000, text, "lead", []), new(2000, 3000, "Second verse", "lead", [])]));
     }
 

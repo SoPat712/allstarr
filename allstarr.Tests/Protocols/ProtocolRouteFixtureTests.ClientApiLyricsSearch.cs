@@ -294,6 +294,43 @@ public sealed partial class ProtocolRouteFixtureTests
     }
 
     [Fact]
+    public async Task ClientApi_LyricsSearchListsOneRecordingOnceAcrossItsCopies()
+    {
+        var recording = Guid.NewGuid();
+        using var factory = ClientLyricsFactory(recording, new());
+        using var client = CreateClientApiClient(factory);
+        client.DefaultRequestHeaders.Add("X-Emby-Token", "listener-token");
+        var (owner, _) = await SeedClientLyricsAsync(factory, recording);
+        var context = (await factory.Services.GetRequiredService<IBackendLibraryAccessResolver>().ResolveUserAsync(owner)).Context!;
+        var index = factory.Services.GetRequiredService<LyricsSearchIndex>();
+        async Task Store(string id, string title, string album, int seconds, string isrc)
+        {
+            var execution = new ProtocolExecutionContext(context.Protocol, context.BackendInstanceId, context.VerifiedBackendPrincipalId,
+                context.Principal!, "search-fixture", DateTimeOffset.UtcNow.AddMinutes(1), default);
+            await index.StoreAsync(execution, new Song
+            {
+                Id = "ext-deezer-song-" + id,
+                ExternalProvider = "deezer",
+                ExternalId = id,
+                Title = title,
+                Artist = "Tate McRae",
+                Album = album,
+                Duration = seconds,
+                Isrc = isrc
+            }, null, new(new("unison", "unison"), "plain", [new RichLyricsLine(null, null, "be my own housewife", "lead", [])]));
+        }
+        // The single and the album copy share an ISRC and a length: one recording. The live take is another.
+        await Store("single", "Housewife", "Housewife - Single", 208, "USRC12601916");
+        await Store("album", "Housewife", "Housewife", 209, "USRC12601916");
+        await Store("live", "Housewife (Live)", "Live at Home", 215, "USRC12601999");
+
+        var hits = (await ReadClientLyricsJsonAsync(client, "/allstarr/v1/search/lyrics?q=be%20my%20own%20housewife"))["results"]!.AsArray();
+
+        Assert.Equal(2, hits.Count);
+        Assert.Single(hits, hit => hit!["title"]!.GetValue<string>() == "Housewife (Live)");
+    }
+
+    [Fact]
     public async Task ClientApi_LibraryLyricsSearchIndexesChangesInBackgroundAndEnforcesLibraryVisibility()
     {
         var recording = Guid.NewGuid();

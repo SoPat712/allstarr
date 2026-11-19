@@ -181,6 +181,7 @@ public sealed class LyricsSearchReader(LyricsSearchIndex index, IDbContextFactor
                 accessible.Add(hit with { AlbumId = item.TryGetProperty("AlbumId", out var album) && album.ValueKind == JsonValueKind.String ? album.GetString() : null });
             }
             Timed("access-filter");
+            accessible = OneHitPerRecording(accessible, visibleByItem);
             if (accessible.Count > limit || !result.Truncated)
             {
                 // Hits matching the line about equally well (a song and its covers) are ordered by which one is the listener's or best known.
@@ -193,6 +194,22 @@ public sealed class LyricsSearchReader(LyricsSearchIndex index, IDbContextFactor
             }
             take = Math.Min(visibleDocuments.Count, take * 2);
         }
+    }
+
+    // One recording on two services is one hit, by the same proof search uses; the listener's own copy stays when it is one.
+    private static List<LyricsSearchResult> OneHitPerRecording(List<LyricsSearchResult> hits,
+        IReadOnlyDictionary<string, IndexedLyricsDocument> documents)
+    {
+        var kept = new List<LyricsSearchResult>();
+        foreach (var hit in hits)
+        {
+            var song = documents.GetValueOrDefault(hit.ItemId)?.Song;
+            var twin = song == null ? -1 : kept.FindIndex(other =>
+                documents.GetValueOrDefault(other.ItemId)?.Song is { } known && MusicSearchService.SameSearchRecording(known, song));
+            if (twin < 0) kept.Add(hit);
+            else if (!hit.IsExternal && kept[twin].IsExternal) kept[twin] = hit;
+        }
+        return kept;
     }
 
     private sealed record Visibility(IReadOnlyList<IndexedLyricsDocument> Documents, IReadOnlySet<Guid> PlayableRecordings,
