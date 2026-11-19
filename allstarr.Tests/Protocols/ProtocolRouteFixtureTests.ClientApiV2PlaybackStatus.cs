@@ -42,6 +42,9 @@ public sealed partial class ProtocolRouteFixtureTests
             await second.Content.ReadAsByteArrayAsync();
             await completions.WaitAsync();
             Assert.NotNull((await ReadClientLyricsJsonAsync(client, path))["serving"]);
+            // An app holding the id as a UUID sends it back with hyphens.
+            var hyphenated = "/allstarr/v2/playback/" + Guid.ParseExact(playback["playbackId"]!.GetValue<string>(), "N").ToString("D");
+            Assert.NotNull((await ReadClientLyricsJsonAsync(client, hyphenated))["serving"]);
         }
         finally { firstRelease.TrySetResult(); secondRelease.TrySetResult(); }
         await first.Content.ReadAsByteArrayAsync();

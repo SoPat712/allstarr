@@ -12,6 +12,8 @@ public sealed class V2PlaybackStatusReader(V2ServingStreams serving, PlaybackRea
 {
     public async Task<V2Result> ReadAsync(HttpContext http, ProtocolExecutionContext execution, string id)
     {
+        // Apps that hold the id as a UUID send it back with hyphens.
+        if (Guid.TryParseExact(id, "D", out var hyphenated)) id = hyphenated.ToString("N");
         var status = serving.Status(execution, id);
         if (status.Status != 404 || !Guid.TryParseExact(id, "N", out var request)) return status;
         if (await started.ReadAsync(http, execution, request) is not { } playback) return status;
