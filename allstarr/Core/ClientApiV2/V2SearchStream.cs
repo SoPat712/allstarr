@@ -191,7 +191,15 @@ public sealed class V2SearchStream(IProtocolProviderGateway providers, MusicSear
                         // service's copy of the same release into one row; the per-service shape leaves it out.
                         if ((ranked || sentAlbums.Add(AlbumKey(album.Title, album.Artist))) &&
                             sentIds.Add("MusicAlbum:" + album.Id)) Add(builder.ConvertAlbumToJellyfinItem(album), AlbumScore(album), "albums", album: album);
-                    foreach (var artist in results.Artists.Where(artist => !music.IsEmptyArtist(artist))
+                    // An artist tied to a library artist is shown on that row. It never stands for the same-named artists
+                    // nothing ties, or they would leave the results with it.
+                    // The library's ties are read beside the services and are nearly always there first. A service that
+                    // answers sooner, as a repeated search does, waits a moment for them; a slow library holds nothing back.
+                    IReadOnlySet<string>? tied = null;
+                    if (savedLinks != null)
+                        try { tied = MusicSearchService.LinkedKeys(await savedLinks.WaitAsync(TiesWait, cancellation)); }
+                        catch (Exception error) when (error is not OperationCanceledException || !cancellation.IsCancellationRequested) { }
+                    foreach (var artist in results.Artists.Where(artist => !music.IsEmptyArtist(artist) && !MusicSearchService.IsLinked(artist, tied))
                                  .OrderByDescending(ArtistScore).Take(limit))
                     {
                         if (sentIds.Contains("MusicArtist:" + artist.Id)) continue;
@@ -271,6 +279,7 @@ public sealed class V2SearchStream(IProtocolProviderGateway providers, MusicSear
     }
 
     internal const string CombinedSource = "allstarr", CombinedSourceName = "Allstarr";
+    private static readonly TimeSpan TiesWait = TimeSpan.FromMilliseconds(150);
 
     private static string Normalize(string? value) => FuzzyMatcher.NormalizeForMatching(value ?? "");
     private static string AlbumKey(string title, string? artist) => Normalize(title) + "\u001f" + Normalize(artist);

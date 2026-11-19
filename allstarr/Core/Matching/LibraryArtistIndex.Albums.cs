@@ -11,7 +11,7 @@ namespace allstarr.Core.Matching;
 
 public sealed partial class LibraryArtistIndex
 {
-    private const int CandidateChecks = 6;
+    private const int CandidateChecks = 8;
     private static readonly TimeSpan CheckedFor = TimeSpan.FromHours(6);
     // Titles many acts share prove nothing about which act it is.
     private static readonly HashSet<string> CommonTitles = new[]
@@ -106,14 +106,26 @@ public sealed partial class LibraryArtistIndex
             access.Context.VerifiedBackendPrincipalId, access.Context.Principal, "library-artist-link", now.AddMinutes(1), token)
         { IsReadOnly = true, UseStoredBackendCredentials = true };
         var checks = 0;
-        foreach (var candidate in candidates.OrderByDescending(artist => artist.AlbumCount ?? 0))
+        // A service lists an artist once, so one already tied there leaves its other same-named accounts alone. Each
+        // service's fullest artist goes first: a pass reaches every service before any service's second account.
+        var tiedServices = names.Keys.ToDictionary(key => key, _ => new HashSet<string>(StringComparer.Ordinal), StringComparer.Ordinal);
+        foreach (var (name, links) in saved)
+            if (tiedServices.TryGetValue(FuzzyMatcher.NormalizeForMatching(name), out var known))
+                known.UnionWith(links.Select(link => ServiceCatalog.Of(link.ProviderId)));
+        var tied = 0;
+        var ordered = candidates.GroupBy(artist => ServiceCatalog.Of(NormalizeProvider(artist.ExternalProvider!)), StringComparer.Ordinal)
+            .SelectMany(service => service.OrderByDescending(artist => artist.AlbumCount ?? 0).Select((artist, rank) => (artist, rank)))
+            .OrderBy(item => item.rank).Select(item => item.artist).ToArray();
+        foreach (var candidate in ordered)
         {
             var name = names[FuzzyMatcher.NormalizeForMatching(candidate.Name)];
             var provider = NormalizeProvider(candidate.ExternalProvider!);
             var artist = ServiceCatalog.Key(provider, candidate.ExternalId!);
-            if ((saved.GetValueOrDefault(name) ?? []).Any(link => ServiceCatalog.Key(link.ProviderId, link.ArtistId) == artist)) continue;
-            if (!albumChecks.TryAdd($"{owner:N}|{artist}", now + CheckedFor)) continue;
+            var services = tiedServices[FuzzyMatcher.NormalizeForMatching(candidate.Name)];
+            if (services.Contains(ServiceCatalog.Of(provider))) continue;
+            if (albumChecks.TryGetValue($"{owner:N}|{artist}", out var checkedUntil) && checkedUntil > now) continue;
             if (++checks > CandidateChecks) break;
+            albumChecks[$"{owner:N}|{artist}"] = now + CheckedFor;
             token.ThrowIfCancellationRequested();
             List<Album> albums;
             try { albums = await providers.GetArtistAlbumsAsync(context, provider, candidate.ExternalId!); }
@@ -121,10 +133,16 @@ public sealed partial class LibraryArtistIndex
             {
                 // A service that failed is asked again on the next search.
                 albumChecks.TryRemove($"{owner:N}|{artist}", out _);
+                logger?.LogInformation("Albums of a same-named artist on {Provider} could not be read ({ErrorType})", provider, error.GetType().Name);
                 continue;
             }
-            await ProveByAlbumsAsync(owner, name, provider, candidate.ExternalId!, albums, token);
+            if (!await ProveByAlbumsAsync(owner, name, provider, candidate.ExternalId!, albums, token)) continue;
+            services.Add(ServiceCatalog.Of(provider));
+            tied++;
         }
+        if (checks > 0)
+            logger?.LogInformation("Checked {Checked} same-named service artists against the library's albums; {Tied} tied",
+                Math.Min(checks, CandidateChecks), tied);
     }
 
     /// <summary>
@@ -156,6 +174,7 @@ public sealed partial class LibraryArtistIndex
         {
             // A lookup that failed is tried again on the next visit.
             albumChecks.TryRemove(memo, out _);
+            logger?.LogWarning("Looking a library artist up on the services failed ({ErrorType})", error.GetType().Name);
         }
     }
 

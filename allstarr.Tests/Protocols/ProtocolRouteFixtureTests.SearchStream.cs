@@ -189,7 +189,8 @@ public sealed partial class ProtocolRouteFixtureTests
             Artists =
             [
                 new Artist { Id = "ext-deezer-artist-same", Name = "Juice WRLD", ExternalProvider = "deezer", ExternalId = "same" },
-                new Artist { Id = "ext-deezer-artist-999", Name = "Juice WRLD 999", ExternalProvider = "deezer", ExternalId = "999" }
+                new Artist { Id = "ext-deezer-artist-999", Name = "Juice WRLD 999", ExternalProvider = "deezer", ExternalId = "999" },
+                new Artist { Id = "ext-deezer-artist-namesake", Name = "Juice WRLD", ExternalProvider = "deezer", ExternalId = "namesake" }
             ]
         };
         var links = new Mock<ILibraryArtistLinks>();
@@ -216,6 +217,9 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.Equal("ext-deezer-artist-same", alsoOn["id"]!.GetValue<string>());
         Assert.False(string.IsNullOrWhiteSpace(alsoOn["sourceName"]!.GetValue<string>()));
         Assert.Contains(artists, item => item!["Id"]!.GetValue<string>() == "ext-deezer-artist-999");
+        // Another act of the same name that nothing ties stays in the results: the tied one never stands for it.
+        var namesake = Assert.Single(artists, item => item!["Id"]!.GetValue<string>() == "ext-deezer-artist-namesake")!;
+        Assert.Equal("lib-artist-juice", Assert.Single(namesake["namesakes"]!.AsArray())!["id"]!.GetValue<string>());
         links.Verify(item => item.RequestAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 

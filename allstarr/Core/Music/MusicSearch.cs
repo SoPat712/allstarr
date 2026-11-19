@@ -448,7 +448,7 @@ public sealed partial class MusicSearchService(
         _ = Task.Run(async () =>
         {
             try { await artistLinks.ProveCandidatesAsync(owner, names, shown, CancellationToken.None); }
-            catch (Exception) { }
+            catch (Exception error) { logger?.LogWarning("Checking same-named artists' albums failed ({ErrorType})", error.GetType().Name); }
         }, CancellationToken.None);
     }
 

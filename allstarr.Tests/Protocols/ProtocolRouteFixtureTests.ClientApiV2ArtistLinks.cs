@@ -153,7 +153,8 @@ public sealed partial class ProtocolRouteFixtureTests
         // Candidates already tied or answered for are not offered again, whichever of a service's sources named them.
         links.Setup(item => item.ReadCandidatesAsync(It.IsAny<Guid>(), "Say Now", It.IsAny<CancellationToken>()))
             .ReturnsAsync([new("tidal", "9", "Say Now", 0, [], true), new("spotiflac-deezer", "1", "Say Now", 0, [], true),
-                new("deezer", "namesake", "Say Now", 0, [], true)]);
+                new("deezer", "namesake", "Say Now", 0, [], true), new("deezer", "second account", "Say Now", 0, [], true),
+                new("tidal", "10", "Say Now", 0, [], true), new("tidal", "11", "Say Now", 0, [], true)]);
         links.Setup(item => item.SetFixAsync(It.IsAny<Guid>(), "Say Now", "apple-musickit", "1680224047", true, It.IsAny<CancellationToken>()))
             .Callback(() => fixes.Add(new("apple-musickit", "1680224047", true, false))).ReturnsAsync(true);
         using var client = ArtistLinksClient(links.Object, out var factory);
@@ -178,7 +179,10 @@ public sealed partial class ProtocolRouteFixtureTests
             var byAlbum = shown.Single(link => link.GetProperty("by").GetString() == "albums");
             Assert.Equal(V2Ids.Artist("ext-qobuz-artist-7"), byAlbum.GetProperty("id").GetString());
             Assert.Equal("Shared album", byAlbum.GetProperty("album").GetString());
-            var candidate = Assert.Single(json.RootElement.GetProperty("candidates").EnumerateArray());
+            // Deezer already has its artist, so its other accounts are not offered; an untied service offers two at most.
+            var offered = json.RootElement.GetProperty("candidates").EnumerateArray().ToArray();
+            Assert.Equal(["ext-tidal-artist-9", "ext-tidal-artist-10"], offered.Select(item => item.GetProperty("aliases")[0].GetString()));
+            var candidate = offered[0];
             Assert.Equal(V2Ids.Artist("ext-tidal-artist-9"), candidate.GetProperty("id").GetString());
             Assert.Equal(["ext-tidal-artist-9"], candidate.GetProperty("aliases").EnumerateArray().Select(value => value.GetString()));
             Assert.Equal("Say Now", candidate.GetProperty("name").GetString());

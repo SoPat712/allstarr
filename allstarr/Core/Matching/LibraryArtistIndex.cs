@@ -26,7 +26,7 @@ public sealed record LibraryArtistFix(string ProviderId, string ArtistId, bool S
 public sealed partial class LibraryArtistIndex(IDbContextFactory<AllstarrDbContext> factory,
     IBackendLibraryAccessResolver libraryAccess, IPlatformClock clock, TrackMatchPlayableSearch search,
     IProtocolProviderGateway providers, ITrackIdentityService identities, IProviderRegistry? registry = null,
-    EmptyServiceArtists? emptyArtists = null)
+    EmptyServiceArtists? emptyArtists = null, ILogger<LibraryArtistIndex>? logger = null)
 {
     private const string IndexKind = "library-artist-index", BackfillKind = "library-artist-backfill", FixKind = "library-artist-fix",
         AlbumKind = "library-artist-album-link";

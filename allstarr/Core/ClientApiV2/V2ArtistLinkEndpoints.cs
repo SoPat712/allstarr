@@ -107,9 +107,14 @@ public sealed class V2ArtistLinkEndpoints(ILibraryArtistLinks index, JellyfinPro
         // One row per service: a service's two sources name the same artist by the same id.
         var settled = tied.Select(link => ServiceCatalog.Key(link.ProviderId, link.ArtistId))
             .Concat(fixes.Select(fix => ServiceCatalog.Key(fix.ProviderId, fix.ArtistId))).ToHashSet(StringComparer.Ordinal);
+        // A service lists an artist once: where one is already tied, its other same-named accounts are not offered, and
+        // an untied service offers its first two at most.
+        var tiedServices = links.Select(link => ServiceCatalog.Of(link.Source)).ToHashSet(StringComparer.Ordinal);
         var candidates = (await index.ReadCandidatesAsync(owner, name, token))
-            .Where(candidate => !settled.Contains(ServiceCatalog.Key(candidate.ProviderId, candidate.ArtistId)))
+            .Where(candidate => !settled.Contains(ServiceCatalog.Key(candidate.ProviderId, candidate.ArtistId)) &&
+                !tiedServices.Contains(ServiceCatalog.Of(candidate.ProviderId)))
             .DistinctBy(candidate => ServiceCatalog.Key(candidate.ProviderId, candidate.ArtistId), StringComparer.Ordinal)
+            .GroupBy(candidate => ServiceCatalog.Of(candidate.ProviderId), StringComparer.Ordinal).SelectMany(service => service.Take(CandidatesPerService))
             .Select(candidate =>
             {
                 var legacy = ProtocolProviderGateway.ProtocolItemId(new(candidate.ProviderId, ProviderResourceKind.Artist, candidate.ArtistId));
@@ -120,6 +125,7 @@ public sealed class V2ArtistLinkEndpoints(ILibraryArtistLinks index, JellyfinPro
     }
 
     internal const string CandidateReason = "Same name. No matched song or shared album yet.";
+    private const int CandidatesPerService = 2;
     private static readonly TimeSpan DiscoverWait = TimeSpan.FromSeconds(3);
 
     private static bool Is(LibraryArtistFix fix, string provider, string artistId) =>

@@ -60,10 +60,11 @@ public sealed partial class TrackIdentityServiceTests
         var index = ArtistAlbumIndex(gateway);
         var shown = new[]
         {
-            new Artist { Name = "Ashnikko", ExternalProvider = "deezer", ExternalId = "same" },
+            new Artist { Name = "Ashnikko", ExternalProvider = "deezer", ExternalId = "same", AlbumCount = 9 },
             new Artist { Name = "ASHNIKKO", ExternalProvider = "qobuz", ExternalId = "namesake" },
-            // A different name is never checked.
-            new Artist { Name = "Ashnikko Tribute", ExternalProvider = "deezer", ExternalId = "tribute" }
+            // A different name is never checked, and neither is a second account on a service whose artist is already tied.
+            new Artist { Name = "Ashnikko Tribute", ExternalProvider = "deezer", ExternalId = "tribute" },
+            new Artist { Name = "Ashnikko", ExternalProvider = "spotiflac-deezer", ExternalId = "fan account", AlbumCount = 0 }
         };
 
         await index.ProveCandidatesAsync(_userA, ["Ashnikko"], shown);
@@ -73,6 +74,7 @@ public sealed partial class TrackIdentityServiceTests
         gateway.Verify(item => item.GetArtistAlbumsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "same"), Times.Once);
         gateway.Verify(item => item.GetArtistAlbumsAsync(It.IsAny<ProtocolExecutionContext>(), "qobuz", "namesake"), Times.Once);
         gateway.Verify(item => item.GetArtistAlbumsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "tribute"), Times.Never);
+        gateway.Verify(item => item.GetArtistAlbumsAsync(It.IsAny<ProtocolExecutionContext>(), "spotiflac-deezer", "fan account"), Times.Never);
     }
 
     private LibraryArtistIndex ArtistAlbumIndex(Mock<IProtocolProviderGateway> gateway)
