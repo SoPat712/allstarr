@@ -12,7 +12,7 @@ The audit clones are temporary working copies outside this repository. Allstarr 
 | Project and audited revision | License found | What it proves | Allstarr decision |
 | --- | --- | --- | --- |
 | [MusicBrainz Docker `c8a225f`](https://github.com/metabrainz/musicbrainz-docker/tree/c8a225fab3ea3a4650d8b1e0fab41d98878adc29) | No repository-level license file detected; underlying components and data have their own terms | A replicated MusicBrainz deployment is operationally substantial and does not repair missing upstream metadata | Do not require or deploy it for the first Jellyfin-plus-provider use case. |
-| [BrainzMash hearing-aid `c25bd6e`](https://github.com/statichum/brainzmash-hearring-aid/tree/c25bd6e8816592af33cac65c42dff6a35b9e0566) | No repository-level license detected | A community pool exposes a Lidarr-shaped API and a separately approved read-only MusicBrainz-compatible `/ws/2` front door | Use `https://api.brainzmash.cc/ws/2` as the selected canonical upstream after its operator approves Allstarr's honest user agent. Do not copy or deploy the pool software as part of Allstarr. |
+| [BrainzMash hearing-aid `c25bd6e`](https://github.com/statichum/brainzmash-hearring-aid/tree/c25bd6e8816592af33cac65c42dff6a35b9e0566) | No repository-level license detected | A community pool exposes a Lidarr-shaped API and a separately approved read-only MusicBrainz-compatible `/ws/2` front door | Allstarr's default endpoint is MusicBrainz (`https://musicbrainz.org/ws/2`). `https://api.brainzmash.cc/ws/2` is a compatible alternative, usable only after its operator approves Allstarr's honest user agent. Do not copy or deploy the pool software as part of Allstarr. |
 | [BrainzMash bootstrap `0db5710`](https://github.com/statichum/brainzmash-bootstrap/tree/0db5710e9e983226fb88e0d30c3ccfd4eb1022f8) | No repository-level license detected | Shows how a contributor node is joined to the pool | Do not use it for an Allstarr-supported deployment. It tracks mutable branches/images, publishes internal services, stores secrets in generated configuration, and lacks the supply-chain and rollback controls required here. |
 | [DroppedNeedle `5a337fc`](https://github.com/DroppedNeedle/DroppedNeedle/tree/5a337fc94b3b2edb0b00742dbccce605d93ee1ef) | AGPL-3.0 | It demonstrates separate recording/release identity, manual review, support-only fingerprint evidence, and the approved BrainzMash `/ws/2` consumer contract | Retain those independent matching, source-activation, privacy-disclosure, and client-behavior lessons without copying its catalog architecture or identity. |
 | [Aurral `5fb0f3e`](https://github.com/lklynet/aurral/tree/5fb0f3e8c371de1fc5635594c7761a3e05f0ac0d) | MIT | Its Lidarr-shaped BrainzMash client demonstrates bounded concurrency, single-flight requests, caching, health state, and short retry budgets | Reuse resilience lessons in Allstarr's existing MusicBrainz client and canonical catalog owner, but do not add Aurral's second metadata dialect. |
@@ -23,8 +23,8 @@ The audit clones are temporary working copies outside this repository. Allstarr 
 
 | Project and audited revision | License found | What it proves | Allstarr decision |
 | --- | --- | --- | --- |
-| [Music Assistant server `ee38f52`](https://github.com/music-assistant/server/tree/ee38f522a1eb07c5d359566cc8c171538c89b5e2) | Apache-2.0 | A library entity can own mappings to several provider instances without making any provider ID canonical | Keep one Allstarr recording with multiple authorized routes. Let Integrations → Routing select playback only after each route independently passes match acceptance. |
-| [AudioMuse status](../operations/audiomuse.md), audited revision `e78c87dccc2afbfb22b3d3264a8b36a50f3e9d3f` | AGPL-3.0 | Local-server identity and content-derived evidence are separate concerns | The integration is shelved, retained in the build and hidden from the normal dashboard. It does not own catalog identity or routing. |
+| [Music Assistant server `ee38f52`](https://github.com/music-assistant/server/tree/ee38f522a1eb07c5d359566cc8c171538c89b5e2) | Apache-2.0 | A library entity can own mappings to several provider instances without making any provider ID canonical | Keep one Allstarr recording with multiple authorized routes. Let source order (Settings → Music sources) select playback only after each route independently passes match acceptance. |
+| [AudioMuse](../operations/audiomuse.md), audited revision `e78c87dccc2afbfb22b3d3264a8b36a50f3e9d3f` | AGPL-3.0 | Local-server identity and content-derived evidence are separate concerns | The integration is active: its connection is set in Settings → Mixes and discovery, and mood mixes use it. Sonic Instant Mix and the OpenSubsonic `getSonicSimilarTracks` and `findSonicPath` methods need the development release profile. It does not own catalog identity or routing. |
 | [DroppedNeedle `5a337fc`](https://github.com/DroppedNeedle/DroppedNeedle/tree/5a337fc94b3b2edb0b00742dbccce605d93ee1ef) | AGPL-3.0 | Acquired files need verification, quarantine, provenance, atomic catalog admission, and eventual native-library reconciliation | Apply those lessons to Allstarr's existing download/keep pipeline instead of introducing a second library manager. Lidarr remains optional. |
 
 ## Playlist import
@@ -117,12 +117,24 @@ authoritative. These adaptations are distributed under Allstarr's
 
 ## SpotiFLAC-Mobile runtime reuse
 
-The extension compatibility wrappers and host functions are adapted from
-[SpotiFLAC-Mobile](https://github.com/zarzet/SpotiFLAC-Mobile), inspected 2026-10-10:
-`rust_backend/crates/extensions/src/prelude.js`, `file_transform.rs`,
-`download/segments.rs`, `signed_session/protocol.rs`, `signed_session/fetch.rs`,
-and `rust_backend/crates/core/src/matching.rs`. Allstarr retains its own
-invocation paths, permission checks, artifact size limits and cancellation.
+The extension compatibility wrappers, host functions, signed-session client and
+platform link resolver adapt code from
+[SpotiFLAC-Mobile](https://github.com/zarzet/SpotiFLAC-Mobile), first inspected
+2026-10-10. Paths are relative to `allstarr/` here and to `rust_backend/crates/`
+upstream:
+
+| Allstarr file | Upstream source |
+| --- | --- |
+| `Providers/Extensions/SpotiFlacExtensionCompatibility.cs` | `extensions/src/prelude.js`, `extensions/src/environment.rs` |
+| `Providers/Extensions/ExtensionHostBridge.Transform.cs` | `extensions/src/file_transform.rs` |
+| `Providers/Extensions/ExtensionHostBridge.Segments.cs` | `extensions/src/download/segments.rs` |
+| `Providers/Extensions/ExtensionHostBridge.Utilities.cs` | `core/src/matching.rs` |
+| `Providers/Extensions/ExtensionManager.cs` | `network/src/lib.rs` |
+| `Providers/Extensions/ExtensionSignedSessionClient.cs` | `extensions/src/signed_session/protocol.rs`, `fetch.rs` and `ss_protocol.rs` |
+| `Core/Matching/PlatformLinkResolverChain.cs` | `providers/src/resolver` |
+
+Allstarr retains its own invocation paths, permission checks, artifact size
+limits and cancellation.
 
 The copied portions carry this notice:
 
@@ -130,6 +142,37 @@ The copied portions carry this notice:
 MIT License
 
 Copyright (c) 2026 zarzet
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+## QQMusicDecoder notice
+
+The QRC lyrics cipher (`QrcCipher`) in
+`allstarr/Core/Providers/Lyrics/ChineseWordLyricsParser.cs` is adapted from
+[`QQMusicDecoder/DESHelper.cs` at 0e1494194523dd885405812a91ee9b9702bfb30c](https://github.com/WXRIW/QQMusicDecoder/blob/0e1494194523dd885405812a91ee9b9702bfb30c/QQMusicDecoder/DESHelper.cs)
+in WXRIW's QQMusicDecoder. The adapted code carries this notice:
+
+```text
+MIT License
+
+Copyright (c) 2023 WXRIW
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

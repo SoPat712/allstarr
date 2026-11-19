@@ -3,8 +3,11 @@
 The Allstarr client API gives music apps access to tracks, lyrics, playback,
 matches and listener state. It runs on the music listener, normally port `5274`,
 with a Jellyfin backend. Subsonic deployments use the Subsonic compatibility
-surface instead. The administrator can disable the client API; disabled requests
-return `404`.
+surface instead.
+
+The client API is off by default. An administrator turns it on in the dashboard
+under Settings → Apps → **Client API for apps**. While it is off, client API
+requests return `404`.
 
 Use [v2](v2.md) for new clients. It is the native API, with a shared track shape,
 optional views, batched reads and signed playback links. [v1](v1.md) remains
@@ -26,7 +29,9 @@ applies that listener's library access, source accounts and preferences.
 For v2, send `Authorization: Bearer <token>`. For v1, send `X-Emby-Token: <token>`
 or Jellyfin's `Authorization: MediaBrowser ... Token="<token>"` header.
 Never put the listener token in a URL. V2 rejects query credentials with `401`.
-The v2 event stream and ping require the Bearer header specifically.
+The v2 event stream and ping read the token only from the `Authorization`
+header, as either `Bearer <token>` or the MediaBrowser `Token="<token>"` form;
+`X-Emby-Token` alone returns `401` there.
 
 Examples use `BASE=http://localhost:5274` and an `ALLSTARR_TOKEN` environment
 variable containing your listener token. Use HTTPS when connecting remotely.
@@ -50,8 +55,9 @@ Jellyfin deployment also serves the documents at `/allstarr/v1/openapi.json` and
 `/allstarr/v2/openapi.json` while the client API is enabled.
 
 The path selects the API version. The application version is separate.
-The v1 capabilities response reports available features; check it before showing
-optional controls. Do not infer feature availability from the server version.
+The v2 session `features` map and the v1 capabilities response report available
+features; check them before showing optional controls. Do not infer feature
+availability from the server version.
 Treat IDs and continuation cursors as opaque. Preserve unknown response fields
 and tolerate additional fields when reading JSON.
 
@@ -82,8 +88,8 @@ Provider limits and local capacity still apply. Honor `Retry-After` when present
 use bounded backoff for temporary failures, and stop retrying rejected credentials.
 
 - A v2 track list accepts at most 100 IDs. A batch accepts 1–20 reads.
-- Event streams share a limit of eight connections per listener and 256 total
-  across v1 and v2. Excess connections return `503`. Reuse a connection.
+- The v2 event stream allows eight connections per listener and 256 in total.
+  Excess connections return `503`. Reuse a connection.
 - Provider audio defaults to six concurrent streams per listener. Local media
   conversion defaults to two concurrent jobs. Administrators can change these
   limits; capacity failures return `503` with `Retry-After`.
