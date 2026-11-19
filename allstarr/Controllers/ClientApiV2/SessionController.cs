@@ -8,8 +8,8 @@ public sealed class SessionController(V2SessionReader session) : ClientApiV2Cont
 {
     [HttpGet]
     [EndpointName("getSession")]
-    [EndpointDescription("Reads this listener's identity, server version, available v2 areas and the dashboard link. Can also be read inside a batch.")]
+    [EndpointDescription("Reads this listener's identity, server version, available v2 areas, the dashboard link, the library's own mark and how adds to the library work. Can also be read inside a batch.")]
     [ProducesResponseType<V2SessionResponse>(200)]
     [ProducesResponseType(304)]
-    public async Task<IActionResult> Get() => Respond(await session.ReadAsync(Execution));
+    public async Task<IActionResult> Get() => Respond(await session.ReadAsync(HttpContext, Execution));
 }

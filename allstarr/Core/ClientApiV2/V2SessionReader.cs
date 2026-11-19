@@ -1,14 +1,17 @@
+using allstarr.Core.ClientApi;
 using allstarr.Core.Protocols;
 using allstarr.Core.Settings;
 
 namespace allstarr.Core.ClientApiV2;
 
-public sealed class V2SessionReader(IDurableRuntimeSettings settings)
+public sealed class V2SessionReader(IDurableRuntimeSettings settings, LibraryProviderResolver library, ClientLibraryAdditions additions)
 {
-    public async Task<V2Result> ReadAsync(ProtocolExecutionContext execution)
+    public async Task<V2Result> ReadAsync(HttpContext http, ProtocolExecutionContext execution)
     {
         var listener = execution.Principal!;
         var address = (await settings.GetAsync("Admin:Oidc:PublicUrl", execution.CancellationToken)).NormalizedValue.Trim();
+        var mark = V2ProviderUrls.For(await library.ResolveAsync(http, execution));
+        var adding = await additions.CapabilitiesAsync(execution, execution.CancellationToken);
         return new(200, new V2SessionResponse(new(listener.UserId, listener.DisplayName), AppVersion.Version,
             new Dictionary<string, bool>(StringComparer.Ordinal)
             {
@@ -53,6 +56,7 @@ public sealed class V2SessionReader(IDurableRuntimeSettings settings)
                 ["trackLyrics"] = true,
                 // A service song's measured loudness arrives as trackGainDb, announced by track.updated with changed ["loudness"].
                 ["trackLoudness"] = true
-            }, string.IsNullOrEmpty(address) ? null : new(address)));
+            }, string.IsNullOrEmpty(address) ? null : new(address), new(mark.Id, mark.Name, mark.IconUrl, mark.GlyphUrl),
+            new(adding.CanAddDirectly, adding.RequiresApproval, adding.DefaultUnit)));
     }
 }

@@ -48,6 +48,10 @@ public sealed partial class ProtocolRouteFixtureTests
         var capabilities = JsonNode.Parse(await v1.Content.ReadAsStringAsync())!;
         Assert.Equal(capabilities["serverVersion"]!.GetValue<string>(), session["serverVersion"]!.GetValue<string>());
         Assert.True(JsonNode.DeepEquals(capabilities["dashboard"], session["dashboard"]));
+        // The library's own mark and how adds work answer as the v1 capabilities do, with v2 icon addresses.
+        Assert.Equal(capabilities["library"]!["id"]!.GetValue<string>(), session["library"]!["id"]!.GetValue<string>());
+        Assert.Equal(capabilities["library"]!["name"]!.GetValue<string>(), session["library"]!["name"]!.GetValue<string>());
+        Assert.True(JsonNode.DeepEquals(capabilities["libraryAdditions"], session["libraryAdditions"]));
         foreach (var name in new[] { "tracks", "albums", "batch", "playback", "events", "artistLinks", "lyricsTranslation", "autoplay",
                      "trackFacts", "lyricsSources", "trackMatch", "appearances", "similarAlbums", "playbackStatus", "mixes", "releases",
                      "libraryAdditions", "artistFollow", "reports", "karaokeModel", "providerIcons", "history", "historyImports",

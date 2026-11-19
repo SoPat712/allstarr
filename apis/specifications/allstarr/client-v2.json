@@ -4260,7 +4260,7 @@
         "tags": [
           "Session"
         ],
-        "description": "Reads this listener\u0027s identity, server version, available v2 areas and the dashboard link. Can also be read inside a batch.",
+        "description": "Reads this listener\u0027s identity, server version, available v2 areas, the dashboard link, the library\u0027s own mark and how adds to the library work. Can also be read inside a batch.",
         "operationId": "getSession",
         "parameters": [
           {
@@ -8114,6 +8114,27 @@
           }
         }
       },
+      "V2LibraryAdditionCapabilities": {
+        "required": [
+          "canAddDirectly",
+          "requiresApproval",
+          "defaultUnit"
+        ],
+        "type": "object",
+        "properties": {
+          "canAddDirectly": {
+            "type": "boolean",
+            "description": "Adds start at once; otherwise they wait for an administrator."
+          },
+          "requiresApproval": {
+            "type": "boolean"
+          },
+          "defaultUnit": {
+            "type": "string",
+            "description": "\u0060song\u0060 or \u0060album\u0060: what an add button adds unless the listener picks."
+          }
+        }
+      },
       "V2LibraryChoice": {
         "required": [
           "selected"
@@ -9723,7 +9744,9 @@
           "listener",
           "serverVersion",
           "features",
-          "dashboard"
+          "dashboard",
+          "library",
+          "libraryAdditions"
         ],
         "type": "object",
         "properties": {
@@ -9752,6 +9775,14 @@
                 "type": "null"
               }
             ]
+          },
+          "library": {
+            "description": "The media server\u0027s own mark, shown on library results beside the services\u0027.",
+            "$ref": "#/components/schemas/V2Provider"
+          },
+          "libraryAdditions": {
+            "description": "How this listener adds a service song or album to the library.",
+            "$ref": "#/components/schemas/V2LibraryAdditionCapabilities"
           },
           "build": {
             "type": [

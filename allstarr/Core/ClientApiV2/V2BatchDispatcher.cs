@@ -68,7 +68,7 @@ public sealed class V2BatchDispatcher(IServiceScopeFactory scopes, ILogger<V2Bat
         var resources = scope.ServiceProvider.GetRequiredService<V2TrackResources>();
         return segments switch
         {
-            ["session"] when Allowed(query, []) => await scope.ServiceProvider.GetRequiredService<V2SessionReader>().ReadAsync(execution),
+            ["session"] when Allowed(query, []) => await scope.ServiceProvider.GetRequiredService<V2SessionReader>().ReadAsync(http, execution),
             ["session"] => new(400, null),
             ["tracks", var id, "lyrics"] when Allowed(query, ["sourceId"]) =>
                 await resources.LyricsAsync(http, execution, id, query.ContainsKey("sourceId") ? Value(query, "sourceId") ?? "" : null),
