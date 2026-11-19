@@ -273,8 +273,10 @@ public sealed class MusicBrainzService : IMusicBrainzCatalogClient
         CancellationToken cancellationToken,
         TimeSpan? requestTimeout = null)
     {
+        // MusicBrainz refuses release groups, genres and tags on an ISRC read with a 400, which answered every ISRC as
+        // unknown. The recording found here is read by its id when those are wanted.
         var response = await GetJsonAsync<MusicBrainzIsrcResponse>(
-            $"isrc/{isrc}?fmt=json&inc=artists+releases+release-groups+isrcs+genres+tags",
+            $"isrc/{isrc}?fmt=json&inc=artists+releases+isrcs",
             cancellationToken, requestTimeout);
         var recordings = response?.Recordings;
         if (recordings is not { Count: > 0 }) return null;

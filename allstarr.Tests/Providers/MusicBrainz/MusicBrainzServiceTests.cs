@@ -67,6 +67,8 @@ public sealed class MusicBrainzServiceTests
         Assert.Equal(MusicBrainzService.HttpClientName, factory.ClientName);
         Assert.Equal(1, handler.Calls);
         Assert.Equal("/ws/2/isrc/USABC1234567", handler.RequestUris.Single().AbsolutePath);
+        // MusicBrainz answers 400 to an ISRC read that asks for release groups, genres or tags.
+        Assert.Equal("?fmt=json&inc=artists+releases+isrcs", handler.RequestUris.Single().Query);
         Assert.Null(handler.Authorizations.Single());
         Assert.Equal(MusicBrainzService.UserAgent, handler.UserAgents.Single());
     }

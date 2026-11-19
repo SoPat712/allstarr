@@ -30,7 +30,12 @@ public sealed class SharedTagSources(
         if (MusicBrainzService.NormalizeMbid(mbid) is { } normalizedMbid)
             recording = await musicBrainz.LookupByMbidAsync(normalizedMbid, cancellationToken);
         if (recording == null && MusicBrainzService.NormalizeIsrc(isrc) is { } normalizedIsrc)
+        {
             recording = await musicBrainz.LookupByIsrcAsync(normalizedIsrc, cancellationToken);
+            // An ISRC read names the recording; its genres, tags and releases come with the recording itself.
+            if (MusicBrainzService.NormalizeMbid(recording?.Id) is { } foundMbid)
+                recording = await musicBrainz.LookupByMbidAsync(foundMbid, cancellationToken) ?? recording;
+        }
 
         string? artistId = null;
         if (recording != null)
