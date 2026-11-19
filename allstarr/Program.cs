@@ -533,6 +533,8 @@ builder.Services.AddScoped<V2ArtistLinkEndpoints>();
 builder.Services.AddScoped<V2BatchDispatcher>();
 builder.Services.AddScoped<V2MeEndpoints>();
 builder.Services.AddScoped<V2StatsWarmUp>();
+builder.Services.AddSingleton<V2StatsRowsWarmer>();
+builder.Services.AddHostedService(provider => provider.GetRequiredService<V2StatsRowsWarmer>());
 builder.Services.AddScoped<V2SearchStream>();
 builder.Services.AddScoped<V2SearchEndpoints>();
 builder.Services.AddScoped<V2ServiceLyricsSearch>();

@@ -57,8 +57,11 @@ public sealed partial class ListeningStatsService(IDbContextFactory<AllstarrDbCo
     private const int TopLimit = 50;
     public static readonly TimeSpan WarmEvery = TimeSpan.FromMinutes(1);
     private static readonly TimeSpan KeptFor = TimeSpan.FromMinutes(10);
-    // A visit waits this long for a recap read after new plays, then answers from the last one while the read finishes.
-    internal TimeSpan FreshWait { get; init; } = TimeSpan.FromMilliseconds(750);
+    // A visit waits only this long for a recap read after new plays, in case it is about done, then answers from the
+    // last one while the read finishes. A read takes seconds, so a longer wait only made every such visit slow.
+    internal TimeSpan FreshWait { get; init; } = TimeSpan.FromMilliseconds(40);
+    /// <summary>Told the listener whose recap was just read again, so what apps show beside it can be made ready too.</summary>
+    public Action<Guid>? Rebuilt { get; set; }
     private static readonly TimeSpan StaleFor = TimeSpan.FromMinutes(30);
     private static readonly TimeSpan BuildLimit = TimeSpan.FromMinutes(2);
     // Recaps opened lately are read again in the background; the list is bounded so odd years cannot pile up work.
@@ -247,6 +250,8 @@ public sealed partial class ListeningStatsService(IDbContextFactory<AllstarrDbCo
                     AbsoluteExpirationRelativeToNow = StaleFor
                 });
                 artwork?.Queue(listener, result);
+                try { Rebuilt?.Invoke(key.Scope.OwnerUserId); }
+                catch (Exception) { }
                 return result;
             }
             finally { building.TryRemove(KeyValuePair.Create((key, plays, finished), self)); }
