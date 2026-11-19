@@ -114,7 +114,7 @@ public sealed class V2BatchDispatcher(IServiceScopeFactory scopes, ILogger<V2Bat
             ["me", "history"] when Allowed(query, ["limit", "before"]) => await scope.ServiceProvider.GetRequiredService<V2MeEndpoints>().ReadAsync(http, execution, "history"),
             ["me", "history", "rows"] when Allowed(query, ["limit", "before"]) => await scope.ServiceProvider.GetRequiredService<V2MeEndpoints>().ReadAsync(http, execution, "history/rows"),
             ["me", "history", "imports"] when Allowed(query, []) => await scope.ServiceProvider.GetRequiredService<V2MeEndpoints>().ReadAsync(http, execution, "history/imports"),
-            ["me", "history", "imports", "recheck"] when Allowed(query, []) => await scope.ServiceProvider.GetRequiredService<V2MeEndpoints>().ReadAsync(http, execution, "history/imports/recheck"),
+            ["me", "history", "imports", "recheck"] when Allowed(query, ["examples"]) => await scope.ServiceProvider.GetRequiredService<V2MeEndpoints>().ReadAsync(http, execution, "history/imports/recheck"),
             ["me", "stats"] when Allowed(query, ["period", "year", "timeZoneId"]) => await scope.ServiceProvider.GetRequiredService<V2MeEndpoints>().ReadAsync(http, execution, "stats"),
             ["me", var resource] when resource is "sound" or "taste" or "preferences" && Allowed(query, []) =>
                 await scope.ServiceProvider.GetRequiredService<V2MeEndpoints>().ReadAsync(http, execution, resource),

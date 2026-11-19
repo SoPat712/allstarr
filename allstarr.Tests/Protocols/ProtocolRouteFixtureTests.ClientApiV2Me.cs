@@ -433,6 +433,12 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.Equal(V2Ids.Track(recording), example.GetProperty("recordingId").GetString());
         Assert.Equal(V2Ids.Track(recording), example.GetProperty("track").GetProperty("id").GetString());
         Assert.Equal("Completely different recording", example.GetProperty("title").GetString());
+        // An app that shows only the counts asks without the examples.
+        using var counts = await client.GetAsync("/allstarr/v2/me/history/imports/recheck?examples=false");
+        Assert.Equal(HttpStatusCode.OK, counts.StatusCode);
+        using var countsBody = JsonDocument.Parse(await counts.Content.ReadAsStringAsync());
+        Assert.Equal(1, countsBody.RootElement.GetProperty("doubtful").GetInt32());
+        Assert.Empty(countsBody.RootElement.GetProperty("examples").EnumerateArray());
         await using var check = await factory.Services.GetRequiredService<IDbContextFactory<AllstarrDbContext>>().CreateDbContextAsync();
         Assert.Equal(recording, (await check.ListeningEvents.SingleAsync()).CanonicalRecordingId);
     }
@@ -462,6 +468,47 @@ public sealed partial class ProtocolRouteFixtureTests
         using var other = await client.GetAsync("/allstarr/v2/me/preferences");
         using var otherBody = JsonDocument.Parse(await other.Content.ReadAsStringAsync());
         Assert.Equal("keep", otherBody.RootElement.GetProperty("heartAction").GetString());
+    }
+
+    [Fact]
+    public async Task ClientApiV2_SearchReadsOnlyTheMusicLibrariesTheListenerChose()
+    {
+        var searches = new System.Collections.Concurrent.ConcurrentQueue<(string? Library, string Types)>();
+        using var factory = ClientApiFactory(request =>
+        {
+            switch (request.RequestUri!.AbsolutePath)
+            {
+                case "/Users/Me": return Json(200, """{"Id":"listener"}""");
+                case "/UserViews": return Json(200, """{"Items":[{"Id":"mine","Name":"My music","CollectionType":"music"},{"Id":"kids","Name":"Kids","CollectionType":"music"}]}""");
+            }
+            var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(request.RequestUri.Query);
+            if (request.RequestUri.AbsolutePath == "/Users/listener/Items" && query.ContainsKey("SearchTerm"))
+                searches.Enqueue((query.TryGetValue("ParentId", out var parent) ? parent.ToString() : null, query["IncludeItemTypes"].ToString()));
+            return Json(200, """{"Items":[]}""");
+        });
+        using var client = CreateClientApiClient(factory);
+        client.DefaultRequestHeaders.Authorization = new("Bearer", "listener-token");
+        async Task SearchAsync()
+        {
+            searches.Clear();
+            using var response = await client.GetAsync("/allstarr/v2/search?q=anything");
+            Assert.True(response.StatusCode == HttpStatusCode.OK, await response.Content.ReadAsStringAsync());
+            await response.Content.ReadAsStringAsync();
+        }
+
+        // Without a choice the whole library is searched at once.
+        await SearchAsync();
+        Assert.All(searches, search => Assert.Null(search.Library));
+        Assert.NotEmpty(searches);
+
+        using (var chosen = await client.PatchAsJsonAsync("/allstarr/v2/me/preferences", new { libraries = new { selected = new[] { "mine" } } }))
+            chosen.EnsureSuccessStatusCode();
+        await SearchAsync();
+        // Songs, albums and artists come from the chosen library; playlists belong to no music library.
+        var music = Assert.Single(searches, search => search.Library != null);
+        Assert.Equal("mine", music.Library);
+        Assert.DoesNotContain("Playlist", music.Types);
+        Assert.Equal("Playlist", Assert.Single(searches, search => search.Library == null).Types);
     }
 
     [Fact]

@@ -44,7 +44,9 @@ public sealed class MeController(V2MeEndpoints me, RecapArtworkReader artwork, J
     [EndpointDescription("Checks this listener's imported matches with the current matcher, without changing them. Examples include matched V2Track values when available. Can be batched.")]
     [ProducesResponseType<V2HistoryRecheck>(200)]
     [ProducesResponseType(304)]
-    public async Task<IActionResult> Recheck() => Respond(await me.ReadAsync(HttpContext, Execution, "history/imports/recheck"));
+    public async Task<IActionResult> Recheck(
+        [FromQuery, Description("`false` returns the counts with an empty examples list, for apps that show only the counts.")] bool examples = true) =>
+        Respond(await me.ReadAsync(HttpContext, Execution, "history/imports/recheck"));
 
     [HttpGet("stats")]
     [EndpointName("getMyStatsV2")]

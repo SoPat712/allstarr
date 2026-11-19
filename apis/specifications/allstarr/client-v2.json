@@ -1940,6 +1940,15 @@
         "operationId": "getMyHistoryRecheckV2",
         "parameters": [
           {
+            "name": "examples",
+            "in": "query",
+            "description": "\u0060false\u0060 returns the counts with an empty examples list, for apps that show only the counts.",
+            "schema": {
+              "type": "boolean",
+              "default": true
+            }
+          },
+          {
             "name": "If-None-Match",
             "in": "header",
             "description": "The stored ETag; a matching representation returns 304 without a body.",

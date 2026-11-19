@@ -19,6 +19,7 @@ public sealed class V2MeEndpoints(ClientListeningHistory history, ListeningHisto
         {
             "history" or "history/rows" => new[] { "limit", "before" },
             "stats" => ["period", "year", "timeZoneId"],
+            "history/imports/recheck" => ["examples"],
             _ => []
         };
         if (query.Any(item => allowed.Contains(item.Key) && item.Value.Count != 1)) return new(400, null);
@@ -44,7 +45,10 @@ public sealed class V2MeEndpoints(ClientListeningHistory history, ListeningHisto
                 case "history/imports":
                     return new(200, await imports.ListAsync(new(owner, execution.Protocol.ToString().ToLowerInvariant(), execution.BackendInstanceId), 50, token));
                 case "history/imports/recheck":
+                    if (Value("examples") is not (null or "true" or "false")) return new(400, null);
                     var recheck = await resolution.RecheckAsync(execution, token);
+                    // An app that shows only the counts asks without the examples, which are 200 songs read in full.
+                    if (Value("examples") == "false") recheck = recheck with { Examples = [] };
                     var matched = await TrackMapAsync(http, execution, recheck.Examples.Select(song => V2Ids.Track(song.RecordingId)));
                     return new(200, new V2HistoryRecheck(recheck.Songs, recheck.Unchecked, recheck.Doubtful, recheck.DoubtfulPlays,
                         recheck.Examples.Select(song => new V2HistoryRecheckSong(matched.GetValueOrDefault(V2Ids.Track(song.RecordingId)),

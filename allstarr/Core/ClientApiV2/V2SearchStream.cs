@@ -22,7 +22,7 @@ namespace allstarr.Core.ClientApiV2;
 public sealed class V2SearchStream(IProtocolProviderGateway providers, MusicSearchService music,
     JellyfinProxyService proxy, JellyfinResponseBuilder builder, JellyfinItemResponseFilter itemFilter,
     IApplicationCache cache, TimeProvider clock, LibraryProviderResolver libraryProvider, IProviderRegistry registry,
-    ILibrarySpellings? spellings = null)
+    ILibrarySpellings? spellings = null, ListeningLibraries? libraries = null)
 {
     internal async Task<IActionResult> StreamAsync(HttpContext http, ProtocolExecutionContext execution, string query,
         int limit, HashSet<string> requested, bool ranked,
@@ -43,7 +43,7 @@ public sealed class V2SearchStream(IProtocolProviderGateway providers, MusicSear
         var headers = http.Request.Headers;
         // Every item names where it came from, so apps can label a library artist and a same-named service artist apart.
         var library = await libraryProvider.ResolveAsync(http, execution);
-        var native = new NativeSearch(proxy, headers, execution, spellings);
+        var native = new NativeSearch(proxy, headers, execution, spellings, libraries);
         var nativeTask = Task.Run(() => native.ReadAsync(query, limit, requested, token, includePlaylists: ranked), token);
         var sentIds = new HashSet<string>(StringComparer.Ordinal);
         var sentSongs = new List<Song>();
@@ -117,6 +117,15 @@ public sealed class V2SearchStream(IProtocolProviderGateway providers, MusicSear
                             ExplicitContentLyrics = item.ExplicitContentLyrics
                         }).ToArray();
                     var projected = await music.ProjectSearchSongsAsync(execution, results.Songs, native, cancellation).WaitAsync(cancellation);
+                    // A service song stays a service song when the listener's only copy is in a library they left out.
+                    if (libraries != null && projected.Where(entry => entry is { Native: not null, Origin: not null })
+                            .Select(entry => entry.Native!.Id).Distinct(StringComparer.Ordinal).ToArray() is { Length: > 0 } copies)
+                    {
+                        var chosen = (await libraries.KeepChosenAsync(execution, copies, cancellation)).ToHashSet(StringComparer.Ordinal);
+                        if (chosen.Count < copies.Length)
+                            projected = projected.Select(entry => entry is { Native: { } copy, Origin: { } origin } && !chosen.Contains(copy.Id)
+                                ? new() { Song = origin } : entry).ToArray();
+                    }
                     // Ranked search keeps a service song Allstarr matched to a library song: it joins that song's row,
                     // or stands in for it when the library search didn't list it.
                     var libraryCopies = new Dictionary<Song, string>(ReferenceEqualityComparer.Instance);
@@ -393,8 +402,23 @@ public sealed class V2SearchStream(IProtocolProviderGateway providers, MusicSear
         };
 
     private sealed class NativeSearch(JellyfinProxyService proxy, IHeaderDictionary headers, ProtocolExecutionContext context,
-        ILibrarySpellings? spellings = null) : INativeMusicSearch<Dictionary<string, object?>>
+        ILibrarySpellings? spellings = null, ListeningLibraries? libraries = null) : INativeMusicSearch<Dictionary<string, object?>>
     {
+        private Task<IReadOnlyList<string>?>? chosen;
+
+        // The music libraries the listener chose, when that is fewer than they can open; null searches all of them.
+        private async Task<IReadOnlyList<string>?> ChosenAsync(CancellationToken token)
+        {
+            if (libraries == null) return null;
+            try
+            {
+                var choice = await libraries.ReadAsync(context, token);
+                return choice?.Selected is { Count: > 0 } selected && selected.Count < choice.Available.Count ? selected : null;
+            }
+            // Search never fails over the choice; it searches every library instead.
+            catch (Exception error) when (error is not OperationCanceledException || !token.IsCancellationRequested) { return null; }
+        }
+
         /// <summary>The library's own spelling of the query, when it differs ("cybersex" → "Cyber Sex").</summary>
         public string? Spelled { get; private set; }
 
@@ -415,18 +439,33 @@ public sealed class V2SearchStream(IProtocolProviderGateway providers, MusicSear
             HashSet<string> types, CancellationToken token, bool includePlaylists)
         {
             if (!includePlaylists && types.SetEquals(["Playlist"])) return [];
+            var queryTypes = (includePlaylists ? types : types.Where(type => !type.Equals("Playlist", StringComparison.OrdinalIgnoreCase))).ToArray();
+            var selected = await (chosen ??= ChosenAsync(token));
+            if (selected == null) return await QueryAsync(query, limit, queryTypes, null, token);
+            // Library results follow "Your music libraries", as mixes and Made for you do: one search per chosen library.
+            // Playlists belong to no music library, so they are searched on their own.
+            var music = queryTypes.Where(type => !type.Equals("Playlist", StringComparison.OrdinalIgnoreCase)).ToArray();
+            var searches = music.Length == 0 ? [] : selected.Select(library => QueryAsync(query, limit, music, library, token)).ToList();
+            if (music.Length < queryTypes.Length) searches.Add(QueryAsync(query, limit, ["Playlist"], null, token));
+            return (await Task.WhenAll(searches)).SelectMany(found => found).DistinctBy(item => item.Id, StringComparer.Ordinal).ToArray();
+        }
+
+        private async Task<IReadOnlyList<NativeMusicItem<Dictionary<string, object?>>>> QueryAsync(string query, int limit,
+            IReadOnlyCollection<string> queryTypes, string? library, CancellationToken token)
+        {
             try
             {
-                var queryTypes = includePlaylists ? types : types.Where(type => !type.Equals("Playlist", StringComparison.OrdinalIgnoreCase));
+                var parameters = new Dictionary<string, string>
+                {
+                    ["SearchTerm"] = query,
+                    ["IncludeItemTypes"] = string.Join(',', queryTypes),
+                    ["Fields"] = "ProviderIds",
+                    ["Recursive"] = "true",
+                    ["Limit"] = limit.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                };
+                if (library != null) parameters["ParentId"] = library;
                 var (body, status) = await proxy.GetJsonAsync($"Users/{Uri.EscapeDataString(context.VerifiedBackendPrincipalId)}/Items",
-                    new()
-                    {
-                        ["SearchTerm"] = query,
-                        ["IncludeItemTypes"] = string.Join(',', queryTypes),
-                        ["Fields"] = "ProviderIds",
-                        ["Recursive"] = "true",
-                        ["Limit"] = limit.ToString(System.Globalization.CultureInfo.InvariantCulture)
-                    }, headers, token);
+                    parameters, headers, token);
                 using (body)
                     return status == 200 && body?.RootElement.TryGetProperty("Items", out var rows) == true
                         ? rows.EnumerateArray().Select(item => JellyfinController.ToNativeSearchItem(item.Deserialize<Dictionary<string, object?>>() ?? []))
