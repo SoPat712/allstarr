@@ -22,9 +22,29 @@ public sealed partial class ProtocolRouteFixtureTests
     private const string SecondSong = """{"Id":"s2","Type":"Audio","Name":"Second song","ArtistItems":[{"Name":"Stored artist","Id":"artist1"}],"RunTimeTicks":1800000000}""";
     private const string BonusSong = """{"Id":"s3","Type":"Audio","Name":"Bonus song","ArtistItems":[{"Name":"Stored artist","Id":"artist1"}],"RunTimeTicks":1500000000}""";
     private const string LiveSong = """{"Id":"s4","Type":"Audio","Name":"Stored song (Live)","ArtistItems":[{"Name":"Stored artist","Id":"artist1"}],"RunTimeTicks":2000000000}""";
-    private const string LongerSong = """{"Id":"s5","Type":"Audio","Name":"Stored song","ArtistItems":[{"Name":"Stored artist","Id":"artist1"}],"RunTimeTicks":2100000000}""";
+    private const string LongerSong = """{"Id":"s5","Type":"Audio","Name":"Stored song","ArtistItems":[{"Name":"Stored artist","Id":"artist1"}],"RunTimeTicks":2300000000}""";
     private const string OtherSong = """{"Id":"s6","Type":"Audio","Name":"Another song","ArtistItems":[{"Name":"Stored artist","Id":"artist1"}],"RunTimeTicks":2000000000}""";
     private const string NoSongsMatch = "Same title and artist. None of its songs match by title and length.";
+
+    [Theory]
+    // Pressings and services differ by seconds, and a featured artist sits in the title on one and the credits on the other.
+    [InlineData("Aaj Se Teri", "Arijit Singh", 321_750L, "Aaj Se Teri", "Arijit Singh", 312, true)]
+    [InlineData("Wet Like", "Ashnikko, COBRAH", 161_300L, "Wet Like (feat. COBRAH)", "Ashnikko", 161, true)]
+    [InlineData("Stored song - Remastered 2011", "Stored artist", 200_000L, "Stored song", "Stored artist", 201, true)]
+    [InlineData("Stored song (Acoustic)", "Stored artist", 200_000L, "Stored song (Acoustic)", "Stored artist", 200, true)]
+    // A length too far off, another take or a re-recording is another song.
+    [InlineData("Stored song", "Stored artist", 200_000L, "Stored song", "Stored artist", 220, false)]
+    [InlineData("Stored song", "Stored artist", 200_000L, "Stored song (Live)", "Stored artist", 200, false)]
+    [InlineData("Stored song", "Stored artist", 200_000L, "Stored song (Acoustic)", "Stored artist", 200, false)]
+    [InlineData("State of Grace", "Taylor Swift", 295_000L, "State of Grace (Taylor's Version)", "Taylor Swift", 295, false)]
+    // An album list without lengths goes by the song's own artists.
+    [InlineData("Aaj Se Teri", "Arijit Singh", 321_750L, "Aaj Se Teri", "Arijit Singh", null, true)]
+    [InlineData("Aaj Se Teri", "Arijit Singh", null, "Aaj Se Teri", "Amit Trivedi, Arijit Singh", 312, true)]
+    [InlineData("Aaj Se Teri", "Arijit Singh", 321_750L, "Aaj Se Teri", "Someone Else", null, false)]
+    public void LibraryAlbum_SongsAreTheSameByTitleVersionAndLength(string ownTitle, string ownArtist, long? ownMilliseconds,
+        string title, string artist, int? seconds, bool same) =>
+        Assert.Equal(same, V2LibraryAlbums.SameSong(new(ownTitle, ownArtist, ownMilliseconds), "Stored album",
+            new Song { Title = title, Artist = artist, Duration = seconds }, "Stored album"));
 
     [Theory]
     // Every song of the shorter album is on the other, by title and length: one song owned of two, the whole album,
@@ -113,6 +133,9 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.True(response.StatusCode == HttpStatusCode.OK, text);
         var body = JsonNode.Parse(text)!.AsObject();
         Assert.Equal("Stored album", Assert.Single(searches.Distinct()));
+        // The album itself is asked for only when its songs are needed: for a library album of that name, or the songs.
+        gateway.Verify(item => item.GetAlbumAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "7"),
+            storedWithSongs ? Times.Never() : Times.Once());
 
         if (by == null) Assert.False(body.ContainsKey("libraryAlbum"), text);
         else
@@ -124,6 +147,13 @@ public sealed partial class ProtocolRouteFixtureTests
             Assert.Equal(ownedSongs, same["ownedSongs"]!.GetValue<int>());
             Assert.Equal(songCount, same["songCount"]!.GetValue<int>());
             Assert.False(body.ContainsKey("couldBe"), text);
+            // Each shared song names its row in the track list and the listener's own song.
+            using var listed = await client.GetAsync(path + "?include=tracks");
+            var rows = JsonNode.Parse(await listed.Content.ReadAsStringAsync())!["tracks"]!.AsArray().Select(row => row!["id"]!.GetValue<string>()).ToArray();
+            var pairs = same["ownedTracks"]!.AsArray();
+            Assert.Equal(ownedSongs, pairs.Count);
+            Assert.All(pairs, pair => Assert.Contains(pair!["id"]!.GetValue<string>(), rows));
+            Assert.Equal(by == "songs" ? "native1" : "s1", pairs[0]!["libraryItemId"]!.GetValue<string>());
         }
         if (reason == null) Assert.False(body.ContainsKey("couldBe"), text);
         else
@@ -134,10 +164,6 @@ public sealed partial class ProtocolRouteFixtureTests
             Assert.Equal("album1", could[0]!["libraryId"]!.GetValue<string>());
             Assert.False(body.ContainsKey("libraryAlbum"), text);
         }
-        // The album itself is asked for only when its songs are needed: for a library album of that name, or the songs.
-        gateway.Verify(item => item.GetAlbumAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "7"),
-            storedWithSongs ? Times.Never() : Times.Once());
-
         // Asking for the songs too gives the same answer about the album.
         using var withTracks = await client.GetAsync(path + "?include=tracks");
         var full = JsonNode.Parse(await withTracks.Content.ReadAsStringAsync())!.AsObject();

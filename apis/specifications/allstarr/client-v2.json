@@ -8313,7 +8313,7 @@
               "null",
               "string"
             ],
-            "description": "On libraryAlbum, why they are the same: \u0060songs\u0060 (songs of this album are the listener\u0027s own songs on it, by recording) or \u0060titles\u0060 (every song of the shorter of the two is on the other, by title and length)."
+            "description": "On libraryAlbum, why they are the same: \u0060songs\u0060 (songs of this album are the listener\u0027s own songs on it, by recording) or \u0060titles\u0060 (every song of the shorter of the two is on the other, by title, version and length)."
           },
           "ownedSongs": {
             "type": [
@@ -8322,6 +8322,16 @@
             ],
             "description": "How many songs the two albums share.",
             "format": "int32"
+          },
+          "ownedTracks": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/V2OwnedTrack"
+            },
+            "description": "On libraryAlbum, the shared songs: each row of this album\u0027s \u0060tracks\u0060 that is one of the listener\u0027s own songs, with that song. A row found by title carries no \u0060libraryItemId\u0060 of its own, so this is where it is said."
           },
           "reason": {
             "type": [
@@ -9005,6 +9015,23 @@
           },
           "name": {
             "type": "string"
+          }
+        }
+      },
+      "V2OwnedTrack": {
+        "required": [
+          "id",
+          "libraryItemId"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The song\u0027s id in this album\u0027s \u0060tracks\u0060."
+          },
+          "libraryItemId": {
+            "type": "string",
+            "description": "The listener\u0027s own song on the library album."
           }
         }
       },

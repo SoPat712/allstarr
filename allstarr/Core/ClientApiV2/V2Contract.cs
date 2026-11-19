@@ -144,6 +144,11 @@ public sealed record V2AlbumSummary(
     public bool? Explicit { get; init; }
 }
 
+/// <summary>A song of a service album that is the listener's own song on the library album.</summary>
+public sealed record V2OwnedTrack(
+    [property: JsonPropertyName("id"), Description("The song's id in this album's `tracks`.")] string Id,
+    [property: JsonPropertyName("libraryItemId"), Description("The listener's own song on the library album.")] string LibraryItemId);
+
 /// <summary>A library album a service album is, or could be.</summary>
 public sealed record V2LibraryAlbumRef(
     [property: JsonPropertyName("id")] string Id,
@@ -160,12 +165,17 @@ public sealed record V2LibraryAlbumRef(
     public int? SongCount { get; init; }
 
     [JsonPropertyName("by"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull),
-     Description("On libraryAlbum, why they are the same: `songs` (songs of this album are the listener's own songs on it, by recording) or `titles` (every song of the shorter of the two is on the other, by title and length).")]
+     Description("On libraryAlbum, why they are the same: `songs` (songs of this album are the listener's own songs on it, by recording) or `titles` (every song of the shorter of the two is on the other, by title, version and length).")]
     public string? By { get; init; }
 
     [JsonPropertyName("ownedSongs"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull),
      Description("How many songs the two albums share.")]
     public int? OwnedSongs { get; init; }
+
+    [JsonPropertyName("ownedTracks"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull),
+     Description("On libraryAlbum, the shared songs: each row of this album's `tracks` that is one of the listener's own songs, with that song. " +
+        "A row found by title carries no `libraryItemId` of its own, so this is where it is said.")]
+    public IReadOnlyList<V2OwnedTrack>? OwnedTracks { get; init; }
 
     [JsonPropertyName("reason"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull),
      Description("On couldBe, what agrees and what differs, as a short sentence to show.")]
