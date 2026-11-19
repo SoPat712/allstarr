@@ -24,17 +24,22 @@ public sealed partial class ProtocolRouteFixtureTests
 
     [Theory]
     // The same artist, title, edition and song count is the same album.
-    [InlineData(SameLibraryAlbum, false, "album", null, 0)]
+    [InlineData(SameLibraryAlbum, false, true, "album", null, 0)]
     // Another edition is only offered, with what differs.
-    [InlineData(DeluxeLibraryAlbum, false, null, "Same title and artist. 15 songs there, 1 here.", 1)]
+    [InlineData(DeluxeLibraryAlbum, false, true, null, "Same title and artist. 15 songs there, 1 here.", 1)]
     // Unless a song of this album is the listener's own song on it.
-    [InlineData(DeluxeLibraryAlbum, true, "songs", null, 0)]
+    [InlineData(DeluxeLibraryAlbum, true, true, "songs", null, 0)]
     // Two library albums that both fit are for a person to tell apart.
-    [InlineData(SameLibraryAlbum + "," + SecondLibraryAlbum, false, null, "Same album. Your library has it more than once.", 2)]
+    [InlineData(SameLibraryAlbum + "," + SecondLibraryAlbum, false, true, null, "Same album. Your library has it more than once.", 2)]
     // Another artist's album of that name, or none at all, says nothing.
-    [InlineData(NamesakeLibraryAlbum, false, null, null, 0)]
-    [InlineData("", false, null, null, 0)]
-    public async Task ClientApiV2_AServiceAlbumSaysWhichLibraryAlbumItIsOrCouldBe(string libraryAlbums, bool ownsSong, string? by, string? reason, int offered)
+    [InlineData(NamesakeLibraryAlbum, false, true, null, null, 0)]
+    [InlineData("", false, true, null, null, 0)]
+    // An album a search stored has no songs or song count yet; the album itself is read before anything is said.
+    [InlineData(SameLibraryAlbum, false, false, "album", null, 0)]
+    [InlineData(DeluxeLibraryAlbum, false, false, null, "Same title and artist. 15 songs there, 1 here.", 1)]
+    [InlineData(DeluxeLibraryAlbum, true, false, "songs", null, 0)]
+    public async Task ClientApiV2_AServiceAlbumSaysWhichLibraryAlbumItIsOrCouldBe(string libraryAlbums, bool ownsSong, bool storedWithSongs,
+        string? by, string? reason, int offered)
     {
         Song Stored()
         {
@@ -45,16 +50,18 @@ public sealed partial class ProtocolRouteFixtureTests
         var gateway = V2BatchGateway();
         gateway.Setup(item => item.GetStoredSongAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", It.IsAny<string>())).ReturnsAsync(Stored);
         gateway.Setup(item => item.GetSongAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", It.IsAny<string>())).ReturnsAsync(Stored);
-        gateway.Setup(item => item.GetStoredAlbumAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "7")).ReturnsAsync(() => new Album
+        Album Service(bool withSongs) => new()
         {
             Id = "ext-deezer-album-7",
             Title = "Stored album",
             Artist = "Stored artist",
             ArtistId = "ext-deezer-artist-9",
             Year = 2020,
-            SongCount = 1,
-            Songs = [Stored()]
-        });
+            SongCount = withSongs ? 1 : null,
+            Songs = withSongs ? [Stored()] : []
+        };
+        gateway.Setup(item => item.GetStoredAlbumAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "7")).ReturnsAsync(() => Service(storedWithSongs));
+        gateway.Setup(item => item.GetAlbumAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "7")).ReturnsAsync(() => Service(true));
         var library = new Mock<ILibraryIndexService> { DefaultValue = DefaultValue.Mock };
         library.Setup(service => service.FindKnownRecordingTracksAsync(It.IsAny<ProtocolExecutionContext>(),
                 It.IsAny<IReadOnlyList<LibraryRecordingLookup>>(), It.IsAny<CancellationToken>()))
@@ -111,6 +118,10 @@ public sealed partial class ProtocolRouteFixtureTests
             Assert.False(body.ContainsKey("libraryAlbum"), text);
         }
 
+        // The album itself is asked for only when its songs are needed: for a library album of that name, or the songs.
+        gateway.Verify(item => item.GetAlbumAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "7"),
+            storedWithSongs ? Times.Never() : Times.Once());
+
         // Asking for the songs too gives the same answer about the album.
         using var withTracks = await client.GetAsync(path + "?include=tracks");
         var full = JsonNode.Parse(await withTracks.Content.ReadAsStringAsync())!.AsObject();
@@ -120,11 +131,15 @@ public sealed partial class ProtocolRouteFixtureTests
 
         // A library album never points at itself.
         using var own = await client.GetAsync("/allstarr/v2/albums/album1");
+        Assert.Equal(libraryAlbums.Contains("\"album1\"") ? HttpStatusCode.OK : HttpStatusCode.NotFound, own.StatusCode);
         if (own.StatusCode == HttpStatusCode.OK)
         {
             var mine = JsonNode.Parse(await own.Content.ReadAsStringAsync())!.AsObject();
             Assert.False(mine.ContainsKey("libraryAlbum"));
             Assert.False(mine.ContainsKey("couldBe"));
         }
+        // The media server lists its first albums for an id it cannot read; that is not the album asked for.
+        using var unknown = await client.GetAsync("/allstarr/v2/albums/not-an-album");
+        Assert.Equal(HttpStatusCode.NotFound, unknown.StatusCode);
     }
 }

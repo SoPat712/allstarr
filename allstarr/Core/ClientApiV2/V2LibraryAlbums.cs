@@ -9,8 +9,9 @@ namespace allstarr.Core.ClientApiV2;
 
 /// <summary>
 /// Says which library album a service album is. Albums join on proof only: songs of the service album that are the
-/// listener's own songs on one library album of that title, or the same artist, title, edition and song count. A library
-/// album that only shares the artist and title is offered as one it could be, such as another edition.
+/// listener's own songs on one library album of that title, or the same artist, title, edition and a song count both
+/// sides state. A library album that only shares the artist and title is offered as one it could be, such as another
+/// edition.
 /// </summary>
 public sealed class V2LibraryAlbums(ListeningLibraries? libraries = null)
 {
@@ -18,7 +19,7 @@ public sealed class V2LibraryAlbums(ListeningLibraries? libraries = null)
     private const int Offered = 5;
 
     internal async Task<(V2LibraryAlbumRef? Library, IReadOnlyList<V2LibraryAlbumRef>? CouldBe)> IdentifyAsync(HttpContext http,
-        ProtocolExecutionContext execution, V2AlbumEndpoints albums, Album album, Func<Task<IReadOnlyList<V2Track>>> tracks)
+        ProtocolExecutionContext execution, V2AlbumEndpoints albums, Album album, Func<Task<(Album Album, IReadOnlyList<V2Track> Tracks)>> songs)
     {
         var title = FuzzyMatcher.StripDecorators(album.Title ?? "");
         var artistKey = FuzzyMatcher.NormalizeForMatching(FuzzyMatcher.SplitCredits(album.Artist).FirstOrDefault() ??
@@ -69,26 +70,30 @@ public sealed class V2LibraryAlbums(ListeningLibraries? libraries = null)
             V2ArtworkUrls.For(item.Album.Id, item.Tag))
         { Year = item.Album.Year, SongCount = item.Album.SongCount };
 
-        // The listener's own songs among this album's, by recording or ISRC, name their library album outright.
-        var bySongs = (await tracks()).Where(track => track.LibraryItemId != null && track.Album?.LibraryId != null)
+        // The listener's own songs among this album's, by recording or ISRC, name their library album outright. The
+        // album as the service gives it, with its songs, also settles how many it has.
+        var (full, tracks) = await songs();
+        var here = full.SongCount is > 0 ? full.SongCount : full.Songs.Count > 0 ? full.Songs.Count : null;
+        var bySongs = tracks.Where(track => track.LibraryItemId != null && track.Album?.LibraryId != null)
             .GroupBy(track => Key(track.Album!.LibraryId!), StringComparer.Ordinal)
             .Select(group => (Owned: owned.FirstOrDefault(item => Key(item.Album.Id) == group.Key), Songs: group.Count()))
             .Where(item => item.Owned.Album != null).OrderByDescending(item => item.Songs).ToArray();
         if (bySongs.Length == 1) return (Shape(bySongs[0].Owned) with { By = "songs", OwnedSongs = bySongs[0].Songs }, null);
-        var same = owned.Where(item => MusicAlbumReleases.Compatible(item.Album, album)).ToArray();
-        if (bySongs.Length == 0 && same.Length == 1) return (Shape(same[0]) with { By = "album" }, null);
+        var same = owned.Where(item => MusicAlbumReleases.Compatible(item.Album, full)).ToArray();
+        // An unknown song count on either side proves nothing: a few owned songs of a long album are not that album.
+        if (bySongs.Length == 0 && same.Length == 1 && here is > 0 && same[0].Album.SongCount == here)
+            return (Shape(same[0]) with { By = "album" }, null);
         // Several library albums fit, or only the name does: a person can tell them apart, so they are offered, the closest first.
         return (null, owned.OrderByDescending(item => bySongs.FirstOrDefault(entry => entry.Owned.Album == item.Album).Songs)
             .ThenByDescending(item => same.Contains(item)).Take(Offered)
-            .Select(item => Shape(item) with { Reason = Reason(item.Album, album, same.Length > 1 || bySongs.Length > 1) }).ToArray());
+            .Select(item => Shape(item) with { Reason = Reason(item.Album, here, same.Length > 1 || bySongs.Length > 1) }).ToArray());
     }
 
     private static string Key(string id) => Guid.TryParse(id, out var parsed) ? parsed.ToString("N") : id;
 
     // One line under a name on a phone.
-    private static string Reason(Album owned, Album album, bool several)
+    private static string Reason(Album owned, int? here, bool several)
     {
-        var here = album.SongCount is > 0 ? album.SongCount : album.Songs.Count > 0 ? album.Songs.Count : null;
         if (owned.SongCount is > 0 && here is > 0 && owned.SongCount != here)
             return $"Same title and artist. {owned.SongCount} songs there, {here} here.";
         return several ? "Same album. Your library has it more than once." : "Same title and artist. May be another edition.";

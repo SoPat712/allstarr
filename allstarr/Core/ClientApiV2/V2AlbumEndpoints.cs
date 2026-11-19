@@ -47,16 +47,20 @@ public sealed class V2AlbumEndpoints(V2TrackReader tracks, IProtocolProviderGate
         Album? service = null;
         if (parsed.isExternal)
         {
-            var metadata = await providers.GetStoredAlbumAsync(execution, parsed.provider!, parsed.externalId!) ??
-                await providers.GetAlbumAsync(execution, parsed.provider!, parsed.externalId!);
+            var metadata = await providers.GetStoredAlbumAsync(execution, parsed.provider!, parsed.externalId!);
+            // A search or an artist page stores an album's line without its songs; those come with the album itself.
+            if (metadata == null || metadata.Songs.Count == 0 && included.Contains("tracks"))
+                metadata = await providers.GetAlbumAsync(execution, parsed.provider!, parsed.externalId!) ?? metadata;
             if (metadata == null) return new(404, null);
             album = Summary(source, metadata);
             service = metadata;
-            songIds = metadata.Songs.Where(song => execution.Policy?.Includes(song) != false).Select(song => song.Id).ToArray();
+            songIds = SongIds(execution, metadata);
         }
         else
         {
-            album = (await LibraryAlbumsAsync(http, execution, new() { ["ids"] = source })).FirstOrDefault();
+            // The media server answers an id it cannot read with its first albums, so only the album asked for counts.
+            album = (await LibraryAlbumsAsync(http, execution, new() { ["ids"] = source }))
+                .FirstOrDefault(item => SameItem(V2Ids.LibrarySource(item.Id, V2IdKind.Album), source));
             if (album == null) return new(404, null);
             if (included.Contains("tracks"))
             {
@@ -89,10 +93,15 @@ public sealed class V2AlbumEndpoints(V2TrackReader tracks, IProtocolProviderGate
         }
         // The listener's own album this one is, or could be. Its songs are read only when the library has an album of
         // this name, so the answer is the same with and without include=tracks.
-        if (service != null && libraryAlbums != null)
+        if (service is { } stored && libraryAlbums != null)
         {
-            var (library, couldBe) = await libraryAlbums.IdentifyAsync(http, execution, this, service,
-                async () => (read ??= await tracks.ReadAsync(http, execution, songIds, false)).Tracks);
+            var (library, couldBe) = await libraryAlbums.IdentifyAsync(http, execution, this, stored, async () =>
+            {
+                if (read != null) return (stored, read.Tracks);
+                var full = stored.Songs.Count > 0 ? stored
+                    : await providers.GetAlbumAsync(execution, parsed.provider!, parsed.externalId!) ?? stored;
+                return (full, (await tracks.ReadAsync(http, execution, SongIds(execution, full), false)).Tracks);
+            });
             response = response with { LibraryAlbum = library, CouldBe = couldBe };
         }
         if (requested.Contains("more-by-artist"))
@@ -110,6 +119,12 @@ public sealed class V2AlbumEndpoints(V2TrackReader tracks, IProtocolProviderGate
         }
         return new(200, response);
     }
+
+    private static bool SameItem(string? left, string right) => left != null &&
+        (Guid.TryParse(left, out var first) && Guid.TryParse(right, out var second) ? first == second : string.Equals(left, right, StringComparison.Ordinal));
+
+    private static string[] SongIds(ProtocolExecutionContext execution, Album album) =>
+        album.Songs.Where(song => execution.Policy?.Includes(song) != false).Select(song => song.Id).ToArray();
 
     internal static V2AlbumSummary Summary(string source, Album album)
     {
