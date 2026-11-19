@@ -373,6 +373,26 @@ public sealed class ListeningStatsTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task TheTimeZoneAnAppAsksInIsKeptSoRecapsCanBeWarmedForItAfterARestart()
+    {
+        Assert.Null(await stats.SavedTimeZoneAsync(owner, default));
+        await stats.GetAsync(Session(), "30d", null, default, "America/New_York");
+        await stats.GetAsync(Session(), "7d", null, default, "America/New_York");
+        // No zone sent leaves the saved one alone.
+        await stats.GetAsync(Session(), "7d", null, default);
+
+        stats.Dispose();
+        stats = new(factory, clock);
+        Assert.Equal("America/New_York", await stats.SavedTimeZoneAsync(owner, default));
+        await stats.GetAsync(Session(), "7d", null, default, "Europe/London");
+        stats.Dispose();
+        stats = new(factory, clock);
+        Assert.Equal("Europe/London", await stats.SavedTimeZoneAsync(owner, default));
+        await using var db = factory.CreateDbContext();
+        Assert.Equal(2, await db.ExternalMetadataSnapshots.CountAsync(item => item.ResourceKind == "listening-stats-zone"));
+    }
+
+    [Fact]
     public async Task AVisitThatGivesUpLeavesItsReadForTheNextVisit()
     {
         Factory.Visiting.Value = true;

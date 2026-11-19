@@ -76,8 +76,9 @@ public sealed class TasteWarmUp(TasteService taste, IDbContextFactory<AllstarrDb
                 await scope.ServiceProvider.GetRequiredService<ILibraryIndexService>().WarmOwnershipAsync(execution, token);
             });
             await ReadAsync(() => sound.WarmAsync(user.Id, token));
+            // Recaps are warmed for the listener's own days: the zone their app asks in, when one is known.
             foreach (var period in new[] { "30d", "7d", "year", "all" })
-                await ReadAsync(() => stats.GetAsync(execution, period, null, token));
+                await ReadAsync(async () => await stats.GetAsync(execution, period, null, token, await stats.SavedTimeZoneAsync(user.Id, token)));
             await ReadAsync(() => taste.WarmAsync(user.Id, token));
             await ReadAsync(async () =>
             {

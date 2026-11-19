@@ -70,6 +70,9 @@ public sealed partial class ListeningStatsService(IDbContextFactory<AllstarrDbCo
     private readonly MemoryCache cache = new(new MemoryCacheOptions { SizeLimit = 256 });
     private readonly ConcurrentDictionary<OpenedRecap, DateTimeOffset> opened = new();
     private readonly ConcurrentDictionary<(RecapKey Recap, long Plays, long Finished), Lazy<Task<ListeningStats>>> building = new();
+    private const string ZoneKind = "listening-stats-zone";
+    private sealed record SavedZone(string Zone);
+    private readonly ConcurrentDictionary<Guid, string> zones = new();
     private readonly CancellationTokenSource stopping = new();
 
     public Task<ListeningStats> GetAsync(AdminAuthSession session, string? period, int? year, CancellationToken token, string? timeZoneId = null)
@@ -102,9 +105,68 @@ public sealed partial class ListeningStatsService(IDbContextFactory<AllstarrDbCo
             catch (Exception error) when (error is TimeZoneNotFoundException or InvalidTimeZoneException) { throw new ArgumentException("The time zone is invalid."); }
         }
         var interval = CreatePeriod(period, year, clock.UtcNow, zone);
+        if (!string.IsNullOrWhiteSpace(timeZoneId)) await RememberTimeZoneAsync(db, scope, principalId, zone.Id, token);
         opened[new(scope, period, year, zone)] = clock.UtcNow;
         if (opened.Count > RememberedRecaps) opened.TryRemove(opened.MinBy(item => item.Value));
         return await CachedAsync(db, scope, interval, zone, actor, TimeSpan.Zero, true, token);
+    }
+
+    /// <summary>
+    /// The time zone this listener's app last asked in. A recap's days depend on it, so recaps warmed after a restart
+    /// are only the ones the app will ask for when they are read in the same zone.
+    /// </summary>
+    public async Task<string?> SavedTimeZoneAsync(Guid owner, CancellationToken token)
+    {
+        if (zones.TryGetValue(owner, out var known)) return known;
+        await using var db = await factory.CreateDbContextAsync(token);
+        var saved = await SavedTimeZoneAsync(db, owner, token);
+        if (saved.Zone != null) zones[owner] = saved.Zone;
+        return saved.Zone;
+    }
+
+    private static async Task<(string? Zone, int Version)> SavedTimeZoneAsync(AllstarrDbContext db, Guid owner, CancellationToken token)
+    {
+        var saved = await db.ExternalMetadataSnapshots.AsNoTracking().Where(item => item.OwnerUserId == owner &&
+                item.ProviderId == "allstarr" && item.ResourceKind == ZoneKind)
+            .OrderByDescending(item => item.SnapshotVersion).Select(item => new { item.PayloadJson, item.SnapshotVersion }).FirstOrDefaultAsync(token);
+        if (saved == null) return (null, 0);
+        try { return (System.Text.Json.JsonSerializer.Deserialize<SavedZone>(saved.PayloadJson)?.Zone, saved.SnapshotVersion); }
+        catch (System.Text.Json.JsonException) { return (null, saved.SnapshotVersion); }
+    }
+
+    private async Task RememberTimeZoneAsync(AllstarrDbContext db, IntelligenceScope scope, string principalId, string zone, CancellationToken token)
+    {
+        var owner = scope.OwnerUserId;
+        if (zones.TryGetValue(owner, out var known) && known == zone) return;
+        try
+        {
+            var saved = await SavedTimeZoneAsync(db, owner, token);
+            if (saved.Zone != zone)
+            {
+                var json = System.Text.Json.JsonSerializer.Serialize(new SavedZone(zone));
+                db.ExternalMetadataSnapshots.Add(new()
+                {
+                    Id = Guid.CreateVersion7(),
+                    OwnerUserId = owner,
+                    Protocol = scope.Protocol,
+                    BackendInstanceId = scope.BackendInstanceId,
+                    BackendPrincipalId = principalId,
+                    ProviderId = "allstarr",
+                    ResourceKind = ZoneKind,
+                    ExternalIdHash = allstarr.Core.Matching.CanonicalCatalogKeys.Hash(owner.ToString("N")),
+                    SnapshotVersion = saved.Version + 1,
+                    ProviderRevision = "zone",
+                    PayloadJson = json,
+                    PayloadSha256 = allstarr.Core.Matching.CanonicalCatalogKeys.Hash(json),
+                    CorrelationId = "listening-stats",
+                    RetrievedAt = clock.UtcNow
+                });
+                await db.SaveChangesAsync(token);
+            }
+            zones[owner] = zone;
+        }
+        // Remembering the zone only helps warming; a recap is never refused over it.
+        catch (DbUpdateException) { }
     }
 
     // A recap opened lately is read again once the listener's plays changed or its answer is about to expire, so the next
