@@ -17,12 +17,31 @@ public sealed record V2ArtistLink(
     [property: JsonPropertyName("aliases"), Description("The same artist's older id, as search and artist pages use it today.")] IReadOnlyList<string> Aliases,
     [property: JsonPropertyName("source")] string Source,
     [property: JsonPropertyName("sourceName")] string SourceName,
-    [property: JsonPropertyName("by"), Description("`songs` when matched songs tie them, `fix` when a person said so.")] string By,
-    [property: JsonPropertyName("scope"), Description("For a fix: `household` when an administrator set it for everyone, `you` when it is this listener's own.")] string? Scope);
+    [property: JsonPropertyName("by"), Description("`songs` when matched songs tie them, `albums` when both have the same album, `fix` when a person said so.")] string By,
+    [property: JsonPropertyName("scope"), Description("For a fix: `household` when an administrator set it for everyone, `you` when it is this listener's own.")] string? Scope)
+{
+    [JsonPropertyName("album"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull), Description("For `albums`: the library album the service artist also has.")]
+    public string? Album { get; init; }
+}
+
+/// <summary>A service artist with the library artist's name that nothing ties to it yet.</summary>
+public sealed record V2ArtistCandidate(
+    [property: JsonPropertyName("id")] string Id,
+    [property: JsonPropertyName("aliases"), Description("The same artist's older id, as search and artist pages use it today.")] IReadOnlyList<string> Aliases,
+    [property: JsonPropertyName("source")] string Source,
+    [property: JsonPropertyName("sourceName")] string SourceName,
+    [property: JsonPropertyName("name")] string Name,
+    [property: JsonPropertyName("artwork")] V2Artwork? Artwork,
+    [property: JsonPropertyName("reason"), Description("What agrees and what is missing, as a short sentence to show.")] string Reason);
 
 public sealed record V2ArtistLinksResponse(
     [property: JsonPropertyName("links"), Description("Service artists shown as this library artist.")] IReadOnlyList<V2ArtistLink> Links,
-    [property: JsonPropertyName("notSame"), Description("Service artists someone said are a different act; search keeps them apart.")] IReadOnlyList<V2ArtistLink> NotSame);
+    [property: JsonPropertyName("notSame"), Description("Service artists someone said are a different act; search keeps them apart.")] IReadOnlyList<V2ArtistLink> NotSame)
+{
+    [JsonPropertyName("candidates"), Description("Service artists with the same name that nothing ties to this artist: no matched song, no shared album and no answer. " +
+        "They could be the same artist; a person decides with the link routes.")]
+    public IReadOnlyList<V2ArtistCandidate> Candidates { get; init; } = [];
+}
 
 public sealed record V2ArtistLinkRequest
 {
@@ -42,6 +61,9 @@ public sealed class V2ArtistLinkEndpoints(ILibraryArtistLinks index, JellyfinPro
     {
         if (execution.Actor?.EffectiveUserId is not { } owner) return new(401, null);
         if (await LibraryArtistNameAsync(http, execution, libraryArtistId) is not { } name) return new(404, null);
+        // The first read of an artist asks the services who answers to the name; a slow answer finishes for the next read.
+        try { await index.DiscoverAsync(owner, name, CancellationToken.None).WaitAsync(DiscoverWait, http.RequestAborted); }
+        catch (TimeoutException) { }
         return new(200, await ResponseAsync(owner, name, http.RequestAborted));
     }
 
@@ -65,22 +87,43 @@ public sealed class V2ArtistLinkEndpoints(ILibraryArtistLinks index, JellyfinPro
 
     private async Task<V2ArtistLinksResponse> ResponseAsync(Guid owner, string name, CancellationToken token)
     {
-        var (songs, fixes) = await index.ReadPartsAsync(owner, name, token);
+        var proof = await index.ReadProofAsync(owner, name, token);
+        var fixes = proof.Fixes;
+        string SourceName(string provider) => registry.TryGet(provider, out var descriptor) ? descriptor!.DisplayName : provider;
         V2ArtistLink Shape(string provider, string artistId, LibraryArtistFix? fix)
         {
             var legacy = ProtocolProviderGateway.ProtocolItemId(new(provider, ProviderResourceKind.Artist, artistId));
-            var sourceName = registry.TryGet(provider, out var descriptor) ? descriptor!.DisplayName : provider;
-            return new(V2Ids.Artist(legacy), [legacy], provider, sourceName, fix == null ? "songs" : "fix",
-                fix == null ? null : fix.Household ? "household" : "you");
+            var album = fix != null || proof.Songs.Any(link => ServiceCatalog.Same(link.ProviderId, link.ArtistId, provider, artistId)) ? null
+                : proof.Albums.FirstOrDefault(link => ServiceCatalog.Same(link.ProviderId, link.ArtistId, provider, artistId))?.Album;
+            return new(V2Ids.Artist(legacy), [legacy], provider, SourceName(provider), fix != null ? "fix" : album != null ? "albums" : "songs",
+                fix == null ? null : fix.Household ? "household" : "you")
+            { Album = album };
         }
-        var links = LibraryArtistIndex.Apply(songs, fixes).Select(link =>
+        var tied = proof.Songs.Concat(proof.Albums.Select(link => new LibraryArtistLink(link.ProviderId, link.ArtistId)))
+            .DistinctBy(link => ServiceCatalog.Key(link.ProviderId, link.ArtistId), StringComparer.Ordinal).ToArray();
+        var links = LibraryArtistIndex.Apply(tied, fixes).Select(link =>
             Shape(link.ProviderId, link.ArtistId, fixes.FirstOrDefault(fix => fix.Same && Is(fix, link.ProviderId, link.ArtistId)))).ToArray();
         var notSame = fixes.Where(fix => !fix.Same).Select(fix => Shape(fix.ProviderId, fix.ArtistId, fix)).ToArray();
-        return new(links, notSame);
+        // One row per service: a service's two sources name the same artist by the same id.
+        var settled = tied.Select(link => ServiceCatalog.Key(link.ProviderId, link.ArtistId))
+            .Concat(fixes.Select(fix => ServiceCatalog.Key(fix.ProviderId, fix.ArtistId))).ToHashSet(StringComparer.Ordinal);
+        var candidates = (await index.ReadCandidatesAsync(owner, name, token))
+            .Where(candidate => !settled.Contains(ServiceCatalog.Key(candidate.ProviderId, candidate.ArtistId)))
+            .DistinctBy(candidate => ServiceCatalog.Key(candidate.ProviderId, candidate.ArtistId), StringComparer.Ordinal)
+            .Select(candidate =>
+            {
+                var legacy = ProtocolProviderGateway.ProtocolItemId(new(candidate.ProviderId, ProviderResourceKind.Artist, candidate.ArtistId));
+                return new V2ArtistCandidate(V2Ids.Artist(legacy), [legacy], candidate.ProviderId, SourceName(candidate.ProviderId), candidate.Name,
+                    V2ArtworkUrls.For(legacy, JellyfinItemArtwork.PrimaryImageTag(legacy, false)), CandidateReason);
+            }).ToArray();
+        return new(links, notSame) { Candidates = candidates };
     }
 
+    internal const string CandidateReason = "Same name. No matched song or shared album yet.";
+    private static readonly TimeSpan DiscoverWait = TimeSpan.FromSeconds(3);
+
     private static bool Is(LibraryArtistFix fix, string provider, string artistId) =>
-        fix.ArtistId == artistId && string.Equals(fix.ProviderId, provider, StringComparison.Ordinal);
+        ServiceCatalog.Same(fix.ProviderId, fix.ArtistId, provider, artistId);
 
     // The library side is a media server artist; its name is what links are kept under.
     private async Task<string?> LibraryArtistNameAsync(HttpContext http, ProtocolExecutionContext execution, string libraryArtistId)

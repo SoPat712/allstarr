@@ -29,6 +29,8 @@ public sealed class V2ArtistEndpoints(V2TrackReader tracks, IProtocolProviderGat
             IReadOnlyList<V2AlbumSummary>? artistAlbums = null;
             IReadOnlyList<string> songIds = [];
             var following = await releases.IsFollowingAsync(execution, source);
+            V2LibraryArtistRef? libraryArtist = null;
+            IReadOnlyList<V2LibraryArtistRef>? couldBe = null;
             if (parsed.isExternal)
             {
                 if (parsed.type != "artist") return null;
@@ -39,12 +41,18 @@ public sealed class V2ArtistEndpoints(V2TrackReader tracks, IProtocolProviderGat
                     V2ArtworkUrls.For(source, JellyfinItemArtwork.PrimaryImageTag(source, false)), metadata.Genres, following)
                 { Provider = libraryArtists?.ServiceProvider(V2Ids.Artist(source), V2IdKind.Artist) };
                 // A service artist's page also lists the same artist's albums from the listener's other services.
+                List<Album>? found = null;
                 if (included.Contains("albums"))
-                    artistAlbums = (catalog != null
-                            ? await catalog.AlbumsAsync(execution, parsed.provider!, parsed.externalId!, Task.FromResult<Artist?>(metadata))
-                            : await providers.GetArtistAlbumsAsync(execution, parsed.provider!, parsed.externalId!, AlbumLimit))
-                        .Where(item => V2Ids.IsValidSource(item.Id, V2IdKind.Album)).Select(item => V2AlbumEndpoints.Summary(item.Id, item))
+                {
+                    found = catalog != null
+                        ? await catalog.AlbumsAsync(execution, parsed.provider!, parsed.externalId!, Task.FromResult<Artist?>(metadata))
+                        : await providers.GetArtistAlbumsAsync(execution, parsed.provider!, parsed.externalId!, AlbumLimit);
+                    artistAlbums = found.Where(item => V2Ids.IsValidSource(item.Id, V2IdKind.Album)).Select(item => V2AlbumEndpoints.Summary(item.Id, item))
                         .DistinctBy(item => item.Id).Take(AlbumLimit).ToArray();
+                }
+                // The listener's own artist of this name: the same one when songs, an album or a person say so.
+                if (libraryArtists != null)
+                    (libraryArtist, couldBe) = await libraryArtists.IdentifyAsync(http, execution, parsed.provider!, parsed.externalId!, metadata.Name, found);
                 if (included.Contains("tracks"))
                     songIds = (await providers.GetArtistTracksAsync(execution, parsed.provider!, parsed.externalId!, TrackLimit))
                         .Where(song => execution.Policy?.Includes(song) != false).Select(song => song.Id).ToArray();
@@ -80,7 +88,7 @@ public sealed class V2ArtistEndpoints(V2TrackReader tracks, IProtocolProviderGat
                     songIds = V2AlbumEndpoints.Items(document).Select(item => String(item, "Id")).OfType<string>().ToArray();
                 }
             }
-            var response = new V2ArtistResponse(artist) { Albums = artistAlbums };
+            var response = new V2ArtistResponse(artist) { Albums = artistAlbums, LibraryArtist = libraryArtist, CouldBe = couldBe };
             if (!included.Contains("tracks")) return response;
             var read = await tracks.ReadAsync(http, execution, songIds, false);
             return response with { Tracks = read.Tracks, Missing = read.Missing };

@@ -11,7 +11,7 @@ namespace allstarr.Core.Music;
 /// so a namesake never leaks in. Links are kept for a few hours, and a first visit waits only briefly for them.
 /// </summary>
 public sealed class StreamingArtistCatalog(IProtocolProviderGateway providers, TimeProvider? clock = null,
-    EmptyServiceArtists? emptyArtists = null)
+    EmptyServiceArtists? emptyArtists = null, Matching.ILibraryArtistLinks? libraryLinks = null)
 {
     private const int CandidatesPerService = 2, KeptLinks = 512;
     private static readonly TimeSpan LinkLifetime = TimeSpan.FromHours(6);
@@ -32,12 +32,21 @@ public sealed class StreamingArtistCatalog(IProtocolProviderGateway providers, T
         var linkedTask = artist == null || string.IsNullOrWhiteSpace(artist.Name) || emptyArtists?.IsEmpty(artist) == true
             ? null : LinkedAsync(context, provider, artistId, artist.Name, ownTask);
         var own = await ownTask;
+        // An album this artist shares with the listener's own artist of the same name ties the two for later searches.
+        if (libraryLinks != null && own.Count > 0 && artist?.Name is { Length: > 0 } named && context.Actor?.EffectiveUserId is { } listener)
+            _ = TieAsync(listener, named, provider, artistId, own);
         if (linkedTask == null || artist == null || own.Count == 0) return own;
         var linked = await linkedTask;
         if (linked.Count == 0) return own;
         var pageId = string.IsNullOrWhiteSpace(artist.Id) ? $"ext-{provider}-artist-{artistId}" : artist.Id;
         var others = await Task.WhenAll(linked.Select(link => OtherAlbumsAsync(context, link, pageId, artist.Name)));
         return MusicAlbumReleases.WithoutServiceRepeats(MusicAlbumReleases.Collapse(own.Concat(others.SelectMany(found => found))));
+    }
+
+    private async Task TieAsync(Guid listener, string name, string provider, string artistId, List<Album> own)
+    {
+        try { await libraryLinks!.ProveByAlbumsAsync(listener, name, provider, artistId, own, CancellationToken.None); }
+        catch (Exception) { }
     }
 
     private async Task<List<Album>> OwnAsync(ProtocolExecutionContext context, string provider, string artistId)
@@ -125,5 +134,5 @@ public sealed class StreamingArtistCatalog(IProtocolProviderGateway providers, T
             }).ToArray();
     }
 
-    private static string Service(string? provider) => AppleMusicClient.NormalizeProviderId(provider ?? "");
+    private static string Service(string? provider) => Matching.ServiceCatalog.Of(provider ?? "");
 }

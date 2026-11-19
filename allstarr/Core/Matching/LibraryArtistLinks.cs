@@ -28,6 +28,28 @@ public interface ILibraryArtistLinks
 
     Task RecordCandidatesAsync(Guid owner, IReadOnlyCollection<string> names, IReadOnlyCollection<Artist> artists,
         CancellationToken token);
+
+    /// <summary>Song links, shared-album links and people's answers, each on its own.</summary>
+    async Task<LibraryArtistProof> ReadProofAsync(Guid owner, string name, CancellationToken token)
+    {
+        var (songs, fixes) = await ReadPartsAsync(owner, name, token);
+        return new(songs, [], fixes);
+    }
+
+    /// <summary>Same-named service artists nothing ties to the library artist yet, for a person to decide.</summary>
+    Task<IReadOnlyList<LibraryArtistEvidence>> ReadCandidatesAsync(Guid owner, string name, CancellationToken token) =>
+        Task.FromResult<IReadOnlyList<LibraryArtistEvidence>>([]);
+
+    /// <summary>Ties a same-named service artist that shares an album with the library artist; true when they are tied.</summary>
+    Task<bool> ProveByAlbumsAsync(Guid owner, string name, string providerId, string artistId, IReadOnlyCollection<Album> albums,
+        CancellationToken token) => Task.FromResult(false);
+
+    /// <summary>Checks the same-named service artists just shown against the library's albums, in the background's own time.</summary>
+    Task ProveCandidatesAsync(Guid owner, IReadOnlyCollection<string> names, IReadOnlyCollection<Artist> artists, CancellationToken token) =>
+        Task.CompletedTask;
+
+    /// <summary>Looks the name up on the listener's services, records who answers to it and checks their albums; at most once every few hours.</summary>
+    Task DiscoverAsync(Guid owner, string name, CancellationToken token) => Task.CompletedTask;
 }
 
 public sealed record LibraryArtistLinkPayload(Guid UserId, string Name);
@@ -50,6 +72,19 @@ public sealed class LibraryArtistLinks(LibraryArtistIndex index, DurableJobQueue
 
     public Task RecordCandidatesAsync(Guid owner, IReadOnlyCollection<string> names, IReadOnlyCollection<Artist> artists,
         CancellationToken token) => index.RecordCandidatesAsync(owner, names, artists, token);
+
+    public Task<LibraryArtistProof> ReadProofAsync(Guid owner, string name, CancellationToken token) => index.ReadProofAsync(owner, name, token);
+
+    public async Task<IReadOnlyList<LibraryArtistEvidence>> ReadCandidatesAsync(Guid owner, string name, CancellationToken token) =>
+        (await index.ReadReviewAsync(owner, [name], token)).GetValueOrDefault(name)?.Candidates ?? [];
+
+    public Task<bool> ProveByAlbumsAsync(Guid owner, string name, string providerId, string artistId, IReadOnlyCollection<Album> albums,
+        CancellationToken token) => index.ProveByAlbumsAsync(owner, name, providerId, artistId, albums, token);
+
+    public Task ProveCandidatesAsync(Guid owner, IReadOnlyCollection<string> names, IReadOnlyCollection<Artist> artists, CancellationToken token) =>
+        index.ProveCandidatesAsync(owner, names, artists, token);
+
+    public Task DiscoverAsync(Guid owner, string name, CancellationToken token) => index.DiscoverAsync(owner, name, token);
 
     public async Task RequestAsync(Guid owner, string name, CancellationToken token)
     {

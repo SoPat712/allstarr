@@ -34,7 +34,7 @@ public sealed class V2LibraryArtists(JellyfinProxyService jellyfin, IProviderReg
         if (!tracks.Any(track => track.IsExternal)) return tracks;
         var library = await ByNameAsync(http, execution);
         var owner = execution.Actor?.EffectiveUserId;
-        var refused = new Dictionary<string, HashSet<(string, string)>?>(StringComparer.Ordinal);
+        var refused = new Dictionary<string, HashSet<string>?>(StringComparer.Ordinal);
         async Task<V2Ref> Link(V2Ref artist)
         {
             if (artist.LibraryId != null) return artist;
@@ -49,7 +49,7 @@ public sealed class V2LibraryArtists(JellyfinProxyService jellyfin, IProviderReg
                     try
                     {
                         others = (await links.ReadPartsAsync(user, artist.Name, execution.CancellationToken)).Fixes
-                            .Where(fix => !fix.Same).Select(fix => (fix.ProviderId, fix.ArtistId)).ToHashSet();
+                            .Where(fix => !fix.Same).Select(fix => ServiceCatalog.Key(fix.ProviderId, fix.ArtistId)).ToHashSet(StringComparer.Ordinal);
                     }
                     // Without the listener's answers the service artist stays, rather than risk a link they refused.
                     catch (Exception error) when (error is not OperationCanceledException || !execution.CancellationToken.IsCancellationRequested)
@@ -58,7 +58,7 @@ public sealed class V2LibraryArtists(JellyfinProxyService jellyfin, IProviderReg
                     }
                     refused[key] = others;
                 }
-                if (others == null || others.Contains((provider, external))) return artist with { Provider = ServiceProvider(artist.Id, V2IdKind.Artist) };
+                if (others == null || others.Contains(ServiceCatalog.Key(provider, external))) return artist with { Provider = ServiceProvider(artist.Id, V2IdKind.Artist) };
             }
             return new V2Ref(V2Ids.Artist(libraryId), artist.Name);
         }
@@ -85,6 +85,54 @@ public sealed class V2LibraryArtists(JellyfinProxyService jellyfin, IProviderReg
             });
         }
         return result;
+    }
+
+    internal const string SameNameReason = "Same name. No matched song or shared album yet.";
+
+    /// <summary>
+    /// For a service artist: the library artist it is proven to be, or the same-named library artist it could be. A
+    /// shared album among the albums the page already loaded is proof; a person's "not the same" leaves both empty.
+    /// </summary>
+    internal async Task<(V2LibraryArtistRef? Library, IReadOnlyList<V2LibraryArtistRef>? CouldBe)> IdentifyAsync(HttpContext http,
+        ProtocolExecutionContext execution, string provider, string artistId, string name, IReadOnlyCollection<Models.Domain.Album>? albums)
+    {
+        if (links == null || execution.Actor?.EffectiveUserId is not { } owner) return (null, null);
+        var key = FuzzyMatcher.NormalizeForMatching(name);
+        if (key.Length == 0 || !(await ByNameAsync(http, execution)).TryGetValue(key, out var libraryId)) return (null, null);
+        string? by;
+        try
+        {
+            var proof = await links.ReadProofAsync(owner, name, execution.CancellationToken);
+            var fix = proof.Fixes.FirstOrDefault(item => ServiceCatalog.Same(item.ProviderId, item.ArtistId, provider, artistId));
+            if (fix is { Same: false }) return (null, null);
+            by = fix != null ? "fix" : proof.Songs.Any(link => ServiceCatalog.Same(link.ProviderId, link.ArtistId, provider, artistId)) ? "songs"
+                : proof.Albums.Any(link => ServiceCatalog.Same(link.ProviderId, link.ArtistId, provider, artistId)) ? "albums" : null;
+            if (by == null && albums is { Count: > 0 } &&
+                await links.ProveByAlbumsAsync(owner, name, provider, artistId, albums, execution.CancellationToken)) by = "albums";
+        }
+        // Without the saved ties, say nothing rather than suggest one a person refused.
+        catch (Exception error) when (error is not OperationCanceledException || !execution.CancellationToken.IsCancellationRequested)
+        {
+            return (null, null);
+        }
+        V2Artwork? artwork = null;
+        var shown = name;
+        try
+        {
+            var (body, status) = await jellyfin.GetJsonAsync(
+                $"Users/{Uri.EscapeDataString(execution.VerifiedBackendPrincipalId)}/Items/{Uri.EscapeDataString(libraryId)}",
+                null, http.Request.Headers, execution.CancellationToken);
+            using (body)
+                if (status == 200 && body != null)
+                {
+                    if (body.RootElement.TryGetProperty("Name", out var libraryName) && libraryName.GetString() is { Length: > 0 } value) shown = value;
+                    artwork = V2ArtworkUrls.For(libraryId, body.RootElement.TryGetProperty("ImageTags", out var tags) &&
+                        tags.ValueKind == JsonValueKind.Object && tags.TryGetProperty("Primary", out var primary) ? primary.GetString() : null);
+                }
+        }
+        catch (Exception error) when (error is not OperationCanceledException || !execution.CancellationToken.IsCancellationRequested) { }
+        var library = new V2LibraryArtistRef(V2Ids.Artist(libraryId), shown, artwork);
+        return by != null ? (library with { By = by }, null) : (null, [library with { Reason = SameNameReason }]);
     }
 
     // One listing of the listener's library artists, kept briefly; a name two library artists share links to neither.

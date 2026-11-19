@@ -43,6 +43,10 @@ public sealed class MusicCatalogMerge(IProtocolProviderGateway providers, ILibra
                 if (!catalog.Any(album => owned.Contains(FuzzyMatcher.NormalizeForMatching(album.Title)))) continue;
                 services.Add(Service(candidate.ExternalProvider!));
                 albums.AddRange(catalog);
+                // The shared album is kept as a tie, so search lists this artist as the library's too.
+                if (links != null && context.Actor?.EffectiveUserId is { } listener)
+                    try { await links.ProveByAlbumsAsync(listener, artistName, candidate.ExternalProvider!, candidate.ExternalId!, catalog, context.CancellationToken); }
+                    catch (Exception error) when (error is not OperationCanceledException) { }
             }
         }
         if (albums.Count == 0) return [];
@@ -72,7 +76,7 @@ public sealed class MusicCatalogMerge(IProtocolProviderGateway providers, ILibra
         catch (Exception error) when (error is not OperationCanceledException) { return []; }
     }
 
-    private static string Service(string provider) => AppleMusicClient.NormalizeProviderId(provider);
+    private static string Service(string provider) => ServiceCatalog.Of(provider);
 
     /// <summary>
     /// Provider songs missing from a library album: the provider album must have the same

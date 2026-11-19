@@ -54,6 +54,9 @@ public sealed class V2SessionReader(IDurableRuntimeSettings settings, LibraryPro
                 ["mixRows"] = true,
                 ["historyRows"] = true,
                 ["trackLyrics"] = true,
+                // A library artist's links list unproven same-named service artists; a service artist names its library artist.
+                ["artistCandidates"] = true,
+                ["artistIdentity"] = true,
                 // A service song's measured loudness arrives as trackGainDb, announced by track.updated with changed ["loudness"].
                 ["trackLoudness"] = true
             }, string.IsNullOrEmpty(address) ? null : new(address), new(mark.Id, mark.Name, mark.IconUrl, mark.GlyphUrl),

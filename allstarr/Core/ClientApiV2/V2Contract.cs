@@ -174,8 +174,35 @@ public sealed record V2ArtistSummary(
     public V2Provider? Provider { get; init; }
 }
 
+/// <summary>A library artist a service artist is, or could be.</summary>
+public sealed record V2LibraryArtistRef(
+    [property: JsonPropertyName("id")] string Id,
+    [property: JsonPropertyName("name")] string Name,
+    [property: JsonPropertyName("artwork")] V2Artwork? Artwork)
+{
+    [JsonPropertyName("libraryId"), Description("The media server artist, which library artist pages open by.")]
+    public string? LibraryId => V2Ids.LibrarySource(Id, V2IdKind.Artist);
+
+    [JsonPropertyName("by"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull),
+     Description("On libraryArtist, why they are the same: `songs` (matched songs), `albums` (both have the same album) or `fix` (a person said so).")]
+    public string? By { get; init; }
+
+    [JsonPropertyName("reason"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull),
+     Description("On couldBe, what agrees and what is missing, as a short sentence to show.")]
+    public string? Reason { get; init; }
+}
+
 public sealed record V2ArtistResponse([property: JsonPropertyName("artist")] V2ArtistSummary Artist)
 {
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull), JsonPropertyName("libraryArtist"),
+     Description("For a service artist proven to be an artist in this listener's library: that library artist, whose page shows both.")]
+    public V2LibraryArtistRef? LibraryArtist { get; init; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull), JsonPropertyName("couldBe"),
+     Description("For a service artist: library artists of the same name that nothing ties it to and no one has ruled out. " +
+        "Names alone never join artists; a person decides with PUT /artists/{libraryArtistId}/links/{serviceArtistId}.")]
+    public IReadOnlyList<V2LibraryArtistRef>? CouldBe { get; init; }
+
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull), JsonPropertyName("albums"), Description("Up to 50 albums, newest first for library artists.")]
     public IReadOnlyList<V2AlbumSummary>? Albums { get; init; }
 

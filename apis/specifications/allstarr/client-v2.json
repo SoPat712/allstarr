@@ -7266,6 +7266,57 @@
           }
         }
       },
+      "V2ArtistCandidate": {
+        "required": [
+          "id",
+          "aliases",
+          "source",
+          "sourceName",
+          "name",
+          "artwork",
+          "reason"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "aliases": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The same artist\u0027s older id, as search and artist pages use it today."
+          },
+          "source": {
+            "type": "string"
+          },
+          "sourceName": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "artwork": {
+            "type": [
+              "null",
+              "object"
+            ],
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/V2Artwork"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "description": "What agrees and what is missing, as a short sentence to show."
+          }
+        }
+      },
       "V2ArtistFollow": {
         "required": [
           "followed",
@@ -7310,7 +7361,7 @@
           },
           "by": {
             "type": "string",
-            "description": "\u0060songs\u0060 when matched songs tie them, \u0060fix\u0060 when a person said so."
+            "description": "\u0060songs\u0060 when matched songs tie them, \u0060albums\u0060 when both have the same album, \u0060fix\u0060 when a person said so."
           },
           "scope": {
             "type": [
@@ -7318,6 +7369,13 @@
               "string"
             ],
             "description": "For a fix: \u0060household\u0060 when an administrator set it for everyone, \u0060you\u0060 when it is this listener\u0027s own."
+          },
+          "album": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "description": "For \u0060albums\u0060: the library album the service artist also has."
           }
         }
       },
@@ -7353,6 +7411,13 @@
               "$ref": "#/components/schemas/V2ArtistLink"
             },
             "description": "Service artists someone said are a different act; search keeps them apart."
+          },
+          "candidates": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/V2ArtistCandidate"
+            },
+            "description": "Service artists with the same name that nothing ties to this artist: no matched song, no shared album and no answer. They could be the same artist; a person decides with the link routes."
           }
         }
       },
@@ -7364,6 +7429,31 @@
         "properties": {
           "artist": {
             "$ref": "#/components/schemas/V2ArtistSummary"
+          },
+          "libraryArtist": {
+            "type": [
+              "null",
+              "object"
+            ],
+            "anyOf": [
+              {
+                "description": "For a service artist proven to be an artist in this listener\u0027s library: that library artist, whose page shows both.",
+                "$ref": "#/components/schemas/V2LibraryArtistRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "couldBe": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/V2LibraryArtistRef"
+            },
+            "description": "For a service artist: library artists of the same name that nothing ties it to and no one has ruled out. Names alone never join artists; a person decides with PUT /artists/{libraryArtistId}/links/{serviceArtistId}."
           },
           "albums": {
             "type": [
@@ -8132,6 +8222,57 @@
           "defaultUnit": {
             "type": "string",
             "description": "\u0060song\u0060 or \u0060album\u0060: what an add button adds unless the listener picks."
+          }
+        }
+      },
+      "V2LibraryArtistRef": {
+        "required": [
+          "id",
+          "name",
+          "artwork"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "artwork": {
+            "type": [
+              "null",
+              "object"
+            ],
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/V2Artwork"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "libraryId": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "description": "The media server artist, which library artist pages open by."
+          },
+          "by": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "description": "On libraryArtist, why they are the same: \u0060songs\u0060 (matched songs), \u0060albums\u0060 (both have the same album) or \u0060fix\u0060 (a person said so)."
+          },
+          "reason": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "description": "On couldBe, what agrees and what is missing, as a short sentence to show."
           }
         }
       },

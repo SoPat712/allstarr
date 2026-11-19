@@ -13,6 +13,13 @@ namespace allstarr.Core.Matching;
 
 public sealed record LibraryArtistLink(string ProviderId, string ArtistId);
 
+/// <summary>A service artist of the same name with an album the library also holds under that artist.</summary>
+public sealed record LibraryArtistAlbumLink(string ProviderId, string ArtistId, string Album);
+
+/// <summary>Why service artists count as a library artist: matched songs, a shared album, or a person's answer.</summary>
+public sealed record LibraryArtistProof(IReadOnlyList<LibraryArtistLink> Songs, IReadOnlyList<LibraryArtistAlbumLink> Albums,
+    IReadOnlyList<LibraryArtistFix> Fixes);
+
 /// <summary>A person's own answer for one service artist: the same artist as the library one, or not. Household fixes come from administrators.</summary>
 public sealed record LibraryArtistFix(string ProviderId, string ArtistId, bool Same, bool Household);
 
@@ -21,7 +28,8 @@ public sealed partial class LibraryArtistIndex(IDbContextFactory<AllstarrDbConte
     IProtocolProviderGateway providers, ITrackIdentityService identities, IProviderRegistry? registry = null,
     EmptyServiceArtists? emptyArtists = null)
 {
-    private const string IndexKind = "library-artist-index", BackfillKind = "library-artist-backfill", FixKind = "library-artist-fix";
+    private const string IndexKind = "library-artist-index", BackfillKind = "library-artist-backfill", FixKind = "library-artist-fix",
+        AlbumKind = "library-artist-album-link";
     private static readonly SemaphoreSlim Gate = new(1, 1);
     private sealed record Backfill(Guid JobId, Guid[] Tried, int Attempted);
 
@@ -35,19 +43,32 @@ public sealed partial class LibraryArtistIndex(IDbContextFactory<AllstarrDbConte
     public async Task<(IReadOnlyList<LibraryArtistLink> Songs, IReadOnlyList<LibraryArtistFix> Fixes)> ReadPartsAsync(Guid owner, string name,
         CancellationToken token = default)
     {
-        if (!ValidName(name)) return ([], []);
+        var proof = await ReadProofAsync(owner, name, token);
+        return (WithAlbums(proof.Songs, proof.Albums), proof.Fixes);
+    }
+
+    /// <summary>Song links, shared-album links and people's answers, each on its own, so apps can say why a link stands.</summary>
+    public async Task<LibraryArtistProof> ReadProofAsync(Guid owner, string name, CancellationToken token = default)
+    {
+        if (!ValidName(name)) return new([], [], []);
         var access = await libraryAccess.ResolveUserAsync(owner, token);
-        if (access.Context == null || !access.Access.Succeeded) return ([], []);
+        if (access.Context == null || !access.Access.Succeeded) return new([], [], []);
         using (RequestTiming.Current?.Stage("lock")) await Gate.WaitAsync(token);
         try
         {
             await using var db = await factory.CreateDbContextAsync(token);
             var songs = (await ComputedAsync(db, owner, access, name, token)).Where(link => Usable(link.ArtistId)).ToArray();
+            var albums = (await AlbumLinksAsync(db, owner, access.Context, [name], token)).GetValueOrDefault(name) ?? [];
             var fixes = (await FixesAsync(db, owner, access.Context, [name], token)).GetValueOrDefault(name) ?? [];
-            return (songs, fixes);
+            return new(songs, albums, fixes);
         }
         finally { Gate.Release(); }
     }
+
+    // A shared album ties a service artist as matched songs do; one a song already ties is listed once.
+    private static IReadOnlyList<LibraryArtistLink> WithAlbums(IReadOnlyList<LibraryArtistLink> songs, IReadOnlyList<LibraryArtistAlbumLink> albums) =>
+        albums.Count == 0 ? songs : songs.Concat(albums.Select(link => new LibraryArtistLink(link.ProviderId, link.ArtistId)))
+            .DistinctBy(link => ServiceCatalog.Key(link.ProviderId, link.ArtistId), StringComparer.Ordinal).ToArray();
 
     /// <summary>
     /// Saves one person's answer for a service artist; null clears it. An administrator's answer applies to the whole
@@ -92,8 +113,9 @@ public sealed partial class LibraryArtistIndex(IDbContextFactory<AllstarrDbConte
     internal static IReadOnlyList<LibraryArtistLink> Apply(IReadOnlyList<LibraryArtistLink> songs, IReadOnlyList<LibraryArtistFix> fixes)
     {
         if (fixes.Count == 0) return songs;
-        var refused = fixes.Where(fix => !fix.Same).Select(fix => (fix.ProviderId, fix.ArtistId)).ToHashSet();
-        return songs.Where(link => !refused.Contains((link.ProviderId, link.ArtistId)))
+        // An answer about an artist covers that artist on each of its service's sources.
+        var refused = fixes.Where(fix => !fix.Same).Select(fix => ServiceCatalog.Key(fix.ProviderId, fix.ArtistId)).ToHashSet(StringComparer.Ordinal);
+        return songs.Where(link => !refused.Contains(ServiceCatalog.Key(link.ProviderId, link.ArtistId)))
             .Concat(fixes.Where(fix => fix.Same).Select(fix => new LibraryArtistLink(fix.ProviderId, fix.ArtistId)))
             .Distinct().ToArray();
     }
@@ -263,6 +285,8 @@ public sealed partial class LibraryArtistIndex(IDbContextFactory<AllstarrDbConte
         if (access.Context == null || !access.Access.Succeeded) return result;
         await using var db = await factory.CreateDbContextAsync(token);
         result = await ReadSavedAsync(db, owner, access.Context, valid, token);
+        foreach (var (name, albums) in await AlbumLinksAsync(db, owner, access.Context, valid, token))
+            result[name] = WithAlbums(result.GetValueOrDefault(name) ?? [], albums);
         foreach (var (name, fixes) in await FixesAsync(db, owner, access.Context, valid, token))
             result[name] = Apply(result.GetValueOrDefault(name) ?? [], fixes);
         return result;

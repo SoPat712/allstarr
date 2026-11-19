@@ -440,8 +440,16 @@ public sealed partial class MusicSearchService(
         IReadOnlyCollection<Artist> artists, CancellationToken token)
     {
         if (artistLinks == null || context.Actor?.EffectiveUserId is not { } owner) return;
-        try { await artistLinks.RecordCandidatesAsync(owner, names, artists.Where(artist => !IsEmptyArtist(artist)).ToArray(), token); }
+        var shown = artists.Where(artist => !IsEmptyArtist(artist)).ToArray();
+        try { await artistLinks.RecordCandidatesAsync(owner, names, shown, token); }
         catch (Exception error) when (error is not OperationCanceledException) { }
+        // Their albums are checked against the library's in the background, so the next search can list a proven one as
+        // the library artist.
+        _ = Task.Run(async () =>
+        {
+            try { await artistLinks.ProveCandidatesAsync(owner, names, shown, CancellationToken.None); }
+            catch (Exception) { }
+        }, CancellationToken.None);
     }
 
     public bool IsEmptyArtist(Artist artist) => emptyArtists?.IsEmpty(artist) == true;
@@ -450,8 +458,8 @@ public sealed partial class MusicSearchService(
     public void ProbeArtists(ProtocolExecutionContext context, IEnumerable<Artist> artists, IEnumerable<string>? libraryNames = null) =>
         _ = emptyArtists?.Probe(providers, context, artists, libraryNames);
 
-    public static string ArtistKey(string provider, string artistId) =>
-        AppleMusicClient.NormalizeProviderId(provider) + ":" + artistId;
+    // A service's two sources name an artist by the same id, so a tie to one covers the other.
+    public static string ArtistKey(string provider, string artistId) => ServiceCatalog.Key(provider, artistId);
 
     public static string? ArtistKey(Artist artist) =>
         string.IsNullOrEmpty(artist.ExternalProvider) || string.IsNullOrEmpty(artist.ExternalId)

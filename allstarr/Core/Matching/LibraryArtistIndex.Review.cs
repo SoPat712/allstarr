@@ -59,14 +59,17 @@ public sealed partial class LibraryArtistIndex
                 var unseen = artists.Where(artist => FuzzyMatcher.NormalizeForMatching(artist.Name) == FuzzyMatcher.NormalizeForMatching(name) &&
                     !saved.Any(item => item.ProviderId == NormalizeProvider(artist.ExternalProvider!) && item.ArtistId == artist.ExternalId && item.Name == artist.Name)).ToArray();
                 if (unseen.Length == 0) continue;
-                var songs = await ComputedAsync(db, owner, access, name, token);
+                var songs = WithAlbums(await ComputedAsync(db, owner, access, name, token),
+                    (await AlbumLinksAsync(db, owner, access.Context, [name], token)).GetValueOrDefault(name) ?? []);
                 var changed = false;
                 foreach (var artist in unseen)
                 {
                     var provider = NormalizeProvider(artist.ExternalProvider!);
                     var id = artist.ExternalId!;
-                    if (songs.Any(link => link.ProviderId == provider && link.ArtistId == id) ||
-                        (fixes.GetValueOrDefault(name) ?? []).Any(fix => fix.ProviderId == provider && fix.ArtistId == id)) continue;
+                    // An artist already tied or answered for, on any of its service's sources, is no candidate.
+                    var artistKey = ServiceCatalog.Key(provider, id);
+                    if (songs.Any(link => ServiceCatalog.Key(link.ProviderId, link.ArtistId) == artistKey) ||
+                        (fixes.GetValueOrDefault(name) ?? []).Any(fix => ServiceCatalog.Key(fix.ProviderId, fix.ArtistId) == artistKey)) continue;
                     var candidate = new LibraryArtistEvidence(provider, id, artist.Name, 0, [], true);
                     var old = saved.FindIndex(item => item.ProviderId == provider && item.ArtistId == id);
                     if (old >= 0 && saved[old].Name == candidate.Name) continue;
@@ -102,15 +105,18 @@ public sealed partial class LibraryArtistIndex
             var candidatesByKey = rows.GroupBy(row => row.ExternalIdHash, StringComparer.Ordinal)
                 .ToDictionary(group => group.Key, group => ReadCandidates(group.MaxBy(row => row.SnapshotVersion)?.PayloadJson), StringComparer.Ordinal);
             var fixes = await FixesAsync(db, owner, access.Context, names, token);
+            var albumLinks = await AlbumLinksAsync(db, owner, access.Context, names, token);
             foreach (var name in names)
             {
                 var candidates = candidatesByKey.GetValueOrDefault(keysByName[name]) ?? [];
                 var evidence = new List<LibraryArtistEvidence>();
-                var songs = detail ? await ComputedAsync(db, owner, access, name, token, evidence) : saved!.GetValueOrDefault(name) ?? [];
+                var songs = WithAlbums(detail ? await ComputedAsync(db, owner, access, name, token, evidence) : saved!.GetValueOrDefault(name) ?? [],
+                    albumLinks.GetValueOrDefault(name) ?? []);
                 var decisions = fixes.GetValueOrDefault(name) ?? [];
-                result[name] = new(songs, decisions, candidates.Where(candidate => !songs.Any(link => link.ProviderId == candidate.ProviderId &&
-                    link.ArtistId == candidate.ArtistId) && !decisions.Any(fix => fix.ProviderId == candidate.ProviderId &&
-                    fix.ArtistId == candidate.ArtistId) && emptyArtists?.IsEmpty(new Artist
+                var settled = songs.Select(link => ServiceCatalog.Key(link.ProviderId, link.ArtistId))
+                    .Concat(decisions.Select(fix => ServiceCatalog.Key(fix.ProviderId, fix.ArtistId))).ToHashSet(StringComparer.Ordinal);
+                result[name] = new(songs, decisions, candidates.Where(candidate =>
+                    !settled.Contains(ServiceCatalog.Key(candidate.ProviderId, candidate.ArtistId)) && emptyArtists?.IsEmpty(new Artist
                     {
                         ExternalProvider = candidate.ProviderId,
                         ExternalId = candidate.ArtistId
