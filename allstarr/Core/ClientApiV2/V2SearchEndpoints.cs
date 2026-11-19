@@ -1,6 +1,8 @@
+using System.Diagnostics;
 using System.Text.Json;
 using allstarr.Controllers.ClientApi;
 using allstarr.Core.ClientApi;
+using allstarr.Core.Operations;
 using allstarr.Core.Protocols;
 using allstarr.Models.Domain;
 using allstarr.Services.Local;
@@ -9,9 +11,13 @@ using Microsoft.AspNetCore.Mvc;
 namespace allstarr.Core.ClientApiV2;
 
 /// <summary>Listener-scoped search reads using the shared ranked stream and stored lyrics index.</summary>
-public sealed class V2SearchEndpoints(V2SearchStream stream, V2TrackReader tracks, LyricsSearchReader lyrics)
+public sealed class V2SearchEndpoints(V2SearchStream stream, V2TrackReader tracks, LyricsSearchReader lyrics,
+    ILogger<V2SearchEndpoints>? logger = null)
 {
     private static readonly IReadOnlySet<string> Types = new HashSet<string>(StringComparer.Ordinal) { "songs", "albums", "artists", "playlists" };
+
+    // Turning a snapshot's songs into tracks is what this stream adds to the ranked one; a slow first one is worth a line.
+    private static readonly TimeSpan SlowFirstRead = TimeSpan.FromMilliseconds(250);
 
     public async Task<IActionResult> StreamAsync(HttpContext http, ProtocolExecutionContext execution, string? q, int limit, string? types)
     {
@@ -23,6 +29,8 @@ public sealed class V2SearchEndpoints(V2SearchStream stream, V2TrackReader track
         var requested = selected.Select(type => type switch { "songs" => "Audio", "albums" => "MusicAlbum", "artists" => "MusicArtist", _ => "Playlist" })
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var read = new Dictionary<string, V2Track?>(StringComparer.Ordinal);
+        var started = Stopwatch.GetTimestamp();
+        var untimed = true;
         return await stream.StreamAsync(http, execution, query, limit, requested, true, async (batch, token) =>
         {
             var rows = batch.Sections.Values.SelectMany(rows => rows).Concat(batch.Items)
@@ -34,9 +42,16 @@ public sealed class V2SearchEndpoints(V2SearchStream stream, V2TrackReader track
                 var current = new ProtocolExecutionContext(execution.Protocol, execution.BackendInstanceId, execution.VerifiedBackendPrincipalId,
                     execution.Principal, execution.CorrelationId, execution.Deadline, token, execution.Client)
                 { Policy = execution.Policy };
+                // The first read is timed on its own, apart from the services still answering beside it.
+                using var timing = untimed ? RequestTiming.Begin() : null;
                 var result = await tracks.ReadWithSourcesAsync(http, current, songs.Select(Id).ToArray(), false, metadata);
                 var byId = Index(result.Response.Tracks);
                 foreach (var row in songs) read[Id(row)] = byId.GetValueOrDefault(Id(row));
+                if (timing?.Snapshot("search") is { } took)
+                    logger?.Log(took.TotalMs >= SlowFirstRead.TotalMilliseconds ? LogLevel.Information : LogLevel.Debug,
+                        "Search read its first {Songs} songs in {ReadMs:0} ms, {WaitedMs:0} ms into the search ({Timing})",
+                        songs.Length, took.TotalMs, Stopwatch.GetElapsedTime(started).TotalMilliseconds - took.TotalMs, took.Header);
+                untimed = false;
             }
             var hits = rows.Select(row => Project(row, read.GetValueOrDefault(Id(row)))).Where(hit => hit.HasValue)
                 .Select(hit => hit!.Value).ToDictionary(hit => hit.Key, hit => hit.Value);

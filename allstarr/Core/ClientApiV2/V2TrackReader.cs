@@ -2,6 +2,7 @@ using System.Text.Json;
 using allstarr.Core.ClientApi;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Matching;
+using allstarr.Core.Operations;
 using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
 using allstarr.Models.Domain;
@@ -48,7 +49,9 @@ public sealed class V2TrackReader(
         var copies = new Dictionary<string, string>(StringComparer.Ordinal);
         if (external.Length > 0)
         {
-            var known = await identities.ResolveRecordingsAsync(execution.RequireActor(), external, token);
+            IReadOnlyDictionary<string, CanonicalRecordingIdentity?> known;
+            using (RequestTiming.Current?.Stage("resolve"))
+                known = await identities.ResolveRecordingsAsync(execution.RequireActor(), external, token);
             // A song from a service that can't play it, such as a ListenBrainz like, reads as its recording.
             foreach (var id in external)
                 if (known.GetValueOrDefault(id) is { } recording &&
@@ -61,7 +64,8 @@ public sealed class V2TrackReader(
                 return new LibraryRecordingLookup(id, identity.Id, identity.Isrc, registry.ResolveProviderId(parsed.provider!), parsed.externalId);
             }).ToArray();
             if (lookups.Length > 0)
-                foreach (var pair in await libraryIndex.FindKnownRecordingTracksAsync(execution, lookups, token)) copies[pair.Key] = pair.Value;
+                using (RequestTiming.Current?.Stage("owned"))
+                    foreach (var pair in await libraryIndex.FindKnownRecordingTracksAsync(execution, lookups, token)) copies[pair.Key] = pair.Value;
         }
         var targets = sources.ToDictionary(pair => pair.Key, pair => copies.GetValueOrDefault(pair.Value) ?? pair.Value, StringComparer.Ordinal);
         var targetIds = targets.Values.Distinct(StringComparer.Ordinal).ToArray();
@@ -79,7 +83,9 @@ public sealed class V2TrackReader(
         }).OfType<LibraryRecordingLookup>().ToArray();
         if (unowned.Length > 0)
         {
-            var owned = await libraryIndex.FindKnownRecordingTracksAsync(execution, unowned, token);
+            IReadOnlyDictionary<string, string> owned;
+            using (RequestTiming.Current?.Stage("owned"))
+                owned = await libraryIndex.FindKnownRecordingTracksAsync(execution, unowned, token);
             if (owned.Count > 0)
             {
                 targets = targets.ToDictionary(pair => pair.Key, pair => owned.GetValueOrDefault(pair.Value) ?? pair.Value, StringComparer.Ordinal);
@@ -94,8 +100,11 @@ public sealed class V2TrackReader(
         var observed = searchSongs?.Where(pair => songs.ContainsKey(pair.Key)).ToArray() ?? [];
         foreach (var (id, song) in observed) songs[id] = song;
         if (observed.Length > 0 && identities is ITrackMediaFactsStore mediaFacts)
-            await mediaFacts.ApplyStoredMediaFactsAsync(execution.RequireActor(), observed.Select(pair => pair.Value).ToArray(), execution.CancellationToken);
-        var library = await ReadLibraryAsync(http, execution, targetIds.Where(id => !IsExternal(id) && facts.ContainsKey(id)).ToArray());
+            using (RequestTiming.Current?.Stage("store"))
+                await mediaFacts.ApplyStoredMediaFactsAsync(execution.RequireActor(), observed.Select(pair => pair.Value).ToArray(), execution.CancellationToken);
+        Dictionary<string, LibraryItem> library;
+        using (RequestTiming.Current?.Stage("library"))
+            library = await ReadLibraryAsync(http, execution, targetIds.Where(id => !IsExternal(id) && facts.ContainsKey(id)).ToArray());
 
         var tracks = new List<V2Track>();
         var albums = includeAlbums ? new Dictionary<string, V2AlbumSummary>(StringComparer.Ordinal) : null;
@@ -124,7 +133,10 @@ public sealed class V2TrackReader(
                 tracks.Add(built with { Aliases = aliases });
             }
         }
-        var linked = libraryArtists == null ? tracks : await libraryArtists.LinkAsync(http, execution, tracks);
+        IReadOnlyList<V2Track> linked = tracks;
+        if (libraryArtists != null)
+            using (RequestTiming.Current?.Stage("linked"))
+                linked = await libraryArtists.LinkAsync(http, execution, tracks);
         return (new(linked, missing) { Albums = albums }, readFrom);
     }
 
