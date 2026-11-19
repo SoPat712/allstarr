@@ -22,7 +22,6 @@ data/
 downloads/
 kept/
 cache/
-valkey-data/
 allstarr-backups/
 state-transfers/
 *.dump

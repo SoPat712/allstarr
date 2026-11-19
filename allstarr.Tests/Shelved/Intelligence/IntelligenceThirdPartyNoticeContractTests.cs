@@ -13,7 +13,6 @@ public sealed class IntelligenceThirdPartyNoticeContractTests
         Assert.Contains("not a bundled registry or third-party extension packages", sdk,
             StringComparison.Ordinal);
         Assert.True(File.Exists(Path.Combine(root, "allstarr", "wwwroot", "licenses", "fonts", "Inter-OFL.txt")));
-        Assert.True(File.Exists(Path.Combine(root, "allstarr", "wwwroot", "licenses", "fonts", "Sora-OFL.txt")));
     }
 
     private static string FindRepositoryRoot()

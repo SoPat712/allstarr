@@ -53,9 +53,7 @@ CodeCoverage/
 TestResult.xml
 nunit-*.xml
 
-# Fichiers et dossiers à ignorer pour un projet .NET
-bin/
-obj/
+# Editors and local files
 *.user
 *.suo
 *.userosscache
@@ -65,7 +63,7 @@ obj/
 .idea/
 # Visual Studio Code
 .vscode/
-# Autres fichiers temporaires
+# Temporary files
 *.log
 
 /.env
@@ -87,20 +85,14 @@ __pycache__/
 .pytest_cache/
 *.egg-info/
 
-# Downloaded music files
+# Music folders an older install kept next to the checkout
 /downloads/
-!/downloads/.gitkeep
 
 # Kept music files (favorited external tracks)
 /kept/
 
 # Cache files (Spotify missing tracks, etc.)
 /cache/
-
-# Docker volumes
-/valkey-data/
-/.apple-provider/
-/apple-downloads/
 
 # Keep only the exact versioned OpenAPI artifacts. Local feature notes, raw captures, cloned repositories,
 # ad-hoc scripts, and credentials under apis/ are intentionally ignored.
@@ -113,10 +105,8 @@ apis/specifications/allstarr/*
 !apis/specifications/allstarr/client-v2.json
 !apis/specifications/jellyfin/
 apis/specifications/jellyfin/*
+!apis/specifications/jellyfin/openapi-10.11.11.json
 !apis/specifications/jellyfin/openapi-12.0.0.json
-
-# Sample missing playlists for Spotify integration testing
-sampleMissingPlaylists/
 
 # Development-only WebUI tooling
 /node_modules/
@@ -126,11 +116,3 @@ sampleMissingPlaylists/
 /webui/playwright-report/
 /webui/test-results/
 /test-results/
-
-# Local design tooling
-/.agents/
-/.codex/
-/.impeccable/
-/webui/.impeccable/
-/PRODUCT.md
-/agent_docs/
