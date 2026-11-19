@@ -50,6 +50,7 @@ public sealed class V2SessionReader(IDurableRuntimeSettings settings)
                 ["tracksFacts"] = true,
                 ["mixRows"] = true,
                 ["historyRows"] = true,
+                ["trackLyrics"] = true,
                 // A service song's measured loudness arrives as trackGainDb, announced by track.updated with changed ["loudness"].
                 ["trackLoudness"] = true
             }, string.IsNullOrEmpty(address) ? null : new(address)));

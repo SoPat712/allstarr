@@ -21,7 +21,8 @@ public sealed class V2TrackReader(
     ITrackIdentityService identities,
     IProviderRegistry registry,
     ILibraryIndexService libraryIndex,
-    V2LibraryArtists? libraryArtists = null)
+    V2LibraryArtists? libraryArtists = null,
+    V2RowIds? rowIds = null)
 {
     private const string LibraryFields = "MediaSources,ProviderIds";
     private static readonly HashSet<string> LosslessCodecs = new(StringComparer.OrdinalIgnoreCase)
@@ -122,6 +123,8 @@ public sealed class V2TrackReader(
                 sources[id] = decoded.Recording is { } recording ? CanonicalRecordingRecord.DefaultPublicId(recording) : decoded.Source!;
         var (read, songs) = await details.ReadWithSongsAsync(http, execution, sources.Values.Distinct(StringComparer.Ordinal).ToArray(), resolveServingProvider: true);
         var facts = read.Items.ToDictionary(item => item.Id, StringComparer.Ordinal);
+        // A recording or service song the listener has in the library names that copy, as a track read does.
+        var copies = rowIds == null ? null : await rowIds.ResolveAsync(execution, sources.Values.Where(IsExternal));
         var tracks = new List<V2TrackFacts>();
         var returned = new Dictionary<string, int>(StringComparer.Ordinal);
         var missing = new List<string>();
@@ -133,7 +136,8 @@ public sealed class V2TrackReader(
                 continue;
             }
             var trackId = TrackId(source, item.CanonicalRecordingId);
-            var aliases = Aliases(trackId, id, source, source, item.CanonicalRecordingId);
+            var copy = IsExternal(source) ? copies?.GetValueOrDefault(source)?.LibraryItemId : source;
+            var aliases = Aliases(trackId, id, source, copy ?? source, item.CanonicalRecordingId);
             if (returned.TryGetValue(trackId, out var index))
             {
                 tracks[index] = tracks[index] with { Aliases = tracks[index].Aliases.Union(aliases, StringComparer.Ordinal).ToArray() };
@@ -145,7 +149,7 @@ public sealed class V2TrackReader(
                 provider != "allstarr")
                 externalIds[provider] = external;
             returned[trackId] = tracks.Count;
-            tracks.Add(new(trackId, aliases, item.IsExternal, IsExternal(source) ? null : source, item.CanonicalRecordingId,
+            tracks.Add(new(trackId, aliases, item.IsExternal, copy, item.CanonicalRecordingId,
                 item.Provider == null ? null : Provider(item.Provider), externalIds,
                 item.Audio is { } audio ? FormatOf(null, audio.Codec, audio.Bitrate, audio.SampleRate, audio.BitDepth, null) : null,
                 item.Explicit, item.Saved, item.PlayCount, item.LastPlayedAt, new(item.Keep.State, item.Keep.Progress),

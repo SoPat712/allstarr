@@ -104,6 +104,13 @@ public sealed partial class ProtocolRouteFixtureTests
         var named = await ReadClientLyricsJsonAsync(client, $"/allstarr/v2/tracks/{V2Ids.Track(recording)}/lyrics/sources");
         Assert.True(JsonNode.DeepEquals(library, named), $"{library} vs {named}");
         Assert.Contains(named["sources"]!.AsArray(), source => source!["sourceId"]!.GetValue<string>() == "backend");
+        // The lyrics alone answer as the lyrics view and v1 do for the library song.
+        var track = V2Ids.Track(recording);
+        var original = (await ReadClientLyricsJsonAsync(client, "/allstarr/v1/items/native/lyrics")).ToJsonString()
+            .Replace("/allstarr/v1/providers/", "/allstarr/v2/providers/", StringComparison.Ordinal);
+        var lyrics = await ReadClientLyricsJsonAsync(client, $"/allstarr/v2/tracks/{track}/lyrics");
+        Assert.True(JsonNode.DeepEquals(JsonNode.Parse(original), lyrics), $"{original} vs {lyrics}");
+        await AssertV2ResourceRead(client, $"/allstarr/v2/tracks/{track}/lyrics", lyrics);
     }
 
     [Fact]

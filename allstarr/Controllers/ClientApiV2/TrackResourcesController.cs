@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.ComponentModel.DataAnnotations;
+using allstarr.Core.Capabilities;
 using allstarr.Core.ClientApi;
 using allstarr.Core.ClientApiV2;
 using Microsoft.AspNetCore.Mvc;
@@ -9,6 +10,15 @@ namespace allstarr.Controllers.ClientApiV2;
 [Route("allstarr/v2/tracks/{id}")]
 public sealed class TrackResourcesController(V2TrackResources tracks) : ClientApiV2ControllerBase
 {
+    [HttpGet("lyrics")]
+    [EndpointName("getTrackLyrics")]
+    [EndpointDescription("Reads the track's lyrics alone, exactly as the lyrics view of a track read holds them, without reading the track (session feature trackLyrics). With sourceId, reads that version. Can also be read inside a batch.")]
+    [ProducesResponseType<RichLyrics>(200)]
+    [ProducesResponseType(304)]
+    public async Task<IActionResult> Lyrics(string id,
+        [FromQuery, Description("A version id from lyrics/sources; empty or absent reads the effective choice.")] string? sourceId = null) =>
+        Respond(await tracks.LyricsAsync(HttpContext, Execution, id, sourceId ?? (Request.Query.ContainsKey("sourceId") ? "" : null)));
+
     [HttpGet("lyrics/sources")]
     [EndpointName("getTrackLyricsSources")]
     [EndpointDescription("Lists available lyrics versions, the effective choice and revision stamps. Can also be read inside a batch.")]

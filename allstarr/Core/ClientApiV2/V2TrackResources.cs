@@ -9,6 +9,9 @@ namespace allstarr.Core.ClientApiV2;
 public sealed class V2TrackResources(ItemLyricsReader lyrics, ItemMatchReader matches, ItemAppearancesReader appearances,
     V2RowIds? rowIds = null)
 {
+    public Task<V2Result> LyricsAsync(HttpContext http, ProtocolExecutionContext execution, string id, string? sourceId) =>
+        WithSourceAsync(id, async source => await lyrics.ReadAsync(http, execution, await ReadFromAsync(execution, source), sourceId));
+
     public Task<V2Result> LyricsSourcesAsync(HttpContext http, ProtocolExecutionContext execution, string id, bool includeLyrics) =>
         WithSourceAsync(id, async source => await lyrics.SourcesAsync(http, execution, await ReadFromAsync(execution, source), includeLyrics));
 

@@ -70,6 +70,9 @@ public sealed class V2BatchDispatcher(IServiceScopeFactory scopes, ILogger<V2Bat
         {
             ["session"] when Allowed(query, []) => await scope.ServiceProvider.GetRequiredService<V2SessionReader>().ReadAsync(execution),
             ["session"] => new(400, null),
+            ["tracks", var id, "lyrics"] when Allowed(query, ["sourceId"]) =>
+                await resources.LyricsAsync(http, execution, id, query.ContainsKey("sourceId") ? Value(query, "sourceId") ?? "" : null),
+            ["tracks", _, "lyrics"] => new(400, null),
             ["tracks", var id, "lyrics", "sources"] when Allowed(query, ["includeLyrics"]) &&
                 bool.TryParse(Value(query, "includeLyrics") ?? "false", out var includeLyrics) =>
                 await resources.LyricsSourcesAsync(http, execution, id, includeLyrics),
