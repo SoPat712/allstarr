@@ -1,8 +1,10 @@
-# Jellyfin v12 music compatibility surface
+# Jellyfin music surface
 
-Allstarr implements a deliberately music-only Jellyfin boundary. This contract is
-audited against `apis/specifications/jellyfin/openapi-12.0.0.json`; an operation
-outside the executable allowlist is denied by default on the public Jellyfin port.
+Allstarr exposes a deliberately music-only Jellyfin boundary. The policy is
+checked against the Jellyfin 12.0.0 and 10.11.11 OpenAPI documents in
+`apis/specifications/jellyfin/`. An operation outside the allowlist is denied by
+default on the music-app port. Only Jellyfin 10.11.11 has been tested against a
+live server; see [qualification evidence](#qualification-evidence).
 
 ## Request flow
 
@@ -48,8 +50,8 @@ After authentication, clients can discover music libraries with `Items` or
 `Recursive` value has the same root-discovery behavior as `Recursive=false`.
 The response preserves each native music library and playlist folder and applies
 pagination after filtering other library types. Native playlist-folder IDs remain
-unchanged, and folder-child queries retain their music-only scope. Saved provider
-songs belong in the library's contents and do not replace its root folders.
+unchanged, and folder-child queries retain their music-only scope. Saved service
+songs do not appear in library browsing; they appear in favorites views.
 
 ## Explicitly excluded
 
@@ -117,25 +119,34 @@ Merged search hints preserve native objects and stable source order, then apply
 the client `Limit` once to the final native-plus-external result.
 
 The safe live comparison is `tools/tests/live_jellyfin_smoke.sh`; usage and
-output semantics are in `tools/tests/README.md`. The recorded live runtime is
-Jellyfin 10.11.11. Jellyfin 12 remains covered by the pinned OpenAPI and
-deterministic contracts; live 12.x runtime parity is deferred until a public
-release is available.
+output are described in [the test tools guide](../../tools/tests/README.md). The
+only live runtime tested so far is Jellyfin 10.11.11. Jellyfin 12 is covered by
+the pinned OpenAPI document and fixed contract tests only, not by a live server.
 
 ## Apple Music cold playback
 
-For an uncached `apple-download` track, Allstarr prefers `api/audio/{id}` when the sidecar advertises
-`audio-file`. Preparation completes before the response starts: GAMDL fetches the source, then lossless
-sources become a regular FLAC file with total samples and a seek table. AAC sources remain MP4. The
-cached file response supplies its real length and supports byte ranges, so GET and HEAD can describe a
-complete, seekable file on the first request. Concurrent requests share preparation and conversion.
-Allstarr uses the existing download-backed opening deadline while waiting. Missing audio fails before
-headers, allowing provider fallback; account mismatch remains an account error.
+For an uncached Apple Music song, Allstarr uses the gateway's `api/audio/{id}`
+route when the gateway advertises `audio-file`. The gateway streams the audio
+while it prepares it: lossless sources arrive as FLAC and AAC sources as
+fragmented MP4. This first response has no `Content-Length` or byte-range
+support. It carries the catalog duration in `X-Allstarr-Duration-Seconds`, and
+Allstarr adds FLAC duration guidance as the bytes arrive. Concurrent requests
+for the same song, account and quality share one preparation. Allstarr waits
+within the usual download-backed opening limit. A failure before the first
+audio bytes returns an error, so another service can be tried; an account
+mismatch stays an account error. A failure after audio starts ends the transfer,
+and Allstarr does not cache the partial file.
 
-Older sidecars continue using `api/stream/{id}` with an empty 10-byte ID3v2.4 tag followed by FFmpeg's
-FLAC stdout. Allstarr removes that prelude and can add duration guidance lazily. Sequential responses
-become seekable after the managed cache finishes; legacy HEAD only reports known media headers.
-The `api/download/{id}` complete FLAC contract remains available for managed downloads.
+Once preparation finishes, the gateway caches the complete file. Later requests
+get its real length and byte ranges, so apps can seek freely. A HEAD request
+prepares the file completely before it answers.
 
-`applemusic` and `apple-download` are canonical aliases on this path. An Apple ID
-therefore never incurs an Apple-to-Apple Odesli translation.
+Older gateways use `api/stream/{id}`: an empty 10-byte ID3v2.4 tag followed by
+FLAC. Allstarr strips the tag and can add duration guidance. These streams
+become seekable once the song cache holds the complete file; HEAD reports only
+known media headers. Managed downloads use `api/download/{id}`, which returns a
+complete FLAC file.
+
+The Apple Music service is `apple-musickit`. The older names `apple-download`
+and `applemusic` map to it, so an Apple ID never needs a song-link lookup to
+reach Apple.

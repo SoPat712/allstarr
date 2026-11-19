@@ -6,6 +6,7 @@ wrapper-v2 source, Apple native libraries, credentials, or session data.
 
 The optional root Compose profile builds the locked official wrapper-v2 0.0.2 source beside this gateway and puts
 both on Allstarr's private network. Do not expose the gateway or wrapper login endpoints to the public Internet.
+For setup in Allstarr, see [Apple downloads](../../docs/operations/apple-download-provider.md).
 
 ## GAMDL qualification
 
@@ -14,12 +15,12 @@ Checked on 2026-10-08: the exact `3.9.1` pin matches the latest stable
 [PyPI release](https://pypi.org/project/gamdl/3.9.1/), published on 2026-09-22 from commit
 `bc3bcd25ed61dcdb78c28ffb0ef32053b618c7e3`.
 
-Qualification in disposable environments on macOS ARM64 with Python 3.13.15 passed all 83 gateway/account-entrypoint fixtures
-(0 failures, 0 skips) and 15 offline CLI argument cases using the installed GAMDL parser. These cases cover
-the runner's codecs, isolated cookies path, wrapper HTTP/decrypt arguments, output paths, artist selection,
-and lyrics-only mode. Mocked factories against the installed GAMDL CLI verify that only the selected account API
-reaches media operations and an account mismatch fails before that boundary. The native media extension imports successfully. No live Apple account, wrapper
-activation, download, or deployment was exercised.
+Qualification ran the gateway's offline test suite and offline command-line argument cases against the
+installed GAMDL parser, in disposable environments on macOS ARM64. These cases cover the runner's codecs,
+isolated cookies path, wrapper HTTP and decrypt arguments, output paths, artist selection and lyrics-only mode.
+Mocked factories against the installed GAMDL CLI check that only the selected account's API reaches media
+operations and that an account mismatch fails before that point. The native media extension imports
+successfully. That qualification used no live Apple account, wrapper activation, download or deployment.
 
 Python remains `>=3.10`; the existing Python 3.12 Bookworm image needs no version change for this pin.
 The release provides CPython 3.10 ABI-compatible Linux wheels for x86_64 and ARM64 requiring glibc 2.34+.
@@ -115,24 +116,32 @@ subprocess limit. Dead, timed-out, or abandoned workers are killed with their pr
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `APPLE_GATEWAY_WRAPPER_URL` | `http://wrapper-v2` | Separate wrapper-v2 origin |
-| `APPLE_GATEWAY_WRAPPER_DECRYPT_HOST` | `wrapper-v2` | Wrapper-v2 raw decrypt host reachable from this container |
+| `APPLE_GATEWAY_WRAPPER_URL` | `http://wrapper-v2` | Separate wrapper-v2 origin. The root Compose file sets `http://apple-wrapper:80`. |
+| `APPLE_GATEWAY_WRAPPER_DECRYPT_HOST` | `wrapper-v2` | Wrapper-v2 raw decrypt host reachable from this container. The root Compose file sets `apple-wrapper`. |
 | `APPLE_GATEWAY_WRAPPER_DECRYPT_PORT` | `10020` | Wrapper-v2 raw decrypt port reachable from this container |
 | `APPLE_GATEWAY_DATA_ROOT` | `/data` | Persistent artifact and temporary root |
-| `APPLE_GATEWAY_MAX_CONCURRENCY` | `2` | Shared worker-job and subprocess limit |
-| `APPLE_GATEWAY_PROCESS_TIMEOUT_SECONDS` | `900` | Hard subprocess deadline |
-| `APPLE_GATEWAY_WRAPPER_TIMEOUT_SECONDS` | `45` | Wrapper request deadline |
-| `APPLE_GATEWAY_MAX_PROCESS_OUTPUT_BYTES` | `32768` | Maximum retained stdout and stderr per process |
+| `APPLE_GATEWAY_STOREFRONT` | `us` | Two-letter default storefront, checked at startup; any other value stops the gateway. Media requests use the selected account's storefront. |
+| `APPLE_GATEWAY_COOKIES_PATH` | empty | Optional operator cookie file. Media requests never use it; they use the selected account's token. |
+| `APPLE_GATEWAY_GAMDL_PATH` | `gamdl` | GAMDL executable |
+| `APPLE_GATEWAY_FFMPEG_PATH` | `ffmpeg` | FFmpeg executable |
+| `APPLE_GATEWAY_MAX_CONCURRENCY` | `2` | Shared worker-job and subprocess limit (1 to 8) |
+| `APPLE_GATEWAY_PROCESS_TIMEOUT_SECONDS` | `900` | Hard subprocess deadline (10 to 7200) |
+| `APPLE_GATEWAY_WRAPPER_TIMEOUT_SECONDS` | `45` | Wrapper request deadline (2 to 300) |
+| `APPLE_GATEWAY_MAX_PROCESS_OUTPUT_BYTES` | `32768` | Maximum retained stdout and stderr per process (1024 to 1048576) |
 
-Prepare wrapper-v2 with the operator's legal APK/APKM, then use the saved Apple profile:
+The root Compose file sets the wrapper addresses itself and passes `APPLE_GATEWAY_STOREFRONT`,
+`APPLE_GATEWAY_MAX_CONCURRENCY` and `APPLE_GATEWAY_PROCESS_TIMEOUT_SECONDS` from `.env`. The rest use their
+defaults unless you set them in a Compose override.
+
+Prepare wrapper-v2 with the operator's legal APK/APKM, then build and start the Apple profile:
 
 ```bash
-./allstarr.sh prepare-apple /private/path/apple-music.apkm x86_64
-./allstarr.sh up
+./allstarr.sh enable apple /private/path/apple-music.apkm x86_64
 ```
 
-The root Compose profile configures `http://apple-gateway:8000` internally. Removing the profile does not change
-Allstarr's SQLite state, existing media, gateway state, or wrapper login session.
+Compose does not tell Allstarr where the gateway is. Save `http://apple-gateway:8000` as the Apple Music
+service's **Optional download gateway URL** in the dashboard. Removing the profile does not change Allstarr's
+database, existing media, gateway state, or wrapper login session.
 
 Media URLs are constructed from the validated storefront and numeric catalog song ID. The gateway passes
 arguments as an exec array, never through a shell. It rejects unsafe artifact paths, symlinks, redirects from

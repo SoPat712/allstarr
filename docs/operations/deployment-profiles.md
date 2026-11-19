@@ -1,24 +1,75 @@
-# Deployment
+# Deployment profiles
+
+Allstarr runs as one core container. Two optional profiles add containers: `apple` for Apple Music playback and downloads, and `sessions` for automatic extension sign-in renewal. `./allstarr.sh` saves which profiles you use in `.allstarr-profiles` and starts them with the core.
 
 ## Install
 
-Install Docker with Compose, obtain this repository, and run:
+Install Docker with Compose, get this repository, and run:
 
 ```bash
 docker compose up -d
 ```
 
-This starts one Allstarr container using the pinned application image. Its only persistent mount is `./data:/app/data`. No `.env` file, source build or optional service is required. Music clients use port 5274. The dashboard listens at `http://localhost:5275`, with the host port bound to loopback.
+This starts one Allstarr container from the pinned application image. Its only persistent mount is `./data:/app/data`. No `.env` file, source build or optional service is needed. Music apps use port 5274. The dashboard is at `http://localhost:5275`, bound to the host's loopback address.
 
-Open the dashboard, choose Jellyfin or Subsonic / OpenSubsonic, and verify a media-server administrator. Use an address reachable from the container; `localhost` inside the container refers to Allstarr itself. The connection is saved in SQLite and the password is discarded. Allstarr restarts after its response, then the dashboard offers sign-in and the shared setup guide. Reviewed and skipped steps persist across browsers. Reopen it under Settings → Setup without resetting choices. Product settings and encrypted accounts belong in the dashboard. See [configuration](configuration.md) for listener and trusted-network settings.
+On a server without a desktop, reach the dashboard through an SSH tunnel, for example `ssh -L 5275:127.0.0.1:5275 you@server`, then open `http://localhost:5275` on your own computer. To open it from your network instead, see [keep administration private](webui-access.md#keep-administration-private).
+
+Open the dashboard, choose Jellyfin or Subsonic / OpenSubsonic, and verify a media-server administrator. Use an address the container can reach; `localhost` inside the container is Allstarr itself. The connection is saved in the database and the password is discarded. Allstarr restarts, then offers sign-in and the setup guide. The guide remembers reviewed and skipped steps across browsers; reopen it from **Settings → Backups and health → Setup guide** without resetting anything. Settings and accounts live in the dashboard; see [configuration](configuration.md).
+
+## Update
+
+Create and download a backup in **Settings → Backups and health**, and keep the previous image and a stopped copy of the data folder. Then run:
+
+```bash
+./allstarr.sh update
+```
+
+The command checks the deployment files, pulls the configured Allstarr image and recreates the saved profiles. A failed pull or optional service build stops startup. It does not change Git files or delete volumes. To move to a different pinned release, set `ALLSTARR_IMAGE` in `.env` first.
+
+Other commands:
+
+- `./allstarr.sh up` starts the saved profiles without pulling the application image.
+- `./allstarr.sh status` lists their containers.
+- `./allstarr.sh logs [service]` follows their logs.
+- `./allstarr.sh down` stops the saved deployment without deleting its volumes.
+
+An earlier installation may keep its data in the project's `allstarr-data` volume. When `ALLSTARR_DATA_PATH` is unset and `./data` is missing or empty, `up` and `update` keep using that volume: the script adds `ALLSTARR_DATA_PATH=allstarr-data` to `.env` and reports it. Keep the same Compose project name, including any `COMPOSE_PROJECT_NAME`. Nothing is copied or moved. If both the volume and `./data` hold data, startup stops until you choose `ALLSTARR_DATA_PATH=./data` or `ALLSTARR_DATA_PATH=allstarr-data`. That check needs the configured Allstarr image to be available locally. Plain `docker compose up` does not run this check.
+
+## Optional Apple downloads
+
+The `apple` profile adds Allstarr's Apple gateway and the wrapper it uses. Neither publishes a host port.
+
+Get a supported Apple Music for Android APK or APKM legally. In **Sources → Services → Apple Music**, choose **Sign in to Apple Music**, open **Advanced setup** and upload the package. Then run:
+
+```bash
+./allstarr.sh enable apple
+```
+
+The architecture is detected automatically; pass `x86_64` or `arm64-v8a` when needed. Uploads are stored in `data/apple-upload` with the default layout. The script finds a custom bind-mounted data path from Compose, and also accepts the older `.apple-provider/incoming` staging folder. With a named volume or another layout, pass the package path yourself: `./allstarr.sh enable apple /path/to/package.apkm x86_64`.
+
+The command verifies the package and the locked wrapper inputs, builds the local Apple images, saves the profile and starts it. It needs Git, jq and unzip. `./allstarr.sh prepare-apple` verifies and builds without starting. `install-apple` is an older name for `enable apple`.
+
+Then set **Optional download gateway URL** to `http://apple-gateway:8000` on the Apple Music service, sign in and test. See [Apple downloads](apple-download-provider.md).
+
+```bash
+./allstarr.sh disable apple
+```
+
+This stops and removes the two Apple containers and forgets the saved profile. It keeps gateway data, wrapper sessions, Allstarr's records and media. Plain Compose does not read `.allstarr-profiles`; pass `--profile apple` yourself when you run Compose by hand. Neither way needs the Docker socket mounted in Allstarr.
+
+Spotify lyrics run inside Allstarr with a connected Spotify account and need no profile.
+
+## Optional extension sign-in verification
+
+`./allstarr.sh enable sessions` builds an optional Chromium service and gives Allstarr its private address. It renews approved `api.zarz.moe` connections after they expire or before a capped session runs out. The saved profile works with release and source deployments. `./allstarr.sh disable sessions` returns to manual verification without deleting connections. The service publishes no host port and stores no provider sessions. See the [session verifier](../../sidecars/session-verifier/README.md) for its limits, retries and direct Compose setup.
 
 ## Upgrade from version 2
 
-Keep the existing Compose file, `.env`, mount paths and project name. Do not replace them with the new default layout during the upgrade. Version 3 honors legacy backend reachability and administrator network settings. When no explicit data mount exists, it uses `/app/cache/allstarr-v3` inside the existing persistent cache mount for SQLite and the key ring. It keeps `/health` and native proxy requests available while upgrade setup is pending.
+Keep the existing Compose file, `.env`, mount paths and project name. Do not replace them with the new default layout during the upgrade. Version 3 honours the old backend address and dashboard network settings. When there is no data mount, it keeps the database and key ring in `/app/cache/allstarr-v3` inside the existing persistent cache mount. `/health` and ordinary music-app requests keep working while setup is pending.
 
-Before upgrading, record the previous image tag and immutable image ID. Retain that image locally or in your registry. Stop Allstarr and copy its configuration, cache, download and kept folders, plus any other persistent paths. Preserve old optional-service state separately if you will need it for rollback. Never run both versions against the same folders.
+Before upgrading, record the previous image tag and image ID, and keep that image locally or in your registry. Stop Allstarr and copy its configuration, cache, download and kept folders, plus any other persistent paths. Keep old optional-service state too if you may need it for rollback. Never run both versions against the same folders.
 
-When the image reference in your existing Compose file points to the release you intend to run:
+When the image in your existing Compose file points to the release you want:
 
 ```bash
 docker compose stop allstarr
@@ -27,66 +78,21 @@ docker compose pull allstarr
 docker compose up -d --no-deps allstarr
 ```
 
-These commands use the image already named in your Compose file. A pinned v2 tag stays pinned; `latest` advances only when a release is published. This beta does not mean that `latest` has already changed.
+These commands use the image already named in your Compose file. A pinned v2 tag stays pinned; `latest` moves only when a release is published.
 
-Sign in and review the legacy `.env` through Settings → Setup before applying its import. The source file stays unchanged. Existing saved settings and account revisions take precedence. Original kept and permanent-download audio stays in its existing mounts. Valkey cache and old matching state are not imported. New managed media stays within the existing media mounts so backend library paths continue to work. Inspect rejected or unsupported settings and test playback before removing anything from the old installation. The guided checklist explains source changes, original-file adoption, playlists, routing, lyrics and optional Apple downloads. Finish for now skips remaining optional steps; it does not erase their configuration. Verify the import jobs and ordinary playback before declaring the upgrade complete.
+Sign in and open the setup guide's **Review previous settings** step to preview and import the old `.env`; see [legacy import](legacy-env-import.md). The file itself is not changed. Existing saved settings and accounts take precedence. Original kept and downloaded audio stays in its mounts, and new songs go into those mounts too, so media-server library paths keep working. Valkey cache and old matching state are not imported. Check rejected or unsupported settings and test playback before you remove anything from the old installation. **Finish for now** skips the remaining optional steps without erasing them. Check the import jobs and ordinary playback before you call the upgrade done.
 
-Old Valkey and Spotify-lyrics services may remain in an unchanged v2 Compose file. The new runtime does not use them. Leave deployment tidy-up until the upgrade is verified; removing a service that is still named in `depends_on` requires a deliberate Compose edit.
+Old Valkey and Spotify-lyrics services may stay in an unchanged v2 Compose file; the new runtime does not use them. Leave that tidy-up until the upgrade is verified. Removing a service that is still named in `depends_on` needs a deliberate Compose edit.
 
-## Update a new deployment
-
-Create and download a backup in Settings → Backups, and retain the previous image and a stopped copy of the data folder. Then run:
-
-```bash
-./allstarr.sh update
-```
-
-The command validates deployment files, pulls the configured Allstarr image and recreates the saved profiles. A failed pull or optional service build prevents startup. It does not change Git files or delete volumes. Changing to a different pinned release requires setting `ALLSTARR_IMAGE` in the optional `.env` first.
-
-`./allstarr.sh up` starts the saved profiles without pulling the application image. `status` lists their containers; `logs [service]` follows their logs. `down` stops the saved deployment without deleting its volumes.
-
-When updating an earlier installation that used the project’s `allstarr-data` volume, `up` and `update` retain that volume automatically if `ALLSTARR_DATA_PATH` is unset and `./data` is missing or empty. The script appends `ALLSTARR_DATA_PATH=allstarr-data` to `.env`, preserving existing settings and permissions, and reports the retained volume. Keep the same Compose project name, including any `COMPOSE_PROJECT_NAME` setting. No files are copied or moved. If both locations contain data, startup stops until you explicitly choose `ALLSTARR_DATA_PATH=./data` or `ALLSTARR_DATA_PATH=allstarr-data`. Checking an existing volume alongside populated `./data` requires the configured Allstarr image to be available locally; a failed check also stops startup and asks for an explicit path. Plain `docker compose up` does not perform this check.
-
-## Optional Apple downloads
-
-The current deployment files put Apple's gateway and wrapper behind the `apple` profile and publish no host ports. An untouched v2 Compose file does not contain these services. Finish and verify its core upgrade first; adding Apple is a separate opt-in deployment change using the current host helper and profile definitions. Preserve the original cache, kept and download container paths when preparing that change. Upload a legally obtained supported Apple Music APK/APKM through Integrations → Services → Apple Music, then run:
-
-```bash
-./allstarr.sh enable apple
-```
-
-Architecture is detected automatically; pass `x86_64` or `arm64-v8a` when needed. Uploads are stored in `data/apple-upload` with the default layout. The script resolves a custom bind-mounted data path from Compose and also recognizes the older `.apple-provider/incoming` staging folder. With a named volume or a separately managed layout, pass an explicit package path: `./allstarr.sh enable apple /path/to/package.apkm x86_64`.
-
-The command verifies the package and locked wrapper inputs, builds the local Apple images, saves the profile and starts it. Git, jq and unzip are required for preparation. `prepare-apple` verifies and builds without starting; `install-apple` remains a compatibility alias for `enable apple`. The dashboard displays the single `enable apple` host step.
-
-Configure the gateway address as `http://apple-gateway:8000` in the Apple service settings, then complete sign-in and testing in the dashboard. See [Apple downloads](apple-download-provider.md).
-
-```bash
-./allstarr.sh disable apple
-```
-
-This stops and removes only the two Apple containers and forgets the saved profile. It preserves gateway data, wrapper sessions, application records and media. The script reads `.allstarr-profiles`; plain Compose does not read that file. For manual Compose operation, supply `--profile apple` explicitly when Apple should run. Neither path needs a Docker socket mounted in Allstarr.
-
-Spotify lyrics run inside Allstarr with a selected Spotify account and need no Compose profile.
-
-## Optional extension sign-in verification
-
-`./allstarr.sh enable sessions` builds an optional Chromium service and configures
-its private address in Allstarr. It completes fresh verification for approved
-`api.zarz.moe` connections after expiry or before a capped session expires. The
-saved profile works with release and source deployments. Use
-`./allstarr.sh disable sessions` to return to manual verification without deleting
-connections. The service exposes no host port and stores no provider sessions.
-See the [session verifier](../../sidecars/session-verifier/README.md) for its
-restricted origins, retries, direct Compose setup, and recovery behavior.
+An unchanged v2 Compose file has no Apple services. Finish and verify the core upgrade first; adding Apple is a separate change using the current helper and profile definitions. Keep the original cache, kept and download container paths when you do.
 
 ## Backup, restore and rollback
 
-Use Settings → Backups for verified database-and-key-ring archives. The archive excludes media, extension packages, cache, deployment configuration, and optional provider sessions. Stop Allstarr before you copy the complete data folder, and include external mounts and optional provider volumes separately. Follow [storage operations](storage.md) for exact restore steps and copied-file verification. The shell `init`, `upgrade`, `backup` and `restore` commands are removed: use guided setup, the normal image update, verified database archives and complete stopped-folder copies.
+Use **Settings → Backups and health** for verified database-and-key-ring archives. The archive excludes media, extension packages, cache, deployment configuration, and optional provider sessions. Stop Allstarr before you copy the complete data folder, and include external mounts and optional provider volumes separately. [Storage operations](storage.md) has the restore steps and how copied folders are checked.
 
-To roll back, stop the new container, restore the complete pre-upgrade folders to their original mounts, and select the previous image. For a new-layout installation, set `ALLSTARR_IMAGE` to its saved tag or digest in `.env`, then run `docker compose up -d --no-deps --pull never allstarr`. Keep the failed upgrade's folders separately for inspection. Do not run an older image against a database migrated by a newer version.
+To roll back, stop the new container, restore the complete pre-upgrade folders to their original mounts, and select the previous image. For a new-layout installation, set `ALLSTARR_IMAGE` to its saved tag or digest in `.env`, then run `docker compose up -d --no-deps --pull never allstarr`. Keep the failed upgrade's folders separately for inspection. Never run an older image against a database a newer version has migrated.
 
-For an unchanged v2 layout, use its untouched deployment configuration and original folders. If its image reference was a moving tag, a temporary Compose override can select the saved immutable image without editing the original file:
+For an unchanged v2 layout, use its untouched deployment files and original folders. If its image was a moving tag, a temporary Compose override can select the saved image without editing the original file:
 
 ```yaml
 # rollback.yml
@@ -99,11 +105,11 @@ services:
 docker compose -f docker-compose.yml -f rollback.yml up -d --no-deps --pull never allstarr
 ```
 
-Use the same Compose project name and all original mounts. Verify native playback, administrator access and accounts before resuming normal traffic. Never use `down -v` during recovery.
+Use the same Compose project name and all original mounts. Check music-app playback, dashboard access and accounts before you let listeners back in. Never use `down -v` during recovery.
 
 ## Source development
 
-Source mode lives under `tools/`:
+Source builds use the developer script under `tools/`:
 
 ```bash
 ./tools/develop.sh mode source
@@ -111,4 +117,4 @@ Source mode lives under `tools/`:
 ./tools/develop.sh update
 ```
 
-The developer script adds `tools/docker-compose.source.yml` to the base file. `up` builds the current checkout. `update` requires a clean tracked tree on a tracked branch, fast-forwards it and builds before recreation. It supports Git worktrees. It does not prune shared images or build caches. Set `./tools/develop.sh mode release` to return to published images. If an older installation has saved source mode, the normal script stops with instructions to use the developer script.
+The script adds `tools/docker-compose.source.yml` to the base file. `up` builds the current checkout. `update` needs a clean tracked tree on a tracked branch; it fast-forwards and builds before recreating. It supports Git worktrees and does not prune shared images or build caches. `./tools/develop.sh mode release` returns to published images. If an older installation saved source mode, `./allstarr.sh` stops and points you to the developer script.

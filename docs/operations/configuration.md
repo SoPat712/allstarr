@@ -1,168 +1,155 @@
 # Configuration
 
-Allstarr separates deployment bootstrap, durable application settings, and encrypted credentials. Do not move a value between these owners merely to make it editable in the WebUI.
+Allstarr keeps its settings in its database and you change them in the dashboard. A short list of deployment values is read when the container starts. Passwords, tokens and keys are stored encrypted; see [storage operations](storage.md) for the key ring and backups.
 
-## Deployment-owned values
+## Deployment values
 
-`.env` is optional. It holds values needed before storage opens: image and release profile, ports, bind address, trusted subnets and the local data path. `.env.example` lists the supported deployment defaults.
+`.env` is optional. `docker-compose.yml` reads it and passes these values to the container; it does not mount `.env` inside the container. `.env.example` lists the common ones.
 
-| Group | Values |
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `ALLSTARR_IMAGE` | the release named in `.env.example` | Application image. Set a tag or digest to choose a release. |
+| `ALLSTARR_RELEASE_PROFILE` | `core` | `core` or `development`. Any other value stops startup. See [release profiles](#release-profiles). |
+| `ALLSTARR_DATA_PATH` | `./data` | Host folder or named volume mounted at `/app/data`. |
+| `PROXY_BIND_ADDRESS`, `PROXY_PORT` | `0.0.0.0`, `5274` | Host address and port for music apps. |
+| `ADMIN_BIND_ADDRESS`, `ADMIN_PORT` | `127.0.0.1`, `5275` | Host address and port for the dashboard. |
+| `ADMIN_BIND_ANY_IP` | `false` | Accept dashboard connections from other machines. Use it with `ADMIN_TRUSTED_SUBNETS`. |
+| `ADMIN_TRUSTED_SUBNETS` | empty | Comma-separated networks allowed to open the dashboard, for example `192.168.1.0/24`. |
+| `ADMIN_BASE_PATH` | empty | Path prefix when the dashboard sits behind a reverse proxy, for example `/allstarr`. |
+| `BACKEND_TYPE`, `JELLYFIN_URL`, `SUBSONIC_URL` | `Jellyfin`, empty, empty | Optional start-up defaults for the media server. A connection saved in first-run setup takes precedence. |
+| `SESSION_VERIFIER_URL` | empty | Address of the optional [session verifier](../../sidecars/session-verifier/README.md). |
+
+`SESSION_VERIFIER_URL` is not in `.env.example`. `./allstarr.sh enable sessions` sets it to `http://session-verifier:8000` for you whenever the `sessions` profile is saved. If you run Compose by hand, put `SESSION_VERIFIER_URL=http://session-verifier:8000` in `.env` and pass `--profile sessions`. Compose hands the value to Allstarr as `Extensions__SessionVerification__BaseUrl`.
+
+After you change a deployment value, recreate the container with `./allstarr.sh up` or `docker compose up -d`. A few of these values also appear in the dashboard as read-only fields, so you can check what is in effect.
+
+For HTTPS, a reverse-proxy path or single sign-on, see [HTTPS, private dashboard access and SSO](webui-access.md). For install, update and rollback, see [deployment](deployment-profiles.md).
+
+## Container overrides
+
+Besides the values above, Allstarr reads a few settings from the container environment; all other settings live in the dashboard. Add these under `environment:` in a Compose override file, then recreate the container. The Compose file also sets a few internal values, such as `Storage__DataDirectory=/app/data`; leave those as they are.
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `ForwardedHeaders__KnownProxies`, `ForwardedHeaders__KnownNetworks` | none | Trust forwarded client addresses and schemes from your reverse proxy. See [HTTPS and proxies](webui-access.md#keep-administration-private). |
+| `Promotion__AllowedBase` | none | Optional limit on where **Add to library** may write. See [adding songs to the library](storage.md#adding-songs-to-the-media-server-library). |
+| `Secrets__KeyRingPath` | `/app/data/keyring.json` | Key ring location, for an existing secret mount. It must be writable to apply a restore. |
+| `Library__DownloadPath`, `Library__KeptPath` | `/app/data/downloads`, `/app/data/kept` | Put downloads and kept songs in another mounted folder. |
+| `Storage__DatabaseFileName` | `allstarr.db` | Database file name inside the data folder. |
+
+Other product settings from a version 2 `.env` are not read at startup. They come over once through the [legacy import](legacy-env-import.md).
+
+## Where settings live
+
+Use **Find a setting** at the top of Settings to search by name.
+
+| Settings | Where |
 | --- | --- |
-| Image and local data | `ALLSTARR_IMAGE`, `ALLSTARR_RELEASE_PROFILE`, `ALLSTARR_DATA_PATH` |
-| Public listeners | `PROXY_BIND_ADDRESS`, `PROXY_PORT`, `ADMIN_BIND_ADDRESS`, `ADMIN_PORT` |
-| Admin network policy | `ADMIN_BIND_ANY_IP`, `ADMIN_TRUSTED_SUBNETS`, `ADMIN_BASE_PATH` |
-| Legacy or temporary backend selection | `BACKEND_TYPE`, `JELLYFIN_URL`, `SUBSONIC_URL` |
-| Optional session verifier | `SESSION_VERIFIER_URL` (Compose), `Extensions__SessionVerification__BaseUrl` (Allstarr) |
+| Audio quality, playback start, preferring your own copy | Settings → Sound quality |
+| Source order for Search, Downloads, Streaming, Playlists and Lyrics; lyric translation; whether listeners can connect their own accounts | Settings → Music sources |
+| Libraries to use, where added songs go, downloads, imported playlist matching, folders | Settings → Library |
+| Client API for apps, music-client address, browser origins | Settings → Apps |
+| AudioMuse, mixes in apps, similar-song fallbacks | Settings → Mixes and discovery |
+| Scrobbling songs from your own library, activity history retention | Settings → History and scrobbling |
+| Listeners, explicit songs for everyone, media-server access, single sign-on, dashboard network | Settings → People and sign-in |
+| Email and ntfy alerts | Settings → Alerts |
+| Song cache, streams per listener, conversions, search wait | Settings → Storage and speed |
+| Backups, health checks, request logging, setup guide | Settings → Backups and health |
+| Song links, extension installs, challenge solver | Settings → Advanced |
+| Each service's own settings, extensions | Sources → Services |
+| Service accounts and scrobbling accounts | Sources → Accounts |
+| A listener's own choices | Settings → Listening |
 
-The default Compose file passes these bootstrap values to Allstarr. It does not mount `.env` into the container or import product settings from it. Changing a deployment value requires recreating the container. Existing v2 deployments can keep their mounted `.env` for the explicit upgrade review.
-
-Compose uses `./data` at `/app/data` unless `ALLSTARR_DATA_PATH` selects another local path. SQLite, the key ring and managed media share that folder. No database sidecar is required. A fresh core starts with `docker compose up -d`; choose and verify the backend in the dashboard. Its saved connection takes precedence over legacy startup defaults. See [deployment](deployment-profiles.md).
-
-For a dashboard mounted under a reverse-proxy path or optional OIDC login, see [WebUI proxy and SSO setup](webui-access.md). Neither setting changes music-client authentication on port 5274.
-
-Saved Jellyfin connections require encrypted service access for playlist sync and library scans. Manage it in **Settings → General → Background library access**. When a legacy `JELLYFIN_API_KEY` is still mounted or present in the process environment, this page and the import review offer **Verify and restore access** separately from a settings import. Confirmation verifies administrator permissions before encryption and restart; the plain key is never a fallback for a saved connection. Rematching preserves existing local matches while the library index or access is unavailable and retries later.
-
-## Protected files
-
-First startup creates `keyring.json` with private permissions when the database has no saved secrets. Keep it with the database: losing the key ring prevents decryption of saved provider credentials. `Secrets__KeyRingPath` remains available as an explicit override; it must be writable to apply a restore. Use the verified backup and restore controls in Settings → Backups. See [storage operations](storage.md) for data-folder contents and offline copies.
-
-## Durable settings
-
-Non-secret product behavior belongs in household SQLite settings and is edited through the dashboard surface that owns it. Operator, cache and diagnostics policy lives under **Settings**. Source order, playback quality and matching preference live under **Integrations > Routing**. Playlist behavior stays with each playlist. Each user's explicit-content filter and external/explicit title labels can override the household defaults under **Preferences**; clearing an override restores the current household value.
-
-`DurableRuntimeSettingsService` owns validation, typing, revisions, optimistic concurrency, and live option updates after a successful commit. Controllers must not add a second environment or JSON owner for these settings.
+Most settings apply as soon as you save them. A setting marked **Restarts Allstarr** restarts it automatically after the save. The dashboard waits and reconnects when Allstarr is back; playing music pauses briefly. Fields marked as deployment values are read-only in the dashboard; change them in `.env` or the Compose file and recreate the container.
 
 ## Music-client address
 
-Set **Settings → Network → Music-client address** to the Allstarr gateway URL listeners enter in their music apps, for example `https://music.example.com`. Include the port and any gateway path prefix when needed. This optional household setting updates **Getting started** immediately. It does not change listener ports, reverse-proxy routing or the backend connection. An unset value leaves the guide's address empty.
+Set **Settings → Apps → Music-client address** to the address listeners enter in their music apps, for example `https://music.example.com`. Include the port and any path prefix your proxy uses. Use an absolute HTTP or HTTPS URL without credentials, a query or a fragment. Do not enter the media server's private address.
 
-The durable key is `Gateway:PublicListenerUrl`; `PUBLIC_LISTENER_URL` is its environment/import alias. Use an absolute HTTP or HTTPS URL without credentials, a query or a fragment. Keep the backend server's private address out of this field. The guide uses the signed-in listener's verified backend type and username and offers only compatible apps. See [connecting a music app](../user-guide.md#connect-your-music-app).
+The address shows on **Connect apps** with step-by-step setup for each app. It changes the instructions only; it does not change ports, proxy routing or the media-server connection. A version 2 `PUBLIC_LISTENER_URL` comes over through the legacy import.
 
-Problem reports are stored in SQLite and included in database backups. Only administrators can list reports, inspect their captured diagnostics or change their status. Signed-in listeners can preview and submit reports for their accessible songs and observed playback. Capture reads existing local metadata, match authority and source-check results; it does not start a provider request, playback probe or download. Submitted context is bounded and redacts credential assignments and URLs. Reports are not sent to an external service.
+**Client API for apps** on the same page is off by default. Turn it on to let apps such as Songbird use Allstarr's own features (song details, synced lyrics, mixes). See the [client API](../api/README.md).
+
+## Media server
+
+First-run setup asks for the server type and address, then verifies a media-server administrator. The connection is saved in the database and the password is discarded. Allstarr restarts to load it. Use an address the container can reach: `localhost` inside the container is Allstarr itself, so use `http://host.docker.internal:8096` for a server on the Docker host.
+
+Each user is created at their first verified sign-in. Their administrator role comes from the media server.
+
+### Media-server access
+
+For Jellyfin, playlist sync and library scans need saved access. Turn on **Allow playlist sync and library scans** in the **Media server** card in Settings → People and sign-in. It verifies a Jellyfin administrator sign-in, stores the access token encrypted for that server, and restarts Allstarr. Each listener's own library permissions still apply. Music apps keep working without it.
+
+If an old `JELLYFIN_API_KEY` is still in the mounted `.env` or the container environment, the card and the setup guide offer **Verify and restore access**. With Subsonic, each listener grants playlist access themselves.
+
+### Libraries to use
+
+Allstarr indexes every music library the media server returns. Choose a subset in **Settings → Library → Libraries to use**; an empty choice means all. The change applies without a restart. Every request still checks the listener's own permissions on the media server. Those checks are cached for up to 30 seconds and refreshed at sign-in.
 
 ## Provider accounts
 
-Provider credentials are encrypted and persisted as **Personal** or **Shared** accounts. Personal accounts have one user owner; Shared accounts have no user owner and are managed by administrators. Services and their configuration are managed under **Integrations > Services**. Credentials and audience policy live under **Integrations > Accounts**; capability priority lives under **Integrations > Routing**.
+Service credentials are saved encrypted as **Personal** or **Shared** accounts in **Sources → Accounts**. A Personal account has one owner. A Shared account has no owner, is managed by administrators, and is available to the whole household for the capabilities its service offers.
 
-`ProviderAccounts:ListenersCanConnectOwnAccounts` defaults to `true` and is editable in Settings as **Listeners can connect their own accounts**. It gates creation of Personal accounts by listeners. Turning it off preserves use, configuration and removal of existing accounts. Administrators can manage all accounts, but cannot route playback through another user’s Personal credential. The former account management modes and global-account policy switches are no longer supported.
+**Listeners can connect their own accounts** (Settings → Music sources) is on by default. Turning it off stops listeners adding new Personal accounts; existing accounts keep working and can still be removed. Administrators can manage every account, but playback never uses another listener's Personal account.
 
-Routing selects the requesting user’s enabled, eligible Personal account first, then an eligible Shared account. Explicit account selection follows the same ownership checks; revoked credentials are unavailable. Accounts are independent of backend music libraries. Shared use can consume provider limits and includes the capabilities declared by that provider. See the [account workflow](../user-guide.md#integrations).
+When a song needs a service, Allstarr uses the listener's own enabled Personal account first, then an enabled Shared account. Accounts do not grant access to media-server libraries or to another listener's playlists. Shared use counts against that service's limits.
 
-Extensions are package implementations, not a second account system. Their install, update, permission, and removal lifecycle lives under **Integrations > Extensions**. Once active, their Services and Accounts use the same Integrations surfaces as built-in providers.
+An administrator's **Test** on an account checks each capability's connection. For a streaming account it then plays a short real sample (at most 64 KiB within 30 seconds, or five minutes for extensions that download before they stream) and reports whether the service supports byte ranges, its own seeking, or only sequential playback. The sample needs a known song from saved metadata; until there is one, refresh playlist metadata first.
 
-Shared accounts are eligible for household use only while enabled and authorized for the requested capability. They do not grant access to any backend library or another user's private playlist management.
+Connection status is kept in memory per account. After a restart it starts as Unknown and normal requests rebuild it. By default three failures start a 60-second cooldown; a rejected credential starts it at once, and a rate limit can ask for longer.
 
-## Spotify playlist compatibility
+Extensions add services. Install, update and remove them in **Sources → Services → Add extension**. Their services and accounts then work like the built-in ones.
 
-Public Spotify playlist reads use an anonymous web session with no account or cookies. Private playlists and Liked Songs use only the selected encrypted account. Import requests accept a playlist ID, `spotify:playlist:` URI, or an `https://open.spotify.com/playlist/…` link; tracking parameters and fragments are discarded before persistence. The logical source ID `liked-songs` reads that account's Liked Songs through the same paged playlist pipeline and preserves Spotify's returned order.
+## Look up songs on your other services
 
-Administrators can edit compatibility fields under **Integrations → Services → Spotify** without restarting: Pathfinder endpoint, library/playlist/Liked Songs query hashes, token endpoint, and the public TOTP secrets URL. The shipped v1 endpoint and existing hashes remain the defaults. Selecting Spotify's v2 endpoint sends the corresponding POST query envelope. Query hashes require 64 hexadecimal characters; token-bearing endpoints are restricted to the supported Spotify URLs, and the public secrets URL requires HTTPS without embedded credentials. Credentials remain in Accounts.
+**Look up songs on your other services** is in Settings → Advanced → Song links. It is off by default.
 
-A persisted-query failure reports a provider contract change. Check the compatibility fields against a trusted current source before changing them; token failures remain account errors, and an incompatible response does not publish a partial playlist snapshot.
+When it is on and your enabled services can't find a sure copy of a song by ISRC or search, Allstarr asks link services such as song.link where else the song lives. Each answer must pass the same match rules as any other match, so playback and lyrics can fall back to your other enabled services. Existing manual matches are never changed. Turning it off keeps links already found.
 
-## Backend setup
+Two optional keys sit beside it. Both are stored encrypted.
 
-A fresh persistent installation starts with health and guided backend setup available before a server has been selected. `GET /api/admin/auth/setup` returns the shared first setup step and an antiforgery token. `POST` to that endpoint verifies an active media-server administrator before saving the backend type and base address in SQLite. The response completes before Allstarr restarts to compose the selected Jellyfin or Subsonic/OpenSubsonic surface. A configured installation refuses anonymous replacement of that connection.
+- **MusicLink API key**: a free key from musiclink.one. It finds songs by ISRC on Apple Music, Spotify, YouTube Music and more, and is asked first.
+- **song.link API key**: with a key, the official song.link API is tried first.
 
-The optional library-scanning choice saves the verified Jellyfin service token through the encrypted secret store, bound to the exact backend address and credential purpose. Subsonic playlist credentials remain listener-specific consent. Passwords are used for verification, and the setup response contains no credentials. A later startup applies a staged restore before reading the saved connection, so the restored database selects the protocol. Saved household settings take precedence over deployment defaults; personal overrides remain scoped to their user.
+**Wait between song.link lookups** (under the Advanced fold) defaults to 6000 ms and accepts 1000 to 60000 ms. Link services' rate limits and `Retry-After` replies are honoured. These settings restart Allstarr when saved.
 
-In a version 2 layout, an explicit backend address/type remains available for native proxying while the upgrade is pending. The confirmed legacy import saves that same verified connection once and preserves existing encrypted service access. Imported values never switch the active backend. Product environment values are accepted through the explicit import boundary rather than reread as live settings.
+## Metadata service
 
-`Identity:BackendInstanceId` defaults to `primary` and identifies the selected backend instance. Users are created on verified sign-in and are distinct by backend type, instance, and backend principal. Their administrator role is read from the backend. Old multi-user modes and provider account management modes are recognized only as unsupported legacy input; they do not change ownership. Indexing includes all music libraries unless the administrator selects a subset, and each request still checks the listener's backend library permissions.
+MusicBrainz settings are in **Sources → Services → MusicBrainz enrichment**: the metadata source identifier, service URL, request interval (default 1000 ms, 1000 to 60000) and an optional authorized user-agent override. The public MusicBrainz service needs no account. Saving restarts Allstarr. Recording lookups run as low-priority background jobs.
 
-`ALLSTARR_RELEASE_PROFILE` defaults to `core`. It includes For you, mixes, new releases, taste, Recap and listening-history imports. The older Intelligence workspace and its recommendation workers require `development`. AudioMuse remains in the build, but its Sounds page is shelved and hidden from the normal dashboard. Unknown profile names stop startup.
+You can point Allstarr at another service that speaks the read-only MusicBrainz `/ws/2` API. Give it its own source identifier so cached answers are kept apart, and ask that service's operator before you use it. For example, BrainzMash uses `brainzmash` and `https://api.brainzmash.cc/ws/2` once it has approved Allstarr's user agent. Do not use `https://lidarrapi.brainzmash.cc`; that is a different API. A 401 or 403 means access is not set up, not that a recording is missing.
 
-## Background cross-provider links
+Leave the user-agent override blank. Allstarr identifies itself with its own version. Use an override only with the metadata service operator's permission, and never copy another application's identity.
 
-Enable **Public cross-provider links** in Integrations → Services to collect optional cross-provider evidence after a match
-has been saved. It defaults to false. A durable job queries public track links,
-verifies the exact source ID, and stores new catalog aliases through the recording
-identity owner. Existing conflicting or manual associations are left unchanged.
-New links enqueue an owner-scoped rematch; lookups never run inside the original
-match decision, search, or playback request. Existing lyrics URL translation uses
-the same bounded client independently of this background-work toggle.
+## Spotify compatibility
 
-The cross-provider request interval defaults to 6000 ms and accepts 1000–60000 ms.
-Successful responses use the existing Odesli cache duration; empty responses are
-cached for six hours. Rate limits and server failures honor `Retry-After`, bounded
-to one hour, across all requests. Jobs make at most three attempts; a later match
-can request unresolved evidence again the following week. Disabling enrichment
-leaves previously accepted aliases intact.
+Public Spotify playlists are read with an anonymous web session. Private playlists and Liked Songs need a connected Spotify account. Playlist imports accept a playlist ID, a `spotify:playlist:` URI or an `https://open.spotify.com/playlist/…` link.
 
-## Canonical metadata upstream
+Spotify's private web API changes from time to time. **Sources → Services → Spotify** has advanced fields for the Pathfinder endpoint, the library, playlist and Liked Songs query hashes, the token endpoint and the public TOTP secrets URL. The shipped values are the defaults. A persisted-query failure points to a change on Spotify's side; check new values against a trusted current source before you change them. A failed response never publishes a partial playlist.
 
-MusicBrainz recording enrichment is optional and disabled by default. Enable MusicBrainz under Integrations → Services to discover recordings with ISRCs but no MBID in
-hourly background passes. Each lookup runs as a low-priority durable job, with
-three attempts; unresolved or exhausted work can be queued again the following
-week. It never runs inside a search, playback, library scan or match decision.
-The MusicBrainz request interval defaults to 1000 ms and accepts 1000–60000 ms.
-Rate limits and temporary failures use cancellable requests and durable retries;
-`Retry-After` is bounded to one hour. Exact, unambiguous evidence can add ISRCs
-and merge recordings, retaining the earliest public ID and all old redirects.
-Ambiguous results or conflicting MBIDs leave the existing identity unchanged.
+## Explicit songs
 
-Allstarr's catalog client speaks the read-only MusicBrainz `/ws/2` contract. The public MusicBrainz service remains the bootstrap default. After the BrainzMash operator approves Allstarr's user agent, select the pool without changing matching or catalog ownership:
+**Explicit songs for everyone** is in Settings → People and sign-in.
 
-In Integrations → Services → MusicBrainz, set the metadata source identifier to `brainzmash`, the service URL to `https://api.brainzmash.cc/ws/2`, and the request interval to `1000` ms, then save and restart.
+- **Show everything** (default).
+- **Hide clean/edited versions** hides only clean or edited versions. Naturally clean, explicit and unrated songs stay.
+- **Clean only** needs proof that a song is clean, including songs from your own library. Missing or unknown ratings are hidden. In playlists, a verified clean version replaces an explicit entry when title, artist, album, version and duration agree; otherwise the entry is skipped. Lyrics come only from your media server or kept copies.
 
-This is the MusicBrainz-compatible front door used by DroppedNeedle. Do not append `/ws/2` to `https://lidarrapi.brainzmash.cc`: that is the separate Lidarr/Aurral-shaped API with `/artist`, `/album`, and `/search/*` resources, and Allstarr deliberately does not implement that second dialect. Requests identify themselves with the version derived from `AppVersion.Version` and the Allstarr repository URL. Source IDs isolate cache entries and provenance, so changing the upstream cannot reuse another source's response. A 401 or 403 is an access/configuration failure, not a missing recording; do not retry it as catalog churn. Playback uses persisted routes and remains available when the metadata upstream is unavailable.
+Listeners can choose **Clean only** for themselves in Settings → Listening when the household shows everything, but they can't loosen a household **Clean only**. The same page has **Show [A] for external tracks** and **Show [E] for explicit tracks**, both on by default.
 
-The authorized user agent override is an exceptional, temporary operator-approved compatibility setting. Leave it blank for normal operation so Allstarr derives its identity from `AppVersion.Version`. Never copy another application's identity without explicit permission from the upstream operator; remove the override as soon as Allstarr's own identity is admitted.
+## Release profiles
+
+`core` is the normal release. It includes For you, mixes, new releases, taste, Recap, listening-history imports and the [AudioMuse](audiomuse.md) features listed on its page.
+
+`development` adds the older Intelligence workspace and its recommendation jobs, plus AudioMuse's sonic Instant Mix and the OpenSubsonic `getSonicSimilarTracks` and `findSonicPath` methods.
 
 ## Optional services
 
-Use `allstarr.sh` rather than editing Compose fragments:
+Turn optional containers on and off with `allstarr.sh` instead of editing Compose files:
 
 ```bash
-./allstarr.sh enable apple x86_64
+./allstarr.sh enable apple
+./allstarr.sh enable sessions
 ```
 
-The optional [session verifier](../../sidecars/session-verifier/README.md) uses a deployment-owned service address. `./allstarr.sh enable sessions` configures it and recreates Allstarr; the address is read at startup and does not require a legacy settings import.
-
-See [deployment profiles](deployment-profiles.md), [Spotify lyrics](spotify-lyrics.md), and [Apple download](apple-download-provider.md).
-
-## Legacy import
-
-A legacy `.env` is imported explicitly after the new deployment is running. Startup never scans it automatically. See [the legacy import contract](legacy-env-import.md).
-
-## Music libraries
-
-Allstarr indexes every music library returned by the backend by default. Select backend music libraries in Settings to restrict indexing and local matching to a subset. An empty selection includes all libraries. Legacy library selections can be reviewed during the explicit settings import.
-
-Indexed tracks retain their backend library identifier. Each listener's access is
-resolved from Jellyfin `UserViews` or Subsonic `getMusicFolders`, using their current
-credentials. Permission results are cached for at most 30 seconds per viewer and
-authentication context and invalidated on sign-in. A failed lookup makes indexed
-local copies unavailable; independently authorized provider routes can still play.
-When an inaccessible match has another accessible local copy of the same recording,
-Allstarr chooses it deterministically. Native backend requests continue to use the
-caller's credentials.
-
-## Listening preferences
-
-`EXPLICIT_FILTER` seeds the household default through the existing settings importer. Supported values are `All`, `ExplicitOnly` and `CleanOnly`; the default is `All`. `ExplicitOnly` retains its v2 meaning: hide only clean/edited versions (Deezer value 3), while retaining naturally clean (0), explicit (1), unknown/no-advice (2, 6, 7), and missing values. The WebUI labels it **Hide clean/edited versions**. `CleanOnly` requires positive clean evidence (Deezer 0 or 3, or an equivalent provider/native clean flag); missing and unrecognized ratings are withheld, including local recordings. A clean-only household setting or an administrator's listener lock cannot be loosened by personal preferences. Listeners can choose clean-only for themselves when the household permits all content. Verified clean playlist counterparts replace explicit entries when title, artist, album, version and duration agree; otherwise the entry is skipped. Direct media requests are checked before opening cached, kept or upstream audio. Clean-only lyrics use recording-linked backend or kept sources; unverified text-search lyrics are withheld. Recap and stored-file exports also withhold unverified recordings. Each signed-in listener can independently show the `[A]` external and `[E]` explicit title markers in **Listening preferences**. Both markers default to on. Reset removes that listener's overrides and uses the latest household restrictions. Routing order and deployment settings remain household controls.
-
-
-## Provider connection status
-
-Status is kept in memory for each provider, account revision and capability. Restarting starts account status at Unknown; normal requests rebuild it. Changing credentials cannot reuse a previous revision's health. By default three failures open a 60-second cooldown; credential rejection opens it immediately, and rate limits can request a longer wait. After cooldown, normal requests can try again. Historical health samples and rollups are not stored. Explicit stream diagnostic results remain in the audit history.
-
-Sidecar readiness uses cheap bounded requests, starts immediately, and refreshes within a minute. `Sidecars:ProbeIntervalSeconds` defaults to 30 (allowed 5–30), and `ProbeTimeoutSeconds` defaults to 5 (allowed 1–5); values outside these ranges, including the earlier 900-second default, are clamped with a startup warning. Up to 256 targets run in batches of at most 64 concurrent requests. The previous jitter and per-cycle target settings are no longer used. Optional sidecar failures affect only their capabilities. No background task logs into managed accounts or downloads a media sample.
-
-An administrator's account Test first checks each capability's connection. For a streaming account whose checks pass, it then plays a short real sample: at most 64 KiB within 30 seconds (five minutes for extensions that download before streaming), and reports the observed playback support: byte ranges, provider seeking, or sequential playback. The sample needs a known track from saved provider metadata; until one exists the Test reports the connection result and asks for one (refresh playlist metadata first). Playlist and scrobbling tests check their own capabilities. Streaming lease creation alone does not count as successful playback.
-
-The health-table migration preserves users, accounts, encrypted credentials, settings and playlist data. Back up the database and matching encryption key ring before upgrading. A rollback requires the matching older database/key-ring pair and application image.
-
-## Service and retention settings
-
-Settings owns browser origins/methods/headers/credential policy, remote extension installation, request logging, activity and job-history retention, automatic backup retention, and the selected backend music libraries. These values are saved in SQLite. Library selection preserves opaque identifiers and never grants a listener additional backend permissions. Browser credentials require explicit origins; wildcard credential policies are refused in both import preview and apply.
-
-Integrations → Services → MusicBrainz owns the metadata source identifier, service URL, request interval and optional authorized user agent override. The public metadata service needs no username or password. Changes to these service and operator settings are marked as requiring a restart. Save commits first and requests restart after the response completes; a container restart policy brings Allstarr back. Source changes isolate cache/provenance by identifier. Existing product environment values are imported once through the reviewed legacy import and cannot override saved settings on later startups.
-
-## Administrator access settings
-
-Use **Settings → Network → Single sign-on** for OIDC and **Settings → General → Background library access** for unattended Jellyfin scans. Saves restart Allstarr after confirmation; the dashboard waits for it to return.
-
-The authenticated `GET`/`PUT /api/admin/access/oidc` API owns single sign-on policy and its encrypted client secret. GET returns non-secret settings, an opaque revision and an antiforgery token; PUT requires both. Changing the identity service or client ID requires a new client secret. A save requests restart after the response completes. Missing, revoked or incorrectly scoped encryption references leave single sign-on disabled for review while media-server login remains available. Old SSO environment values are reported for explicit review, never automatically enabled.
-
-`GET`/`PUT /api/admin/access/backend` manages optional Jellyfin scanning access after the connection is saved. Enable verifies the same active media-server administrator outside the database writer, then rechecks user, connection and setting revisions before encrypting the token. Disable revokes only that exact backend-purpose reference. Passwords are never saved. Subsonic playlist grants remain personal and separate. These operations require an active administrator, antiforgery protection and a current revision; native proxying does not require scanning access.
+See [Apple downloads](apple-download-provider.md), the [session verifier](../../sidecars/session-verifier/README.md) and [deployment](deployment-profiles.md#optional-apple-downloads).

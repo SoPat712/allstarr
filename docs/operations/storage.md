@@ -1,80 +1,86 @@
 # Storage operations
 
-The runtime stores durable state in SQLite at `{Storage:DataDirectory}/{Storage:DatabaseFileName}` (defaults: `/app/data/allstarr.db`). Run one Allstarr process per database and mount the data directory on local disk. Network filesystems are rejected. PostgreSQL connection settings are no longer used by the runtime.
+Allstarr keeps its database, encryption key ring and managed music in one data folder. The database is SQLite at `/app/data/allstarr.db`; no database container is needed. Run one Allstarr process per data folder and keep it on local disk. Allstarr refuses a database folder on a network filesystem such as NFS or SMB.
 
-## One local data folder
+## The data folder
 
-Compose mounts `./data` at `/app/data` by default, with or without `.env`. Set `ALLSTARR_DATA_PATH` to use another local folder. An unchanged v2 Compose layout uses its existing persistent cache mount at `/app/cache/allstarr-v3` when no data mount exists. Direct runs can set `Storage__DataDirectory` to another local folder. First startup creates the database and key ring without a setup script or database service.
+Compose mounts `./data` at `/app/data`, with or without `.env`. Set `ALLSTARR_DATA_PATH` to use another local folder or a named volume. An unchanged version 2 layout keeps its data elsewhere; see [upgrade from version 2](deployment-profiles.md#upgrade-from-version-2). First startup creates the database and key ring.
 
-| Path within the data folder | Contents |
+| In the data folder | Contents |
 | --- | --- |
-| `allstarr.db`, `allstarr.db-wal`, `allstarr.db-shm` | Database and live SQLite sidecars |
-| `keyring.json` | Keys for encrypted saved credentials |
-| `data-protection/` | Browser session protection keys |
-| `.allstarr-storage` | Owned marker used to recognize a copied data folder |
-| `downloads/`, `kept/` | Managed and retained music |
+| `allstarr.db`, `allstarr.db-wal`, `allstarr.db-shm` | Database and its live SQLite files |
+| `keyring.json` | Keys for saved passwords, tokens and keys |
+| `data-protection/` | Dashboard sign-in protection keys |
+| `.allstarr-storage` | Marker used to recognise a copied data folder |
+| `downloads/`, `kept/` | Downloaded and kept music |
 | `extensions/` | Installed extension packages |
 | `apple-upload/` | Optional staged Apple APK/APKM packages |
-| `cache/` | Media cache and temporary download/import workspaces |
+| `cache/` | Song cache and temporary download and import space |
 | `backups/` | Verified database-and-key-ring archives |
-| `restore-pending/`, `pre-restore-*/` | Staged and previous restore data |
+| `restore-pending/`, `pre-restore-*/` | A staged restore, and the files it replaced |
 
-Explicit library, extension, cache, workspace, and key-ring path overrides remain supported. Include those external paths separately when moving an installation. Optional Apple gateway and wrapper sessions remain in their own profile volumes.
+The key ring, download and kept folders can live outside the data folder through [container overrides](configuration.md#container-overrides). Include those paths when you back up or move an installation. Optional Apple gateway and wrapper sessions remain in their own profile volumes.
 
-## Playback cache and kept audio
+The database also holds problem reports. They are included in backups and never sent to an outside service.
 
-New installations cache provider playback for **72 hours after last use**. **Library → Cached → Track cache behavior** controls playback caching and retention. Saved choices and explicit configuration overrides survive upgrades. The legacy `Permanent` storage value disables ordinary playback caching and sends requested managed downloads to Kept; it does not retain every played song.
+Original media-server music is only read, never changed.
 
-Temporary audio is limited to **2 GiB by default**. Capacity pressure can evict the least recently used eligible files before their age limit. Active readers and background fills are protected. Cached lists complete published files and shows age expiry only when a tracked last-use time is available; the hourly cleanup may remove them after that time.
+## Song cache and kept songs
 
-Hearts, explicit Keep and retained playlists use separate managed references. Cache eviction does not release these references or delete kept copies. Releasing the last reference starts a twenty-four-hour grace period, independent of the playback cache window. Back up kept audio separately from database-and-key-ring archives.
+**Settings → Storage and speed → Song cache** controls songs played from services:
 
-## Offline folder backup and restore
+- **Cache played songs** is on by default. Cached songs start faster next time.
+- **Keep cached songs for (hours)** defaults to 72 hours after the last play. The size limit can remove songs sooner.
+- **Maximum audio cache (GiB)** defaults to 2 GiB.
 
-Stop Allstarr before copying its complete data folder. With the default layout:
+When the cache is full, the least recently used songs that nobody is playing are removed first. An hourly cleanup removes songs past their age. **Library → Cached** lists cached songs and links to these settings.
 
-```bash
-docker compose stop allstarr
-cp -a ./data ../allstarr-data-backup
-docker compose up -d --no-deps allstarr
-```
+Turning **Cache played songs** off stops caching ordinary playback; requested downloads then go to Kept. It does not keep every played song.
 
-Use a new backup destination each time. The copy must run with permission to read every private file; use `sudo cp -a` for root-owned Docker data. Verify that the copy includes the database, key ring, private files, media and any SQLite sidecars. Preserve private permissions. Copy deployment configuration, external media roots and optional Apple gateway and wrapper volumes separately. Stop each optional service before copying its state; stop Valkey as well when preserving its volume for a v2 rollback. In a v2 layout, preserve the whole cache, download and kept mounts, including the new `cache/allstarr-v3` directory. A database-and-key-ring archive alone does not include those media files.
+Hearts, **Keep** and retained playlists protect their own copies in Kept, whatever the cache does. **Stop keeping** removes only your own Keep. When the last reason to keep a song goes away, its copy is deleted after 24 hours. An administrator's **Delete kept copy…** in Library → Kept deletes the household copy without that wait. Its confirmation lists what still refers to the song; hearts and playlist entries stay, and the song streams again when played. Back up kept music separately from database archives.
 
-To restore a complete folder copy, stop Allstarr, preserve the current data folder separately, and put the verified copy back at the configured host path. Use the same image version and container mount paths. Start only one installation and check readiness, saved accounts, playlists, settings and playback. Do not merge selected database files into a live folder. Never copy or replace the active database piecemeal.
+## Audio capacity and cleanup
 
-A copied folder is recognized at startup and owned audio is verified before filesystem identities are updated. Native proxying and health remain available. Check **Settings → Storage → Saved-file verification** and **Activity → Everyone → Queue**; changed, missing or linked files need repair. Keep the original stopped installation until verification and playback pass. Never edit ownership records to bypass their checks. See [copied data folder verification](#verifying-a-copied-folder).
+These limits apply to new work as soon as you save them.
 
-For rollback to an earlier image, restore the matching pre-upgrade folder backup before starting that image. Keep the upgraded folder separately. An older image must not open a newer migrated database. For a v2 rollback, retain its untouched Compose file, `.env` and original media roots. See [deployment and rollback](deployment-profiles.md) for image selection without replacing the original Compose file.
+| Setting | Where | Default | Range |
+| --- | --- | --- | --- |
+| Maximum audio cache (GiB) | Song cache | 2 GiB | 1 to 1024 |
+| Provider streams per listener | Speed | 6 | 1 to 64 |
+| Concurrent media conversions | Speed | 2 | 1 to 16 |
 
-## Database readiness and recovery
+The audio limit covers finished cache files, songs still filling, and temporary read-ahead for original downloads. It is separate from the metadata, artwork and response caches. Two listeners asking for the same song from the same account and quality share one download.
 
-Startup enables WAL, applies pending migrations, and runs an integrity check before storage becomes ready. Each connection enforces foreign keys and uses normal synchronization with a five-second busy timeout. Unknown schema versions and damaged database files leave durable operations unavailable while the native proxy remains available. Startup does not replace damaged data or fall back to another database.
+A listener's stream limit counts opening and active service streams, including downloads, seeks and HLS segments. Media-server streams don't count.
 
-| Setting | Default | Purpose |
-| --- | --- | --- |
-| `Storage__DataDirectory` | `/app/data` | Owned local database and backup directory |
-| `Storage__DatabaseFileName` | `allstarr.db` | File name within the data directory |
-| `Storage__AutoMigrate` | `true` | Apply pending migrations before readiness |
-| `Storage__CommandTimeoutSeconds` | `30` | Command execution timeout |
-| `Storage:BackupEnabled` | `true` | Daily database-and-key-ring backup |
-| `Storage:BackupTimeUtc` | `03:00` | Daily time in UTC, in `HH:mm` format |
-| `Storage:BackupDirectory` | Empty | Existing absolute container directory; empty uses the data volume's `backups/` folder |
-| `Storage:BackupDailyRetentionCount` | `14` | Daily scheduled copies to keep (1–90) |
-| `Storage:BackupWeeklyRetentionCount` | `8` | Weekly scheduled copies to keep (0–52) |
-| `Storage:BackupRetentionCount` | `10` | Recent manual copies to keep (1–1000) |
+Cleanup never removes songs that are being played, kept songs, downloads, your media server's files, files it doesn't recognise, changed files or symbolic links. Older cache files without a verified owner stay readable and still count towards the limit. Do not delete unfamiliar files to free space; raise the limit or use the cache controls under **Advanced: cache times, file checks and cleanup**.
 
-Development installations use a fresh SQLite baseline; PostgreSQL data is not imported. Preserve existing PostgreSQL data separately before replacing an installation. Do not remove media roots or the encryption key ring.
+When stream, conversion or cache capacity is full, Allstarr answers HTTP 503 with `Retry-After: 5`. This is a local busy state: it doesn't count as a service failure and frees up as other responses finish. A cache that stays full is reported as needing a higher limit.
 
-Administrators configure daily backups and download archives in **Settings → Backups**. The status card shows the last verified time and size, the next scheduled run, current work and safe failure details. **Back up now** queues durable background work; acceptance does not mean the archive is complete. Work survives restart, and overlapping manual or scheduled requests do not start a second snapshot. A missed schedule runs once after recovery rather than creating a backlog of historical snapshots. Schedule changes apply to future work without a restart.
+## Backups
 
-Each private ZIP contains a consistent SQLite snapshot, the configured encryption key ring, and a manifest with file checksums and schema information. Creation verifies database integrity and key availability; download verifies archive checksums again. Keep downloaded archives private: together, the database and key ring can unlock saved credentials. Backups exclude media, caches, deployment configuration, extension packages and optional provider-session volumes.
+Set up backups in **Settings → Backups and health**.
 
-Scheduled retention keeps the newest verified archive from each of the most recent 14 UTC dates and eight ISO weeks by default. One archive can satisfy both daily and weekly retention. Manual archives have a separate count, defaulting to ten. Cleanup requires saved ownership and unchanged file identity and content; it preserves active downloads, unrelated files, damaged or changed archives, and archives created before ownership tracking was introduced. Existing archives remain in their folders when the destination changes. Downloading an older archive checks its contents without adopting it for automatic deletion.
+| Setting | Default |
+| --- | --- |
+| Daily backups | On |
+| Backup time (UTC) | 03:00 |
+| Daily copies | 14 (1 to 90) |
+| Weekly copies | 8 (0 to 52) |
+| Manual copies | 10 (1 to 1000) |
+| Backup folder | Empty: the data folder's `backups/` |
 
-The default destination is `{Storage:DataDirectory}/backups`. To use storage synchronized elsewhere, first mount its local folder into the container, then enter that existing absolute container path in **Backup folder**. Configure the synchronization outside Allstarr and protect the remote copy as carefully as the key ring. A missing, replaced or unavailable mount reports a backup failure; it does not redirect backups to another folder. Keep the live SQLite database on local disk even when archives are synchronized elsewhere.
+The status card shows the last verified backup, its size, the next run and any failure. **Back up now** queues the work; it is not done until the status says so. Work survives a restart, and overlapping requests don't start a second backup. A missed schedule runs once after recovery. Schedule changes apply without a restart.
 
-For example, after creating the host folder with suitable private permissions, add a bind mount to your Compose override:
+Each backup is a private ZIP with a consistent database snapshot, the key ring, and a manifest with checksums. Creating it checks the database and keys; downloading it checks the checksums again. Keep downloaded archives private: the database and key ring together unlock saved credentials. Backups do not include music, caches, deployment files, extension packages or optional service volumes.
+
+Retention keeps the newest backup from each of the last 14 UTC days and 8 ISO weeks, plus the 10 newest manual backups. One file can count as both daily and weekly. Cleanup deletes only backups Allstarr made and that are unchanged; it keeps damaged or changed files, unrelated files and backups from earlier versions.
+
+### Back up to synced storage
+
+To keep backups on synced storage, mount its local folder into the container, then enter that existing absolute container path as **Backup folder**. Set up the sync outside Allstarr and protect the remote copy as carefully as the key ring. A missing or replaced mount is reported as a backup failure; Allstarr never falls back to another folder. Keep the live database on local disk.
+
+For example, after creating the host folder with private permissions, add a bind mount to a Compose override:
 
 ```yaml
 services:
@@ -87,109 +93,74 @@ services:
           create_host_path: false
 ```
 
-Replace the source path, recreate the container with the override, then save `/backup-export` as **Backup folder**. The long bind syntax prevents Compose from silently creating a missing host folder; see [Docker's bind-mount options](https://docs.docker.com/reference/compose-file/services/#long-syntax-5). It does not configure or verify the synchronization service.
+Recreate the container, then save `/backup-export` as **Backup folder**. The long syntax stops Compose from silently creating a missing host folder; see [Docker's bind-mount options](https://docs.docker.com/reference/compose-file/services/#long-syntax-5).
 
-To restore, choose a backup ZIP in Settings → Backups and confirm **Restore on restart**. Uploads are limited to 1 GiB, with a maximum expanded database size of 4 GiB. Allstarr checks the archive, schema history, database integrity, and required encryption keys, then stages the files in `{Storage:DataDirectory}/restore-pending`. The running database stays unchanged until you restart Allstarr. A pending restore prevents another backup or restore from starting.
+## Restore a backup
 
-Before opening storage after restart, Allstarr preserves the current database, SQLite sidecars, and key ring in a private `pre-restore-*` directory. It then installs the staged database and key ring. Keep these previous files until you have verified your accounts, playlists, and settings; they are not removed by backup retention. Caches, media, and installed extension packages are outside the restore.
+In **Settings → Backups and health**, choose a backup ZIP and confirm **Restore on restart**. Uploads are limited to 1 GiB, with at most 4 GiB of expanded database. Allstarr checks the archive, its schema history, the database and the keys, then stages the files in `restore-pending/`. Nothing changes until you restart Allstarr. While a restore is pending, no other backup or restore can start.
 
-If application is interrupted, the staged files remain available for retry on the next restart. A failed application leaves durable storage unavailable with `restore_application_failed`; fix disk or permission problems and restart again. Keep the configured database and key-ring paths unchanged during recovery. An external key-ring override must be writable for restore; a read-only secret mount cannot be replaced by Allstarr. Restore paths must not use symbolic links. Do not manually remove pending files or replace individual live files after a failed application: the database and key ring must remain a matching pair.
+On restart, Allstarr moves the current database and key ring to a private `pre-restore-*` folder, then installs the staged pair. Keep that folder until you have checked accounts, playlists and settings; backup retention never removes it. Caches, music and extension packages are not part of a restore.
 
-The shell `backup` and `restore` commands are removed. Use the Backups workflow for verified database archives or a stopped-folder copy for a complete offline backup. The shell `init` and `upgrade` commands are also removed; use the dashboard setup guide and normal image update.
+If the restore is interrupted, it is retried at the next restart. If it fails, storage stays unavailable with `restore_application_failed`; fix the disk or permission problem and restart again. Keep the database and key-ring paths unchanged while you recover, and don't remove pending files or swap individual files by hand: the database and key ring must stay a matching pair. A key ring on a read-only mount can't be replaced, and restore paths must not be symbolic links.
 
-The encryption key ring defaults to `{Storage:DataDirectory}/keyring.json`; `Secrets__KeyRingPath` overrides that location for existing secret mounts. On first startup, an empty database gets a randomly generated key ring with private file permissions. Normal startup never overwrites an existing key ring. If encrypted secrets exist but the key ring is missing, restore the original key ring: Allstarr leaves saved credentials unavailable and continues native proxy access. It does not generate a replacement key that would make those credentials unreadable.
+## The key ring
 
-Audio, artwork, extension packages, and the encryption key ring remain files. Original backend music is read-only. Keep the configured encryption key ring together with any offline copy of the database: losing it makes the corresponding encrypted provider credentials unreadable. Stop Allstarr before making an offline copy of its data directory, and include any WAL sidecar files. Never copy or replace the active database piecemeal.
+The key ring is `keyring.json` in the data folder unless `Secrets__KeyRingPath` points elsewhere. First startup on an empty database creates it with private permissions. Startup never overwrites an existing key ring.
 
-## Audio capacity and cleanup
+Keep the key ring with every copy of the database. Without it, saved credentials can't be read. If encrypted credentials exist but the key ring is missing, restore the original key ring: Allstarr leaves those credentials unavailable and keeps music apps working, rather than making a new key that would lock them out for good.
 
-**Settings → Storage → Audio limits** controls provider audio separately from the metadata, artwork and response-file caches. Changes apply to new work without a restart.
+## Offline folder backup and restore
 
-| Setting | Default | Range |
-| --- | --- | --- |
-| Maximum audio cache | 2 GiB | 1–1024 GiB |
-| Provider streams per listener | 6 | 1–64 |
-| Concurrent media conversions | 2 | 1–16 |
+A complete copy of the stopped data folder is the full backup: database, key ring, sign-in keys and music. With the default layout:
 
-The audio budget includes completed cache files, in-progress fills and temporary original-download read-ahead. Original downloads use a private directory in the operating system's temporary folder, tied to the configured audio root. Leftovers from an interrupted process count toward the budget and remain protected for review. Concurrent requests for the same authorized source item share a fill; personal accounts, account revisions, quality choices and original-download purposes retain their own scopes. A listener's limit covers opening and active provider responses, including downloads, seeks and HLS segments. Native backend streaming keeps its existing proxy path.
+```bash
+docker compose stop allstarr
+cp -a ./data ../allstarr-data-backup
+docker compose up -d --no-deps allstarr
+```
 
-When more space is needed, the cache removes its least recently used eligible completed files. Hourly age-based cleanup uses the same ownership and reader checks, measured from the recorded last use. A recorded filesystem identity and content checksum must still match before removal. Active readers pin their bytes through completion, publication and temporary-file retirement. Lowering the ceiling does not interrupt those readers. Kept songs, downloaded copies, original backend files, unknown files, replaced files and symbolic links are never eviction candidates. Older cache files without verified ownership remain readable and protected; their space still counts toward the ceiling. Legacy transcoded files without a current owner also remain untouched. Do not delete unfamiliar files to clear this condition. Increase the ceiling or review storage through its existing management controls.
+Use a new destination each time. Copy with permission to read every private file (`sudo cp -a` for root-owned Docker data), and keep the permissions. Check that the copy includes the database and its `-wal` and `-shm` files, the key ring and the music. Copy deployment files, outside music folders and optional Apple volumes separately; stop each optional service before copying its state.
 
-Allstarr bounds its own audio conversion processes across playback, extension conversions and quality analysis. Saturated stream, conversion or audio-cache capacity returns HTTP **503** and **Retry-After: 5**. This local busy state does not count as a source failure or trigger source cooldown. Retrying after other responses finish normally frees capacity. A persistently full audio cache reports that its ceiling needs review. Optional external services manage their own resources separately.
+To restore, stop Allstarr, set the current folder aside, and put the verified copy back at the configured host path. Use the same image version and container paths. Start only one installation, then check readiness, accounts, playlists, settings and playback. Never copy or replace the live database file by file.
 
-## Event log and job retention
-
-A background cleanup keeps the event log and finished playback jobs from growing the database with listening time. Each playback progress report is its own durable job; finished (succeeded or cancelled) playback jobs and their attempt events are removed once they are older than the event-log retention period. Events that another durable record references, such as a legacy import, are kept. Set these under the event-log policy in Settings:
-
-| Setting | Default | Purpose |
-| --- | --- | --- |
-| `Operations__EventLog__RetentionDays` | `30` | Age after which unreferenced events and finished playback jobs are removed (1–3650) |
-| `Operations__EventLog__MaximumRows` | `250000` | Oldest unreferenced events beyond this count are removed, job attempt history first (1000–5000000) |
-| `Operations__EventLog__JobHistoryRetentionDays` | `7` | Age after which job attempt history is removed; never longer than `RetentionDays` (1–3650) |
-| `Operations__EventLog__CleanupIntervalMinutes` | `360` | Time between cleanup passes; one also runs at startup (5–10080) |
-| `Operations__EventLog__CleanupBatchSize` | `1000` | Rows deleted per batch (100–10000) |
-
-## Background job recovery and concurrency
-
-Run one Allstarr process per database. After storage becomes ready, the worker immediately requeues jobs interrupted by the previous process. A cancellation saved before shutdown becomes terminal on recovery. Restart recovery preserves the job identity, account binding and retry budget; no lease expiration or heartbeat is required. A job interrupted by `Jobs__MaxConsecutiveInterruptions` restarts in a row (default `5`, range `1`–`100`) without finishing an attempt is marked failed with `worker_interrupted_repeatedly`, so work that takes the process down cannot loop forever; any finished attempt resets the count. A job's detail includes its latest attempt and retained completion history from the event ledger.
-
-`Jobs__MaximumConcurrentJobs` defaults to `4` and accepts values from `1` to `32`. Each registered job type runs one execution at a time by default. Set `Jobs__TypeConcurrencyLimits__<job.type>` to an integer between one and the global maximum to allow more executions of that type. Keys use the normalized lower-case job type. The global limit still applies across types. Shutdown cancels and awaits every active handler; a temporary database failure retries persistence of a finished handler's result without invoking that handler again.
-
-## Kept publication ownership
-
-Storage rows use the retained recording metadata and actual download source before falling back to file tags or filenames. New kept copies retain available track numbers and album artists; a missing number leaves out the numeric filename prefix. Existing copies show their saved title, artist, album and source without renaming or retagging the audio. Artwork uses the downloaded source, with the provider mark as fallback when artwork is unavailable.
-
-Managed kept files and their recording associations are stored separately from personal provider download artifacts. Publication retains the source user, job, track and account revision without changing the source artifact's owner. An existing personal download from before track binding was introduced stays personal; it is never guessed into a household kept route.
-
-Playlist retention uses the same household recording association and managed references as favorites. A published snapshot or KeepAll change saves its reference updates, obsolete-work cancellation and new retention jobs in one SQLite transaction. Workers verify the current published entry and effective external route again after preparing audio. Retention workers read the requested source entry and current route inputs directly. An old snapshot or a disabled retention option cannot publish a lasting copy. Source updates and manual rematch publication release obsolete file associations even when a provider track keeps the same reference key.
-
-Placement uses the configured kept root and the existing journal, checksum and filesystem identity checks. A provisional reference protects interrupted placement until the current job can adopt it. Rejected publication releases its own provisional reference and removes only an unpublished, unreferenced owned file. Cleanup refuses caller-owned database transactions, changed paths and any file with a kept route or active reference. Original backend files remain untouched. Published artifact provenance is retained; the download owner removes superseded workspace bytes only after their published, managed-file and reservation dependencies are gone. Database backups do not include these audio files; preserve their configured roots separately.
-
-Explicit Keep requests use the same verified household recording placement and durable reference owner as hearts and playlist retention. The cache index identifies the requested track. The worker verifies cached audio and moves it to Kept, using a rename on the same filesystem or a verified copy followed by deletion across filesystems. Shared cache mappings follow the kept path, and interrupted moves resume from the saved ownership records. Only missing or invalid cached audio needs a new download. Release Keep never deletes a household file directly and affects only the requesting administrator’s explicit reference. The final reference release queues the standard twenty-four-hour cleanup.
-
-**Delete kept copy…** is a separate administrator action in Library → Kept. Its confirmation lists the current favorites, playlist references and Keeps, then queues deletion of the household audio and its unchanged lyrics sidecar. Hearts and playlist entries stay, so the song can stream or download into temporary cache when played online. Existing automatic retention requests cannot immediately recreate the deleted kept copy; a new explicit Keep can save it again. Changed files, references or administrator access invalidate the confirmation. Activity reports the result, including any changed lyrics left for inspection. Ordinary **Release Keep** keeps its twenty-four-hour grace period.
-
-Kept playback checks the recorded root, path, length and filesystem identity on the opened read handle, rejecting symbolic links and replaced files without hashing the entire track on each stream, seek or HEAD request. Publication, ordinary ownership lookup and removal retain full content verification. Playback refuses kept files without a recorded filesystem identity and can use an eligible provider instead.
-
-If a kept file is missing, damaged or replaced, a new heart, Keep or retained-playlist download can publish a verified replacement at a fresh path. Existing interests move with the recording routes in the same transaction. The old ownership record is retired and recorded in history. Allstarr leaves changed files and symbolic links at the old path untouched; inspect those paths before removing them manually. An available verified copy of the same recording can be reused instead of another placement.
-
-A database that has retained superseded download artifacts cannot be migrated back to the earlier single-artifact schema without losing publication or reservation history. That downgrade is rejected before changing the schema. To return to an earlier version, restore a backup made before the upgrade using the normal recovery procedure.
-
-Personal source use modes extend the existing runtime settings allowlist and preserve older settings during upgrade. An in-place downgrade is rejected while personal source modes are saved, so returning to an older version requires the matching pre-upgrade backup and image.
-
-## Adding songs to the backend library
-
-Library additions have a dashboard flow. Approve a writable Jellyfin music
-folder in **Settings → Library → Where and who**, then use **Add to library**
-for an eligible recording. If Jellyfin and Allstarr use different paths, map the
-backend path to its mounted path inside Allstarr. `Promotion__AllowedBase` is an
-optional restriction, not a prerequisite. Approval rejects symbolic links and
-verifies write access. See [library setup](../user-guide.md#adding-to-your-library).
-
-The administration API is owned by `LibraryPromotionsController` and
-`PromotionProfilesController`. It discovers folders at
-`GET /api/admin/library-promotions/folders`.
-Save approved roots at `PUT /api/admin/library-promotions/roots`, preview at
-`POST /api/admin/library-promotions/preview`, and start at
-`POST /api/admin/library-promotions`. Roots retain backend and local paths. Current
-requests can acquire missing audio; a pre-existing artifact is not required.
-
-Library permissions and approval policy apply to each request and again during
-work. Quality checks can pause a run for review. Existing backend files remain
-untouched. Back up approved library roots separately from database archives.
-
-## Imported original media
-
-A version 2 upgrade can retain its original kept and permanent-download files in place. New managed files use an `Allstarr` subfolder within each existing persistent media mount, so a backend library already watching the kept mount continues to see newly kept songs. The original directories and files are not renamed. Import previews exclude exact files already owned by the new managed-file store rather than excluding a folder by name. SQLite records the exact root, path, filesystem identity, size and checksum, together with the administrator's import receipt. These originals have permanent protected references. Playback, lyrics and downloads read them; cleanup, Remove and Release Keep do not delete or retarget them. Existing lyrics sidecars are preserved, and Allstarr does not create sidecars beside an imported original.
-
-A verified database-and-key-ring backup includes the ownership proof but excludes the audio. Stop Allstarr before copying its data folder and all retained original media roots, then restore the same container paths on the new host. After a stopped copy, Allstarr recognizes the new data folder and queues verification of already owned files. It checks changed filesystem identities against their saved contents before rebinding ownership. Missing mounts, changed bytes and symbolic links stay unavailable for review. Keep the stopped version 2 folders until the upgrade is verified. Going back to version 2 uses its untouched environment and original folders; rolling back a version 3 database uses the matching older backup and image. A populated original-media schema refuses a downgrade that would discard its protections.
+To roll back to an earlier image, restore the folder backup made before the upgrade, then start that image. Never run an older image against a database a newer version has migrated. See [deployment and rollback](deployment-profiles.md#backup-restore-and-rollback).
 
 ## Verifying a copied folder
 
-Keep the container paths unchanged when moving data, especially the original `/app/kept` and `/app/downloads` mounts in an upgraded installation. Copy the complete stopped folder, including `.allstarr-storage`, SQLite sidecars and the key ring. Do not edit the marker or copy individual live database files. The same image recognizes the copy and records **Verify saved files** as durable work in Activity. Health and native proxying remain available; other queued work resumes after verification. Already verified files become readable as the work proceeds. Playback retains its normal opened-file identity checks and does not rehash the entire song on each request.
+Keep the container paths unchanged when you move data, especially `/app/kept` and `/app/downloads` in an upgraded version 2 installation. Copy the whole stopped folder, including `.allstarr-storage`, the SQLite files and the key ring. Don't edit the marker.
 
-Verification reads only paths already owned by the database. It never adopts arbitrary neighboring files or changes audio, lyrics, references, account revisions, credential versions or the immutable original import provenance. Hashing runs outside database writers. Each identity update checks the current job, storage generation and exact saved file revision in one transaction. Interrupted work resumes and skips identities already verified. An interrupted legacy import retains files already adopted; unverified originals whose identity changed need a new preview.
+At startup the same image recognises the copy and queues **Verify saved files** in Activity. Health checks and music apps keep working. Each saved file is checked against its recorded contents before Allstarr trusts its new location; other queued work resumes afterwards. Missing, changed or linked files stay unavailable for review while the rest stay usable. Verification never adopts other files and never changes audio or lyrics.
 
-If a file needs review, restore its original bytes and path, then choose **Verify saved files** in Settings → Storage. The same action is available through `POST /api/admin/storage/files/verify`. The authenticated status API at `GET /api/admin/storage/files` returns progress and an antiforgery token; verification requires that token and an active administrator. Repeated requests reuse pending work. Missing or unsafe files remain protected and unavailable while other verified files stay usable. Per-file verification details use the shorter job-history retention policy so large moves do not crowd out administrator events.
+If a file needs review, restore its original bytes and path, then choose **Verify saved files** under **Saved-file verification** in Settings → Storage and speed → **Advanced: cache times, file checks and cleanup**. Follow progress in Activity. Keep the original stopped installation until verification and playback pass.
 
-The populated copy-recovery schema cannot be downgraded in place. Use the matching older image and a backup from before the upgrade. Database-and-key-ring ZIPs still exclude audio; preserve the original media roots or use a complete stopped-folder copy when relocating music as well.
+## Database readiness
+
+At startup Allstarr turns on SQLite write-ahead logging, applies pending migrations and runs an integrity check before storage is ready. An unknown schema version or a damaged database leaves stored features unavailable while music apps keep reaching the media server. Startup never replaces damaged data or switches to another database.
+
+## Event log and job retention
+
+Activity history is trimmed in the background so the database doesn't grow with listening time. Set it in **Settings → History and scrobbling**. Changes restart Allstarr.
+
+| Setting | Default | Range |
+| --- | --- | --- |
+| Activity retention days | 30 | 1 to 3650 |
+| Maximum activity rows | 250000 | 1000 to 5000000 |
+| Job history retention days (under Advanced) | 7 | 1 to 3650, never longer than activity retention |
+| Activity cleanup interval in minutes (under Advanced) | 360 | 5 to 10080 |
+| Activity cleanup batch size (under Advanced) | 1000 | 100 to 10000 |
+
+Each playback progress report is a short job. Finished playback jobs and their history are removed once they pass the activity retention age. Events that another record depends on, such as a legacy import, are kept. A cleanup pass also runs at startup.
+
+After a restart, jobs that were interrupted are queued again with the same retry budget. A job interrupted five times in a row without finishing is marked failed (`worker_interrupted_repeatedly`), so work that crashes Allstarr can't loop forever. Up to four jobs run at once.
+
+## Adding songs to the media server library
+
+Approve a writable Jellyfin music folder in **Settings → Library → Where added songs go**, then use **Add to library** on a song, or **Library → To library**. If Jellyfin and Allstarr see the folder under different paths, map the media-server path to its path inside the Allstarr container. Approval rejects symbolic links and checks write access. `Promotion__AllowedBase` is an optional [container override](configuration.md#container-overrides) that limits where added songs may go; it is not needed.
+
+Library permissions and approval apply to each request and again while the work runs. Quality checks can pause a run for review. Existing media-server files are never changed. Back up approved library folders separately from database archives.
+
+## Imported version 2 media
+
+A version 2 upgrade can keep its original kept and downloaded files in place. New files go into an `Allstarr` subfolder of each existing media mount, so a media server already watching the kept folder sees new songs. Originals are never renamed, moved, retagged or deleted, and Allstarr adds no lyrics files beside them. See [legacy import](legacy-env-import.md#original-media).
+
+Database backups include the record of which files Allstarr owns, but not the audio. When you move such an installation, copy the stopped data folder and every original media folder, and keep the same container paths. Keep the stopped version 2 folders until the upgrade is verified.

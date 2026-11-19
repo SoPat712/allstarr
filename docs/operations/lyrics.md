@@ -1,37 +1,79 @@
 # Lyrics sources
 
-Set the household source order in **Integrations → Routing → Lyrics**. A saved source choice for the song takes precedence, then accessible **Kept LRC** enabled for automatic use is checked before remote lookups. The remaining sources follow the effective source order. An unavailable source does not prevent the remaining sources from being tried. Only enabled sources and accounts authorized for the listener can participate; **Manual only** sources participate only when explicitly selected.
+Allstarr looks for lyrics in one household order. Set it in **Settings → Music sources → Lyrics**. Listeners don't have their own order. Lyrics reach Jellyfin and Subsonic apps through their normal lyrics requests, and apps that use the [client API](../api/README.md).
 
-Automatic lookup can start up to four eligible remote sources together. A lower-priority answer waits up to 1.5 seconds for an earlier source, returning sooner when no earlier source can answer. If the first group has no answer after three seconds, lookup continues through the remaining order without restarting those requests. Sources that need a new cross-provider identity lookup wait until already-started sources finish without lyrics; an available answer does not wait for that discovery. Source order takes precedence over timing format: an earlier plain result can beat a later timed result. Genuine word timing is preferred to line timing, then plain text, only at equal priority. No timestamps are invented.
+## Default order
 
-Sources with rate limits, credentials, shared token requests or challenge handling need recent successful health for the current source configuration before joining parallel lookup. Otherwise, they are tried conservatively without overlapping outstanding speculative work. Already-started eligible requests can finish into their existing source caches after a result returns; outstanding work stays bounded and has a cancellation deadline. When automatic lookup capacity is occupied, lyrics can be temporarily unavailable rather than starting an unbounded queue. An explicit source preview still queries only the selected source.
+| # | Source | Needs |
+| --- | --- | --- |
+| 1 | Media server lyrics | Nothing; lyrics your media server already has |
+| 2 | Kept LRC | Nothing; `.lrc` files beside downloaded or kept songs |
+| 3 | Spotify | A connected Spotify account; see [Spotify](#spotify) |
+| 4 | Apple Music | An Apple Music account and the optional [Apple gateway](apple-download-provider.md) |
+| 5 | lrc.red | Nothing |
+| 6 | LyricsPlus | Nothing; optional self-hosted instance |
+| 7 | Musixmatch | Nothing; optional token |
+| 8 | AMLL TTML DB | Nothing |
+| 9 | NetEase Lyrics | Nothing |
+| 10 | QQ Music Lyrics | Nothing |
+| 11 | Kugou Lyrics | Nothing |
+| 12 | LRCMux | Nothing |
+| 13 | LRCLib | Nothing |
+| 14 | Unison | Nothing |
+| 15 | Genius | Nothing; plain lyrics only |
+| 16 | SpicyLyrics | A free server key, connected in Sources → Accounts, and a known Spotify track |
 
-Listeners can save their own source order in **Listening preferences → Lyrics source order**. This takes precedence over the household order in both protocols. Saving display preferences alone preserves the existing order; **Reset to household defaults** removes personal choices and follows the current household settings again. Concurrent edits require reloading the latest preferences before saving.
+Lyrics extensions you install join the end of the list. Drag sources to reorder them; the order saves as you drop. A saved order that lacks media server lyrics or Kept LRC gets them back at the top. Retired sources are removed from saved orders at startup.
 
-**Media server lyrics** participates in the movable order after the kept-lyrics preflight. Older saved orders that omit it are completed with the missing local source. Native Jellyfin and Subsonic song requests verify the requested song before querying other sources. When backend lyrics win, their original response is preserved, including language, offsets, enhanced cues and additional metadata. Plain backend lyrics follow the same source-priority rule. A failed Subsonic backend lookup keeps its original response if no other source succeeds.
+## How a source is chosen
 
-Retired sources are removed from saved household and personal routing preferences at startup. Kept lyrics remain available through **Kept LRC**, independently of the original source.
+A version a listener picked for a song wins. Otherwise Allstarr tries sources in order. Only sources set to **On** in Sources → Services are tried automatically; **Manual only** sources answer only when someone picks them. A source that fails or has no lyrics doesn't stop the rest.
 
-Native parsing follows the [Jellyfin 10.11 lyrics DTOs](https://github.com/jellyfin/jellyfin/tree/v10.11.0/MediaBrowser.Model/Lyrics) and [OpenSubsonic structured lyrics](https://opensubsonic.netlify.app/docs/responses/structuredlyrics/). Verified times retain millisecond precision, and plain text is not assigned invented timestamps.
+Order beats timing: an earlier source with plain lyrics wins over a later one with timed lyrics. Between equal sources, word timing beats line timing, and line timing beats plain text. Allstarr never invents timestamps.
 
-**Kept LRC** reads the sibling `.lrc` of an indexed download or a verified household kept copy, including copies under a custom kept root. It stays fixed first in the order controls, while a saved choice for the song remains stronger. Disabling the source prevents this preflight. The relative order of the other saved sources is retained. Provider songs use their exact source identity; native songs use source IDs from the current listener's accessible library index. Unindexed files, cache paths, filenames and artist/title similarity do not establish an association.
+Up to four sources are asked at once. A later source's answer waits up to 1.5 seconds for earlier sources, and returns sooner when none of them can answer. If nothing has answered after three seconds, the lookup moves on through the rest of the order. Sources with rate limits, credentials or challenge checks join the parallel lookups only after recent successful use; otherwise they are asked one at a time. When lookup capacity is busy, lyrics can be briefly unavailable instead of building an endless queue. Answers that arrive late still fill the cache for next time.
 
-Personal account downloads remain available only to that account's owner; shared accounts and anonymous legacy mappings remain subject to managed-file ownership. Disabled accounts and users, removed files, symlinks, missing audio, invalid UTF-8 and sidecars larger than 2 MiB are skipped so another source can answer. Reading lyrics never writes either file. Timed sidecars preserve their raw LRC; protocol projections apply a global offset once, with positive offsets showing lyrics sooner, following the OpenSubsonic convention. Plain projections omit LRC metadata tags and retain the actual words.
+With **Clean only** in effect, lyrics come only from your media server or kept files, and only for songs proven clean.
 
-## LyricsPlus
+### Media server lyrics
 
-LyricsPlus requires no account. It looks up a song using its title, artists, album and duration. With no server URL configured, Allstarr tries `lyricsplus.binimum.org`, `lyricsplus-seven.vercel.app`, `lyricsplus.prjktla.workers.dev` and `lyrics-plus-backend.vercel.app` in order. Public service availability can change; a configured source is not a promise that an instance is online or has a particular song.
+Jellyfin and Subsonic song requests check the song with the media server before asking other sources. When the media server's lyrics win, its original response is kept, including language, offsets and extra cues. If a Subsonic lookup fails and no other source answers, the media server's own response is returned.
 
-To use your own instance, open **Integrations → Services → LyricsPlus** and save its optional self-hosted URL. HTTP is supported for a private service. The URL must not contain credentials, a query or a fragment. A path prefix is preserved. A configured instance is used exclusively; Allstarr does not send the lookup to public instances when it fails. Clear the field to use public fallback again. `LYRICSPLUS_URL` remains available as a bootstrap/import alias.
+Allstarr reads the [Jellyfin 10.11 lyrics format](https://github.com/jellyfin/jellyfin/tree/v10.11.0/MediaBrowser.Model/Lyrics) and [OpenSubsonic structured lyrics](https://opensubsonic.netlify.app/docs/responses/structuredlyrics/), keeping millisecond times.
 
-The [LyricsPlus V2 schema](https://github.com/ibratabian17/LyricsPlus/blob/gelato/internal/api/openapi/openapi.yaml) supplies plain, line and syllable/chunk results. Allstarr sends line timestamps as LRC with millisecond precision to music apps. It also retains genuine source segment times, durations and background or synthetic-alignment flags in its bounded lyric cache, without inventing word boundaries. Successful responses are cached by endpoint configuration, metadata and requested format. Misses, malformed responses and failures are not cached as successful lyrics.
+### Kept LRC
 
-## Musixmatch
+**Kept LRC** reads the `.lrc` file beside a downloaded song or a household kept copy, including copies in a custom kept folder. Service songs use their exact source; your own songs use the listener's accessible library index. File names, cache paths and similar titles never link a lyrics file to a song.
 
-Musixmatch uses its mobile API and can obtain an automatic token without an account entry. To supply your own app connection, open **Integrations → Accounts**, connect Musixmatch and paste its **Debug Info or user token**. This is optional. Use a Personal account for one listener or Shared for the household. Allstarr stores supplied credentials through its encrypted account secret store. Do not paste them into a service URL, a public instance or a support message.
+A Personal account's downloads are readable only by that account's owner. Files are skipped, so another source can answer, when the account or user is disabled, the file was removed or is a symbolic link, the audio is missing, the text isn't valid UTF-8, or the file is larger than 2 MiB. Reading lyrics never writes either file. A global `offset` tag is applied once; positive offsets show lyrics sooner, as in OpenSubsonic. Kept lyrics stay available whichever source they first came from.
 
-Lookup checks the matched title and artist, then prefers richsync lines, subtitle LRC and plain lyrics within that source. When richsync includes segment offsets, Allstarr retains their precise absolute times alongside line LRC. Missing segment durations remain unknown. Malformed optional segment metadata is discarded while otherwise valid line lyrics remain usable. Successful content is cached separately for automatic access or the exact account connection, metadata and requested format. Automatic token acquisition is shared and observes retry backoff. A rejected supplied token needs attention in the account form. Regional access and token validity depend on Musixmatch.
+### LyricsPlus
 
-## Other sources
+LyricsPlus needs no account. It looks a song up by title, artists, album and duration. Without a server URL, Allstarr tries `lyricsplus.binimum.org`, `lyricsplus-seven.vercel.app`, `lyricsplus.prjktla.workers.dev` and `lyrics-plus-backend.vercel.app` in that order. Public instances come and go.
 
-See [Spotify lyrics](spotify-lyrics.md) for encrypted Spotify account setup and migration from its retired container. Apple lyrics require the selected Apple account and optional gateway described in [Apple setup](apple-download-provider.md). LRCLIB and typed lyrics extensions use the same ordered resolver. Timed lyrics remain timed, and plain text is never given invented timestamps.
+To use your own instance, save **Optional self-hosted URL** in **Sources → Services → LyricsPlus**. HTTP is fine for a private service. The URL must not contain credentials, a query or a fragment; a path prefix is kept. A saved instance is used on its own, with no fallback to public instances. Clear the field to go back to public instances. A version 2 `LYRICSPLUS_URL` comes over through the [legacy import](legacy-env-import.md).
+
+LyricsPlus can return plain, line-timed and word-timed lyrics. Apps receive line timing as LRC with millisecond precision; Allstarr keeps the word timing it receives without making up word boundaries. Only successful answers are cached.
+
+### Musixmatch
+
+Musixmatch can get a token automatically, with no account. To use your own app connection, choose **Connect account** in **Sources → Accounts**, pick Musixmatch and paste its **Debug Info** or user token. Use a Personal account for one listener or Shared for the household. The token is stored encrypted; don't paste it into a URL or a support message.
+
+Musixmatch checks the matched title and artist, then prefers word-timed (richsync) lyrics, then line-timed, then plain. A rejected token shows as needing attention on the account. Regional access depends on Musixmatch.
+
+## Spotify
+
+Spotify lyrics run inside Allstarr with a connected Spotify account. No separate container is needed.
+
+1. In **Sources → Accounts**, connect or edit a Spotify account. Use Personal for one listener or Shared for the household.
+2. Paste the `sp_dc` cookie, or the full Cookie header, into **Spotify browser session (sp_dc)**. It is stored encrypted; don't share it in URLs or logs.
+3. Make sure the account is on and Spotify sits where you want it in the Lyrics order.
+4. Use the account's **Test** to check its connection and lyrics. A working connection doesn't mean every song has lyrics.
+
+Lyrics always need an account; they never use the anonymous session that public playlist imports use. An expired or rejected cookie shows as needing attention on the account, and other sources answer meanwhile. Cached Spotify lyrics are kept apart per account. What a free account or a region can get depends on Spotify.
+
+The old `spotify-lyrics` container and Compose profile are retired. Old `spotify` or `spotify-lyrics` lines in `.allstarr-profiles` are ignored, and the next update removes the old container. `SPOTIFY_LYRICS_API_URL` is ignored. The legacy import still brings over a Spotify cookie from version 2; if the cookie lived only in the old container, paste it into the account yourself.
+
+## Lyric translation for apps
+
+**Translate lyrics for apps** in **Settings → Music sources → Lyric translation** is on by default. Apps that use the [client API](../api/README.md) can ask for a translation; the result is shared with everyone who asks for the same lyrics. Allstarr tries Google, then MyMemory, then your own LibreTranslate server when you save its address in **Optional LibreTranslate URL**. The client API itself is off until you turn on **Client API for apps** in Settings → Apps.

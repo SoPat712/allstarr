@@ -4,7 +4,7 @@ The dashboard uses port 5275 and remains loopback-only by default. URL prefixes 
 
 Password checks for dashboard and Jellyfin sign-in, initial setup, and playlist reauthentication share limits of 20 requests per minute for each client address and 60 requests per minute across all those actions. The limits use the address after configured forwarded-header trust, reject without queueing, and return HTTP 429 with a positive `Retry-After` value. OIDC completion callbacks and ordinary music browsing, playback, and seeking remain outside this sign-in budget.
 
-Dashboard sessions expire after 12 hours, or 30 days when **Remember me** is selected for native sign-in. Allstarr rechecks the media-server account when validating a dashboard session. Disabling the account, revoking its backend credentials, or changing its administrator role requires a new sign-in. If the media server is temporarily unavailable, protected requests return HTTP 503 and preserve the existing session cookie. Retry after the media server recovers.
+Dashboard sessions expire after 12 hours, or 30 days when **Keep me signed in** is selected for media-server sign-in. Allstarr rechecks the media-server account when validating a dashboard session. Disabling the account, revoking its backend credentials, or changing its administrator role requires a new sign-in. If the media server is temporarily unavailable, protected requests return HTTP 503 and preserve the existing session cookie. Retry after the media server recovers.
 
 ## Reverse-proxy path
 
@@ -46,7 +46,7 @@ Preserve the complete request URI, query parameters, authorization headers, `Ran
 
 Query strings can contain credentials. Proxy access logs must exclude them, authorization headers and cookies. The [default nginx access-log format](https://nginx.org/en/docs/http/ngx_http_log_module.html#log_format) includes the original request line; use a sanitized format or disable access logging for the music location. Allstarr's own redaction cannot protect logs written by another service.
 
-Trust forwarded addresses and schemes only from the actual proxy, using the configured known proxies or networks. Do not trust arbitrary client-supplied forwarding headers. Keep **Allow remote extension installation** off unless you deliberately need installation from outside trusted administrator networks; enabling HTTPS does not require enabling remote installation.
+Trust forwarded addresses and schemes only from the actual proxy, using the configured known proxies or networks. Do not trust arbitrary client-supplied forwarding headers. Keep **Install extensions from outside your home network** (Settings → Advanced) off unless you deliberately need it; HTTPS does not require it.
 
 Before inviting listeners, verify sign-in, ordinary playback and a seek well into a track through the external HTTPS address. A successful dashboard page load does not verify music-client requests or proxy range handling. Protect the data directory and its backups together: the database, encryption key ring and browser data-protection keys form the recoverable installation.
 
@@ -130,10 +130,10 @@ Set `ForwardedHeaders__KnownProxies` in Allstarr's Compose `environment` to the 
 | Setting | Shipped behavior |
 | --- | --- |
 | Dashboard binding | Host loopback by default; broader access requires explicit binding and trusted subnets. |
-| Dashboard session lifetime | 12 hours; native **Remember me** uses 30 days. OIDC uses 12 hours. These lifetimes are fixed, not dashboard settings. |
+| Dashboard session lifetime | 12 hours; **Keep me signed in** uses 30 days. Single sign-on uses 12 hours. These lifetimes are fixed, not dashboard settings. |
 | Sign-in limits | 20 requests per minute per client address and 60 globally across protected sign-in actions; HTTP 429 includes `Retry-After`. These limits are fixed. |
-| Allow remote extension installation | Off by default (`Extensions:AllowRemoteInstall=false`). Keep it off; HTTPS music access does not need it. |
-| Music-client address | In **Getting started**, edit **Music-client address** to the HTTPS hostname before copying the setup instructions. This changes the copied guide, not the listener binding. |
+| Install extensions from outside your home network | Off by default (Settings → Advanced). Keep it off; HTTPS music access does not need it. |
+| Music-client address | Set **Settings → Apps → Music-client address** to the HTTPS hostname. **Connect apps** shows it to listeners. This changes the instructions, not the listener binding. |
 
 Validate with `caddy validate --config /etc/caddy/Caddyfile` or `nginx -t` before reloading your proxy. Then use an outside-LAN connection to check music-client sign-in, provider playback and a far seek, and confirm the dashboard is unreachable there. Allstarr exposes one selected music protocol per deployment; test the protocol your installation uses. These examples do not configure DNS, certificates, firewall rules or an existing proxy for you.
 
@@ -145,28 +145,28 @@ Register a confidential web client with your identity provider. Enable authoriza
 https://media.example.org/allstarr/api/admin/auth/oidc/callback
 ```
 
-Keep `ADMIN_BASE_PATH=/allstarr` in deployment configuration when using that prefix. Single sign-on policy and the encrypted client secret are saved in the data folder under **Settings → Network → Single sign-on**, backed by the authenticated administrator access API described in [configuration](configuration.md#administrator-access-settings). Use authority `https://identity.example.org`, client ID `allstarr`, public URL `https://media.example.org/allstarr`, and your own client secret. Set the display name to the name you want on the login screen, then enable and save. Saving requests a restart after the response completes.
+Keep `ADMIN_BASE_PATH=/allstarr` in `.env` when using that prefix. Set up single sign-on in the **Single sign-on** card in **Settings → People and sign-in**. Turn on **Sign in with your identity provider**, then enter **Issuer address** `https://identity.example.org`, **Client ID** `allstarr`, **Public Allstarr address** `https://media.example.org/allstarr` and your own **Client secret**. The card shows the redirect URI to register, with a **Copy** button. Set **Sign-in button name** to the name you want on the sign-in page; it defaults to "Single sign-on". Saving restarts Allstarr. The settings and the encrypted client secret are saved in the data folder.
 
-Use your provider's issuer/authority URL, which may include a realm or application path. Both authority and public URL require HTTPS. The public URL must end at the configured base path with no query or fragment. For a dedicated hostname with no prefix, leave `ADMIN_BASE_PATH` empty and use `https://allstarr.example.org` as the public URL.
+Use your provider's issuer URL, which may include a realm or application path. Both addresses need HTTPS, except that HTTP is allowed for private or local addresses: private IP ranges, `localhost`, and names ending in `.local`, `.lan`, `.internal` or `.home.arpa`. The public address must end at the configured base path, with no query or fragment. For a dedicated hostname with no prefix, leave `ADMIN_BASE_PATH` empty and use `https://allstarr.example.org` as the public URL.
 
-Client secrets are encrypted for the exact identity service and client ID and are never returned by the configuration API. Persist the data-protection keys and encryption key ring across restarts. Changing identity service or client ID requires a new secret. Old environment-based SSO values are left for explicit review in the upgrade preview.
+Client secrets are encrypted for the exact identity service and client ID and are never shown again. Keep the data-protection keys and encryption key ring across restarts. Changing the issuer or client ID needs a new secret. If saved encryption keys are missing, single sign-on stays off for review while media-server sign-in keeps working. Old single sign-on values from a version 2 `.env` are shown for review in the import preview, never turned on automatically.
 
 ### Link a media-server account
 
-1. Choose **Continue with Home SSO** on the login page.
+1. On the sign-in page, choose **Continue with** followed by your sign-in button name, for example **Continue with Home SSO** if you named it "Home SSO".
 2. Sign in at the identity provider.
 3. Enter your Jellyfin or Subsonic credentials and choose **Link account and sign in**.
 
-Allstarr binds the verified issuer and subject to that exact backend account. Email addresses and IdP role claims do not choose a media account or grant administrator access. One SSO identity links to one native account, and a native account has one SSO link. Disconnect an existing link before choosing another account.
+Allstarr binds the verified issuer and subject to that exact backend account. Email addresses and IdP role claims do not choose a media account or grant administrator access. One SSO identity links to one media-server account, and a media-server account has one SSO link. Disconnect an existing link before choosing another account.
 
-For Jellyfin, Allstarr stores the linked account's access token encrypted. For Subsonic, it stores the supplied native credential encrypted; the linking screen explains this before submission. Ordinary Subsonic login does not retain that credential. On future SSO logins, Allstarr checks the stored credential with the selected media server and reads its current permissions. A changed backend URL, rejected credential, or disabled account prevents SSO login.
+For Jellyfin, Allstarr stores the linked account's access token encrypted. For Subsonic, it stores the supplied media-server credential encrypted; the linking screen explains this before submission. Ordinary Subsonic login does not retain that credential. On future SSO logins, Allstarr checks the stored credential with the selected media server and reads its current permissions. A changed backend URL, rejected credential, or disabled account prevents SSO login.
 
-SSO creates a normal 12-hour Allstarr session. Signing out ends the local session, not the identity-provider session. Native username/password login remains available if the identity provider is down.
+SSO creates a normal 12-hour Allstarr session. Signing out ends the local session, not the identity-provider session. Media-server username and password sign-in stays available if the identity provider is down.
 
 ### Disconnect and recover
 
-Use **Disconnect SSO** while signed in to remove your link and revoke its stored credential. Existing SSO-created Allstarr sessions stop working; a native-login session remains usable. If a native credential expires, start SSO again and authenticate the same media account to renew the link.
+Use **Disconnect SSO** in your profile menu while signed in to remove your link and revoke its stored credential. Existing SSO-created Allstarr sessions stop working; a session from media-server sign-in remains usable. If the stored credential expires, start SSO again and authenticate the same media account to renew the link.
 
-Disabling single sign-on through administrator access settings and restarting disables SSO and its existing sessions without changing music-client login. A verified database-and-key-ring backup preserves account links and encrypted credentials. Browser session protection keys are separate files, so sign in again after restoring onto a fresh installation. A stopped copy of the complete data folder includes those protection keys.
+Turning off single sign-on in Settings → People and sign-in restarts Allstarr and ends existing SSO sessions, without changing music-app sign-in. A verified database-and-key-ring backup preserves account links and encrypted credentials. Browser session protection keys are separate files, so sign in again after restoring onto a fresh installation. A stopped copy of the complete data folder includes those protection keys.
 
 If callbacks fail, check the exact redirect URI, public URL, proxy path handling, and trusted forwarded-protocol configuration. Do not include authorization codes, cookies, passwords, or tokens in bug reports.
