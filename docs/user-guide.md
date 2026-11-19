@@ -1,345 +1,414 @@
 # User guide
 
-Allstarr has two surfaces:
+Allstarr has two parts:
 
-- Music clients connect to the Jellyfin or Subsonic-compatible port, normally `5274`.
-- Administrators and permitted users use the dashboard, normally on port `5275`.
+- **Music apps** connect to the Jellyfin or Subsonic port, normally `5274`. You listen there.
+- **The dashboard** runs on port `5275`. You use it to connect services, import playlists, review matches, find mixes and change settings. It is not a music player.
 
-The dashboard controls how Allstarr connects sources, matches music, projects playlists, stores temporary or kept files, and learns from listening. It is not a second music player.
+The first half of this guide is for everyone. The second half, [For administrators](#for-administrators), covers sources, settings, adding songs to the library, backups and health.
 
-## First setup
+## Sign in
 
-1. Start the stack and open the dashboard.
-2. On a fresh install, choose Jellyfin or Subsonic / OpenSubsonic, enter its address and verify a media-server administrator. The password is discarded. The connection is saved in the data folder and Allstarr restarts.
-3. Sign in with your media-server account and review the inline setup guide. It saves reviewed and skipped steps across browsers. Finish for now skips remaining optional steps; reopen it from **Settings → Setup** without resetting choices.
-4. Open **Integrations → Services** to see built-in and installed capabilities.
-5. Open **Integrations → Accounts** to connect personal or explicitly shared provider accounts.
-6. Open **Integrations → Routing** to choose the fallback order for each capability.
-7. Test ordinary local playback in a music client before adding provider playlists or external playback.
+Open the dashboard and sign in with your media-server username and password.
 
-Administrators see deployment and shared-account controls. Listeners can open Home, Playlists, Mappings, Services, their Accounts, For you, Activity, Getting started, Listening preferences, and personal Alerts. Deployment settings, Extensions, Routing, Cached, and Kept require administrator access, including when opened through a direct link.
+- **Keep me signed in** keeps you signed in on that browser for longer. See [dashboard access](operations/webui-access.md) for the session lengths.
+- If your administrator set up single sign-on, choose **Continue with** and your provider's name. See [OIDC login](operations/webui-access.md).
+- On a Subsonic server, **Let Allstarr manage my playlists** lets Allstarr create and update playlists for you. It starts unchecked. You can turn it on later; see [Allow playlist editing](#allow-playlist-editing).
 
-For an existing installation, **Settings → Setup → Review previous settings** can preview the mounted v2 environment or an uploaded copy. Nothing is imported until you confirm the preview. Existing saved settings win. Accounts are checked before enablement; unavailable accounts need attention in Integrations → Accounts. Original kept and download files are verified in place by a durable job. Valkey-only favorites and manual fixes are not imported. SquidWTF has no automatic replacement.
+## Find your way around
 
-**Settings → General → Background library access** connects or disables unattended Jellyfin scans. **Settings → Network → Single sign-on** manages an encrypted OpenID Connect client; blank secrets preserve the current secret only for the same issuer and client. Saving these connections restarts Allstarr after the response. The dashboard waits for the new process and offers a retry if it takes longer than a minute.
+The sidebar shows **Home**, **Library**, **For you**, **Sources**, **Activity**, **Settings**, **Connect apps** and **Report a problem**. Your name in the sidebar opens your **Listening settings**. On a phone, Home, Library, For you and Activity sit at the bottom, and **More** holds Listening settings, Sources, Connect apps, Report a problem and, for administrators, Settings.
 
-After copying a stopped installation's complete folder, **Settings → Storage → Saved-file verification** shows verification progress and lets you retry repaired files. Follow its household job in Activity → Everyone → Queue. Changed, missing or linked originals stay unavailable; verification never replaces their contents.
+Listeners and administrators see different parts:
+
+| Page | Listeners | Administrators also get |
+| --- | --- | --- |
+| Library | Playlists, Matches, To library, Import | Cached and Kept, and artist matches in Matches |
+| Sources | **Available services** and **My accounts** | Every account, shared accounts, extensions and checks |
+| Activity | History and Plays | Jobs, Tasks, Reports, and an **Everyone** view of household work |
+| Settings | Listening, Appearance, Adding to the library, Alerts | Every household and server setting |
+
+Pages update on their own when something changes, including changes made in another tab. Unsaved edits in a form are kept.
 
 ## Connect your music app
 
-Open **Getting started** in the sidebar, or **More → Getting started** on a phone. The guide fills your signed-in username and the music-client address configured by your administrator. Use that address in your app and sign in with your usual media-server password. If the address is missing, ask your administrator for it; editing the guide only changes the address you copy. **Copy server address** and **Copy username** select the text when the browser cannot access the clipboard.
+Open **Connect apps** (on a phone, **More → Connect apps**). It shows your username and the server address your administrator set. Use **Copy** next to each to copy it, then sign in to your app with your usual media-server password. If the address is empty, ask your administrator for it; typing one here only changes what you copy.
 
-The guide shows apps for this deployment's selected protocol:
+Pick your app on the page to see its steps. The list depends on whether this Allstarr serves Jellyfin or Subsonic:
 
-| App | Jellyfin | Subsonic / OpenSubsonic | Setup |
-| --- | --- | --- | --- |
-| Feishin | Yes | Yes | [Desktop app and server setup](https://github.com/jeffvli/feishin) |
-| Finamp | Yes | — | [Finamp](https://github.com/finamp-app/finamp) |
-| Jellyfin Web | Yes | — | **Open web player** in the guide; [project](https://github.com/jellyfin/jellyfin-web) |
-| Symfonium | Yes | Yes | [Jellyfin setup](https://docs.symfonium.app/wiki/providers/jellyfin-media-provider-configuration/) or [Subsonic setup](https://docs.symfonium.app/wiki/providers/subsonic-opensubsonic-media-provider-configuration/) |
-| Tempo | — | Yes | [Android app](https://github.com/CappielloAntonio/tempo) |
+| App | Platform | Jellyfin | Subsonic / OpenSubsonic | Setup help |
+| --- | --- | --- | --- | --- |
+| Finer Player | iPhone | Yes | — | — |
+| Musiver | Mobile | Yes | — | — |
+| Feishin | Desktop | Yes | Yes | [Feishin](https://github.com/jeffvli/feishin) |
+| Finamp | Android and iOS | Yes | — | [Finamp](https://github.com/finamp-app/finamp) |
+| Jellyfin Web | Web browser | Yes | — | **Open web player** on the page; [project](https://github.com/jellyfin/jellyfin-web) |
+| Tempo | Android | — | Yes | [Tempo](https://github.com/CappielloAntonio/tempo) |
+| Symfonium | Android, paid after a trial | Yes | Yes | [Jellyfin setup](https://docs.symfonium.app/wiki/providers/jellyfin-media-provider-configuration/) or [Subsonic setup](https://docs.symfonium.app/wiki/providers/subsonic-opensubsonic-media-provider-configuration/) |
 
-For a first listen, play a song, seek well ahead, add a heart, add it to a playlist, and try an offline download in your chosen app. A device download or offline cache belongs to that app; check it plays with the device offline before traveling. Favoriting provider music or adding it to a playlist makes it available in normal library browsing. Listening history alone does not add it to that saved view.
+For a first listen, play a song, seek ahead, heart it, add it to a playlist and try an offline download. A download or offline cache belongs to that app; check it plays with the device offline before you travel. App-specific limits are in [client compatibility](operations/client-compatibility.md).
 
-Sources set to **Manual only** appear in search and matching for you to choose. Automatic playback uses sources set to **On**. During the beta, an upstream service may rate-limit requests or require verification; choose another available source or wait before retrying. Playback depends on the formats and limits your app requests. Report the song, app version and what happened if playback fails.
+## Search and play
 
-### Report a problem
+Your music apps show your own library as usual. Songs from connected services appear in search, in playlists you import, in mixes and in your favorites. They do not appear when you browse your media-server library.
 
-Use **Report a problem** on Home's Now playing card, in a playlist song's details, or in a mapping row's actions. Getting started also offers a general report. Choose a problem type and enter a short note. The form shows the song, saved match, confirmed playback source, observed music app and recent source checks when those facts are available. A catalog source does not confirm what played. Leave passwords, tokens and private links out of the note.
+- Songs from outside your library are marked **[A]** and explicit songs **[E]**. You can turn either marker off in [Listening settings](#listening-settings).
+- When a song exists in your library, it plays from there. Otherwise Allstarr plays it from a connected service. If the first source is slow to start, Allstarr also tries the next one and keeps whichever starts first.
+- Each service has a **Use this source** switch on its page in **Sources**: **On** (used automatically), **Manual only** (shown in search and matching for you to choose, never used on its own), or **Off**. **Follow** uses the household setting.
+- Services can rate-limit requests or ask for verification. If a song won't play, try again in a few minutes or pick another source, and [report it](#report-a-problem) with the song and app version if it keeps failing.
 
-Reports stay in this Allstarr installation for administrators to review. A failed save keeps your note; retrying an unchanged submission uses the same request identity. If playback details expire, refresh them or explicitly continue without those details. Reporting a wrong match or lyrics does not change the saved choice automatically. In **Activity → Reports**, administrators can open **Review match** for a captured match or **Review lyrics** for a known recording, including songs without a saved match. A wrong-match report opens the review for its exact captured recording. Saving a match marks a new report **Seen**, leaving it open; existing Seen or Fixed status is preserved. Native songs without a provider match explain why review is unavailable. Personal choices apply to the reviewing administrator’s signed-in account. Choose **Household** to set a shared default while preserving listeners’ personal choices.
+A few built-in sources need no account:
 
-## Dashboard map
+- **Monochrome** is an account-free streaming source.
+- **ArtistGrid** lists individual versions from artist trackers, such as leaks and alternate takes. It is **Manual only** by default. Search for the artist's name and an optional song title, then pick the exact version in a match.
 
-### Home
+How playback picks a source, and what `[A]` titles mean in each app, is in [client compatibility](operations/client-compatibility.md).
 
-Home shows your active listening sessions, playback source, scrobble progress, playlists, durable work, and recent activity. Administrators also see household activity, storage totals, and provider health. Start here when playback or background work seems wrong.
+## Library
 
-The source is explicitly marked as confirmed streaming, cached audio, or an unconfirmed catalog entry. See [external song labels and playback sources](operations/client-compatibility.md#external-song-labels-and-playback-sources) for `[A]`/`[E]` titles, automatic fallback, song details, and client limitations.
+**Library** has Playlists, Matches, To library and Import. Administrators also see Cached and Kept; see [Cached and kept songs](#cached-and-kept-songs).
 
-Progress moves between fresh music-app reports and shows **Paused** when the app reports a pause. **Awaiting update** and `~` mean the displayed position is an estimate held until a fresh report arrives; a dash means the app has not supplied that fact.
+### Playlists
 
-### Library
+Choose **Import playlist** to bring a playlist into your apps. Nothing changes on the service.
 
-- **Playlists** connects provider playlists and controls how each is exposed to the selected backend.
-- **Mappings** reviews unresolved or ambiguous provider tracks and preserves accepted decisions for later syncs and playback.
-- **Cached** shows disposable provider audio that may be evicted by cache policy.
-- **Kept** shows explicitly retained audio and related sidecars. Kept media is not deleted by cache cleanup. When adding a kept song to your library, **Only this song** is the primary action. It uses your configured naming and folder structure, creating the needed folders. Choose **Add album to library** to add the whole album instead.
+1. **Choose.** Under **Paste a link**, paste a public playlist link, such as a Spotify or ListenBrainz playlist. No account is needed. Under **From my accounts**, pick playlists or **Liked Songs** from your connected accounts. **Other playlist sources** has more options: a public playlist by link, **Browse a Spotify user** to pick one of a public profile's playlists, and Last.fm **Loved tracks**, **Top tracks** or **Similar tracks** from your own Last.fm account.
+2. **Options and review.**
+   - **Import once** takes a snapshot and ignores later changes. **Keep in sync** checks for changes on the schedule you pick: **Every hour**, **Daily at 3:00 AM** or **Mondays at 3:00 AM**. For ListenBrainz generated playlists, **Follow newest edition** keeps the link on the newest one.
+   - **New playlist** creates a playlist in your apps with the source name. **Existing playlist** keeps the playable songs in a playlist you already manage. Allstarr never takes over a playlist just because its name matches.
+   - **Keep downloaded copies** saves permanent copies of the external songs Allstarr can download. It is off by default. Songs in your library are already permanent.
 
-### For you
+After the import, unsure songs wait in [Matches](#matches), and songs with no match show as not playable in the playlist's details. Through Allstarr, your apps play the playlist with its service songs. The copy stored in your media server holds only songs from your library, so it still works when opened without Allstarr.
 
-For you is private to your signed-in backend account. Open **For you** in the sidebar or bottom navigation.
+Open a playlist for its songs and details. Its **Actions** menu has:
 
-- **For you** shows generated mixes and personal Last.fm and ListenBrainz recommendations. Choose **Add to my apps** to make a mix available in your music apps; **In your apps** confirms it is added. Use **Manage in Playlists** to remove it. Added service mixes read the current source daily at 04:00 in the saved timezone; removal pauses their refresh until you add them again. While a generated mix refreshes, its last saved songs remain available and you can still add or remove mixes and change your feedback. A failed or cancelled refresh keeps the last saved songs.
-- **New releases** follows artists and shows a personal release inbox. You can dismiss a release, review hidden releases, or unfollow an artist. Coverage explains which providers have checked the artist; an unavailable source does not prove there are no releases. A generated release playlist is not available.
-- **Your taste** shows recent **Lately** and longer-term **Usually** preferences, with the leading tags and artists. Add a temporary or lasting nudge, choose Never to exclude a tag or artist, remove a nudge, pause learning, or reset learned preferences. Other nudges softly reorder radio and Allstarr similar-song results. Resetting learned preferences does not delete imported history.
-- **Recap** shows qualified retained plays, top songs and artists, active days, and a year recap. Listening time uses song lengths and is an estimate; unknown lengths are identified. Dates follow the server timezone. Completed imported plays appear in totals, rankings and Recap at their original listening dates; the imported total is also shown separately. Import and remove history here.
+- **Update now** to check the source for changes, and **Refresh source**.
+- **Export missing songs as CSV** or **as JSON** to download the songs with nothing to play, in source order.
+- **Edit settings** for the schedule and sync options, and **Pause** to stop automatic updates.
 
-Open a mix's **How this mix is made** section to inspect its saved recipe and generation counts. It shows qualifying live and imported plays, the actual listening interval, candidate and selected songs, exclusions, artist limits, and songs from your music versus your services. Each song keeps its measured reason. Older saved mixes need a refresh before these details are available. Refresh runs in the background; opening a page does not search music services.
+**Remove from apps**, at the bottom of a playlist Allstarr keeps in sync with Jellyfin, stops syncing and removes the playlist from your music apps. The source playlist, your matches and your settings stay. The confirmation lists songs you added yourself in Jellyfin. **Undo**, or importing the same playlist again with **Keep in sync**, brings it back with its name, artwork, order and your added songs.
 
-Heavy Rotation takes up to 50 songs from 30 days, then fills from 90 days. Below 30 live completed plays, its imported fallback names the original historical 30-day interval. Long Lost needs at least five completed plays and no play in six months, with at most three songs per artist. Uncharted uses real artist relationships from up to twenty top played artists and shares a top-ten style; it excludes songs you have played. Just Dropped uses dated releases from fourteen days, from followed artists or artists played at least ten times, taking one eligible track per release. Each stable style Blend keeps up to twenty-five familiar and twenty-five unplayed songs from already-played artists; either side can remain short. Moods keep their explicit sound-analysis or tag rules and require twenty-five qualifying songs to be ready. Other generated mixes allow two songs per artist.
+When a sync removes songs, it removes only songs it added. Songs you added yourself stay.
 
-Short recipes can fill from enabled automatic music services after your own music. Mood and style picks require actual matching tags or genres; names and titles do not establish a mood. One generation shares at most forty service lookups, each bounded by a timeout and existing provider limits. Service failures keep the eligible songs already found. Clean-only, Never, duplicate-recording and three-early-skips-in-thirty-days filters also apply to filled songs. External service mixes preserve the service's order; Allstarr explains only its playable matching and listening-policy filters.
+Who can see an imported playlist follows your media server's playlist permissions. Each listener plays external songs through the accounts available to them, so a song can be playable for one person and not another. Change sharing in your media-server app; Allstarr does not keep its own share list.
 
-Shared song tags combine available provider genres with bounded background MusicBrainz and Last.fm enrichment. Tags are household metadata; listening profiles and controls remain personal. AudioMuse is shelved and Sounds is hidden from the normal dashboard. See [AudioMuse status](operations/audiomuse.md).
+#### Allow playlist editing
 
-### Integrations
+To reorder or remove songs in your media-server playlists, Allstarr needs your permission.
 
-- **Services** opens **My sources**, showing connected accounts, installed extensions, public services and configured built-ins. Unused built-ins stay under **All available** and **Connect Source**; they do not demand setup in **Needs attention**. Removing a saved connection revokes its credentials. Built-in services remain available to connect later.
-- **Accounts** stores encrypted personal or shared credentials and audience policy.
-- **Extensions** installs, updates, reviews permissions, disables, and removes provider packages. Packages that need a verified sign-in show a **Sign-in** section with the steps; see [signed sessions](extensions/sdk-v1.md#signed-sessions).
-- **Routing** orders the eligible fallback services for metadata, streaming, download, lyrics, playlists, scrobbling, and other typed capabilities.
+- **Jellyfin:** in **Sources → My accounts**, **Playlist editing in Jellyfin** shows whether you allowed it. Choose **Allow editing** and enter your Jellyfin password once. Allstarr keeps a sign-in token, never your password. **Remove** takes it away. Without it, Allstarr uses the household fallback an administrator set up, if any.
+- **Subsonic:** in **Sources → My accounts**, **Playlist management** works the same way. Choose **Allow playlist management** and enter your Subsonic password, or **Revoke access** to stop future writes. Reading playlists keeps working either way.
 
-A Service is an implementation. An Account is a credential and access policy for that Service. An Extension is an optional package that can add Services. Routing decides which ready Service/account pair is tried for a capability. These are related but not interchangeable settings.
+### Matches
 
-Listeners connect **Personal** accounts, which only they may use and manage. Administrators can assign Personal accounts to a user or create **Shared** accounts for the household. A listener’s eligible Personal account is preferred over Shared accounts. Administrators manage Shared accounts; listeners can see their availability without viewing credentials or changing them.
+**Matches** shows how each song from your imported playlists plays. Use the filters **Needs a look**, **Matched by Allstarr**, **Chosen by you**, **Rejected** and **All**, or search by song, artist, album or playlist.
 
-Provider cards and account titles use the provider's display name. The subtitle shows the Personal account owner or **Shared with everyone**, followed by an optional custom connection name. When someone else created a Personal account, the card distinguishes its owner from its creator. New Personal connections default to the signed-in administrator; changing the owner changes whose listening may use the account. Leave the connection name blank to use the provider name. Older automatically generated account labels are renamed on startup; custom labels and credentials are preserved. A provider without a health sample shows **Not checked yet**.
+Open a song to compare it with what plays, then:
 
-Administrators can expand **Recent diagnostic checks** on a source page to see up to 24 recorded checks from the last 30 days. Counts describe these samples, not every stream; unavailable samples stay neutral. **Recent outcomes** shows the latest twenty checks and attempts. Diagnostic checks survive restarts; recent playback attempts reset when the server restarts. **Automatic routing** shows a pause, its start, reason and retry time after repeated failures. By default, three consecutive failures within five minutes pause that source account and capability for sixty seconds; authentication or rate-limit errors can pause sooner. A success, the retry window or **Resume now** restores automatic eligibility without changing your source switches or treating an old failure as a success. Manual-only and Off sources do not show this automatic pause. Opening the page does not run a check.
+- Pick another candidate under **Other choices**, or use **Search for another version…** to search your library and services, including **Manual only** sources. Then choose **Use** *service* **version**. Administrators can save it **For me** or **For the household**. A personal choice wins over a household choice, which wins over automatic matching.
+- **Nothing fits** rejects the current candidates.
+- In the **More** menu: **Rematch**, **Wrong lyrics?** and **Report a problem**.
 
-Apple Music has a three-step setup checklist: connect the Media User Token and storefront, sign the playback gateway into the same Apple account, then test playback. Package installation and gateway details are under Advanced setup. See [Apple setup](operations/apple-download-provider.md#connect-allstarr).
+Choose **Select** to act on several songs at once. **Rematch all** re-runs automatic matching for every song; your own choices and rejections stay. Saved choices survive playlist refreshes and restarts.
 
-Administrators may test playback on accounts they manage, including another user’s Personal account. These diagnostics are audited to the administrator. Ordinary listener playback still uses only the listener’s eligible Personal or Shared accounts.
+Allstarr accepts a match on its own only when it is confident both are the same recording. A different version, such as karaoke, instrumental, a cover or a DJ-mix excerpt, is not accepted on its own. Among good matches, a song in your library wins; otherwise the streaming order in **Settings → Music sources** decides. How matching scores songs is in the [architecture overview](architecture/overview.md).
 
-Action results appear in a shared notification area at the bottom right on desktop or above mobile navigation. Success and information messages close after five seconds, pausing while hovered or focused. Errors remain until dismissed. Form errors and warnings about stale page data remain beside the affected controls.
+### To library
 
-Administrators can change an account’s audience in **Access → Edit access**. Sharing makes the account available for supported capabilities, including playlists or scrobbling when supported, and may consume the provider’s limits. Making it Personal stops new shared selections; it cannot retract audio already delivered.
+**To library** follows songs and albums being added to your media-server library. Filter by **Active**, **Needs a look**, **Added** or **All**.
 
-In Settings, **Listeners can connect their own accounts** defaults to on. Turning it off prevents new listener connections while preserving use, configuration and removal of their existing accounts. Connection probes remain administrator-only, so listeners see **Save connection**. See [provider account policy](operations/configuration.md#provider-accounts).
+You can start an addition with **Add to library…** in a mix song's menu (administrators can also start one from Kept). If you need approval, your request shows under **Waiting for approval** until an administrator approves or declines it; **Cancel request** withdraws it. Your own file naming and quality choices are in **Settings → Adding to the library**. Administrators set up the folder; see [Adding to your library](#adding-to-your-library).
 
-### Subsonic playlist consent
+### Import
 
-On Subsonic sign-in, **Let Allstarr manage my playlists** starts unchecked. Selecting it saves an encrypted backend write credential only after your backend authenticates you. Leave it unchecked to sign in and read playlists without granting background writes.
+**Import** (**Bring your music**) moves a Spotify or Apple Music collection into Allstarr. Nothing changes in Apple Music or Spotify.
 
-In **Integrations → Accounts**, **Playlist management** shows your consent status. Enter your own Subsonic password to grant access, or revoke it there. Revocation stops future writes, including queued writes; sign-in and reads continue. Granting access again does not reactivate old revoked credential references. Reopen and save affected playlist links to use the new grant.
+1. Pick **Apple Music** or **Spotify** and your connected account. Connect one first in **Sources** if needed.
+2. Under **Choose what to bring**, pick **Liked Songs** (Apple Music: **Library songs**), **Playlists**, **Albums** and **Artists**. Liked songs become hearts, albums are hearted, and artists are hearted and followed in **New releases**. **Make playlists in** your media server puts each playlist in your apps. **Choose individual collections** lets you pick single playlists and mark each **Keep in sync**.
+3. Choose **Start import**. Matching runs in the background and shows in Activity. Review only the unsure songs, then see what came over under **Done**.
 
-SSO alone does not grant playlist access. Use native backend reauthentication to consent. Administrators cannot enter another listener's password through this flow. Jellyfin uses its configured service token, checking the listener's target playlist permissions before writing, and does not store listener passwords.
+**Stop moving** stops an import; anything already moved stays.
 
-### Shared playlists
+## For you
 
-The user who links a source playlist owns its source account, refresh schedule and Allstarr management actions. A link with a backend playlist follows that backend's read and edit permissions; a virtual-only link without a backend target stays private to its owner. Backend sharing does not expose the owner's link settings or credentials.
+**For you** is private to your account. It has four tabs.
 
-Each viewer's external tracks use accounts available to that viewer. If no eligible route exists, the track is unavailable for that viewer. Playlist artwork also requires an authorized viewer. Change public/share permissions in your backend client; Allstarr does not keep a separate share list.
+### Mixes
 
-### Activity
+**For you** shows your mixes: **Made for you**, **Moods**, **Your mixes**, **From your services** and a shelf of **New releases**. Mixes refresh every morning.
 
-Activity shows background work and an administrator-only problem inbox. Everyone starts with their own work. Administrators can choose **Everyone** to inspect household work, including system storage verification; the selected scope is remembered in this browser.
+- Open a mix and turn on **Show in my apps** to see it as a playlist in your music apps. **✓ In your apps** confirms it. **Manage in Playlists** removes it. "Your admin hasn't allowed adding mixes" means an administrator turned this off for the household.
+- **Update now** refreshes a mix. Its last songs stay available while it refreshes, and a failed refresh keeps them.
+- **Start a mix** builds your own mix around a song or artist. It appears under **Your mixes**.
+- Each song's menu has **More like this**, **Not for me**, **Don't play this artist** and **Add to library…**.
+- **How this mix is made** explains the recipe: which plays it used, how many songs it looked at, how many it kept, and how many came from your music versus your services.
 
-- **History** explains retained operations using their song or playlist name, source, listener and outcome when that context is available. Green means success, blue means active or scheduled work, amber means waiting or attention, and red means failure. Cancelled and unchecked results stay neutral. Text labels accompany every color. Routine upkeep stays out of History unless it fails. Consecutive identical outcomes within ten minutes collapse into one entry with a count. Expand an entry for its items, result and next step; **Technical details** holds references and reason codes.
-- **Jobs** contains the queue and finished work. Read known progress, retry time and retained attempt history, or open the exact job from a History entry. The latest result represents an operation that recovered after an earlier failure; its earlier attempts remain available. **Cancel job** requests a stop at the worker's next safe point and preserves completed work. Older records may no longer have song details or individual attempts; the page says when those details are unavailable.
-- **Tasks** shows playlist schedules with their last and next run. **Run now** uses the playlist's existing update rules. Administrators also see scheduled Health checks and household backups with links to their settings, plus automatic retention, cache cleanup, library indexing and backfill checks. Maintenance next-check times are approximate; individual kept-copy deletions remain subject to their twenty-four-hour grace period and current references.
-- **Reports** is available to administrators. Filter **New**, **Seen**, **Fixed** or **All**, then open a report to read the listener's note, song, source, client and captured diagnostics when available. Opening it leaves the status unchanged. Select a status and **Save status** to update it; statuses can be changed again. If another administrator changes the report, reload it before saving. **Review match** or **Review lyrics** opens the relevant review when captured song context is available.
+Each recipe draws on your own listening and fills from your services when it runs short. Mood mixes (Chill, Focus, Workout, Party and Sleep) use sound analysis when your administrator has connected AudioMuse, and song tags otherwise; each needs 25 fitting songs to be ready.
 
-The update stream refreshes these views. If it disconnects, Activity shows the reconnect state and checks periodically; reconnecting refreshes the visible work. Errors retain already-loaded records and offer a retry. Activity shows retained operational records and reports; container logs provide additional technical detail.
+### New releases
 
-### Listening preferences
+**New releases** lists new music from artists you follow. Use **Follow more artists** to find artists, or the menu for **Follow my top artists** and **Follow artists from my hearts**. Filter by **Albums**, **EPs** or **Singles**. Open a release for **Add to apps** or **Dismiss release**. Just Dropped collects new releases every Friday.
 
-Open your name in the desktop sidebar, or **More → Listening preferences** on a small screen. These choices belong to your signed-in backend user and apply in both Jellyfin and Subsonic clients. **All** permits every content rating. **Hide clean/edited versions** hides edited versions while keeping naturally clean, explicit and unknown ratings. **Clean only** requires positive clean evidence and withholds unknown ratings, including local recordings. A household restriction or administrator lock cannot be loosened by a listener.
+### Your taste
 
-The **[A]** external and **[E]** explicit title markers can be toggled independently; both default to on. Personal choices override household defaults. **Reset to household defaults** removes your choices and follows the latest defaults again. Reload client search results, playlists or queues to see updated presentation.
+**Your taste** shows what Allstarr has learned from your listening. Under **Steer your mixes**, tap a style or artist to hear more or less of it, **Today only** or **Until I change it**, or hide it. **Private listening (pause learning)** stops learning without losing what it knows. **Reset taste** starts again. **See the details** shows recent (**Lately**) and long-term (**Usually**) preferences.
 
-**Playback start** offers **Fast start**, **Balanced** (the default), and **Best quality**. Fast start prefers the eligible lossless source with the quickest recent audio start. Balanced prefers the highest measured quality when its recent median start is three seconds or less, then favors a quick lossless source. Best quality prefers the highest measured quality. An already cached copy can improve replay quality immediately. All choices respect source use modes, account access, and the household audio-quality ceiling. Administrators set the household default in **Settings → General**; listeners can override it here.
+### Recap
 
-Allstarr opens one source first. If audio has not started after two seconds, or six seconds with Best quality, it also tries the next eligible source. The first audio response wins and the unused candidate is canceled. Recent playback and source Test measurements inform selection; when no measurements exist, configured source priority decides.
+**Recap** shows your plays, top songs and artists, and listening streaks for **Last 7 days**, **Last 30 days**, **This year**, **All time** or **Past years**. Listening time is estimated from song lengths.
 
-Use the up and down buttons in **Lyrics source order** to choose which available sources your music apps try first. A saved source choice for the song takes precedence, then **Kept LRC** stays first. The remaining sources follow your order. Automatic lookup can try up to four eligible remote sources together; a lower-priority answer gives earlier sources a short, 1.5-second window to respond. An earlier source's plain lyrics can win over a later source's timed lyrics. Genuine word timing wins over line timing, then plain text, when priority is equal. Your order applies only to your listener account and still requires enabled sources and authorized accounts. Resetting preferences restores the latest household order as well as your display defaults.
+### Import listening history
 
-Administrators can optionally set **Challenge solver URL** in **Settings → Network** to their own FlareSolverr or Byparr service, such as `http://flaresolverr:8191`, and use **Test** to check it. LAN and container addresses are supported. The LyricsPlus binimum mirror uses it only after a Cloudflare check is detected; other sources keep their normal connection. **Solver timeout** defaults to 60 seconds (10–180). Clearance cookies and the solver's browser identity stay in memory until expiry; clearing the URL turns this feature off.
+Open **For you → Recap → Bring in your history → Import history** and choose one or more files. Allstarr reads exports from Spotify (request **Extended streaming history** in Spotify's privacy settings), Apple (request a copy of your Apple Media Services information and import the ZIP), Last.fm, ListenBrainz, Maloja and Koito. Files can be up to 500 MB unless your administrator set a lower limit.
 
-**Media server lyrics** can be moved with the same controls. If they win, the music app receives the media server's original lyric response, including its language and timing details.
+Review each file's preview before you confirm it. Imports run in the background and never scrobble, download music or create hearts. Imported plays appear in Recap at their original dates. **Use imported history** in **Your taste** decides whether they shape your long-term taste; it is on by default. Deleting an import removes its plays.
 
-**Kept LRC** reads lyrics beside a verified household kept copy, including copies saved under a custom kept root or from an account that is now disconnected. Creating or reusing a kept copy also tries to save missing lyrics using household sources and preferences. Accessible kept lyrics enabled for automatic use are checked before remote lookups, after any saved source choice for the song. Kept LRC stays fixed at the top of the order controls. Allstarr checks the listener's account and file ownership; missing or unreadable sidecars fall through to another source. Reading a sidecar never changes the audio or lyrics file.
+## Lyrics
 
-To fix a song's lyrics, open its match details and select **Wrong lyrics?**. Preview each available source, then select **Use this source for this recording**. This saves a source preference, including a plain-text source when you prefer it; it does not freeze the words. If that source becomes unavailable or disabled, Allstarr uses the normal source order until it returns.
+Music apps get lyrics from the sources your administrator set in **Settings → Music sources → Lyrics**, tried in that order. The order can include lyrics saved next to kept copies and your media server's own lyrics.
 
-**SpicyLyrics** is an optional lyrics source. Open its page in **Integrations → Services**, follow **Get a free API key**, and connect your own server key as a Personal or Shared account. The key is stored encrypted. Its **Test** accepts a Spotify track link, URI or ID without a Spotify account. Automatic lookup needs a verified Spotify identity for the recording; otherwise it falls back to another source. Results can contain word timing, line timing or plain text. WebUI previews show the answering catalogue and any community contributor credits beside the lyrics.
+To fix a song's lyrics, open it in **Matches** and choose **Wrong lyrics?**. Preview each source, then choose **Use this source for this recording**. This saves a source, not the words; if the source goes away, Allstarr goes back to the normal order. Administrators can save the choice for **Only me** or the **Household**. **Use household default** or **Use automatic selection** removes a saved choice.
 
-SpicyLyrics responses stay in the bounded lyrics cache for at most thirty days. They are not saved as permanent kept lyrics or included in lyrics exports. Other eligible sources can still supply those sidecars.
+Sources, their order and how each one works are in [lyrics sources](operations/lyrics.md).
 
-A personal choice overrides the household choice. **Use household default** removes your personal choice. Administrators can preview shared or public sources and save a household preference for listeners without a personal choice; **Use automatic selection** removes it. If the words or choice change while the picker is open, it reloads them for review before another save. Play or match a new song and reload its details if lyric choices are not available yet.
+## Favorites and kept songs
+
+Hearting a service song in your app saves it to your favorites. By default Allstarr also saves a permanent copy (a kept copy) using an account you can use, so the song keeps playing even if that account is later disconnected. A song already in your library is not downloaded again, and a copy someone else in the household already kept is reused.
+
+Your saved service songs show in your app's favorites views (Jellyfin favorites, Subsonic starred lists), next to your library favorites. Removing the heart cancels pending work and releases your hold on the copy. When nothing holds a kept copy any more, it is deleted after a 24-hour grace period. Hearting it again in that time keeps it.
+
+With the default setting, hearting never puts music in your media-server library, retags files or sends a love to Last.fm. To add a song to the library, use [To library](#to-library).
+
+## Scrobbling
+
+Connect Last.fm, ListenBrainz, multi-scrobbler or Koito in **Sources → My accounts**. Each listener connects their own. Songs streamed through Allstarr are always scrobbled; songs from your own library are scrobbled only if your administrator turned that on.
+
+Listens that couldn't be sent show at the top of **My accounts**. **Retry all** sends them again; **Reconnect saved account** fixes an expired sign-in first. If a listen may already have arrived, check the service's history and choose **Already in history** or **Retry**. **Confirm destination** picks the account for older listens. Queued listens never move to a different account on their own.
+
+Delivery and repair are in [scrobble delivery and recovery](operations/scrobbling.md).
+
+## Activity
+
+**Activity** shows what Allstarr has been doing for you.
+
+- **History** lists finished work by song or playlist, with its source and result. Routine upkeep shows only when it fails. Open an entry for its details and next step.
+- **Plays** lists what you played, where it played from and how long it took to start. Filter by **Played**, **Stopped**, **Problems** or **Slow starts**. Open a play for **Wrong song?**, **Look for it again**, **Report a problem** or **Copy diagnostics**.
+
+Administrators also see **Jobs** (running, waiting, failed and finished work, with **Cancel job…**), **Tasks** (playlist schedules, health checks and backups, with **Run now**) and **Reports**. **Mine** and **Everyone** switch between your work and the household's.
+
+## Listening settings
+
+<a id="listening-preferences"></a>
+
+Open your name in the sidebar, or **More → Listening settings** on a phone. These choices are yours and work in both Jellyfin and Subsonic apps. Changes save as you make them.
+
+- **Explicit songs:** **All**, **Hide clean/edited versions** (keeps naturally clean, explicit and unrated songs) or **Clean only** (also hides songs whose rating isn't known). An administrator can lock you to Clean only.
+- **Mark external songs** shows **[A]**; **Mark explicit songs** shows **[E]**. Both are on by default.
+- **Playback start:** **Fast start** prefers the quickest lossless source, **Balanced** (the default) favors quality when songs still start within about three seconds, **Best quality** always prefers the highest quality.
+- **Quality limit** can be lower than the household's limit, not higher.
+- **Your music libraries**, shown when there are several, picks the libraries your mixes and autoplay draw from.
+- **Reset to household defaults** drops your choices.
+
+Reload search results, playlists or queues in your app to see changes.
+
+Other settings for you are under **Settings**: **Appearance** (theme on this device), **Adding to the library** (your own file naming, quality and tags for library copies) and **Alerts** (where Allstarr tells you when your own accounts need attention, by ntfy, Discord or webhook).
+
+## Report a problem
+
+Use **Report a problem** in the sidebar, on Home's now-playing card, in a playlist song's details, in Matches, or on a play in Activity. Choose what went wrong (**Won't play**, **Can't seek**, **Wrong song**, **Wrong lyrics**, **Wrong details** or **Something else**) and add a short note with the app and what you tried. Leave out passwords, tokens and private links.
+
+A report started from a song includes its details, such as the saved match and where it played from. Reports stay inside Allstarr for your administrator. Reporting doesn't change a match or lyrics by itself.
+
+## For administrators
+
+### First setup
+
+1. Start the stack and open the dashboard.
+2. Under **Connect your media server**, choose **Jellyfin** or **Subsonic**, enter its address and sign in as a media-server administrator. The password is discarded. The connection is saved in the data folder and Allstarr restarts.
+3. Sign in and work through **Set up Allstarr**. Mark each step **Reviewed, continue** or **Skip for now**; progress is saved for your account. **Finish setup** skips the remaining optional steps. Reopen it any time from **Settings → Backups and health → Walk through setup again**, or **Continue setup** on Home. Nothing is reset.
+4. Connect services in **Sources** and set their order in **Settings → Music sources**.
+5. Set the address listeners use in **Settings → Apps → Music-client address**, so **Connect apps** can show it.
+6. Test ordinary library playback in a music app before adding playlists or services.
+
+Upgrading from version 2: the setup guide has a step to review your previous settings before anything is imported. See [legacy `.env` import](operations/legacy-env-import.md).
+
+### Sources
+
+<a id="integrations"></a>
+
+**Sources** has two tabs.
+
+- **Services** lists every service Allstarr can use: built-in ones, public ones and installed extensions. Filter by **Needs attention**, **In use**, **Off** or **All**. **Add extension** installs an extension from a catalog, or from a download link with its SHA-256 checksum, and lets you review its access before you enable it.
+- **Accounts** lists every saved account. Listens that couldn't be scrobbled show at the top, and **Shared provider hearts** sits below the list.
+
+A service is something Allstarr can talk to. An account is a saved sign-in for a service, with who may use it. Extensions add services.
+
+Open a service to see:
+
+- **Use this source**: **Everyone** sets the household default; each listener can override it under **Just you**.
+- **Last 30 checks**, and under **Automatic routing**, any pause after repeated failures with **Resume now**. Other sources keep playing during a pause.
+- **Settings, accounts and tests**: **Connect account**, **Test connection**, **Measure start time** and any **Server settings**.
+
+Opening a page never runs a check; **Check now** does.
+
+To connect a service:
+
+1. Open it in **Sources → Services**.
+2. Choose **Connect account**, or fill its **Server settings** if it has some.
+3. Pick the smallest audience that needs it: **Personal** for one listener, or **Shared** for everyone.
+4. Save, then test it.
+
+Saved passwords and keys are never shown again. Leaving a secret field blank while editing keeps the saved one.
+
+A listener's own Personal account is used before a Shared one. Listeners manage their own Personal accounts; administrators manage Shared accounts and can assign a Personal account to a listener. Listeners can connect their own accounts unless you turn off **Listeners can connect their own accounts** in **Settings → Music sources**.
+
+**Edit access** changes an account's audience. Sharing an account lets everyone use it, and its service limits. Making it Personal again stops new use but can't take back audio already played. More in [configuration](operations/configuration.md).
+
+Some services have their own setup:
+
+- **Apple Music** has a three-step checklist: connect the Apple Music account, sign in for playback with the same Apple account, then **Test playback**. See [Apple setup](operations/apple-download-provider.md).
+- **SpicyLyrics** needs a free key: choose **Get a free API key**, then **Connect account**.
+- Extensions that need a verified sign-in show a **Sign in** step on their account. See the [extension SDK](extensions/sdk-v1.md).
+
+**Shared provider hearts** links a Jellyfin profile and a Subsonic profile that belong to the same person, so hearts on service songs apply to both. Both must have signed in before. Review the names and profile codes before you confirm; matching names alone don't prove it's the same person. The first link combines existing hearts and can't be undone here. Everything else stays separate.
 
 ### Settings
 
-Settings owns deployment behavior, cache policy, maintenance, backup and restore. Source credentials and matching controls stay in Integrations.
+Settings saves as you change it. Settings marked **Restarts Allstarr** restart it when saved. **Find a setting** at the top searches every setting. Each page says whether it affects **Just you** or **Everyone**.
 
-In **Settings → Storage → Audio limits**, administrators can set the audio-cache ceiling (2 GiB by default), provider streams per listener (6), and concurrent media conversions (2). These limits apply to new work without restarting. Existing streams can finish. The audio limit is separate from the metadata, artwork and response-file cache limits; it also includes temporary read-ahead for original downloads. Cleanup removes the least recently used eligible audio while preserving files being served, kept music, downloaded copies and media-server files. Older cache files without verified ownership remain protected and count toward the limit.
+**Sound quality**
 
-When a limit is reached, new provider requests receive **503** with **Retry-After** instead of waiting indefinitely. Retry shortly; if the audio cache stays full, increase its ceiling or review storage. Native media-server streaming continues through its usual path. See [audio capacity and cleanup](operations/storage.md#audio-capacity-and-cleanup).
+- **Audio quality** is the household ceiling. **What each source sends** shows what each service is asked for and what it actually delivered.
+- **Playback start for everyone** is the default listeners start from.
+- **Prefer your own music when unsure** favors your library among matches that aren't certain. It never raises a match's confidence.
 
-In **Settings → Backups**, administrators can see the last verified database backup, its size, the next run and any failure. Daily backups start enabled at **03:00 UTC**. The schedule form controls the time, destination folder and retention: 14 daily copies, eight weekly copies and ten manual copies by default. **Back up now** queues a background snapshot; wait for completion before downloading it. Unsaved edits stay in the form when status refreshes. If another administrator changes the schedule, reload the server values before saving again.
+**Music sources**
 
-Backups include the database and encryption keys, so keep downloaded ZIP files private. Audio and other mounted files need separate backups. An optional destination must already exist inside the container; mount synchronized storage before choosing it. Existing archives stay in their original folder when the destination changes. Restore requires a separate confirmation and takes effect on restart. See [backup and restore details](operations/storage.md).
+- Tabs **Search**, **Downloads**, **Streaming**, **Playlists** and **Lyrics** each hold a source order. Drag to reorder; **Sort by score** orders sources by their measured score. Your library always plays first when it has the song.
+- **Lyric translation**: **Translate lyrics for apps** and an optional LibreTranslate address.
+- **Listeners can connect their own accounts** is on by default. Turning it off stops new listener accounts; existing ones keep working.
 
-### Scheduled health checks
+**Library**
 
-Open **Settings → Health** as an administrator. Checks start off. For Jellyfin, Health uses the server API key already saved in Setup. Save the monitoring settings, then choose **Run now** or enable the schedule. No extra Jellyfin user or listener sign-in is required. A saved administrator user token is not accepted as a server API key. The default interval is 30 minutes; **Run now** also works with scheduling off.
+- **Libraries to use** picks which media-server libraries Allstarr reads. Changes apply without a restart.
+- [Adding to your library](#adding-to-your-library) settings sit here too.
+- **Downloads**: **Just the song** or **Whole album**.
+- **Imported playlists** and **Folders** hold playlist matching and download paths.
 
-Jellyfin checks are read-only: server connection, library search, song details, a bounded original-audio sample, a far byte range, artwork and lyrics. If the query finds no song, another native library sample can be used and the result identifies that fallback. Missing samples, artwork, lyrics or range facts remain **Not checked**, with partial coverage shown separately. The check does not create listening sessions, favorites or playlists. Music-app sign-in and listener actions remain manual checks; provider diagnostics are in **Integrations → Services**. These server checks do not establish that an individual music app or provider played successfully.
+**Apps**
 
-Subsonic deployments retain the optional listener-based check because their protocol has no shared server API-key convention. That mode requires an existing dedicated non-administrator listener and saves its access encrypted. Its checks cover provider search, playback, seeking, lyrics, original downloads and temporary favorite/playlist actions. Saving permanently marks that listener as synthetic, excluding its playback from history, recommendations and scrobbles and suppressing automatic downloads from test favorites. Temporary-state cleanup survives restart. Earlier Jellyfin listener checks remain visible in history; new Jellyfin runs use the server API key, and the previous Health credential is retired after its temporary items are cleaned up.
+- **Client API for apps** lets signed-in apps use Allstarr's extra features, such as song details, synced lyrics and mixes. It is off by default. See the [client API](api/README.md).
+- **Music-client address** is the address listeners use in their apps. **Connect apps** shows it.
+- **Browser apps** lists browser origins allowed to call Allstarr.
 
-An optional webhook receives a JSON alert after the same step fails twice consecutively and a recovery message when it passes again. Unchecked steps do not claim recovery. The payload contains the protocol, step, state, and time. The webhook address is encrypted; leave its field blank to retain it. Removing or replacing it stops pending retries to the old address. Ordinary completed results are retained for 30 days, while unfinished cleanup stays available.
+**Mixes and discovery**
 
-## Connect a source
+- **AudioMuse** connects sound analysis. Choose **Edit connection** and enter its address and API key. Mood mixes and **Your sound** in Your taste use it. Sound-based Instant Mix and the OpenSubsonic sonic-similarity calls also need the `development` release profile.
+- **Let listeners add mixes to their apps** is on by default.
+- Similar-song fallbacks from Last.fm and ListenBrainz, used when a service has no suggestions.
 
-1. Open **Integrations → Services** and select the Service.
-2. Read its capabilities and current readiness.
-3. Open **Configuration** for operator-managed fields, or use **Connect account** for encrypted user/shared credentials.
-4. Choose the smallest audience that needs access.
-5. Save and test the connection.
-6. Confirm its capability appears ready before changing Routing.
+**History and scrobbling**
 
-Sensitive values are never returned to the browser after saving. Leaving a secret field blank while editing keeps the saved secret unless the form explicitly says otherwise.
+- **Scrobble songs from your own library** is off by default. Leave it off if your media server already scrobbles them, so each play counts once.
+- **Activity history** sets how long Activity keeps records.
 
-Each source's **Use source** controls choose Automatic, Manual only, or Off for you. Administrators can also set the household default. Personal choices affect only your listener account; **Use household default** removes that source's personal override. An administrator's deployment-wide disabled-source restriction still applies.
+**People and sign-in**
 
-Manual-only sources stay out of automatic playlist matching, canonical identity linking and fallback. In a match dialog, enter an artist and title under **Find a different match**, then select **Search** to include available manual-only sources and pin an exact result. Refreshes and rematches retain that choice. Turning the source off retains the pin but makes it unavailable; any previously verified normal routes can still play.
+- **Listeners** lists everyone with their recent plays. Open a listener to turn on **Clean only, locked**, or, when trusted listeners may add songs, **Adds to the library without approval**. **See their activity** opens their plays.
+- **Explicit songs for everyone** sets the household filter.
+- **Media-server access** (Jellyfin) keeps playlist sync and library scans working when no one is signed in. **Change access**, then **Verify access** with a Jellyfin administrator sign-in; this restarts Allstarr. On Subsonic, each listener grants access themselves.
+- **Playlist editing** shows how many listeners allowed it, and a **Household fallback** sign-in for those who haven't.
+- **Single sign-on** connects an OpenID Connect provider. **Save and restart** applies it. See [OIDC login](operations/webui-access.md).
+- **Network** shows which networks can reach the dashboard. These are set in Compose or `.env`.
 
-**ArtistGrid** is a built-in, account-free source that defaults to Manual only and can be turned off per listener. Its catalog contains individual tracker versions rather than streaming-service identities, so Automatic is unavailable. Search with the artist's name and an optional song title. Supported Pillows, Pixeldrain, Google Drive and Froste audio links appear as selectable songs, as do direct HTTPS audio files ending in .mp3, .m4a, .flac, .wav, .ogg or .aac on public hostnames. Direct files must return audio or binary content; local network targets and redirects to a different host are blocked. Each pin identifies its exact source link; moving spreadsheet rows or reordering links does not select a different version. A removed link becomes unavailable until you choose a replacement. ArtistGrid currently supplies streaming rather than permanent downloads.
+**Alerts**
 
-Provider songs retain available release dates, credits, genres, identifiers, label and rights information. Audio format, bitrate, size, sample rate, bit depth and channel count use measured playback or verified download facts before provider declarations. Later song details and search results reuse saved measurements without downloading audio to fill metadata. Unknown dates and audio values remain absent; gain appears only when supplied or present in the delivered file. Virtual paths use readable artist and album folders with a short identity suffix, while offline download names remain distinct for repeated titles and discs.
+**Open problems** lists what needs attention now. **Household alerts** sends disk-space and health problems to ntfy, Discord or a webhook; listeners add their own channels for their accounts. **Low disk space** sets the warning and critical limits. Use **Send test** in a channel's menu to check it.
 
-External songs, albums and artists use real artwork when available. Missing artwork uses a square raster cover of the provider's icon, including installed extension icons, or a letter tile when no icon exists. The same covers appear in Jellyfin, Subsonic and dashboard rows; native library artwork keeps its existing behavior.
+**Storage and speed**
 
-Copies of the same album release share one row when catalog identifiers, UPC or a complete recording list establish equivalence. An existing library or saved album keeps its identity. Different editions remain separate. When both explicit and clean editions appear, their names include **(Explicit)** and **(Clean)**; a lone edition keeps its ordinary name. The existing **[A]** marker still identifies external items.
+- **Song cache**: **Cache played songs** (on by default), **Maximum audio cache (GiB)** (2 GiB by default) and **Keep cached songs for (hours)** (72 by default).
+- **Speed**: **Provider streams per listener** (6 by default), **Concurrent media conversions** (2 by default) and **Search wait for music services (ms)**.
+- **Advanced: cache times, file checks and cleanup** holds cache times, **Saved-file verification** and cache cleanup.
 
-ArtistGrid's alternate titles also work in music-app search. For example, searching for **Communicate Ariana Grande** can find **Diva Shit [V1]** while keeping that version's own title and duration. Alternate titles improve search relevance without changing recording match scores or combining different versions.
+These limits apply to new work without a restart. When a limit is reached, new service requests get a busy answer instead of waiting forever; music from your library is not affected. See [audio capacity and cleanup](operations/storage.md).
 
-ArtistGrid uses the tracker's file date for the song date and keeps leak dates, version notes, quality descriptions and original filenames in the overview. Eras provide album grouping. A tracker quality label alone does not establish the delivered codec or container.
+After copying a stopped installation's whole data folder, **Saved-file verification** shows progress checking the kept and downloaded files, and lets you retry. Follow it in **Activity → Everyone → Jobs**. Changed or missing files stay unavailable; verification never replaces their contents.
 
-**Monochrome** is a built-in, account-free streaming fallback, enabled by default after other streaming sources. It serves lossless FLAC; high resolution is not guaranteed, and lossy quality settings leave this source unavailable. Automatic playback reuses a verified Monochrome track identity or makes one bounded lookup against the recording's existing title, artist and ISRC. Only a unique, playable exact ISRC match is accepted. Current Monochrome Tracks IDs are separate from Tidal IDs, so a Tidal ID alone cannot establish a route. There are no additional Monochrome requests during catalog search. Manual only permits explicitly selected Monochrome routes; Off disables them. The source's connection check and Test panel can use the sample from its public test fixtures. Seeking uses verified byte ranges when available, otherwise the existing duration guidance and progressive cache.
+**Backups and health**
 
-## Import listening history
+See [Backups and health](#backups-and-health).
 
-Open **For you → Recap → Listening history from other services → Import history** and choose one or more export files. Allstarr accepts Spotify Extended Streaming History audio JSON or ZIP exports, and Last.fm, ListenBrainz, Koito, and Maloja JSON, JSONL, or ZIP exports. CSV is not supported. Request Spotify's extended history from its privacy page; ordinary account data may omit the audio history needed here.
+**Advanced**
 
-The default file limit is 500 MiB, or a lower administrator-configured limit. Spotify ZIP processing reads the audio history files in order and ignores podcasts and audiobooks. Expanded ZIP content is limited to 1 GiB and 1,024 entries. Review the source, dates, plays, skips, unknown rows, duplicates, and retention exclusions before confirming. For multiple files, uploads run one at a time and one combined preview lists each file; failed or unsupported files are skipped. **Import all** confirms successful previews, and **Cancel** removes newly uploaded previews. Counts of songs are summed per file. The imports then run as durable work with overall and per-file progress. Files selected together appear as one expandable group with a single confirmed Delete; this grouping is saved only in this browser and can be lost if browser storage is cleared or unavailable. Deleting an import cancels active work and removes its retained events and owned upload.
+- **Look up songs on your other services** asks link services such as song.link where else a song lives, so playback and lyrics can use your other services. It is off by default. Optional **MusicLink API key** and **song.link API key** sit with it.
+- **Install extensions from outside your home network** is off by default.
+- **Challenge solver URL** points to your own FlareSolverr or Byparr service, for example `http://flaresolverr:8191`, for sources behind Cloudflare checks. **Test** checks it. **Solver timeout** defaults to 60 seconds.
+- **Music server** shows the media-server type. It is set by the deployment.
 
-Imports never scrobble, download music, or create hearts. **For you → Your taste → Use imported history for my taste** is on by default and lets retained imported listens contribute only to **Usually**. Imports do not affect **Lately**. Imported **Usually** preferences halve over 180 days, with each completed import’s newest listen anchored to its completion time; live **Usually** preferences halve over 30 days. Heavy Rotation uses live listening from the last 30 days and, when fewer than 30 live plays are available, also uses the imported history’s latest 30-day listening window. Other generated mixes use eligible retained history. Recap always uses original listening dates, independently of the taste toggle. Turning it off, pausing taste, deleting the import, or removing events through retention removes their influence on the next taste calculation.
+The full list of what lives where, and what can still be set from Docker, is in [configuration](operations/configuration.md).
 
-Retention controls how long events remain; a reporting period only changes what you see. A completed import receipt cannot recreate events later removed. Re-upload the original export if you need to import those events again.
+### Adding to your library
 
-## Add and review a provider playlist
+Allstarr needs write access to the music folder Jellyfin reads. Set it up in **Settings → Library → Where added songs go**. **Available** means a folder can be chosen; it does not mean new songs go there. When there are several, choose **Add songs here** on the one you want. The chosen folder shows **Adds go here**. With only one accessible folder and no choice saved, Allstarr uses it.
 
-1. Open **Library → Playlists → Import playlist**. Choose **Public Spotify playlist** and paste a link, URI or ID without connecting an account. For a private playlist or **Liked Songs**, select your connected Spotify account; you can browse its playlists or paste a link. You can also use **Browse a Spotify user** with a user link, URI or ID to choose one of that profile’s public playlists. Each selected playlist is imported separately. Public imports and profile discovery never use a saved account.
-2. Choose **Import once** to freeze the source snapshot, or **Keep in sync** to follow source changes. Sync defaults to daily, with hourly and weekly schedules available. A frozen import never reads later source changes, even if its source account is disabled.
-3. Choose **New playlist** to create a destination once, or **Existing playlist** to select an exact backend playlist. Future updates use that destination; Allstarr does not adopt a playlist just because its name matches. Changing destinations leaves the old playlist's songs in place and starts ownership tracking separately for the new destination.
-4. Turn on **Keep downloaded copies** to queue permanent downloads of resolved external songs using your authorized accounts. It defaults to off; local songs are already permanent. An unavailable or unresolved song is reported in Activity without rolling back the import.
-5. Open **Mappings** for ambiguous or unresolved tracks. Accept only a candidate that represents the same recording; use interactive search when automatic candidates are wrong.
+If the container can't reach the folder, mount it once, for example `- /path/to/music:/music` in Compose. The host path must be the music folder on the machine running Allstarr; if Jellyfin runs elsewhere, make that folder reachable from the Allstarr host first. Choose **Set path**, enter the **Path inside Allstarr** (for example `/music`), then **Use this folder**. Allstarr checks it can write there with a temporary file and removes it.
 
-ListenBrainz public playlists also accept a playlist link or ID without an account. A personal ListenBrainz account can supply generated playlists; **Follow newest** keeps a linked generated playlist on its newest edition. Last.fm imports require your Personal account and support Loved tracks, Top tracks for the offered periods, and similar tracks. Shared Last.fm accounts cannot supply a personal library. These sources use the same destination, retention, and sync controls described above.
+`Promotion__AllowedBase` is optional. When set, approved folders must sit below that absolute directory inside the container. Paths that climb out of it and symbolic links are rejected. Allstarr writes songs only inside approved folders.
 
-In playlist details, **Actions → Export missing songs as CSV/JSON** downloads the current source songs with no playable local or external route. Source order and duplicate songs are preserved, with positions starting at 1. Exports include title, artists, album, ISRC, duration, match state, and the source track ID when known. Account and backend identifiers are excluded.
+The rest of the page is a profile: the **Household default**, which listeners follow, or **Your profile**.
 
-Metadata follows the link's sync settings. Turning name or description sync off preserves the destination's current values. Jellyfin supports name, description and artwork; Subsonic supports name and description through its [playlist update API](https://opensubsonic.netlify.app/docs/endpoints/updateplaylist/), and reports artwork as unsupported. New Subsonic destinations use the ID returned by the backend, so an older playlist with the same name is left alone. If the backend cannot confirm the new destination's ID, creation is reported as unsupported; choose an existing playlist instead.
+- **Default unit**: **Whole album** or **Just the song**. **Remove kept copy** releases the kept copy once Jellyfin has the song.
+- **Who adds without approval**: **Admins and trusted listeners**, or **Admins**. Everyone else sends a request, which appears in **To library** for you to **Approve and add** or **Decline…**.
+- **How added files are named**: **Autodetect** reads the chosen folder and resets the pattern to what it finds, but only when at least five songs are sampled and all of them match. Otherwise your pattern stays and you choose one yourself. Review the examples, then **Use this naming pattern**. Changing the folder or pattern needs this confirmation again.
+- **Quality of added songs** and **Tags and extras** set the lowest quality to add, the hi-res ceiling, lossy fallback, MusicBrainz tags, cover art, synced lyrics and ReplayGain.
 
-The **Mapped** view preserves source order among tracks visible under your listening preferences. Local matches play from the media server, external `[A]` tracks use eligible providers in configured streaming order, and unresolved songs remain visible with a clear not-playable status. The backend playlist contains matched local songs so it remains useful when opened directly.
+Before adding, Allstarr checks the destination again:
 
-Each source account and playlist has one link per backend; public sources have a separate account-free scope for each owner. Repeating the same import reuses that link; a different import behavior, new/existing destination choice, or selected existing destination is rejected with instructions to edit or remove the current link. Removing a link leaves its backend playlist intact.
+- If a matching album folder already has a different year, choose the existing year or the source's year. Only the folder name changes; the tags don't.
+- If the existing album's layout doesn't fit the chosen pattern, adding stops until you choose a pattern that fits.
+- A song missing a year or track number that the pattern uses can't be added. Allstarr first fetches the release's details; if they're still missing, pick a release with complete details or a pattern without those fields. It never drops the year or uses track `00` silently.
 
-**Remove from my apps** is available for your playlists that Allstarr keeps in sync with Jellyfin, including Spotify playlists linked to a Jellyfin playlist you already had. It stops syncing and removes the Jellyfin playlist from your music apps. Spotify, your saved matches, and your settings stay. The confirmation lists any songs you added in Jellyfin. **Undo**, or importing the same playlist again with **Keep in sync**, restores its name, description, artwork, and song order, including those extra songs, then resumes syncing. Songs that are no longer available in Jellyfin are skipped, and the message tells you how many.
+Kept songs stay playable and downloadable while adding to the library isn't set up. Existing kept copies keep their file names; naming changes apply to new copies. Ownership and safety rules are in [adding songs to the backend library](operations/storage.md).
 
-This action is unavailable when another playlist link uses the same Jellyfin playlist, even for another listener. Playlists imported once and Jellyfin playlists without a source link do not offer it.
+### Cached and kept songs
 
-When synchronization removes stale songs, it removes only memberships it added. A song already present before an import stays yours, including a former synchronized song that you manually add back after its removal.
+- **Cached** songs are temporary copies of songs played from services. They are kept for 72 hours after their last play by default, and the size limit can remove them sooner. Allstarr can fetch them again. A song appears in Cached once its download finishes, even if you skipped it.
+- **Kept** songs are permanent copies: from hearts, from playlists with **Keep downloaded copies**, or because someone chose **Keep**. Cache cleanup never removes them.
 
-An accepted match is reusable across playlist sync, search, playback, and later rematches. A matched local item is returned as the complete native backend object. A genuinely external item keeps a stable virtual identity and provider label.
+In **Library → Cached**, choose **Keep** on a song to move it to Kept without downloading again. **Cache settings** opens **Settings → Storage and speed**.
 
-After a matcher update, newer accepted decisions are published into the current playlist generation automatically. Manual choices stay authoritative. A routed song can still need review: its source popover says **Suggested source — check recording**. Accepted automatic choices say **Automatically matched**, while pinned sources say **Manually chosen**. These labels describe recording confidence; they do not certify current provider availability.
+In **Library → Kept**, **Add to library** starts an addition; choose **Only this song** or **Add album to library**. **Stop keeping** removes only your own Keep. Hearts, playlists and other listeners' Keeps still protect the file; when the last one goes, the 24-hour grace period starts. **Delete kept copy…** removes it for everyone.
 
-Automatic matching keeps confidence separate from routing preference. Among candidates that pass the acceptance threshold and artist-evidence checks, the local Jellyfin or Subsonic match wins; external matches follow **Integrations → Routing → Streaming priority**, even when a later provider scores higher. Confidence selects valid matches, not the preferred playback provider. Saved external mappings are rescored against current metadata and local candidates, never automatically promoted to 100%. Matching uses all source artist credits consistently; an exact lead artist, title, album, and close duration can support a threshold-qualified match when secondary credits differ. Title explanations distinguish case folding, punctuation/diacritic normalization, ignored release decorators, and fuzzy comparison. Live, acoustic, instrumental, remix, clean, and radio-edit differences stay available for manual review but are never selected automatically from field scores, even with a lower acceptance threshold; manual choices remain authoritative.
+Neither folder is in the database backup. Back up kept and downloaded music yourself; see [storage operations](operations/storage.md).
 
-When no candidate qualifies for acceptance, tentative selection uses the local window (7 confidence points by default), then configured provider windows of 5, 3, and 1 point. These windows never increase confidence or turn a tentative result into an accepted match.
+### Backups and health
 
-Interactive search also checks the song title for sources that missed the title and artist query. It keeps those alternatives alongside the first results, including when the first query fills its result limit.
+**Backups.** **Settings → Backups and health** shows the last verified backup, its size and the next run. Daily backups are on by default at **03:00 UTC**, keeping 14 daily, 8 weekly and 10 manual copies. Change **Backup time (UTC)**, **Daily copies**, **Weekly copies**, the **Backup folder** and **Manual copies** in **Backup schedule**. **Back up now** makes a snapshot in the background; wait for it to finish before you **Download** it.
 
-Interactive search orders results by their full recording match score. Equal scores use streaming priority, then the same full album edition as the source. A stronger recording match still ranks above a preferred source. Scores can be equal when the title, artist, version and duration checks agree; different artwork does not change them. Standard and deluxe releases can contain the same recording. Matches supported only by title and artist show **Limited recording metadata** and have a lower score ceiling until duration or strong album evidence supports them. Missing facts stay unknown, and exact recording identifiers can provide stronger evidence. Known explicit source songs reject known clean edits during scoring; unknown explicit status stays unknown. Manual choices remain authoritative.
+A backup holds the database and encryption keys, so keep downloaded ZIP files private. Audio, kept songs, the track cache and installed extensions are not included; back them up separately. A different backup folder must already exist inside the container; mount synchronized storage first.
 
-**Reported audio** shows the format facts available for that individual result, such as FLAC, bit depth and sample rate. Missing facts say **Audio format not reported**. These facts do not establish every available rendition or guarantee the delivered format, and a service's advertised maximum does not increase the recording match score. **Playback start → Best quality** uses the existing eligible route measurements when choosing playback.
+To restore, choose **Restore…** on a saved backup or **Restore from a file**, then type `RESTORE`. **Back up the current state first** is offered. The restore takes effect when Allstarr next restarts; it doesn't restart on its own. Details are in [storage operations](operations/storage.md).
 
-Use **Library → Mappings → Rematch all** when library metadata or matching behavior has changed. The preview includes resolved, review, and unresolved tracks; active manual pins, rejections, and manually selected provider routes are protected. Allstarr replaces current automatic decisions in durable batches of 25 and yields between batches. Earlier decisions remain available as audit history. A new matching-algorithm version schedules the same gradual replacement automatically for stale decisions.
+**Health checks.** Scheduled checks are off until you turn on **Enable scheduled checks**. They run every 30 minutes by default; **Run now** works with scheduling off.
 
-Mapping tabs separate current decisions by purpose: **Manual** contains saved match choices, **Rejected** contains saved rejections, **Automatic** contains matcher-accepted results, **Tentative** contains viable candidates below the acceptance threshold, **Review** contains ambiguous near-ties, and **Unresolved** contains tracks without a safe candidate.
+- On Jellyfin, checks use the server API key saved during setup and are read-only: server connection, library search, song details, an audio sample, seeking, artwork and lyrics. They don't create sessions, favorites or playlists.
+- On Subsonic, checks need a dedicated non-administrator **Health listener**. Saving marks that listener as a test listener for good: its plays are left out of history, mixes and scrobbles.
 
-Mappings show songs with a stored title and artist. Incomplete entries stay hidden until their labels are available; audio measurements enrich an existing song's duration and format rather than creating additional rows. Saved match choices remain intact.
+An optional **Webhook URL** gets an alert when the same step fails twice in a row, and a message when it passes again. App sign-in and service checks are separate: service checks are in **Sources**.
 
-A personal match choice takes precedence over a household choice, which takes precedence over automatic matching. Listeners edit their own choices; administrators can also select **Household** in the match dialog. Both layers remain visible, including the choice underneath the effective one. Household choices still require each listener to have access to the selected library or provider account. An unavailable target falls back to an authorized automatic route.
+Under **Advanced: media and playlist tests, request logging**, **Test media pipeline** and **Test playlist readiness** run one-off checks.
 
-**Clear personal** reveals the household choice, or automatic matching when no household choice exists. **Clear household** leaves any personal choice in place. **Clear and rematch** clears only the selected layer before recalculating automatic evidence. Ordinary rematching and matcher upgrades preserve both layers, including candidate-specific rejections; a rejection of one candidate does not block a different accepted match. Changes use the displayed revision; refresh after a conflict before trying again. Choices survive source refreshes and restart, retain their history, and never alter the shared canonical catalog.
+### Problem reports
 
-A high confidence score can still appear under **Review** when two distinct, same-priority recordings are within the ambiguity guard; Allstarr will not guess between them. A 100% row under **Manual** that says **Accepted** is already accepted—the tab identifies who made the durable decision, not whether it passed the threshold.
-
-Virtual playlists do not silently mutate the source service. Backend materialization adds only resolved local items unless the workflow explicitly says it will download or write back.
-
-Import behavior is fixed when a playlist is created so a later settings edit cannot accidentally turn a frozen copy into a live source link. Song retention can be enabled later; Allstarr immediately queues the already-imported downloadable songs and applies the same policy to later linked updates. Kept files remain permanent until they are explicitly released or removed and must be backed up separately from database archives.
-
-Playlist synchronization retains ownership of songs whose removal has not been confirmed by a backend read and retries their removal on the next sync. Once removal is confirmed, a manually re-added copy stays manual. On upgrade, older inactive memberships are treated as completed removals, preserving songs you manually added back. If a backend creates a destination or adds songs before a later write step fails, retry uses the same destination. Only additions confirmed by a backend read become sync-owned; an unavailable verification read leaves uncertain songs untouched.
-
-## Cached versus kept
-
-- Playback caching is on by default. A **cached** track is a disposable copy retained for **72 hours after its last use**. The size limit can evict it sooner, and Allstarr can fetch it again.
-- A **kept** track was explicitly retained and is managed separately from cache cleanup.
-- A database backup does not contain either audio folder. Back up kept/downloaded media according to your own storage policy.
-
-In **Library → Cached → Track cache behavior**, choose **Cache played songs** and set the retention hours. Existing saved choices survive upgrades. The older **Permanent** setting means **Do not cache playback**; requested managed downloads go to Kept, but ordinary playback does not automatically keep every song. Hearts, Keep and retained playlists protect their copies independently of this setting.
-
-If playback succeeded but Cached is empty, check playback caching, the provider route and Activity. A track appears after its background download finishes and publishes a complete file, even if you skip it before then. Incomplete or failed files are not listed.
-
-Players such as Finer and Feishin can play provider music through Jellyfin's File or Download URLs. These requests also cache the complete original audio when playback caching is enabled, including when the player starts with a small byte range or seeks ahead. Their background fill can finish after that request closes. Original audio and playback-converted audio have separate cache entries. Songs already stored in your media-server library stay on the native path and do not create extra Allstarr cache copies.
-
-A playlist with **Keep downloaded copies** retains its current external songs as household kept recordings. Existing copies are shared with hearts and other retained playlists. Turning the option off, deleting the link, or publishing a source update that removes a song releases only that playlist's interest. The final release starts the same twenty-four-hour grace period used by favorites. Re-enabling the option protects existing copies immediately and queues fresh work for missing ones. In-progress downloads keep their original jobs across refreshes and reordering when the source song and selected recording are unchanged. Changing the source or recording replaces the obsolete work.
-
-Administrators can choose **Keep** on an indexed cached track. This moves the verified audio and its lyrics to Kept, the permanent place. Cache can be cleared automatically. A usable cached file needs no new download; missing or invalid audio uses the normal download flow. Activity shows the result. Existing household copies are reused even if the original source account is disconnected. **Release Keep** removes only your explicit Keep interest. Hearts, retained playlists and other listeners' Keeps still protect the file; the final release starts a twenty-four-hour grace period. Bulk removal follows the same rule for your Keeps.
-
-## Favorites
-
-By default, hearting an external song records your favorite immediately and queues a durable kept copy using an authorized provider account. The heart-action preference can instead save only the heart or use the library-addition approval flow; it affects future hearts. An accessible recording in your backend library avoids a redundant download. An existing household kept copy is reused without contacting its original provider. Otherwise, verified audio is attached to the recording and becomes available to everyone in your household. Its title, artists, album and duration remain available when the original provider account is disconnected. Native songs, albums, artists, and playlists do not trigger favorite downloads.
-
-Jellyfin favorite views and Subsonic `getStarred` / `getStarred2` include your saved provider favorites alongside native favorites. The list uses saved display metadata and stays available when the provider is offline. Older favorites recover their display details in the background, reusing household kept metadata first and otherwise looking up the provider at a limited rate. A “Saved track”, “Saved album”, “Saved artist” or “Saved playlist” label remains while recovery is pending or the provider is unavailable. Pending or failed download work does not hide a heart. Subsonic exposes songs, albums and artists; Jellyfin also exposes playlists. Native folder and artist filters remain scoped to the backend.
-
-The default Keep action does not place music in the backend library, retag existing files, trigger library rescans or send Last.fm love requests. The Add to library preference uses the separate approved library-addition workflow. Removing a favorite cancels its pending work, clears its favorite state and releases that heart’s reference to the household copy. Once its last managed reference is released, the household kept file has a twenty-four-hour grace period before removal. Another listener’s heart or another retained reference protects it. Hearting it again protects an existing copy immediately and cancels its cleanup.
-
-Administrators can use **Integrations → Accounts → Shared provider hearts** to link an existing Jellyfin profile and Subsonic profile belonging to the same person. Both profiles must have previously signed in. Review the names, library labels and profile codes before confirming; matching names alone do not establish a link. Allstarr still exposes only the deployment's selected music protocol.
-
-Linking combines their existing provider hearts once, then hearts and un-hearts apply to both profiles. The initial union cannot be undone here. The card shows actual progress and offers a retry if combining saved hearts stops; a retry continues from saved progress. Disabling or changing one profile does not remove hearts already shared with the other available profile. Native backend favorites stay in their own libraries. Library permissions, source accounts, history, ratings, playlists, scrobbling and settings remain separate. Linking does not copy private display metadata or use the other profile's credentials to download music.
-
-## Listening and scrobbling
-
-Connect Last.fm, ListenBrainz, multi-scrobbler or Koito under **Integrations → Accounts**. ListenBrainz uses your user token; multi-scrobbler and Koito also need their complete ListenBrainz-compatible listening address. Addresses and tokens are encrypted with the account. HTTPS is required outside private networks. See [target setup](operations/scrobbling.md#connect-a-destination) for the exact address formats.
-
-Scrobbling works independently of optional listening-history retention. **Integrations → Accounts → Scrobble delivery** keeps retries, expired credentials and uncertain sends visible after playback stops. Reconnect the saved account before retrying. If the destination may already have accepted a listen, check its history and choose **Already in history** or explicitly retry the missing listen.
-
-Qualified completed plays are retained for personal stats and taste by default unless your listening-history policy explicitly disables retention. Scrobbling remains independent. Taste uses retained qualified listening and eligible personal heart signals; pausing learning preserves the profile without adding observed signals. Local-library permissions and clean-only preferences still apply to discovery results. See [For you](#for-you) and [history imports](#import-listening-history) for the separate imported-history controls.
-
-Scrobbling saves the destination account and revision with accepted playback, then keeps one delivery receipt per completed listen and target. Retries preserve the original metadata and time. A changed or revoked account needs explicit repair; queued listens never move to a replacement account automatically. If a send may have been accepted but its result was lost, Allstarr holds it for review unless the destination safely deduplicates retries. See [scrobble delivery and recovery](operations/scrobbling.md) for status and repair.
+**Activity → Reports** collects listeners' reports. Filter **New**, **Seen**, **Fixed** or **All**. Opening a report doesn't change its status; pick a **Status** and **Save status**, or **Mark fixed**. **Review match** and **Review lyrics** open the song's match or lyrics when the report has them. Saving a match from a new report marks it **Seen**.
 
 ## Safety and recovery
 
-- Keep the dashboard on a trusted network or behind an authenticated proxy.
-- Use a separate provider account when a service allows it, and grant the smallest audience required.
-- Preview imports, legacy configuration, playlist changes, and destructive maintenance actions.
-- Create and download a verified database-and-key-ring backup in Settings → Backups before an update.
-- Back up deployment configuration, retained media, extension packages, and optional provider sessions separately; see [storage operations](operations/storage.md).
+- Keep the dashboard on a trusted network or behind an authenticated proxy. See [dashboard access](operations/webui-access.md).
+- Use a separate service account where a service allows it, and share accounts with the smallest audience.
+- Review previews before imports, restores and bulk removals.
+- Make and download a verified backup in **Settings → Backups and health** before an update.
+- Back up your configuration, kept music, extension packages and optional service sign-ins separately; see [storage operations](operations/storage.md).
 
-For exact procedures, see [configuration](operations/configuration.md), [storage and recovery](operations/storage.md), and [client compatibility](operations/client-compatibility.md).
-
-Visible dashboard pages reconcile changes automatically within about five seconds, including updates made in other tabs or by background work. Returning to a tab or reconnecting refreshes its data while retaining the displayed rows. Refresh buttons show progress only when you use them; automatic refreshes stay quiet. Unsaved form edits are preserved.
-
-Home’s stored-song totals count unique existing cache paths and active managed kept files, including a separately configured Kept folder. Removed or missing files are excluded.
-
-## Adding to your library
-
-Allstarr needs write access to the music folder Jellyfin reads. In **Settings › Library › Where added songs go**, an administrator can see the available folders. **Available** means a folder can be chosen; it does not mean it is the destination for new songs. When several folders are available, choose **Add songs here** on the one you want. The selected folder shows **Adds go here**. Your profile can use its own destination or inherit the household choice; with no saved choice, Allstarr uses the only accessible folder automatically.
-
-If the container cannot reach the folder, mount it once, for example with `- /path/to/music:/music` in Compose. The host path must be the music folder on the machine running Allstarr. If Jellyfin is on another machine, make that folder accessible to the Allstarr host first. Choose **Set path**, enter its path inside Allstarr (for example `/music`), then choose **Use this folder**. Allstarr verifies write access with a temporary probe file and removes it.
-
-`Promotion__AllowedBase` is optional. When configured, approved folders and mappings must stay below that absolute directory inside the container. Approval rejects path traversal and symbolic links. Allstarr writes songs only inside approved folders.
-
-Kept songs remain playable and downloadable while adding to the library is not set up. Quality and naming settings remain available. Existing kept copies retain their filenames; naming changes apply to new copies.
-
-Under **How added files are named**, choose **Autodetect** to rescan the selected folder and reset edited folder and filename settings to its detected pattern. Autodetect only applies a pattern when at least five songs are sampled and every sampled path matches. Mixed layouts or unavailable detection preserve your edited pattern and require an explicit choice. Review the folders and filenames, then choose **Use this naming pattern**. Changing the destination or editing the pattern requires confirmation again. Existing profiles also need this one-time confirmation.
-
-If a matching album already has a different year in its folder name, the add preview requires you to choose the existing folder year or the source's year before adding or requesting songs. This changes folder naming only; the music's date tags stay unchanged. If the existing album layout cannot be reproduced by the selected pattern, adding stops until you choose a matching naming pattern in Settings. The server checks the destination again before queueing and placing files.
-
-Songs missing a year or track number used by the chosen pattern cannot be added. Allstarr first retrieves the selected release’s metadata; if it still cannot verify those values, choose a release with complete metadata or explicitly select a pattern without those fields. It does not silently drop a year or use track `00`. The same checks run before queueing and placing files.
+For exact procedures, see [configuration](operations/configuration.md), [storage operations](operations/storage.md) and [client compatibility](operations/client-compatibility.md).
