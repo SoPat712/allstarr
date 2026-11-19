@@ -1,4 +1,5 @@
 using allstarr.Core.Capabilities;
+using allstarr.Core.ClientApi;
 using allstarr.Core.Music;
 using allstarr.Core.Protocols;
 using allstarr.Models.Settings;
@@ -204,7 +205,7 @@ public sealed class UpcomingSongPreparation(
 }
 
 public sealed class UpcomingTrackPreparation(
-    IBackendLibraryAccessResolver access, ProviderStreamOpener opener) : IUpcomingTrackPreparation
+    IBackendLibraryAccessResolver access, ProviderStreamOpener opener, IServiceScopeFactory? scopes = null) : IUpcomingTrackPreparation
 {
     public async Task PrepareAsync(ProtocolExecutionContext context, string itemId)
     {
@@ -218,6 +219,21 @@ public sealed class UpcomingTrackPreparation(
             viewer.VerifiedBackendPrincipalId, viewer.Principal, context.CorrelationId, context.Deadline,
             context.CancellationToken, context.Client)
         { RequestedItemId = itemId, IsPreparation = true, PreparationQuality = context.PreparationQuality };
+        // A service song's lyrics are looked up beside its audio, so they show as soon as it starts.
+        if (scopes != null && itemId.StartsWith("ext-", StringComparison.Ordinal))
+            using (ExecutionContext.SuppressFlow())
+                _ = Task.Run(() => PrepareLyricsAsync(execution, itemId));
         await opener.PrepareAsync(execution, itemId);
+    }
+
+    private async Task PrepareLyricsAsync(ProtocolExecutionContext execution, string itemId)
+    {
+        try
+        {
+            await using var scope = scopes!.CreateAsyncScope();
+            await scope.ServiceProvider.GetRequiredService<ItemLyricsReader>()
+                .ReadAsync(new DefaultHttpContext { RequestServices = scope.ServiceProvider }, execution, itemId);
+        }
+        catch { /* Optional preparation never changes playback. */ }
     }
 }

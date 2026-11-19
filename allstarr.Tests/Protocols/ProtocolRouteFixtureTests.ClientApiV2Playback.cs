@@ -81,6 +81,35 @@ public sealed partial class ProtocolRouteFixtureTests
         preparation.Verify(item => item.PrepareAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>()), Times.Once);
     }
 
+    [Fact]
+    public async Task ClientApiV2_PrefetchLooksUpTheUpcomingSongsLyricsToo()
+    {
+        var asked = new TaskCompletionSource<ProtocolExecutionContext>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var lyrics = new Mock<IProtocolLyricsResolver>();
+        lyrics.Setup(item => item.GetRichLyricsAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<allstarr.Models.Domain.Song>(),
+                It.IsAny<string>(), It.IsAny<ProtocolLyricsSources>()))
+            .Callback((ProtocolExecutionContext context, allstarr.Models.Domain.Song _, string _, ProtocolLyricsSources? _) => asked.TrySetResult(context))
+            .ReturnsAsync((RichLyrics?)null);
+        using var factory = V2PlaybackFactory(configure: services =>
+        {
+            services.RemoveAll<IProtocolLyricsResolver>();
+            services.AddSingleton(lyrics.Object);
+            services.AddSingleton<IBackendLibraryAccessResolver>(provider =>
+                new SignedInAccess(ActivatorUtilities.CreateInstance<BackendLibraryAccessResolver>(provider), provider));
+        });
+        using var client = CreateClientApiClient(factory);
+        client.DefaultRequestHeaders.Authorization = new("Bearer", "listener-token");
+        await SeedV2DetailsAsync(factory, "listener", "known", personal: true);
+        Mock.Get(factory.Services.GetRequiredService<IProtocolProviderGateway>())
+            .Setup(item => item.GetSongAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "known"))
+            .ReturnsAsync(new allstarr.Models.Domain.Song { Id = "ext-deezer-song-known", Title = "Stored song", Artist = "Artist", ExternalProvider = "deezer", ExternalId = "known" });
+        await ResolveV2Playback(client, "ext-deezer-song-known", "lossless", purpose: "prefetch", diagnostics: factory);
+
+        var context = await asked.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.True(context.IsPreparation);
+        Assert.Equal("ext-deezer-song-known", context.RequestedItemId);
+    }
+
     [Theory]
     [InlineData("High", null, "household", 256000)]
     [InlineData("BestAvailable", "DataSaver", "listener", 96000)]
@@ -308,6 +337,21 @@ public sealed partial class ProtocolRouteFixtureTests
         var text = await response.Content.ReadAsStringAsync();
         Assert.True(response.StatusCode == HttpStatusCode.OK, text + "\n" + diagnostics?.Services.GetRequiredService<V2PlaybackErrors>().Last);
         return JsonNode.Parse(text)!;
+    }
+
+    // Background work acts as the signed-in listener, as it does for a listener with a stored media server sign-in.
+    private sealed class SignedInAccess(IBackendLibraryAccessResolver inner, IServiceProvider services) : IBackendLibraryAccessResolver
+    {
+        public Task<BackendLibraryAccess> ResolveAsync(ProtocolExecutionContext context, CancellationToken cancellationToken = default) =>
+            inner.ResolveAsync(context, cancellationToken);
+
+        public async Task<BackendLibraryAccessContext> ResolveUserAsync(Guid userId, CancellationToken cancellationToken = default) =>
+            new(new ProtocolExecutionContext(ProtocolKind.Jellyfin, "primary", "listener",
+                await services.GetRequiredService<allstarr.Core.Identity.BackendIdentityResolver>().ResolveAsync(new("Jellyfin", "listener"), cancellationToken),
+                "fixture", DateTimeOffset.UtcNow.AddMinutes(1), cancellationToken), new(true, []));
+
+        public Task InvalidateAsync(ProtocolKind protocol, string backendInstanceId, string backendPrincipalId) =>
+            inner.InvalidateAsync(protocol, backendInstanceId, backendPrincipalId);
     }
 
     private static ProtocolFactory V2PlaybackFactory(bool lossy = false, Action<IServiceCollection>? configure = null,
