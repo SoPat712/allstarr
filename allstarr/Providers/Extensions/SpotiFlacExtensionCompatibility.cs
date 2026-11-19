@@ -93,7 +93,7 @@ public static class SpotiFlacExtensionCompatibility
         if (types.Contains("metadata_provider"))
         {
             capabilities.Add(Capability("Metadata", hasSettings, requiresSettings,
-                "searchTracks", "getTrack", "searchAlbums", "getAlbum", "searchArtists", "getArtist"));
+                "searchTracks", "getTrack", "searchAlbums", "getAlbum", "searchArtists", "getArtist", "getArtistAlbums", "getArtistTracks"));
         }
         if (types.Contains("lyrics_provider"))
             capabilities.Add(Capability("Lyrics", hasSettings, requiresSettings, "fetchLyrics"));
@@ -182,9 +182,11 @@ public static class SpotiFlacExtensionCompatibility
         }
         if (metadata != null)
         {
-            var hooks = new[] { "searchTracks", "getTrack", "searchAlbums", "getAlbum", "searchArtists", "getArtist" }
+            // An artist's albums and top tracks come from the albums and top_tracks its getArtist answers with.
+            var hooks = new[] { "searchTracks", "getTrack", "searchAlbums", "getAlbum", "searchArtists", "getArtist", "getArtistAlbums", "getArtistTracks" }
                 .Where(hook => exports.Contains(hook) ||
-                    exports.Contains("customSearch") && (hook.StartsWith("search", StringComparison.Ordinal) || hook == "getTrack"))
+                    exports.Contains("customSearch") && (hook.StartsWith("search", StringComparison.Ordinal) || hook == "getTrack") ||
+                    exports.Contains("getArtist") && hook is "getArtistAlbums" or "getArtistTracks")
                 .ToArray();
             if (hooks.Length == 0) capabilities.Remove(metadata);
             else metadata["hooks"] = new JsonArray(hooks.Select(hook => (JsonNode?)JsonValue.Create(hook)).ToArray());
@@ -1135,6 +1137,36 @@ public static class SpotiFlacExtensionCompatibility
             snapshotVersion: _sfFirst(value, ['snapshotVersion','snapshot_version']), biography: value.biography || value.description || null,
             providerIds: _sfProviderIds(value), lastFmUrl: _sfFirst(value, ['lastFmUrl','last_fm_url']), genres: _sfGenres(value) };
         }
+        // SpotiFLAC's getArtist answers with the artist's albums and top tracks too, so one answer serves all three reads.
+        var _sfArtistAnswers = {}, _sfArtistAnswerOrder = [];
+        function _sfRawArtist(id) {
+          id = String(id);
+          var known = _sfArtistAnswers[id];
+          if (known && Date.now() - known.at < 60000) return known.value;
+          var value = typeof _spotiflacExtension.getArtist === 'function' ? _spotiflacExtension.getArtist(id) : null;
+          if (!value) return null;
+          if (!Object.prototype.hasOwnProperty.call(_sfArtistAnswers, id)) _sfArtistAnswerOrder.push(id);
+          _sfArtistAnswers[id] = { at: Date.now(), value: value };
+          while (_sfArtistAnswerOrder.length > 32) delete _sfArtistAnswers[_sfArtistAnswerOrder.shift()];
+          return value;
+        }
+        function _sfArtistPage(request, names, mapper) {
+          var raw = _sfRawArtist(request.id) || {};
+          var artist = _sfArtist(raw);
+          var all = [];
+          [raw, raw.artist || {}].forEach(function(source) {
+            names.forEach(function(name) { if (all.length === 0 && source[name]) all = _sfArray(source[name]); });
+          });
+          var offset = Math.max(0, Number(request.page && request.page.cursor) || 0);
+          var limit = request.page && request.page.limit || 50;
+          // Items listed under an artist often leave the artist out; they are that artist's.
+          var items = all.slice(offset, offset + limit).map(function(item) {
+            var mapped = mapper(item);
+            if (mapped && (!mapped.artists || mapped.artists.length === 0) && artist.name) mapped.artists = [{ id: artist.id || null, name: artist.name }];
+            return mapped;
+          }).filter(function(item) { return item && item.id; });
+          return { items: items, nextCursor: offset + limit < all.length ? String(offset + limit) : null, isPartial: false, snapshotVersion: null };
+        }
         function _sfSearchFilter(filter) {
           var declared = (_sfManifest.searchBehavior || {}).filters;
           var singular = filter.replace(/s$/, '');
@@ -1192,7 +1224,11 @@ public static class SpotiFlacExtensionCompatibility
           searchAlbums: function(request) { return _sfSearch(request, 'albums', _sfAlbum); },
           getAlbum: function(request) { return _sfAlbum(typeof _spotiflacExtension.getAlbum === 'function' ? _spotiflacExtension.getAlbum(request.id) : null); },
           searchArtists: function(request) { return _sfSearch(request, 'artists', _sfArtist); },
-          getArtist: function(request) { return _sfArtist(typeof _spotiflacExtension.getArtist === 'function' ? _spotiflacExtension.getArtist(request.id) : null); },
+          getArtist: function(request) { return _sfArtist(_sfRawArtist(request.id)); },
+          getArtistAlbums: function(request) { return _sfArtistPage(request, ['albums', 'releases'], _sfAlbum); },
+          getArtistTracks: function(request) {
+            return _sfArtistPage(request, ['top_tracks', 'topTracks'], function(item) { return _sfRememberTrack(_sfTrack(item), item); });
+          },
           searchPlaylists: function(request) { return _sfSearch(request, 'playlists', _sfPlaylist); },
           getPlaylistTracks: function(request) {
             var raw;

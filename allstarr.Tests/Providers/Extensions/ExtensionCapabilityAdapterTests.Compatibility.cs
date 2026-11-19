@@ -426,6 +426,51 @@ public sealed partial class ExtensionCapabilityAdapterTests
         Assert.DoesNotContain("fixture", error.Message, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task ArtistPage_ReadsAlbumsAndTopTracksFromTheArtistAnswer()
+    {
+        const string script = """
+            var calls = 0;
+            registerExtension({
+              getArtist:function(id) {
+                calls++;
+                return {id:id,name:'Starship',biography:'answer ' + calls,
+                  albums:[{id:'album-1',name:'Knee Deep in the Hoopla',year:1985,total_tracks:10},
+                          {id:'album-2',name:'No Protection',artists:[{id:'artist-2',name:'Starship & Friends'}],total_tracks:10},
+                          {id:'album-3',name:'Love Among the Cannibals',total_tracks:11}],
+                  top_tracks:[{id:'track-1',name:"Nothing's Gonna Stop Us Now",artists:'Starship',album_id:'album-2',album_name:'No Protection',duration_ms:270000}]};
+              }
+            });
+            """;
+        var (sandbox, manifest) = CompatibilitySandbox(script);
+        var adapter = new ExtensionMetadataCapabilityAdapter(sandbox, manifest);
+        var id = new ProviderExternalResourceId(manifest.Id, ProviderResourceKind.Artist, "artist-1");
+
+        var artist = (await adapter.GetArtistAsync(Context(manifest.Id), new(id))).RequireValue();
+        var first = (await adapter.GetArtistAlbumsAsync(Context(manifest.Id), new(id, new(2)))).RequireValue();
+        var rest = (await adapter.GetArtistAlbumsAsync(Context(manifest.Id), new(id, new(2, first.NextCursor)))).RequireValue();
+        var tracks = (await adapter.GetArtistTracksAsync(Context(manifest.Id), new(id, new()))).RequireValue();
+
+        Assert.Contains("getArtistAlbums", manifest.Capabilities.Single(item => item.Kind == ProviderCapabilityKind.Metadata).Hooks);
+        Assert.Contains("getArtistTracks", manifest.Capabilities.Single(item => item.Kind == ProviderCapabilityKind.Metadata).Hooks);
+        Assert.Equal("Starship", artist.Name);
+        Assert.Equal(["Knee Deep in the Hoopla", "No Protection"], first.Items.Select(album => album.Title));
+        Assert.Equal("2", first.NextCursor);
+        Assert.Equal(["Love Among the Cannibals"], rest.Items.Select(album => album.Title));
+        Assert.Null(rest.NextCursor);
+        // Albums listed without credits are the artist's; ones that name their artists keep them.
+        Assert.Equal("Starship", Assert.Single(first.Items[0].Artists).Name);
+        Assert.Equal("artist-1", first.Items[0].Artists[0].ArtistId!.Value);
+        Assert.Equal("Starship & Friends", Assert.Single(first.Items[1].Artists).Name);
+        var track = Assert.Single(tracks.Items);
+        Assert.Equal("Nothing's Gonna Stop Us Now", track.Title);
+        Assert.Equal(TimeSpan.FromSeconds(270), track.Duration);
+        // One answer from the service serves the artist, every album page and the top tracks.
+        Assert.Equal("answer 1", artist.Biography);
+        using var again = JsonDocument.Parse(sandbox.InvokeJson("getArtist", """{"id":"artist-1"}""")!);
+        Assert.Equal("answer 1", again.RootElement.GetProperty("biography").GetString());
+    }
+
     private static (ExtensionSandbox Sandbox, ExtensionSdkManifest Manifest) CompatibilitySandbox(string script, string type = "metadata_provider")
     {
         var source = "{\"name\":\"fixture\",\"version\":\"1.0.0\",\"type\":[\"" + type + "\"]}";

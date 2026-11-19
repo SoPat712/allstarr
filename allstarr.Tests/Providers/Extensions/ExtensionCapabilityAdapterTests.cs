@@ -830,7 +830,8 @@ public sealed partial class ExtensionCapabilityAdapterTests
             """;
         var manifest = ExtensionSdkV1.ParseManifest(SpotiFlacExtensionCompatibility.NormalizeManifest(source, script));
         var metadata = Assert.Single(manifest.Capabilities, item => item.Kind == ProviderCapabilityKind.Metadata);
-        Assert.Equal(new[] { "getTrack", "getAlbum", "getArtist" }, metadata.Hooks);
+        // getArtist also answers for the artist's albums and top tracks.
+        Assert.Equal(new[] { "getTrack", "getAlbum", "getArtist", "getArtistAlbums", "getArtistTracks" }, metadata.Hooks);
     }
 
     [Theory]
