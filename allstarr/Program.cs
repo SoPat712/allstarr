@@ -511,6 +511,7 @@ builder.Services.AddScoped<LibraryBackendBrandResolver>();
 builder.Services.AddScoped<LibraryProviderResolver>();
 builder.Services.AddScoped<ItemDetailsReader>();
 builder.Services.AddSingleton<V2LibraryArtists>();
+builder.Services.AddSingleton<V2LibraryAlbums>();
 builder.Services.AddScoped<V2TrackReader>();
 builder.Services.AddSingleton<V2EventStream>();
 builder.Services.AddHostedService(services => services.GetRequiredService<V2EventStream>());

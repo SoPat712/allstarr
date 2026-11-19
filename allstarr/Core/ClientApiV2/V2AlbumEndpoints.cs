@@ -11,7 +11,7 @@ namespace allstarr.Core.ClientApiV2;
 
 /// <summary>Native album reads shared by the standalone route and batch dispatcher.</summary>
 public sealed class V2AlbumEndpoints(V2TrackReader tracks, IProtocolProviderGateway providers, JellyfinProxyService jellyfin,
-    SimilarAlbumsReader similar)
+    SimilarAlbumsReader similar, V2LibraryAlbums? libraryAlbums = null)
 {
     private static readonly IReadOnlySet<string> Includes = new HashSet<string>(StringComparer.Ordinal) { "tracks" };
     private static readonly IReadOnlySet<string> Views = new HashSet<string>(StringComparer.Ordinal) { "more-by-artist" };
@@ -44,13 +44,15 @@ public sealed class V2AlbumEndpoints(V2TrackReader tracks, IProtocolProviderGate
         var parsed = LocalLibraryService.ParseExternalResource(source);
         V2AlbumSummary? album;
         IReadOnlyList<string> songIds = [];
+        Album? service = null;
         if (parsed.isExternal)
         {
             var metadata = await providers.GetStoredAlbumAsync(execution, parsed.provider!, parsed.externalId!) ??
                 await providers.GetAlbumAsync(execution, parsed.provider!, parsed.externalId!);
             if (metadata == null) return new(404, null);
             album = Summary(source, metadata);
-            if (included.Contains("tracks")) songIds = metadata.Songs.Where(song => execution.Policy?.Includes(song) != false).Select(song => song.Id).ToArray();
+            service = metadata;
+            songIds = metadata.Songs.Where(song => execution.Policy?.Includes(song) != false).Select(song => song.Id).ToArray();
         }
         else
         {
@@ -79,10 +81,19 @@ public sealed class V2AlbumEndpoints(V2TrackReader tracks, IProtocolProviderGate
             }
         }
         var response = new V2AlbumResponse(album);
+        V2TracksResponse? read = null;
         if (included.Contains("tracks"))
         {
-            var read = await tracks.ReadAsync(http, execution, songIds, false);
+            read = await tracks.ReadAsync(http, execution, songIds, false);
             response = response with { Tracks = read.Tracks, Missing = read.Missing };
+        }
+        // The listener's own album this one is, or could be. Its songs are read only when the library has an album of
+        // this name, so the answer is the same with and without include=tracks.
+        if (service != null && libraryAlbums != null)
+        {
+            var (library, couldBe) = await libraryAlbums.IdentifyAsync(http, execution, this, service,
+                async () => (read ??= await tracks.ReadAsync(http, execution, songIds, false)).Tracks);
+            response = response with { LibraryAlbum = library, CouldBe = couldBe };
         }
         if (requested.Contains("more-by-artist"))
         {

@@ -144,8 +144,44 @@ public sealed record V2AlbumSummary(
     public bool? Explicit { get; init; }
 }
 
+/// <summary>A library album a service album is, or could be.</summary>
+public sealed record V2LibraryAlbumRef(
+    [property: JsonPropertyName("id")] string Id,
+    [property: JsonPropertyName("title")] string Title,
+    [property: JsonPropertyName("artwork")] V2Artwork? Artwork)
+{
+    [JsonPropertyName("libraryId"), Description("The media server album, which library album pages open by.")]
+    public string? LibraryId => V2Ids.LibrarySource(Id, V2IdKind.Album);
+
+    [JsonPropertyName("year"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? Year { get; init; }
+
+    [JsonPropertyName("songCount"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? SongCount { get; init; }
+
+    [JsonPropertyName("by"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull),
+     Description("On libraryAlbum, why they are the same: `songs` (songs of this album are the listener's own songs on it) or `album` (same artist, title, edition and song count).")]
+    public string? By { get; init; }
+
+    [JsonPropertyName("ownedSongs"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull),
+     Description("With `by: songs`, how many of this album's songs are on the library album.")]
+    public int? OwnedSongs { get; init; }
+
+    [JsonPropertyName("reason"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull),
+     Description("On couldBe, what agrees and what differs, as a short sentence to show.")]
+    public string? Reason { get; init; }
+}
+
 public sealed record V2AlbumResponse([property: JsonPropertyName("album")] V2AlbumSummary Album)
 {
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull), JsonPropertyName("libraryAlbum"),
+     Description("For a service album proven to be an album in this listener's library: that library album.")]
+    public V2LibraryAlbumRef? LibraryAlbum { get; init; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull), JsonPropertyName("couldBe"),
+     Description("For a service album: up to five library albums with the same artist and title that nothing else ties it to, such as another edition.")]
+    public IReadOnlyList<V2LibraryAlbumRef>? CouldBe { get; init; }
+
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull), JsonPropertyName("tracks")]
     public IReadOnlyList<V2Track>? Tracks { get; init; }
 

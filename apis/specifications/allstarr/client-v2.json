@@ -7122,6 +7122,31 @@
           "album": {
             "$ref": "#/components/schemas/V2AlbumSummary"
           },
+          "libraryAlbum": {
+            "type": [
+              "null",
+              "object"
+            ],
+            "anyOf": [
+              {
+                "description": "For a service album proven to be an album in this listener\u0027s library: that library album.",
+                "$ref": "#/components/schemas/V2LibraryAlbumRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "couldBe": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/V2LibraryAlbumRef"
+            },
+            "description": "For a service album: up to five library albums with the same artist and title that nothing else ties it to, such as another edition."
+          },
           "tracks": {
             "type": [
               "null",
@@ -8231,6 +8256,79 @@
           "defaultUnit": {
             "type": "string",
             "description": "\u0060song\u0060 or \u0060album\u0060: what an add button adds unless the listener picks."
+          }
+        }
+      },
+      "V2LibraryAlbumRef": {
+        "required": [
+          "id",
+          "title",
+          "artwork"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "artwork": {
+            "type": [
+              "null",
+              "object"
+            ],
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/V2Artwork"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "libraryId": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "description": "The media server album, which library album pages open by."
+          },
+          "year": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int32"
+          },
+          "songCount": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int32"
+          },
+          "by": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "description": "On libraryAlbum, why they are the same: \u0060songs\u0060 (songs of this album are the listener\u0027s own songs on it) or \u0060album\u0060 (same artist, title, edition and song count)."
+          },
+          "ownedSongs": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "description": "With \u0060by: songs\u0060, how many of this album\u0027s songs are on the library album.",
+            "format": "int32"
+          },
+          "reason": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "description": "On couldBe, what agrees and what differs, as a short sentence to show."
           }
         }
       },
