@@ -96,7 +96,7 @@ public sealed class TasteWarmUpTests
         using var index = new LyricsSearchIndex(database.StorageOptions);
         var lyrics = new LyricsSearchReader(index, factory, access, policies.Object, gateway,
             new Mock<IProviderRouter>().Object, null!, null!, Microsoft.Extensions.Logging.Abstractions.NullLogger<LyricsSearchReader>.Instance,
-            new LyricsSearchChanges(), new RuntimeSettingsChangeSignal());
+            new LyricsSearchChanges(), new RuntimeSettingsChangeSignal(), null!);
         using var disk = new FileMediaApplicationCache(new FileMediaCacheOptions(Path.Combine(database.StorageOptions.DataDirectory, "cache")), clock,
             Microsoft.Extensions.Logging.Abstractions.NullLogger<FileMediaApplicationCache>.Instance);
         using var memory = new MemoryApplicationCache(clock);

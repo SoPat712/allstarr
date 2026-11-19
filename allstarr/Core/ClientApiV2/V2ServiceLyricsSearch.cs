@@ -16,7 +16,7 @@ namespace allstarr.Core.ClientApiV2;
 /// <summary>Finds songs by a lyric line at lyrics services, and the playable song each one is.</summary>
 public sealed partial class V2ServiceLyricsSearch(IHttpClientFactory clients, IApplicationCache cache, V2TrackReader tracks,
     IProtocolProviderGateway providers, IDbContextFactory<AllstarrDbContext> factory,
-    [FromKeyedServices(ListeningLibraries.Key)] IBackendLibraryAccessResolver libraries)
+    [FromKeyedServices(ListeningLibraries.Key)] IBackendLibraryAccessResolver libraries, LyricsSearchOrder order)
 {
     private static readonly TimeSpan ServiceBudget = TimeSpan.FromSeconds(4);
     private static readonly TimeSpan MatchBudget = TimeSpan.FromSeconds(5);
@@ -28,6 +28,8 @@ public sealed partial class V2ServiceLyricsSearch(IHttpClientFactory clients, IA
     private static readonly TimeSpan Kept = TimeSpan.FromMinutes(30);
     // An answer missing a service is kept briefly, so a repeated line is quick without hiding the service for long.
     private static readonly TimeSpan KeptPartly = TimeSpan.FromMinutes(2);
+    // The stored-lyrics search for the same line has usually started the title search that orders these hits.
+    private static readonly TimeSpan OrderWait = TimeSpan.FromSeconds(1);
     private static readonly (string Id, string Name, string Client)[] Services =
     [
         ("neteaselyrics", "NetEase", NetEaseWordLyricsCapabilityAdapter.HttpClientName),
@@ -72,7 +74,12 @@ public sealed partial class V2ServiceLyricsSearch(IHttpClientFactory clients, IA
         var states = Services.Select(service => answers.FirstOrDefault(answer => answer.Service.Id == service.Id) is { Service.Id: not null } answer
             ? new V2ServiceLyricsProvider(service.Id, service.Name, answer.Hits == null ? "unavailable" : "ok")
             : new V2ServiceLyricsProvider(service.Id, service.Name, "off")).ToArray();
-        var result = new Asked(Rank(answers.SelectMany(answer => answer.Hits ?? []), query).Take(limit).ToArray(), states);
+        // Whole-phrase hits, often a song and its covers, are ordered before the answer is kept, so both reads of it agree.
+        var phrase = Normalize(query);
+        var ranked = Rank(answers.SelectMany(answer => answer.Hits ?? []), query).Take(limit).ToArray();
+        var ordered = await order.OrderAsync(execution, ranked, hit => Normalize(hit.Line).Contains(phrase, StringComparison.Ordinal),
+            hit => new(hit.Title, FirstArtist(hit.Artist), false), OrderWait);
+        var result = new Asked(ordered.ToArray(), states);
         await cache.SetAsync(key, result, Complete(result) ? Kept : KeptPartly);
         return result;
     }

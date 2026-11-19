@@ -17,8 +17,11 @@ namespace allstarr.Core.ClientApi;
 
 public sealed class LyricsSearchReader(LyricsSearchIndex index, IDbContextFactory<AllstarrDbContext> factory,
     IBackendLibraryAccessResolver libraries, IEffectiveProviderPolicyResolver policies, IProtocolProviderGateway providers, IProviderRouter router, JellyfinProxyService jellyfin, RecordingKeptFiles kept, ILogger<LyricsSearchReader> logger,
-    LyricsSearchChanges changes, IRuntimeSettingsChangeSignal settings)
+    LyricsSearchChanges changes, IRuntimeSettingsChangeSignal settings, LyricsSearchOrder order)
 {
+    // A title search on the listener's services orders equal hits; the first search for a line may not wait for it.
+    private static readonly TimeSpan OrderWait = TimeSpan.FromMilliseconds(300);
+
     public Task<LyricsSearchResponse> ReadAsync(HttpContext http, ProtocolExecutionContext execution, string query, int limit)
         => ReadAsync(http, execution, query, limit, false);
 
@@ -180,8 +183,13 @@ public sealed class LyricsSearchReader(LyricsSearchIndex index, IDbContextFactor
             Timed("access-filter");
             if (accessible.Count > limit || !result.Truncated)
             {
+                // Hits matching the line about equally well (a song and its covers) are ordered by which one is the listener's or best known.
+                var best = accessible.FirstOrDefault()?.Score ?? 0;
+                var ordered = await order.OrderAsync(execution, accessible, hit => best >= 0.8 && hit.Score >= best - 0.05,
+                    hit => new(hit.Title, hit.Artist, !hit.IsExternal), OrderWait);
+                Timed("order");
                 logger.LogDebug("Lyrics search total: {ElapsedMs:F2} ms; returned {Count}", total.Elapsed.TotalMilliseconds, Math.Min(limit, accessible.Count));
-                return new(accessible.Take(limit).ToArray(), accessible.Count > limit);
+                return new(ordered.Take(limit).ToArray(), accessible.Count > limit);
             }
             take = Math.Min(visibleDocuments.Count, take * 2);
         }

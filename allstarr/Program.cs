@@ -535,6 +535,7 @@ builder.Services.AddScoped<V2ServiceLyricsSearch>();
 builder.Services.AddScoped<ClientListeningHistory>();
 builder.Services.AddSingleton<ClientLibraryAdditions>();
 builder.Services.AddScoped<ItemLyricsReader>();
+builder.Services.AddScoped<LyricsSearchOrder>();
 builder.Services.AddScoped<LyricsSearchReader>();
 builder.Services.AddSingleton<LyricsSearchIndex>();
 builder.Services.AddSingleton<LyricsSearchChanges>();

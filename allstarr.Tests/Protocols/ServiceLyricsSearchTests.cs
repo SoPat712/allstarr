@@ -1,4 +1,5 @@
 using System.Text.Json;
+using allstarr.Core.ClientApi;
 using allstarr.Core.ClientApiV2;
 using allstarr.Core.Identity;
 using allstarr.Core.Protocols;
@@ -70,7 +71,9 @@ public sealed class ServiceLyricsSearchTests
                 ? """{"result":{"songs":[{"name":"Walk","ar":[{"name":"Griff"}],"lyrics":["<b>something in the way that you walk</b>"]}]}}"""
                 : """{"data":{"lyric":{"list":[]}}}""";
         });
-        var search = new V2ServiceLyricsSearch(new Clients(handler), new TestMemoryApplicationCache(), null!, null!, null!, null!);
+        var search = new V2ServiceLyricsSearch(new Clients(handler), new TestMemoryApplicationCache(), null!, null!, null!, null!,
+            new LyricsSearchOrder(null!, new TestMemoryApplicationCache(), null!,
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<LyricsSearchOrder>.Instance));
         var http = new DefaultHttpContext();
         http.Request.QueryString = new QueryString("?q=walk&resolve=false");
         var owner = Guid.CreateVersion7();
