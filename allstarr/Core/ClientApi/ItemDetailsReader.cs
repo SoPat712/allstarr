@@ -426,7 +426,8 @@ public sealed class ItemDetailsReader(
     {
         var result = new Dictionary<string, NativeDetails>(StringComparer.Ordinal);
         if (ids.Length == 0) return result;
-        foreach (var batch in ids.GroupBy(id => Guid.TryParse(id, out _)))
+        // The media server answers at most 100 items a request, so longer lists are asked for 100 at a time.
+        foreach (var batch in ids.GroupBy(id => Guid.TryParse(id, out _)).SelectMany(group => group.Chunk(100)))
         {
             var (body, status) = await jellyfin.GetJsonAsync($"Users/{Uri.EscapeDataString(execution.VerifiedBackendPrincipalId)}/Items",
                 new() { ["ids"] = string.Join(',', batch), ["limit"] = "100", ["enableUserData"] = "true" }, http.Request.Headers, execution.CancellationToken);
