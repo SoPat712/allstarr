@@ -239,6 +239,8 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.Equal(id, addition.GetProperty("id").GetGuid());
         Assert.Equal(V2Ids.Track(recording), addition.GetProperty("itemId").GetString());
         Assert.Equal(V2Ids.TrackSource(source), addition.GetProperty("requestedItemId").GetString());
+        // An app holding only the older id finds its addition by it.
+        Assert.Contains(source, addition.GetProperty("aliases").EnumerateArray().Select(alias => alias.GetString()));
         Assert.Equal("waitingForApproval", addition.GetProperty("state").GetString());
         using var changed = await client.PostAsJsonAsync("/allstarr/v2/library/additions", new { itemId = source, unit = "album" });
         await AssertClientApiError(changed, 409, "conflict");

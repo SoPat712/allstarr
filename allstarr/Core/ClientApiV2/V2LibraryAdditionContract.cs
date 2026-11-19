@@ -20,4 +20,5 @@ public sealed record V2LibraryAddition(
     [property: JsonPropertyName("state")] string State,
     [property: JsonPropertyName("reason")] string Reason,
     [property: JsonPropertyName("libraryItemId"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? LibraryItemId,
-    [property: JsonPropertyName("requestedItemId"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? RequestedItemId);
+    [property: JsonPropertyName("requestedItemId"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? RequestedItemId,
+    [property: JsonPropertyName("aliases"), Description("The older ids of the requested item and the added track, as the media-server routes and v1 spell them, so an app holding those can find its addition.")] IReadOnlyList<string> Aliases);

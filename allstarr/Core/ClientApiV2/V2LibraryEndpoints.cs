@@ -117,10 +117,15 @@ public sealed class V2LibraryEndpoints(MixReader mixes, ReleaseReader releases, 
     private static string TrackId(string id) => id.StartsWith("ext-allstarr-song-", StringComparison.Ordinal) &&
         Guid.TryParse(id["ext-allstarr-song-".Length..], out var recording) ? V2Ids.Track(recording) : V2Ids.TrackSource(id);
 
-    private static V2LibraryAddition Addition(ClientLibraryAddition addition) => new(addition.Id, TrackId(addition.ItemId),
-        addition.Unit, addition.State, addition.Reason, addition.LibraryItemId,
-        addition.RequestedItemId is not { } requested ? null : LocalLibraryService.ParseExternalResource(requested).type == "album"
-            ? V2Ids.Album(requested) : TrackId(requested));
+    private static V2LibraryAddition Addition(ClientLibraryAddition addition)
+    {
+        var itemId = TrackId(addition.ItemId);
+        var requestedItemId = addition.RequestedItemId is not { } requested ? null : LocalLibraryService.ParseExternalResource(requested).type == "album"
+            ? V2Ids.Album(requested) : TrackId(requested);
+        return new(addition.Id, itemId, addition.Unit, addition.State, addition.Reason, addition.LibraryItemId, requestedItemId,
+            new[] { addition.RequestedItemId, addition.ItemId }.OfType<string>().Where(id => id != itemId && id != requestedItemId)
+                .Distinct(StringComparer.Ordinal).ToArray());
+    }
 
     private static async Task<V2Result> ExecuteAsync(Func<Task<V2Result>> action)
     {
