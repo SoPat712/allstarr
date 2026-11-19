@@ -147,8 +147,11 @@ public sealed class V2MeEndpoints(ClientListeningHistory history, ListeningHisto
         var ids = await rowIds.ResolveAsync(execution, itemIds.OfType<string>().Where(id => V2Ids.TryDecode(id, V2IdKind.Track, out _)));
         var owner = execution.RequireActor().EffectiveUserId!.Value;
         var refs = new Dictionary<string, V2RowRefs.Entry?>(StringComparer.Ordinal);
+        // Kept per song and library copy, so a song added to the library since is read again as that copy.
+        string Kept(string source) => source + "\n" + ids[source].LibraryItemId;
         foreach (var source in ids.Keys)
-            if (rowRefs?.Get(owner, source) is { } known) refs[source] = known;
+            if (rowRefs?.Get(owner, Kept(source)) is { } known) refs[source] = known;
+        var kept = refs.Keys.ToHashSet(StringComparer.Ordinal);
         var library = ids.Where(pair => pair.Value.LibraryItemId != null && !refs.ContainsKey(pair.Key)).ToArray();
         var read = await tracks.LibraryRefsAsync(http, execution, library.Select(pair => pair.Value.LibraryItemId!).Distinct(StringComparer.Ordinal).ToArray());
         foreach (var (source, id) in library)
@@ -161,7 +164,8 @@ public sealed class V2MeEndpoints(ClientListeningHistory history, ListeningHisto
         foreach (var (source, entry) in refs)
         {
             if (entry == null) continue;
-            rowRefs?.Set(owner, source, entry);
+            // Only what was just read is kept, so an entry ages out from when it was read, not from when it was last used.
+            if (!kept.Contains(source)) rowRefs?.Set(owner, Kept(source), entry);
             result[source] = (ids[source], entry);
         }
         return result;

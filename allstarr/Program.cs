@@ -532,6 +532,7 @@ builder.Services.AddScoped<LyricsTranslation>();
 builder.Services.AddScoped<V2ArtistLinkEndpoints>();
 builder.Services.AddScoped<V2BatchDispatcher>();
 builder.Services.AddScoped<V2MeEndpoints>();
+builder.Services.AddScoped<V2StatsWarmUp>();
 builder.Services.AddScoped<V2SearchStream>();
 builder.Services.AddScoped<V2SearchEndpoints>();
 builder.Services.AddScoped<V2ServiceLyricsSearch>();

@@ -80,6 +80,13 @@ public sealed class TasteWarmUp(TasteService taste, IDbContextFactory<AllstarrDb
             foreach (var period in new[] { "30d", "7d", "year", "all" })
                 await ReadAsync(async () => await stats.GetAsync(execution, period, null, token, await stats.SavedTimeZoneAsync(user.Id, token)));
             await ReadAsync(() => taste.WarmAsync(user.Id, token));
+            // The app's recap also names each top song's ids, artists and album; those are read here too.
+            await ReadAsync(async () =>
+            {
+                using var scope = scopes.CreateScope();
+                if (execution.Protocol == ProtocolKind.Jellyfin && scope.ServiceProvider.GetService<ClientApiV2.V2StatsWarmUp>() is { } rows)
+                    await rows.WarmAsync(execution, await stats.SavedTimeZoneAsync(user.Id, token), token);
+            });
             await ReadAsync(async () =>
             {
                 using var scope = scopes.CreateScope();

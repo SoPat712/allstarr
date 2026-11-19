@@ -105,7 +105,9 @@ public sealed class V2RowRefs(TimeProvider? clock = null)
 {
     public sealed record Entry(IReadOnlyList<V2Ref> Artists, V2AlbumRef? Album, V2Artwork? Artwork);
 
-    private static readonly TimeSpan Kept = TimeSpan.FromMinutes(30);
+    // A song's artists, album and picture rarely change, and the warm-up reads them again as they age out, so a
+    // listener's own read finds them.
+    private static readonly TimeSpan Kept = TimeSpan.FromHours(12);
     private const int MaximumEntries = 20_000;
     private readonly TimeProvider time = clock ?? TimeProvider.System;
     private readonly ConcurrentDictionary<(Guid, string), (DateTimeOffset At, Entry Entry)> entries = new();

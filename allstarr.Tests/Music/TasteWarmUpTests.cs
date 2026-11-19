@@ -144,7 +144,7 @@ public sealed class TasteWarmUpTests
         time.Advance(TimeSpan.FromSeconds(1));
         foreach (var owner in new[] { recent, boundary })
         {
-            for (var read = 0; read < 10; read++)
+            for (var read = 0; read < 11; read++)
             {
                 Assert.Equal(TimeSpan.FromMilliseconds(100), await time.NextTimerAsync());
                 if (read == 7)

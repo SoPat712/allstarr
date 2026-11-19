@@ -156,6 +156,73 @@ public sealed partial class ProtocolRouteFixtureTests
     }
 
     [Fact]
+    public async Task ClientApiV2_RecapRowsTheWarmUpReadAreNotReadAgainForTheApp()
+    {
+        var upstream = new System.Collections.Concurrent.ConcurrentQueue<string>();
+        var permissions = new Mock<IBackendLibraryPermissionSource>();
+        permissions.Setup(source => source.CreateRequestAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() =>
+            {
+                var request = new HttpRequestMessage(HttpMethod.Get, "http://media.test/UserViews");
+                request.Headers.TryAddWithoutValidation("Authorization", "MediaBrowser Token=\"server-key\"");
+                return request;
+            });
+        using var factory = ClientDetailsFactory(request =>
+        {
+            upstream.Enqueue(request.RequestUri!.AbsolutePath + " " + request.Headers.Authorization);
+            return request.RequestUri.AbsolutePath == "/Users/Me" ? Json(200, """{"Id":"listener"}""") : Json(200, V2LibrarySong);
+        }, services =>
+        {
+            services.RemoveAll<IBackendLibraryPermissionSource>();
+            services.AddSingleton(permissions.Object);
+        });
+        using var client = CreateClientApiClient(factory);
+        var principal = (await factory.Services.GetRequiredService<BackendIdentityResolver>().ResolveAsync(new("Jellyfin", "listener")))!;
+        await using (var db = await factory.Services.GetRequiredService<IDbContextFactory<AllstarrDbContext>>().CreateDbContextAsync())
+        {
+            db.ListeningEvents.Add(new()
+            {
+                Id = Guid.CreateVersion7(),
+                OwnerUserId = principal.UserId,
+                Protocol = "jellyfin",
+                BackendInstanceId = "primary",
+                OccurrenceKey = Guid.NewGuid().ToString("N"),
+                State = ListeningEventState.Completed,
+                ListenedAt = DateTimeOffset.Parse("2026-01-02T03:04:05Z"),
+                UpdatedAt = DateTimeOffset.UtcNow,
+                SourceKind = "protocol",
+                TrackReference = "native1",
+                Title = "Recorded title",
+                Artist = "Recorded artist",
+                Album = "Recorded album",
+                DurationMilliseconds = 120000
+            });
+            await db.SaveChangesAsync();
+        }
+        // The warm-up has no listener request, so it reads the library with the server's own credentials.
+        using (var scope = factory.Services.CreateScope())
+        {
+            var execution = new ProtocolExecutionContext(ProtocolKind.Jellyfin, "primary", "listener", principal, "cache-warm-up",
+                DateTimeOffset.UtcNow.AddMinutes(5), default)
+            { IsReadOnly = true, UseStoredBackendCredentials = true };
+            await scope.ServiceProvider.GetRequiredService<V2StatsWarmUp>().WarmAsync(execution, "America/New_York", default);
+        }
+        Assert.Contains(upstream, call => call.StartsWith("/Users/listener/Items ", StringComparison.Ordinal) && call.Contains("server-key", StringComparison.Ordinal));
+
+        upstream.Clear();
+        client.DefaultRequestHeaders.Authorization = new("Bearer", "listener-token");
+        using var stats = await client.GetAsync("/allstarr/v2/me/stats?period=all&timeZoneId=America/New_York");
+        var text = await stats.Content.ReadAsStringAsync();
+        Assert.True(stats.StatusCode == HttpStatusCode.OK, text);
+        using var body = JsonDocument.Parse(text);
+        var song = Assert.Single(body.RootElement.GetProperty("topSongs").EnumerateArray());
+        Assert.Equal("native1", song.GetProperty("libraryItemId").GetString());
+        Assert.Equal("Library artist", Assert.Single(song.GetProperty("artists").EnumerateArray()).GetProperty("name").GetString());
+        // The app's read needed the media server only to check the listener's token.
+        Assert.DoesNotContain(upstream, call => call.StartsWith("/Users/listener/Items ", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task ClientApiV2_HistoryOfMoreThanOneHundredLibrarySongsReadsEveryTrack()
     {
         // The media server answers at most `limit` items, as Jellyfin does with 100.
