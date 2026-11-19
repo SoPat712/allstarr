@@ -2076,6 +2076,9 @@ public class AdminUiController : ControllerBase
             .Append(Field("MUSICLINK_API_KEY", "Optional MusicLink API key", "password", "operatorSettings.MusicLink:ApiKey",
                 sensitive: true, requiresRestart: true,
                 helpText: "Stored encrypted. A free key from musiclink.one finds songs by ISRC on Apple Music, Spotify, YouTube Music and more. Blank clears it; Allstarr restarts after saving."))
+            .Append(Field("SONGPORT_API_KEY", "Optional SongPort API key", "password", "operatorSettings.SongPort:ApiKey",
+                sensitive: true, requiresRestart: true,
+                helpText: "Stored encrypted. A key from songport.link. Its monthly allowance is small, so it is asked only when the other link services found nothing. Blank clears it; Allstarr restarts after saving."))
             .ToList()),
         Section("general", "Defaults for everyone",
         [

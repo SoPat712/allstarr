@@ -106,10 +106,11 @@ Extensions add services. Install, update and remove them in **Sources → Servic
 
 When it is on and your enabled services can't find a sure copy of a song by ISRC or search, Allstarr asks link services such as song.link where else the song lives. Each answer must pass the same match rules as any other match, so playback and lyrics can fall back to your other enabled services. Existing manual matches are never changed. Turning it off keeps links already found.
 
-Two optional keys sit beside it. Both are stored encrypted.
+Three optional keys sit beside it. Each is stored encrypted. They are asked in this order:
 
 - **MusicLink API key**: a free key from musiclink.one. It finds songs by ISRC on Apple Music, Spotify, YouTube Music and more, and is asked first.
-- **song.link API key**: with a key, the official song.link API is tried first.
+- **song.link API key**: with a key, the official song.link API is asked next, before song.link's public page and the other free sources.
+- **SongPort API key**: a key from songport.link. Its monthly allowance is small, so it is asked last, and only when nothing else found the song on another service. An answer that is only a search link is ignored.
 
 **Wait between song.link lookups** (under the Advanced fold) defaults to 6000 ms and accepts 1000 to 60000 ms. Link services' rate limits and `Retry-After` replies are honoured. These settings restart Allstarr when saved.
 

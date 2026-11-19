@@ -16,6 +16,11 @@ public sealed class MusicLinkSettings
     public string? ApiKey { get; set; }
 }
 
+public sealed class SongPortSettings
+{
+    public string? ApiKey { get; set; }
+}
+
 public sealed class OdesliLookupException(bool retryable, TimeSpan? retryAfter = null)
     : Exception("Cross-provider links are unavailable.")
 {
@@ -32,7 +37,8 @@ public class OdesliService(
     ApplicationCacheRequestCoalescer? coalescer = null,
     TimeProvider? timeProvider = null,
     MusicBrainzService? musicBrainz = null,
-    IOptions<MusicLinkSettings>? musicLink = null)
+    IOptions<MusicLinkSettings>? musicLink = null,
+    IOptions<SongPortSettings>? songPort = null)
 {
     private readonly PlatformLinkResolverChain _chain = new(httpClientFactory.CreateClient("Odesli"),
         timeProvider ?? TimeProvider.System, musicBrainz);
@@ -80,7 +86,7 @@ public class OdesliService(
         return await _coalescer.RunAsync(key, async () =>
         {
             var links = await _chain.ResolveAsync(canonicalUrl, settings.Value.ApiKey, settings.Value.RateLimitMs,
-                isrc, title, artist, cancellationToken, allowMusicBrainz, musicLink?.Value.ApiKey);
+                isrc, title, artist, cancellationToken, allowMusicBrainz, musicLink?.Value.ApiKey, songPort?.Value.ApiKey);
             cancellationToken.ThrowIfCancellationRequested();
             if (links.Count > 0)
                 await cache.SetAsync(key, links, CacheExtensions.OdesliLookupTTL);

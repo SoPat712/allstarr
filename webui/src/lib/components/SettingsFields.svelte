@@ -158,7 +158,7 @@
         </div>
         {#if locked(field)}
           <div class="locked-setting"><output>{toggle(field) ? value(field) === "true" ? "On" : "Off" : field.sensitive ? fieldValue(config, field) ? "Key saved" : "Not set" : optionLabel(field, value(field)) || "Not set"}</output><small><Lock size={12} aria-hidden="true" />Set in your deployment</small></div>
-        {:else if (field.key === "ODESLI_API_KEY" || field.key === "MUSICLINK_API_KEY") && !keyOpen[field.key]}
+        {:else if ["ODESLI_API_KEY", "MUSICLINK_API_KEY", "SONGPORT_API_KEY"].includes(field.key) && !keyOpen[field.key]}
           <Button variant="outline" disabled={busy} onclick={() => keyOpen[field.key] = true}>{fieldValue(config, field) ? "Change key…" : "Add key…"}</Button>
         {:else if field.key === "BACKEND_MUSIC_LIBRARY_IDS" && libraries !== null}
           <fieldset id={`${id}-${field.key}`} class="library-choices quality-control" aria-label={label(field)} disabled={busy}>

@@ -14,7 +14,8 @@ public sealed record LinkServiceKey(string Field, string Name, string ReferenceK
 {
     public static readonly LinkServiceKey SongLink = new("ODESLI_API_KEY", "song.link", "Odesli:ApiKeyReference", "Odesli:ApiKey", "odesli-api-key");
     public static readonly LinkServiceKey MusicLink = new("MUSICLINK_API_KEY", "MusicLink", "MusicLink:ApiKeyReference", "MusicLink:ApiKey", "musiclink-api-key");
-    public static readonly IReadOnlyList<LinkServiceKey> All = [SongLink, MusicLink];
+    public static readonly LinkServiceKey SongPort = new("SONGPORT_API_KEY", "SongPort", "SongPort:ApiKeyReference", "SongPort:ApiKey", "songport-api-key");
+    public static readonly IReadOnlyList<LinkServiceKey> All = [SongLink, MusicLink, SongPort];
 }
 
 public sealed class LinkServiceKeySettingsService(IDbContextFactory<AllstarrDbContext> factory,

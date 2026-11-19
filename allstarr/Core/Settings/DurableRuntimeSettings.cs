@@ -145,7 +145,7 @@ public static class RuntimeSettingCatalog
         foreach (var field in new[] { "BaseUrl", "KeyReference" })
             items.Add(new("AudioMuse:" + field, RuntimeSettingValueType.String, "AudioMuse:" + field,
                 AllowEmpty: true, MaximumLength: field == "BaseUrl" ? 2048 : 36, DefaultValue: ""));
-        foreach (var reference in new[] { "Odesli:ApiKeyReference", "MusicLink:ApiKeyReference" })
+        foreach (var reference in new[] { "Odesli:ApiKeyReference", "MusicLink:ApiKeyReference", "SongPort:ApiKeyReference" })
             items.Add(new(reference, RuntimeSettingValueType.String, reference,
                 AllowEmpty: true, MaximumLength: 36, DefaultValue: "", RequiresRestart: true));
         items.Add(new("Admin:Oidc:Enabled", RuntimeSettingValueType.Boolean, "Admin:Oidc:Enabled", DefaultValue: "false", RequiresRestart: true));

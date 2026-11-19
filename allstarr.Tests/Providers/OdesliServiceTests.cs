@@ -73,6 +73,44 @@ public sealed class OdesliServiceTests
     }
 
     [Fact]
+    public async Task SongPortKey_IsAskedLastOnlyWhenNothingElseFoundTheSongAndSearchLinksAreIgnored()
+    {
+        var handler = new Handler(async (request, token) =>
+        {
+            if (request.RequestUri!.Host != "api.songport.link") return new HttpResponseMessage(HttpStatusCode.NotFound);
+            Assert.Equal(HttpMethod.Post, request.Method);
+            Assert.Equal("/v1/convert", request.RequestUri.AbsolutePath);
+            Assert.Equal("Bearer songport-fixture", request.Headers.Authorization?.ToString());
+            Assert.Contains("\"url\":", await request.Content!.ReadAsStringAsync(token));
+            return Text("""
+                {"isrc":"USRC17607839","upc":null,"title":"Song","artist":"Artist","thumbnail":null,"cached":false,"platforms":{
+                 "spotify":{"url":"https://open.spotify.com/track/abc123","isSearchFallback":false},
+                 "appleMusic":{"url":"https://music.apple.com/us/search?term=song","isSearchFallback":true},
+                 "deezer":{"url":"https://www.deezer.com/track/71","isSearchFallback":false}}}
+                """);
+        });
+        var links = await Create(handler, songPortKey: "songport-fixture").GetTrackLinksAsync(Source, default);
+        Assert.Equal("abc123", links["spotify"]);
+        Assert.Equal("71", links["deezer"]);
+        Assert.False(links.ContainsKey("apple-musickit"));
+        // Every other source was asked first and found nothing.
+        Assert.Equal("api.songport.link", handler.Hosts[^1]);
+        Assert.Equal(1, handler.Hosts.Count(host => host == "api.songport.link"));
+        Assert.True(handler.Hosts.Count > 1);
+    }
+
+    [Fact]
+    public async Task SongPortKey_IsNotSpentWhenAnotherSourceAlreadyFoundTheSong()
+    {
+        var handler = new Handler((request, _) => Task.FromResult(request.RequestUri!.Host == "api.unitune.art"
+            ? Text("""{"linksByPlatform":{"deezer":{"url":"https://www.deezer.com/track/71"}}}""")
+            : new HttpResponseMessage(HttpStatusCode.NotFound)));
+        var links = await Create(handler, songPortKey: "songport-fixture").GetTrackLinksAsync(Source, default);
+        Assert.Equal("71", links["deezer"]);
+        Assert.DoesNotContain("api.songport.link", handler.Hosts);
+    }
+
+    [Fact]
     public async Task MusicLinkKey_IsAskedFirstByIsrcAndKeepsTheReleaseHoldingTheSource()
     {
         var handler = new Handler((request, _) =>
@@ -422,13 +460,15 @@ public sealed class OdesliServiceTests
     }
 
     internal static OdesliService Create(HttpMessageHandler handler, TimeProvider? timeProvider = null, string? apiKey = null,
-        Microsoft.Extensions.Logging.ILogger<OdesliService>? logger = null, MusicBrainzService? musicBrainz = null, string? musicLinkKey = null)
+        Microsoft.Extensions.Logging.ILogger<OdesliService>? logger = null, MusicBrainzService? musicBrainz = null, string? musicLinkKey = null,
+        string? songPortKey = null)
     {
         CacheExtensions.InitializeCacheSettings(Mock.Of<IServiceProvider>());
         return new(Factory(handler), logger ?? NullLogger<OdesliService>.Instance, new TestMemoryApplicationCache(),
             Options.Create(new OdesliSettings { Enabled = true, RateLimitMs = 1000, ApiKey = apiKey }),
             timeProvider: timeProvider ?? new ManualTimeProvider(), musicBrainz: musicBrainz,
-            musicLink: Options.Create(new MusicLinkSettings { ApiKey = musicLinkKey }));
+            musicLink: Options.Create(new MusicLinkSettings { ApiKey = musicLinkKey }),
+            songPort: Options.Create(new SongPortSettings { ApiKey = songPortKey }));
     }
 
     private static IHttpClientFactory Factory(HttpMessageHandler handler)
@@ -452,8 +492,8 @@ public sealed class OdesliServiceTests
         public List<string> Accepts { get; } = [];
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
-            // Only MusicLink is sent its own key; no other service sees a credential.
-            if (request.RequestUri!.Host != "api.musiclink.one") Assert.Null(request.Headers.Authorization);
+            // MusicLink and SongPort are each sent their own key; no other service sees a credential.
+            if (request.RequestUri!.Host is not ("api.musiclink.one" or "api.songport.link")) Assert.Null(request.Headers.Authorization);
             Assert.Null(request.Headers.Referrer);
             Hosts.Add(request.RequestUri!.Host);
             Uris.Add(request.RequestUri);

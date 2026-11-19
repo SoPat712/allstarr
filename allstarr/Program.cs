@@ -313,6 +313,7 @@ builder.Services.ConfigureAll<Microsoft.Extensions.Http.HttpClientFactoryOptions
 builder.Services.ConfigureHttpClientDefaults(client => client.AddHttpMessageHandler(() => new allstarr.Core.Intelligence.HistoryRequestBudgetHandler()));
 builder.Services.Configure<OdesliSettings>(builder.Configuration.GetSection("Odesli"));
 builder.Services.Configure<MusicLinkSettings>(builder.Configuration.GetSection("MusicLink"));
+builder.Services.Configure<SongPortSettings>(builder.Configuration.GetSection("SongPort"));
 builder.Services.AddHttpClient("Odesli", client => client.Timeout = TimeSpan.FromSeconds(6)).RemoveAllLoggers()
     .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false, UseDefaultCredentials = false });
 builder.Services.AddHttpClient("Lrclib", client => client.Timeout = TimeSpan.FromSeconds(5));

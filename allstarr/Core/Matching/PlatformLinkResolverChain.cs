@@ -32,6 +32,7 @@ internal sealed class PlatformLinkResolverChain
     private readonly ServiceRates _rates;
     private long _officialUnavailableUntil;
     private long _musicLinkUnavailableUntil;
+    private long _songPortUnavailableUntil;
 
     public PlatformLinkResolverChain(HttpClient http, TimeProvider clock, MusicBrainzService? musicBrainz)
     {
@@ -44,7 +45,7 @@ internal sealed class PlatformLinkResolverChain
 
     public async Task<Dictionary<string, string>> ResolveAsync(string sourceUrl, string? apiKey, int apiIntervalMs,
         string? isrc, string? title, string? artist, CancellationToken cancellationToken, bool allowMusicBrainz = true,
-        string? musicLinkKey = null)
+        string? musicLinkKey = null, string? songPortKey = null)
     {
         if (sourceUrl.Length > 65536) throw new OdesliLookupException(false);
         if (title?.Length > 500) title = null;
@@ -129,6 +130,23 @@ internal sealed class PlatformLinkResolverChain
             }
         }
         cancellationToken.ThrowIfCancellationRequested();
+        // SongPort allows few conversions a month, so it is asked last and only when nothing else found the song anywhere.
+        if (links.Keys.All(provider => provider == source.Provider) && !string.IsNullOrWhiteSpace(songPortKey) && !token.IsCancellationRequested &&
+            source.Provider is "spotify" or "apple-musickit" or "deezer" or "tidal" or "youtube" &&
+            Interlocked.Read(ref _songPortUnavailableUntil) <= _clock.GetUtcNow().UtcTicks)
+        {
+            try
+            {
+                if (await _rates.SongPort.TryAcquireAsync(token))
+                    foreach (var pair in await SongPortAsync(source, sourceUrl, songPortKey, token)) links.TryAdd(pair.Key, pair.Value);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+            catch (Exception error) when (error is OperationCanceledException or HttpRequestException or JsonException or OdesliLookupException)
+            {
+                failed = true;
+            }
+        }
+        cancellationToken.ThrowIfCancellationRequested();
         if (links.Count > 0)
         {
             links.TryAdd(source.Provider, source.Id);
@@ -161,6 +179,26 @@ internal sealed class PlatformLinkResolverChain
             if (!links.ContainsKey(source.Provider)) first ??= links;
         }
         return first ?? new(StringComparer.Ordinal);
+    }
+
+    private async Task<Dictionary<string, string>> SongPortAsync((string Provider, string Id) source, string sourceUrl, string key,
+        CancellationToken cancellationToken)
+    {
+        var json = await RequestAsync(new Uri("https://api.songport.link/v1/convert"), _rates.SongPort, false, cancellationToken,
+            body: JsonSerializer.Serialize(new { url = sourceUrl }), bearer: key, acquired: true);
+        using var document = JsonDocument.Parse(json);
+        var links = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (document.RootElement.ValueKind != JsonValueKind.Object || !document.RootElement.TryGetProperty("platforms", out var platforms) ||
+            platforms.ValueKind != JsonValueKind.Object) return links;
+        foreach (var platform in platforms.EnumerateObject().Take(64))
+        {
+            // A search link is SongPort's guess at where the song might be, not the song.
+            if (platform.Value.ValueKind != JsonValueKind.Object || !platform.Value.TryGetProperty("isSearchFallback", out var guess) ||
+                guess.ValueKind != JsonValueKind.False) continue;
+            if (OdesliService.ParseTrackUrl(Text(platform.Value, "url")) is { } target) links.TryAdd(target.Provider, target.Id);
+        }
+        // An answer naming a different song on the source's own service is not an answer for this song.
+        return links.TryGetValue(source.Provider, out var same) && same != source.Id ? new(StringComparer.Ordinal) : links;
     }
 
     private async Task<Dictionary<string, string>> SquiglyAsync(string sourceUrl, CancellationToken cancellationToken)
@@ -196,7 +234,7 @@ internal sealed class PlatformLinkResolverChain
         for (var redirects = 0; redirects <= 5; redirects++)
         {
             if (!IsPublicEndpoint(uri) || !(songLink ? IsSongLinkHost(uri.Host) :
-                uri.Host is "api.song.link" or "api.unitune.art" or "squigly.link" or "api.musiclink.one"))
+                uri.Host is "api.song.link" or "api.unitune.art" or "squigly.link" or "api.musiclink.one" or "api.songport.link"))
                 throw new OdesliLookupException(false);
             if (!acquired || redirects > 0) await limiter.WaitAsync(token, apiInterval);
             using var request = new HttpRequestMessage(body == null ? HttpMethod.Get : HttpMethod.Post, uri);
@@ -214,6 +252,16 @@ internal sealed class PlatformLinkResolverChain
                 uri = next;
                 continue;
             }
+            // SongPort's allowance for the month or day is used up: it is left alone until tomorrow.
+            if (uri.Host == "api.songport.link" && response.StatusCode == HttpStatusCode.TooManyRequests)
+            {
+                await response.Content.LoadIntoBufferAsync(64 * 1024, token);
+                if ((await response.Content.ReadAsStringAsync(token)).Contains("QUOTA_EXCEEDED", StringComparison.Ordinal))
+                {
+                    Interlocked.Exchange(ref _songPortUnavailableUntil, _clock.GetUtcNow().AddDays(1).UtcTicks);
+                    throw new OdesliLookupException(false);
+                }
+            }
             if (response.StatusCode == HttpStatusCode.TooManyRequests || (int)response.StatusCode >= 500)
             {
                 var retry = response.Headers.RetryAfter?.Delta ??
@@ -229,6 +277,10 @@ internal sealed class PlatformLinkResolverChain
                     Interlocked.Exchange(ref _musicLinkUnavailableUntil, _clock.GetUtcNow().AddHours(1).UtcTicks);
                 // No match on MusicLink is an answer, not a failure.
                 if (uri.Host == "api.musiclink.one" && response.StatusCode == HttpStatusCode.NotFound) return "{}";
+                if (uri.Host == "api.songport.link" && response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
+                    Interlocked.Exchange(ref _songPortUnavailableUntil, _clock.GetUtcNow().AddHours(1).UtcTicks);
+                // SongPort answers 422 for a song it could not match and 400 for a link it does not read.
+                if (uri.Host == "api.songport.link" && response.StatusCode is HttpStatusCode.UnprocessableEntity or HttpStatusCode.BadRequest) return "{}";
                 throw new OdesliLookupException(false);
             }
             var limit = html ? MaximumHtmlBytes : MaximumJsonBytes;
@@ -318,5 +370,7 @@ internal sealed class PlatformLinkResolverChain
         public PlatformLinkRateLimiter Squigly { get; } = new(18, TimeSpan.FromMinutes(1), clock);
         // MusicLink's free plan: 10 a minute.
         public PlatformLinkRateLimiter MusicLink { get; } = new(10, TimeSpan.FromMinutes(1), clock);
+        // SongPort counts every answer against a small monthly allowance, so it is paced well under its own limit.
+        public PlatformLinkRateLimiter SongPort { get; } = new(6, TimeSpan.FromMinutes(1), clock);
     }
 }
