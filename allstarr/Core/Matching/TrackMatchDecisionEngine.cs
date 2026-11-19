@@ -593,6 +593,7 @@ public sealed class TrackMatchDecisionEngine
              FuzzyMatcher.CarriesSourceAlbumMarkers(source.Title, source.Album, rival.Title, rival.Album)) &&
             !SameLibraryRecording(selected, visible.Single(candidate => candidate.LibraryTrackId == score.LibraryTrackId)) &&
             !SameSongInLibrary(selected, visible.Single(candidate => candidate.LibraryTrackId == score.LibraryTrackId)) &&
+            !OtherEditionOfSelected(source, selected, visible.Single(candidate => candidate.LibraryTrackId == score.LibraryTrackId)) &&
             !SameRecordingIdentity(
                 selected,
                 visible.Single(candidate => candidate.LibraryTrackId == score.LibraryTrackId), source.Artist) &&
@@ -831,6 +832,21 @@ public sealed class TrackMatchDecisionEngine
         FuzzyMatcher.NormalizeTitleForMatching(right.Title, right.Artist, left.Artist) &&
         FuzzyMatcher.SplitCredits(left.Artist).Select(FuzzyMatcher.NormalizeForMatching).ToHashSet(StringComparer.Ordinal)
             .SetEquals(FuzzyMatcher.SplitCredits(right.Artist).Select(FuzzyMatcher.NormalizeForMatching));
+
+    // The clean and the explicit edition of one song on the services: the same title, version and lead artist, and
+    // lengths within three seconds. When the source does not say which it wants, the listener's explicit setting has
+    // already chosen between them, so the other one is not a rival for a person to settle.
+    internal static bool OtherEditionOfSelected(ExternalTrackMatchSnapshot source, LocalTrackMatchCandidate selected, LocalTrackMatchCandidate other) =>
+        !source.IsExplicit.HasValue && !selected.IsLocal && !other.IsLocal &&
+        TrackMatchSignals.Explicitness(selected) is { } chosen && TrackMatchSignals.Explicitness(other) is { } edition && chosen != edition &&
+        FuzzyMatcher.RecordingVersionsMatch(selected.Title, selected.Album, other.Title, other.Album) &&
+        FuzzyMatcher.TitleAnnotationsMatch(selected.Title, selected.Artist, other.Title, other.Artist) &&
+        selected.DurationMilliseconds is > 0 && other.DurationMilliseconds is > 0 &&
+        Math.Abs(selected.DurationMilliseconds.Value - other.DurationMilliseconds.Value) <= 3_000 &&
+        FuzzyMatcher.NormalizeTitleForMatching(selected.Title, selected.Artist, other.Artist) ==
+        FuzzyMatcher.NormalizeTitleForMatching(other.Title, other.Artist, selected.Artist) &&
+        FuzzyMatcher.NormalizeForMatching(FuzzyMatcher.SplitCredits(selected.Artist).FirstOrDefault() ?? "") is { Length: > 0 } lead &&
+        lead == FuzzyMatcher.NormalizeForMatching(FuzzyMatcher.SplitCredits(other.Artist).FirstOrDefault() ?? "");
 
     internal static bool SameRecordingIdentity(
         LocalTrackMatchCandidate left,

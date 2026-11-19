@@ -1487,6 +1487,46 @@ public sealed class TrackMatchDecisionEngineTests(ITestOutputHelper output)
     }
 
     [Fact]
+    public void TheCleanAndExplicitEditionsOfOneSongAreChosenByTheListenersSettingNotAPerson()
+    {
+        var scope = Scope();
+        // A playlist line that does not say clean or explicit; one service has both editions of the song.
+        var source = Source() with { Title = "Smack That", Artist = "Akon feat. Eminem", Album = "Konvicted", AlbumArtist = null, DurationMilliseconds = 212_360, IsExplicit = null };
+        var explicitEdition = ProviderCandidate(scope, "apple-download", 212_000) with
+        {
+            Title = "Smack That (feat. Eminem)",
+            Artist = "Akon",
+            Album = "Konvicted",
+            Isrc = "USUM70609036",
+            IsExplicit = true
+        };
+        var cleanEdition = explicitEdition with
+        {
+            LibraryTrackId = Guid.CreateVersion7(),
+            BackendItemId = "apple-download-clean",
+            Artist = "Akon featuring Eminem",
+            Isrc = "USUM70609035",
+            IsExplicit = false,
+            ProviderTrackIds = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { ["apple-download"] = "clean-track" }
+        };
+
+        var decision = new TrackMatchDecisionEngine().Decide(scope, source, [explicitEdition, cleanEdition], providerPriority: ["apple-download"]);
+
+        Assert.Equal(TrackMatchReviewState.Accepted, decision.State);
+        Assert.Equal(explicitEdition.LibraryTrackId, decision.SelectedLibraryTrackId);
+        Assert.DoesNotContain("ambiguous_top_candidates", decision.Warnings);
+        // A listener who only plays clean songs gets the clean edition, with nothing to settle either.
+        var clean = new TrackMatchDecisionEngine(new TrackMatchPolicy { ExplicitContent = ProviderExplicitContentPolicy.CleanOnly })
+            .Decide(scope, source, [explicitEdition, cleanEdition], providerPriority: ["apple-download"]);
+        Assert.Equal(TrackMatchReviewState.Accepted, clean.State);
+        Assert.Equal(cleanEdition.LibraryTrackId, clean.SelectedLibraryTrackId);
+        // Another take of the song, half a minute longer, is still a choice for a person.
+        var longer = cleanEdition with { DurationMilliseconds = 245_000, Isrc = "USUM70609099" };
+        Assert.NotEqual(TrackMatchReviewState.Accepted, new TrackMatchDecisionEngine().Decide(scope, source with { DurationMilliseconds = null },
+            [explicitEdition with { Isrc = null }, longer], providerPriority: ["apple-download"]).State);
+    }
+
+    [Fact]
     public void MultipleAcceptanceQualifiedLocalRecordingsRemainAmbiguous()
     {
         var scope = Scope();
