@@ -13,7 +13,7 @@ public partial class JellyfinController
     public async Task<IActionResult> HlsAudio(string itemId, [FromServices] ProviderHlsSessions sessions)
     {
         var (external, provider, externalId) = _localLibraryService.ParseSongId(itemId);
-        if (external && await ResolveKnownNativeTrackAsync(itemId) is { } nativeId)
+        if (external && await ResolvePlayableNativeTrackAsync(itemId) is { } nativeId)
         {
             itemId = nativeId;
             external = false;
