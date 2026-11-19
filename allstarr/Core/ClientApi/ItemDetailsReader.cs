@@ -64,6 +64,7 @@ public sealed class ItemDetailsReader(
         using var building = RequestTiming.Current?.Stage("build");
         var started = System.Diagnostics.Stopwatch.GetTimestamp();
         long matchTicks = 0, lyricsTicks = 0, lookupTicks = 0, fileTicks = 0, countTicks = 0, itemTicks = 0;
+        var lyricsCache = new TimedCache(cache);
         var steps = new List<string>();
         var mark = started;
         void Step(string name)
@@ -326,11 +327,12 @@ public sealed class ItemDetailsReader(
             }
         }));
         var items = built.Where(item => item.Details != null).ToDictionary(item => item.Id, item => item.Details!, StringComparer.Ordinal);
-        logger?.LogInformation("Item details timing: prepare {Prepare} ms ({PrepareSteps} ms), songs {Songs} ms, matches {Matches} ms ({MatchSteps} ms), lyrics {Lyrics} ms, lookups {Lookups} ms, files {Files} ms and counts {Counts} ms of {Items} ms summed over {Count} songs",
+        logger?.LogInformation("Item details timing: prepare {Prepare} ms ({PrepareSteps} ms), songs {Songs} ms, matches {Matches} ms ({MatchSteps} ms), lyrics {Lyrics} ms (stored reads {LyricsReads} ms over {LyricsReadCount}, {LyricsFound} found), lookups {Lookups} ms, files {Files} ms and counts {Counts} ms of {Items} ms summed over {Count} songs",
             (int)System.Diagnostics.Stopwatch.GetElapsedTime(started, prepared).TotalMilliseconds, string.Join(", ", steps),
             (int)System.Diagnostics.Stopwatch.GetElapsedTime(prepared).TotalMilliseconds,
             (int)TimeSpan.FromTicks(Interlocked.Read(ref matchTicks)).TotalMilliseconds, matchTiming,
             (int)TimeSpan.FromTicks(Interlocked.Read(ref lyricsTicks)).TotalMilliseconds,
+            (int)TimeSpan.FromTicks(lyricsCache.Ticks).TotalMilliseconds, lyricsCache.Reads, lyricsCache.Found,
             (int)TimeSpan.FromTicks(Interlocked.Read(ref lookupTicks)).TotalMilliseconds,
             (int)TimeSpan.FromTicks(Interlocked.Read(ref fileTicks)).TotalMilliseconds,
             (int)TimeSpan.FromTicks(Interlocked.Read(ref countTicks)).TotalMilliseconds,
@@ -393,7 +395,7 @@ public sealed class ItemDetailsReader(
                 ExplicitContentLyrics = native[id].Rating
             });
             var lyricsStarted = System.Diagnostics.Stopwatch.GetTimestamp();
-            var lyrics = await StoredItemLyrics.ReadAsync(cache, lyricsSong, recordingId, choice?.SourceId, storedFile?.File.CanonicalPath,
+            var lyrics = await StoredItemLyrics.ReadAsync(lyricsCache, lyricsSong, recordingId, choice?.SourceId, storedFile?.File.CanonicalPath,
                 policy, lyricsEndpoint, execution, accounts, links, token,
                 recordingDurationMs: recordingId.HasValue ? recordings.GetValueOrDefault(recordingId.Value)?.DurationMilliseconds : null,
                 automaticLyrics: choice == null && recordingId.HasValue ? retainedLyrics.GetValueOrDefault(recordingId.Value) : null);
@@ -486,5 +488,41 @@ public sealed class ItemDetailsReader(
     {
         try { placement.VerifyOwnedFileIdentity(EfManagedFileOwnershipStore.Map(file)!, token); return true; }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException) { return false; }
+    }
+
+    // Counts how long lyric checks spend reading stored lyrics, apart from judging them.
+    private sealed class TimedCache(IApplicationCache inner) : IApplicationCache
+    {
+        private long ticks;
+        private int reads;
+        private int found;
+        public long Ticks => Interlocked.Read(ref ticks);
+        public int Reads => Volatile.Read(ref reads);
+        public int Found => Volatile.Read(ref found);
+        public bool IsEnabled => inner.IsEnabled;
+
+        public async Task<string?> GetStringAsync(string key) => Count(System.Diagnostics.Stopwatch.GetTimestamp(), await inner.GetStringAsync(key));
+
+        public async Task<T?> GetAsync<T>(string key) where T : class => Count(System.Diagnostics.Stopwatch.GetTimestamp(), await inner.GetAsync<T>(key));
+
+        public Task<bool> SetStringAsync(string key, string value, TimeSpan? expiry = null) => inner.SetStringAsync(key, value, expiry);
+
+        public Task<bool> SetAsync<T>(string key, T value, TimeSpan? expiry = null) where T : class => inner.SetAsync(key, value, expiry);
+
+        public Task<bool> DeleteAsync(string key) => inner.DeleteAsync(key);
+
+        public Task<bool> ExistsAsync(string key) => inner.ExistsAsync(key);
+
+        public Task<int> DeleteByPatternAsync(string pattern) => inner.DeleteByPatternAsync(pattern);
+
+        public Task<int> PurgeAllAsync() => inner.PurgeAllAsync();
+
+        private T? Count<T>(long started, T? value) where T : class
+        {
+            Interlocked.Add(ref ticks, System.Diagnostics.Stopwatch.GetElapsedTime(started).Ticks);
+            Interlocked.Increment(ref reads);
+            if (value != null) Interlocked.Increment(ref found);
+            return value;
+        }
     }
 }
