@@ -200,6 +200,11 @@ public class RequestLoggingMiddleware
         else if (context.Response.StatusCode >= 500 || waited >= SlowAnswer.TotalMilliseconds)
             _logger.LogWarning("Request {Method} {Path} answered {StatusCode} after {WaitedMs} ms", context.Request.Method,
                 SafeOperationalText.Sanitize(context.Request.Path.Value), context.Response.StatusCode, waited);
+        // A change an app asked for and did not get is the one request a person asks about afterwards.
+        else if (context.Response.StatusCode >= 400 && !HttpMethods.IsGet(context.Request.Method) &&
+                 !HttpMethods.IsHead(context.Request.Method) && !HttpMethods.IsOptions(context.Request.Method))
+            _logger.LogInformation("Request {Method} {Path} was refused with {StatusCode} after {WaitedMs} ms", context.Request.Method,
+                SafeOperationalText.Sanitize(context.Request.Path.Value), context.Response.StatusCode, waited);
     }
 
     private static string MaskAuthHeader(string authHeader)
