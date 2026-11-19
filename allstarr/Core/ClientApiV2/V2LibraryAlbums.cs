@@ -44,7 +44,9 @@ public sealed class V2LibraryAlbums(ListeningLibraries? libraries = null)
     internal async Task<(V2LibraryAlbumRef? Library, IReadOnlyList<V2LibraryAlbumRef>? CouldBe)> IdentifyAsync(HttpContext http,
         ProtocolExecutionContext execution, V2AlbumEndpoints albums, Album album, Func<Task<(Album Album, IReadOnlyList<V2Track> Tracks)>> songs)
     {
-        var title = FuzzyMatcher.StripDecorators(album.Title ?? "");
+        // A service's "Hi, It's Me - EP" is the library's "Hi, It's Me".
+        var plain = FuzzyMatcher.WithoutAlbumFormat(album.Title);
+        var title = FuzzyMatcher.StripDecorators(plain);
         var artistKey = FuzzyMatcher.NormalizeForMatching(FuzzyMatcher.SplitCredits(album.Artist).FirstOrDefault() ??
             album.Artists.FirstOrDefault()?.Name ?? "");
         if (string.IsNullOrWhiteSpace(title) || artistKey.Length == 0) return (null, null);
@@ -70,7 +72,7 @@ public sealed class V2LibraryAlbums(ListeningLibraries? libraries = null)
                 {
                     if (String(item, "Type") != "MusicAlbum" || String(item, "Id") is not { } id || !V2Ids.IsValidSource(id, V2IdKind.Album) ||
                         owned.Any(known => known.Album.Id == id) ||
-                        String(item, "Name") is not { Length: > 0 } name || !MusicCatalogMerge.IsSameAlbum(album.Title, name)) continue;
+                        String(item, "Name") is not { Length: > 0 } name || !MusicCatalogMerge.IsSameAlbum(plain, FuzzyMatcher.WithoutAlbumFormat(name))) continue;
                     var artist = String(item, "AlbumArtist") ?? Refs(item, "AlbumArtists").FirstOrDefault()?.Name ?? "";
                     if (!MusicCatalogMerge.LeadArtistMatches(artist, artistKey)) continue;
                     owned.Add(new(new Album

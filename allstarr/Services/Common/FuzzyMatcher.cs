@@ -94,6 +94,9 @@ public static partial class FuzzyMatcher
     private static string StripAlbumFormatSuffix(string? album) =>
         AlbumFormatSuffixRegex().Replace(album ?? string.Empty, string.Empty);
 
+    /// <summary>An album title without the format a service appends to it, as in "Hi, It's Me - EP".</summary>
+    public static string WithoutAlbumFormat(string? album) => StripAlbumFormatSuffix(album).Trim();
+
     [System.Text.RegularExpressions.GeneratedRegex(@"\b(?:ao vivo|en vivo|en directo)\b|\blive\s+(?:at|from)\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
     private static partial System.Text.RegularExpressions.Regex LocalizedLiveRegex();
 
