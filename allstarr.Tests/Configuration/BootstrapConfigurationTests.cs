@@ -64,6 +64,21 @@ public sealed class BootstrapConfigurationTests : IDisposable
         finally { Environment.SetEnvironmentVariable(variable, prior); }
     }
 
+    [Fact]
+    public void Bootstrap_ReadsTheContainersLimitOnWhereAddedSongsGo()
+    {
+        const string variable = "Promotion__AllowedBase";
+        var prior = Environment.GetEnvironmentVariable(variable);
+        try
+        {
+            Environment.SetEnvironmentVariable(variable, "/music");
+            var settings = new ConfigurationManager();
+            RuntimeEnvConfiguration.AddBootstrapOverrides(settings, Path.Combine(root, "missing.env"));
+            Assert.Equal("/music", settings["Promotion:AllowedBase"]);
+        }
+        finally { Environment.SetEnvironmentVariable(variable, prior); }
+    }
+
     [Theory]
     [InlineData(null, null, null)]
     [InlineData("http://mounted-verifier:8000", null, "http://mounted-verifier:8000")]

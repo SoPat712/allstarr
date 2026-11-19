@@ -197,7 +197,9 @@ public static class RuntimeEnvConfiguration
         "Storage:DataDirectory", "Storage:DatabaseFileName", "Storage:AutoMigrate", "Secrets:KeyRingPath",
         "Admin:BindAnyIp", "Admin:TrustedSubnets", "Admin:BasePath", "Admin:Containerized", "Admin:ContainerGateway",
         "Extensions:SessionVerification:BaseUrl",
-        "Library:DownloadPath", "Library:KeptPath"
+        "Library:DownloadPath", "Library:KeptPath",
+        // A deployment's own limit on where added songs may be written; it can only come from the container.
+        "Promotion:AllowedBase"
     };
 
     public static void AddDotEnvOverrides(
