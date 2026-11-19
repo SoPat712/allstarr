@@ -131,7 +131,7 @@
           <Button variant="secondary" aria-label="Copy username" onclick={() => void copy(context!.username, usernameField)}><Copy size={16} aria-hidden="true" />Copy</Button>
         </span>
       </div>
-      {#if administrator}<footer><Button variant="outline" href="#/settings/people">Set the household address</Button></footer>{/if}
+      {#if administrator}<footer><Button variant="outline" href="#/settings/apps">Set the household address</Button></footer>{/if}
     </div>
 
         <ol class="app-steps" aria-label="Connection steps">{#each activeApp.steps as step, index}<li><span class="step-circle" aria-hidden="true">{index + 1}</span><span>{step}</span></li>{/each}</ol>
@@ -156,7 +156,7 @@
     <details class="settings-card connect-tips help-card">
       <summary><span><strong>Tips</strong> <small>Hearts, offline listening and beta limits</small><span class="tips-action">Read the tips</span></span><ChevronDown class="disclosure-chevron" size={18} aria-hidden="true" /></summary>
       <div class="settings-row"><div><strong>Manual-only sources</strong> <small>These appear in search and matching for you to choose. Automatic playback uses sources set to On.</small></div><Button variant="secondary" href="#/sources/services">View sources</Button></div>
-      <div class="settings-row"><div><strong>Hearts and playlists</strong> <small>Favorite provider songs or add them to your playlists to find them in normal browsing. Your listening history alone does not add them to that saved view.</small></div></div>
+      <div class="settings-row"><div><strong>Hearts and playlists</strong> <small>Heart a service song or add it to a playlist to find it again: hearted songs show in your app's favorites, and playlists keep their songs. Your listening history alone does not save a song.</small></div></div>
       <div class="settings-row"><div><strong>Offline listening</strong> <small>Download or cache a song in your music app to keep a copy on that device. Check it plays with the device offline before you travel.</small></div></div>
       <div class="settings-row"><div><strong>Temporary source limits</strong> <small>Some services can rate-limit requests or ask for verification. Choose another available source or wait a few minutes.</small></div></div>
       {#if context.backend === "Jellyfin"}<div class="settings-row"><div><strong>Finamp formats</strong> <small>Some transcoded formats are unavailable. Include the song and app version when reporting a format error.</small></div></div>{/if}

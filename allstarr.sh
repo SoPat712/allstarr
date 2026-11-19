@@ -132,7 +132,7 @@ prepare_apple() {
       fi
     done
   fi
-  [[ -n "$input" && ( -f "$input" || -d "$input" ) ]] || die "no staged Apple package found; upload an .apk/.apkm in Integrations > Services > Apple Music – GAMDL first"
+  [[ -n "$input" && ( -f "$input" || -d "$input" ) ]] || die "no staged Apple package found; upload an .apk/.apkm in Sources > Services > Apple Music – GAMDL first"
   case "$arch" in
     x86_64) ;;
     arm64-v8a) runtime=linux/arm64 ;;
@@ -190,7 +190,7 @@ validate_deployment_files() {
     while IFS= read -r profile; do
       case "$profile" in
         ""|apple|sessions) ;;
-        spotify|spotify-lyrics) echo "Spotify lyrics runs inside Allstarr. Configure its account in Integrations > Accounts." >&2 ;;
+        spotify|spotify-lyrics) echo "Spotify lyrics runs inside Allstarr. Configure its account in Sources > Accounts." >&2 ;;
         *) die "unsupported saved profile '$profile'; use apple or sessions" ;;
       esac
     done < "$PROFILE_FILE"

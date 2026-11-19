@@ -256,7 +256,7 @@
         {#each libraryGroups.slice(1) as item (item.id)}<SettingsFields section={item} {config} onChanged={refresh} />{/each}
       {:else if active === "apps"}
         {#each appsGroups as item (item.id)}<SettingsFields section={item} {config} onChanged={refresh}>
-          {#snippet footer()}{#if item.id === "connecting"}{@render linkRow("Connect an app", "Step-by-step setup, with a QR code for phones.", "Open", "#/connect")}{/if}{/snippet}
+          {#snippet footer()}{#if item.id === "connecting"}{@render linkRow("Connect an app", "Step-by-step setup for each music app.", "Open", "#/connect")}{/if}{/snippet}
         </SettingsFields>{/each}
         {#if browserOrigins.fields.length}<SettingsFields section={browserOrigins} {config} onChanged={refresh}>
           {#snippet footer()}{#if browserAdvanced.fields.length}<AdvancedFold label="Advanced: methods, headers and credentials"><SettingsFields embedded section={browserAdvanced} {config} onChanged={refresh} /></AdvancedFold>{/if}{/snippet}
