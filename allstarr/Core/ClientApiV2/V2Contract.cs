@@ -169,11 +169,11 @@ public sealed record V2LibraryAlbumRef(
     public string? By { get; init; }
 
     [JsonPropertyName("ownedSongs"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull),
-     Description("How many songs the two albums share.")]
+     Description("How many songs the two albums share: the length of ownedTracks. Always set on libraryAlbum; on couldBe only when they share any.")]
     public int? OwnedSongs { get; init; }
 
     [JsonPropertyName("ownedTracks"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull),
-     Description("On libraryAlbum, the shared songs: each row of this album's `tracks` that is one of the listener's own songs, with that song. " +
+     Description("The shared songs: each row of this album's `tracks` that is one of the listener's own songs on that library album, with that song. " +
         "A row found by title carries no `libraryItemId` of its own, so this is where it is said.")]
     public IReadOnlyList<V2OwnedTrack>? OwnedTracks { get; init; }
 

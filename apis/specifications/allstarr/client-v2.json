@@ -8320,7 +8320,7 @@
               "null",
               "integer"
             ],
-            "description": "How many songs the two albums share.",
+            "description": "How many songs the two albums share: the length of ownedTracks. Always set on libraryAlbum; on couldBe only when they share any.",
             "format": "int32"
           },
           "ownedTracks": {
@@ -8331,7 +8331,7 @@
             "items": {
               "$ref": "#/components/schemas/V2OwnedTrack"
             },
-            "description": "On libraryAlbum, the shared songs: each row of this album\u0027s \u0060tracks\u0060 that is one of the listener\u0027s own songs, with that song. A row found by title carries no \u0060libraryItemId\u0060 of its own, so this is where it is said."
+            "description": "The shared songs: each row of this album\u0027s \u0060tracks\u0060 that is one of the listener\u0027s own songs on that library album, with that song. A row found by title carries no \u0060libraryItemId\u0060 of its own, so this is where it is said."
           },
           "reason": {
             "type": [

@@ -115,19 +115,17 @@ public sealed class V2LibraryAlbums(ListeningLibraries? libraries = null)
                     }
                 item.Proven = item.Owned > 0 || item.Matched > 0 && item.Matched == Math.Min(own.Count, full.Songs.Count);
             }
+            // The songs an album shares are said whether or not they settle it, so their rows can be shown as the listener's.
             V2LibraryAlbumRef Shape(Candidate item) => new(V2Ids.Album(item.Album.Id), item.Album.Title, V2ArtworkUrls.For(item.Album.Id, item.Tag))
             {
                 Year = item.Album.Year,
-                SongCount = item.Songs ?? item.Album.SongCount
+                SongCount = item.Songs ?? item.Album.SongCount,
+                OwnedSongs = item.Pairs.Count > 0 ? item.Pairs.Count : null,
+                OwnedTracks = item.Pairs.Count > 0 ? item.Pairs.Select(pair => new V2OwnedTrack(pair.Key, pair.Value)).ToArray() : null
             };
             var proven = owned.Where(item => item.Proven).ToArray();
             if (proven.Length == 1)
-                return (Shape(proven[0]) with
-                {
-                    By = proven[0].Owned > 0 ? "songs" : "titles",
-                    OwnedSongs = Math.Max(proven[0].Pairs.Count, Math.Max(proven[0].Owned, proven[0].Matched)),
-                    OwnedTracks = proven[0].Pairs.Select(pair => new V2OwnedTrack(pair.Key, pair.Value)).ToArray()
-                }, null);
+                return (Shape(proven[0]) with { By = proven[0].Owned > 0 ? "songs" : "titles" }, null);
             // Several library albums fit, or only the name does: a person can tell them apart, so they are offered, the closest first.
             var here = full.SongCount is > 0 ? full.SongCount : full.Songs.Count > 0 ? full.Songs.Count : null;
             return (null, owned.OrderByDescending(item => item.Proven).ThenByDescending(item => Math.Max(item.Owned, item.Matched)).Take(Offered)

@@ -162,6 +162,10 @@ public sealed partial class ProtocolRouteFixtureTests
             Assert.Equal(offered, could.Count);
             Assert.All(could, item => Assert.Equal(reason, item!["reason"]!.GetValue<string>()));
             Assert.Equal("album1", could[0]!["libraryId"]!.GetValue<string>());
+            // An album that shares songs says which, settled or not; one that shares none says nothing of them.
+            var shares = librarySongs.Contains(FirstSong, StringComparison.Ordinal);
+            Assert.All(could, item => Assert.Equal(shares ? 1 : null, item!["ownedSongs"]?.GetValue<int>()));
+            Assert.All(could, item => Assert.Equal(shares ? "s1" : null, item!["ownedTracks"]?[0]?["libraryItemId"]?.GetValue<string>()));
             Assert.False(body.ContainsKey("libraryAlbum"), text);
         }
         // Asking for the songs too gives the same answer about the album.
