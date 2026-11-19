@@ -221,6 +221,25 @@ public sealed partial class ProtocolLyricsAutomaticTests
     }
 
     [Fact]
+    public async Task ARepeatReadOfAnAnsweredLookupDoesNotWaitAgain()
+    {
+        var slow = new Source("lyricsplus");
+        var fast = new Source("lrclib", Result("lrclib", false));
+        await using var fixture = new Fixture(slow, fast);
+        var first = fixture.FindAsync();
+        await StartAsync(first, fast);
+        await fixture.Clock.WaitForTimersAsync(TimeSpan.FromSeconds(1.5));
+        fixture.Clock.Advance(TimeSpan.FromSeconds(1.5));
+        Assert.Equal("lrclib", (await first.WaitAsync(TimeSpan.FromSeconds(5)))?.Source);
+
+        // The listener was answered and hears about the better lyrics when they come, so the next read answers at once.
+        Assert.Equal("lrclib", (await fixture.FindAsync().WaitAsync(TimeSpan.FromSeconds(5)))?.Source);
+        slow.Completion.SetResult(Result("lyricsplus", true));
+        await fixture.EventPublished.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(1, slow.Calls);
+    }
+
+    [Fact]
     public async Task ParallelReadsShareAnUnfinishedLookup()
     {
         var slow = new Source("lyricsplus");

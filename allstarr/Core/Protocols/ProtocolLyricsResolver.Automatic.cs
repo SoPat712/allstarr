@@ -272,10 +272,14 @@ public sealed partial class ProtocolLyricsResolver
             (source.Id == LyricsVersions.ProviderId(lookup.Preferred ?? "") || LyricsQuality.CanImprove(source.Id, rank, score, bestRank, lookup.Song, lookup.RecordingDurationMs))).Any();
     }
 
+    private bool Announces(AutomaticLookup lookup) =>
+        clientUpdates != null && lookup.Protocol.Actor?.EffectiveUserId != null && !lookup.Protocol.IsPreparation &&
+        !lookup.Protocol.IsReadOnly && !lookup.HouseholdOnly;
+
     private void ObserveAutomatic(AutomaticLookup lookup, ProtocolLyricsCandidate? best)
     {
         var context = lookup.Protocol;
-        if (context.Actor?.EffectiveUserId is { } owner && !context.IsPreparation && !context.IsReadOnly && !lookup.HouseholdOnly)
+        if (Announces(lookup) && context.Actor?.EffectiveUserId is { } owner)
             clientUpdates?.Observe(owner, string.IsNullOrWhiteSpace(context.RequestedItemId) ? lookup.Song.Id : context.RequestedItemId, best?.Lyrics);
     }
 
@@ -316,9 +320,10 @@ public sealed partial class ProtocolLyricsResolver
                 var best = BestAutomatic(lookup);
                 // A version list asked for until the choice is settled stops where a single read would, so the choice it
                 // reports is the one the lyrics read serves; services still answering are listed as pending.
+                // Once the listener has an answer, later lyrics reach them as an update, so a repeat read does not wait again.
                 if (timer.IsCancellationRequested || _automaticShutdown.IsCancellationRequested || lookup.Sources.All(source => source.Finished) ||
                     (!all || untilChosen) && best != null && (lookup.Sources.Any(source => source.Known && source.Id == LyricsVersions.ProviderId(best.SourceId)) &&
-                        !ChosenStillAnswering(lookup, best) || IsBestPossible(lookup, best)))
+                        !ChosenStillAnswering(lookup, best) || IsBestPossible(lookup, best) || lookup.Observed && Announces(lookup)))
                 {
                     lookup.Observed = true;
                     ObserveAutomatic(lookup, best);
