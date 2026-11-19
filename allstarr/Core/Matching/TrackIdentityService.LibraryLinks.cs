@@ -15,6 +15,7 @@ namespace allstarr.Core.Matching;
 public sealed partial class TrackIdentityService
 {
     private const int LibraryLinkBatchSize = 25;
+    private const int LibraryLinkQuietRetries = 3;
 
     public async Task<LibraryRecordingLinkResult> LinkLibraryRecordingsAsync(ProviderActorContext actor,
         string correlationId, Guid? recordingId = null, Guid? libraryTrackId = null,
@@ -49,6 +50,7 @@ public sealed partial class TrackIdentityService
         {
             var recordingIds = batch.Select(item => item.Recording.Id).ToArray();
             var applied = false;
+            var retries = 0;
             while (!applied)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -67,7 +69,11 @@ public sealed partial class TrackIdentityService
                     var libraryIds = preparedPlans.SelectMany(item => item.Selected).Select(item => item.Id).Distinct().ToArray();
                     db.ChangeTracker.QueryTrackingBehavior = QueryTrackingBehavior.TrackAll;
                     await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
-                    if (version == await ReadLibraryLinkDataVersionAsync(db, cancellationToken))
+                    // The pairs are read again under the writer lock, which is what makes the change safe. Waiting for a
+                    // moment when nothing else has written is only a courtesy to keep the lock short: on a server that
+                    // is always writing (someone listening, jobs running) that moment may never come, and each try reads
+                    // the library again, so after a few tries the lock is taken as it is.
+                    if (version == await ReadLibraryLinkDataVersionAsync(db, cancellationToken) || ++retries > LibraryLinkQuietRetries)
                     {
                         // Only the prepared pairs are reloaded under the writer lock; changed snapshots retry outside it.
                         var current = await ReadLibraryLinkCandidatesAsync(db, actor, null, libraryTrackId,
