@@ -115,7 +115,8 @@ public sealed class MusicBrainzService : IMusicBrainzCatalogClient
         var normalized = NormalizeIsrc(isrc) ??
             throw new ArgumentException("ISRC must contain a valid 12-character recording code.", nameof(isrc));
         if (!await SourceAvailableAsync(false, cancellationToken)) return null;
-        var key = CacheKeyBuilder.BuildMusicBrainzIsrcKey(normalized, _sourceId) + ":exact-unique";
+        // Answers kept under the earlier key are all "unknown", from the read MusicBrainz refused.
+        var key = CacheKeyBuilder.BuildMusicBrainzIsrcKey(normalized, _sourceId) + ":exact-unique:2";
         return await GetCachedAsync(key, token => LookupIsrcUncachedAsync(normalized, token), cancellationToken);
     }
 
@@ -206,7 +207,7 @@ public sealed class MusicBrainzService : IMusicBrainzCatalogClient
         MusicBrainzRecording? recording = null;
         if (NormalizeIsrc(isrc) is { } normalizedIsrc)
         {
-            var key = CacheKeyBuilder.BuildMusicBrainzIsrcKey(normalizedIsrc, _sourceId) + ":exact-unique";
+            var key = CacheKeyBuilder.BuildMusicBrainzIsrcKey(normalizedIsrc, _sourceId) + ":exact-unique:2";
             recording = await GetCachedAsync(key,
                 token => LookupIsrcUncachedAsync(normalizedIsrc, token, requestTimeout), cancellationToken);
         }
