@@ -94,6 +94,13 @@ public sealed class V2SearchStream(IProtocolProviderGateway providers, MusicSear
             }, token);
         }
         var publishing = snapshots?.RunAsync(publishingStop.Token);
+        var firstTies = FirstTiesAsync();
+        async Task<IReadOnlySet<string>?> FirstTiesAsync()
+        {
+            if (savedLinks == null) return null;
+            try { return MusicSearchService.LinkedKeys(await savedLinks.WaitAsync(TiesWait, token)); }
+            catch (Exception error) when (error is not OperationCanceledException || !token.IsCancellationRequested) { return null; }
+        }
         IReadOnlyList<string> late = [];
         try
         {
@@ -203,11 +210,9 @@ public sealed class V2SearchStream(IProtocolProviderGateway providers, MusicSear
                     // An artist tied to a library artist is shown on that row. It never stands for the same-named artists
                     // nothing ties, or they would leave the results with it.
                     // The library's ties are read beside the services and are nearly always there first. A service that
-                    // answers sooner, as a repeated search does, waits a moment for them; a slow library holds nothing back.
-                    IReadOnlySet<string>? tied = null;
-                    if (savedLinks != null)
-                        try { tied = MusicSearchService.LinkedKeys(await savedLinks.WaitAsync(TiesWait, cancellation)); }
-                        catch (Exception error) when (error is not OperationCanceledException || !cancellation.IsCancellationRequested) { }
+                    // answers sooner, as a repeated search does, waits a moment for them, once for the whole search; a
+                    // slow library holds nothing back.
+                    var tied = savedLinks is { IsCompletedSuccessfully: true } ? MusicSearchService.LinkedKeys(savedLinks.Result) : await firstTies;
                     foreach (var artist in results.Artists.Where(artist => !music.IsEmptyArtist(artist) && !MusicSearchService.IsLinked(artist, tied))
                                  .OrderByDescending(ArtistScore).Take(limit))
                     {
@@ -410,11 +415,7 @@ public sealed class V2SearchStream(IProtocolProviderGateway providers, MusicSear
         private async Task<IReadOnlyList<string>?> ChosenAsync(CancellationToken token)
         {
             if (libraries == null) return null;
-            try
-            {
-                var choice = await libraries.ReadAsync(context, token);
-                return choice?.Selected is { Count: > 0 } selected && selected.Count < choice.Available.Count ? selected : null;
-            }
+            try { return await libraries.NarrowedAsync(context, token); }
             // Search never fails over the choice; it searches every library instead.
             catch (Exception error) when (error is not OperationCanceledException || !token.IsCancellationRequested) { return null; }
         }

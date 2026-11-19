@@ -54,6 +54,16 @@ public sealed class ListeningLibraries(
         return kept.Length == 0 ? access : access with { LibraryIds = kept };
     }
 
+    /// <summary>The chosen libraries when they are fewer than the listener can open; null when every library is in use.</summary>
+    public async Task<IReadOnlyList<string>?> NarrowedAsync(ProtocolExecutionContext context, CancellationToken cancellationToken = default)
+    {
+        if (await SelectedAsync(Owner(context), cancellationToken) is not { Count: > 0 } selected) return null;
+        var access = await inner.ResolveAsync(context, cancellationToken);
+        if (!access.Succeeded) return null;
+        var kept = access.LibraryIds.Where(id => selected.Contains(id, StringComparer.Ordinal)).ToArray();
+        return kept.Length == 0 || kept.Length == access.LibraryIds.Length ? null : kept;
+    }
+
     /// <summary>Keeps service songs and library songs from the chosen libraries, in order; without a choice every id stays.</summary>
     public async Task<IReadOnlyList<string>> KeepChosenAsync(ProtocolExecutionContext context, IReadOnlyList<string> ids,
         CancellationToken cancellationToken = default)
