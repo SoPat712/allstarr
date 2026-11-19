@@ -386,6 +386,23 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
     [Theory]
     [InlineData(ProtocolKind.Jellyfin)]
     [InlineData(ProtocolKind.Subsonic)]
+    public async Task ASongItsServiceCalledUnplayableIsLeftOutOfSearch(ProtocolKind protocol)
+    {
+        var unplayable = new UnplayableSongs();
+        unplayable.Record("soundcloud", "preview");
+        var (gateway, _) = SearchRankingGateway(unplayable, "soundcloud", "soundcloud",
+            RecordingSearchCapability("soundcloud",
+                RecordingSearchTrack("soundcloud", "preview", "Bohemian Rhapsody", "Queen", 30),
+                RecordingSearchTrack("soundcloud", "full", "Bohemian Rhapsody", "Queen Tribute", 355)));
+
+        var song = Assert.Single((await gateway.SearchAsync(SearchRankingContext(protocol), "Bohemian Rhapsody", 25, 0, 0)).Songs);
+
+        Assert.Equal("full", song.ExternalId);
+    }
+
+    [Theory]
+    [InlineData(ProtocolKind.Jellyfin)]
+    [InlineData(ProtocolKind.Subsonic)]
     public async Task OneServicesAlbumAndSingleCopiesOfARecordingAreOneRow(ProtocolKind protocol)
     {
         var (gateway, _) = SearchRankingGateway("deezer", "deezer",

@@ -103,7 +103,7 @@ public sealed partial class ProtocolProviderGateway
                 if (snapshot == null) return (new(), []);
                 var result = snapshot.Result;
                 var tracks = playable.Contains(NormalizeProvider(candidate.Provider.Id), StringComparer.Ordinal)
-                    ? result.Songs.Where(song => policy?.Includes(song) != false).ToArray() : [];
+                    ? result.Songs.Where(song => policy?.Includes(song) != false && unplayableSongs?.Contains(song) != true).ToArray() : [];
                 var lookups = result.Songs.Select((song, index) => (Song: song,
                     Lookup: new TrackIdentityLookup(candidate.Context, snapshot.TrackIds[index])))
                     .Where(item => tracks.Contains(item.Song)).ToArray();

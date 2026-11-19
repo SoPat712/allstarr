@@ -43,6 +43,22 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
     }
 
     [Fact]
+    public async Task OpenStream_ASongItsServiceCallsUnplayableIsRememberedAndTheNextRoutePlays()
+    {
+        var first = Capability("deezer", ProviderOutcome<ProviderStreamLease>.Failure(new(ProviderErrorKind.IncompatibleMedia)));
+        var second = Streaming("qobuz", (_, _) => Task.FromResult(AudioResponse()));
+        var unplayable = new allstarr.Core.Music.UnplayableSongs();
+        var (gateway, _) = FailoverGateway(first, second, unplayable: unplayable);
+
+        var opened = await gateway.OpenStreamAsync(ClientContext(), "deezer", "preview-only", ProviderAudioQuality.Any, null);
+
+        using var response = opened!.Response;
+        Assert.Equal("qobuz", opened.ServingProviderId);
+        Assert.True(unplayable.Contains(new Song { ExternalProvider = "deezer", ExternalId = "preview-only" }));
+        Assert.False(unplayable.Contains(new Song { ExternalProvider = "qobuz", ExternalId = "preview-only" }));
+    }
+
+    [Fact]
     public async Task MonochromeProtectedOpen_PreservesRetryAfterForRouting()
     {
         var first = Streaming("monochrome", (_, _) =>
@@ -642,7 +658,8 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         allstarr.Core.Matching.ITrackIdentityService? identities = null,
         allstarr.Core.Music.IProviderAudioVerifier? audioVerifier = null,
         ProviderStatusManager? providerStatuses = null,
-        Microsoft.Extensions.Logging.ILogger<ProtocolProviderGateway>? logger = null)
+        Microsoft.Extensions.Logging.ILogger<ProtocolProviderGateway>? logger = null,
+        allstarr.Core.Music.UnplayableSongs? unplayable = null)
     {
         var registry = Registry(first.Object, second.Object);
         var router = new Mock<IProviderRouter>(MockBehavior.Strict);
@@ -683,7 +700,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         return (new ProtocolProviderGateway(router.Object, registry, new HttpClientFactory(), configuration,
             managedTrackCache: managedTrackCache, playbackActivity: activity, effectivePolicies: policies,
             outcomes: outcomes, timeProvider: clock, identities: identities, audioVerifier: audioVerifier ?? FixtureAudioVerifier.Instance,
-            providerStatuses: providerStatuses, logger: logger), router);
+            providerStatuses: providerStatuses, logger: logger, unplayableSongs: unplayable), router);
     }
 
     private static ProtocolExecutionContext ClientContext(CancellationToken cancellationToken = default)

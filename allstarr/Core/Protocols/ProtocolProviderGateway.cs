@@ -269,7 +269,8 @@ public sealed partial class ProtocolProviderGateway(
     Enrichment.SharedTagQueue? sharedTags = null, LyricsSearchChanges? lyricsChanges = null,
     TrackMatchDecisionEngine? playbackMatcher = null,
     ProviderStatusManager? providerStatuses = null,
-    ClientEvents.IClientEventPublisher? clientEvents = null) : IProtocolProviderGateway
+    ClientEvents.IClientEventPublisher? clientEvents = null,
+    Music.UnplayableSongs? unplayableSongs = null) : IProtocolProviderGateway
 {
     private const string StreamingClientName = "ProtocolProviderStreaming";
     private readonly IProviderAudioVerifier streamVerifier = audioVerifier ?? new ProviderAudioVerifier();
@@ -500,6 +501,7 @@ public sealed partial class ProtocolProviderGateway(
                 for (var songIndex = 0; songIndex < result.Songs.Count; songIndex++)
                 {
                     var song = result.Songs[songIndex];
+                    if (unplayableSongs?.Contains(song) == true) continue;
                     routed.Songs.Add(song);
                     trackLookups.Add((song, new TrackIdentityLookup(candidate.Context, snapshot.TrackIds[songIndex])));
                 }
@@ -1829,6 +1831,9 @@ public sealed partial class ProtocolProviderGateway(
             if (!protocol.IsReadOnly && !leaseFailed && outcome.Error?.Code != "audio-profile-unavailable" && (!headOnly || !outcome.IsSuccess))
                 outcomes?.Observe(candidate.Context, ProviderCapabilityKind.Streaming,
                     outcome.Error, Stopwatch.GetElapsedTime(started));
+            // The service itself said this song has no full stream, so search stops offering it.
+            if (leaseFailed && outcome.Error?.Kind == ProviderErrorKind.IncompatibleMedia)
+                unplayableSongs?.Record(servingTrack.ProviderId, servingTrack.Value);
             if (outcome.IsSuccess)
             {
                 var (response, lease) = outcome.RequireValue();

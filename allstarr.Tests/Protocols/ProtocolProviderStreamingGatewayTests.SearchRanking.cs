@@ -1,6 +1,7 @@
 using allstarr.Core.Caching;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Matching;
+using allstarr.Core.Music;
 using allstarr.Core.Protocols;
 using allstarr.Core.Routing;
 using allstarr.Core.Storage;
@@ -392,7 +393,11 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         "search-ranking", DateTimeOffset.UtcNow.AddMinutes(1), CancellationToken.None);
 
     private static (ProtocolProviderGateway Gateway, Mock<IProviderRouter> Router) SearchRankingGateway(
-        string metadataOrder, string streamingOrder, params IProviderMetadataCapability[] capabilities)
+        string metadataOrder, string streamingOrder, params IProviderMetadataCapability[] capabilities) =>
+        SearchRankingGateway(null, metadataOrder, streamingOrder, capabilities);
+
+    private static (ProtocolProviderGateway Gateway, Mock<IProviderRouter> Router) SearchRankingGateway(
+        UnplayableSongs? unplayable, string metadataOrder, string streamingOrder, params IProviderMetadataCapability[] capabilities)
     {
         var registry = MetadataRegistry(capabilities);
         var router = new Mock<IProviderRouter>();
@@ -410,6 +415,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
             ["Providers:StreamingOrder"] = streamingOrder,
             ["Cache:SearchFirstAnswerMilliseconds"] = "30000"
         }).Build();
-        return (new ProtocolProviderGateway(router.Object, registry, new HttpClientFactory(), configuration, audioVerifier: FixtureAudioVerifier.Instance), router);
+        return (new ProtocolProviderGateway(router.Object, registry, new HttpClientFactory(), configuration, audioVerifier: FixtureAudioVerifier.Instance,
+            unplayableSongs: unplayable), router);
     }
 }
