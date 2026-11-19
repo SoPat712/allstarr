@@ -25,4 +25,9 @@ public sealed record V2Dashboard([property: JsonPropertyName("url")] string Url)
 public sealed record V2LibraryAdditionCapabilities(
     [property: JsonPropertyName("canAddDirectly"), Description("Adds start at once; otherwise they wait for an administrator.")] bool CanAddDirectly,
     [property: JsonPropertyName("requiresApproval")] bool RequiresApproval,
-    [property: JsonPropertyName("defaultUnit"), Description("`song` or `album`: what an add button adds unless the listener picks.")] string DefaultUnit);
+    [property: JsonPropertyName("defaultUnit"), Description("`song` or `album`: what an add button adds unless the listener picks.")] string DefaultUnit)
+{
+    [JsonPropertyName("setupNeeded"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull),
+     Description("Present while every add would be refused: the sentence to show, such as that a naming pattern must be confirmed in library settings. Absent when adds can start.")]
+    public string? SetupNeeded { get; init; }
+}

@@ -126,6 +126,8 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.Equal(administrator, additions.GetProperty("canAddDirectly").GetBoolean());
         Assert.Equal(!administrator, additions.GetProperty("requiresApproval").GetBoolean());
         Assert.Equal("album", additions.GetProperty("defaultUnit").GetString());
+        // No naming pattern is confirmed here, so every add would be refused; the app is told why before anyone tries.
+        Assert.Equal("Choose and confirm a naming pattern in library settings before adding songs.", additions.GetProperty("setupNeeded").GetString());
     }
 
     [Fact]

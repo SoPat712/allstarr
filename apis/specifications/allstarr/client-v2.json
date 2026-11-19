@@ -8283,6 +8283,13 @@
           "defaultUnit": {
             "type": "string",
             "description": "\u0060song\u0060 or \u0060album\u0060: what an add button adds unless the listener picks."
+          },
+          "setupNeeded": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "description": "Present while every add would be refused: the sentence to show, such as that a naming pattern must be confirmed in library settings. Absent when adds can start."
           }
         }
       },

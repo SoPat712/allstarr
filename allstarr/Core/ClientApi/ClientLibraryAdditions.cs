@@ -20,7 +20,12 @@ public sealed record ClientLibraryAddition(Guid Id, string ItemId, string Unit, 
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? RequestedItemId { get; init; }
 }
-public sealed record ClientLibraryAdditionCapabilities(bool CanAddDirectly, bool RequiresApproval, string DefaultUnit);
+public sealed record ClientLibraryAdditionCapabilities(bool CanAddDirectly, bool RequiresApproval, string DefaultUnit)
+{
+    /// <summary>What every add is refused for until the listener finishes setting adding up; null when adds can start.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? SetupNeeded { get; init; }
+}
 
 public sealed class ClientLibraryAdditions(IDbContextFactory<AllstarrDbContext> factory, LibraryPromotionService promotions,
     PromotionProfiles profiles, PromotionRoots roots, ITrackIdentityService identities, IBackendLibraryAccessResolver access,
@@ -75,7 +80,12 @@ public sealed class ClientLibraryAdditions(IDbContextFactory<AllstarrDbContext> 
     {
         var direct = await promotions.CanAddDirectlyAsync(context, token);
         // Apps read this at startup, so it skips working out which folder adds would go to.
-        return new(direct, !direct, (await profiles.GetMineAsync(context, token, effectiveRoot: false)).Values.DefaultUnit);
+        var profile = (await profiles.GetMineAsync(context, token, effectiveRoot: false)).Values;
+        // Every add is refused until a naming pattern is confirmed; an app can say so instead of offering a button that fails.
+        return new(direct, !direct, profile.DefaultUnit)
+        {
+            SetupNeeded = profile.NamingConfirmed ? null : new PromotionException(PromotionFailure.NamingPatternNotSelected).Message
+        };
     }
 
     public async Task<ClientLibraryAddition> AddAsync(ProtocolExecutionContext context, AddClientLibraryItem request,

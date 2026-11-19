@@ -4312,6 +4312,12 @@
           },
           "defaultUnit": {
             "type": "string"
+          },
+          "setupNeeded": {
+            "type": [
+              "null",
+              "string"
+            ]
           }
         }
       },

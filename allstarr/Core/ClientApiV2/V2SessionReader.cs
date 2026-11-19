@@ -61,6 +61,6 @@ public sealed class V2SessionReader(IDurableRuntimeSettings settings, LibraryPro
                 // A service song's measured loudness arrives as trackGainDb, announced by track.updated with changed ["loudness"].
                 ["trackLoudness"] = true
             }, string.IsNullOrEmpty(address) ? null : new(address), new(mark.Id, mark.Name, mark.IconUrl, mark.GlyphUrl),
-            new(adding.CanAddDirectly, adding.RequiresApproval, adding.DefaultUnit)));
+            new(adding.CanAddDirectly, adding.RequiresApproval, adding.DefaultUnit) { SetupNeeded = adding.SetupNeeded }));
     }
 }
