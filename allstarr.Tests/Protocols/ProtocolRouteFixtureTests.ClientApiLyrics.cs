@@ -417,7 +417,8 @@ public sealed partial class ProtocolRouteFixtureTests
 
     private static ProtocolFactory ClientLyricsFactory(Guid recording, Dictionary<string, ProviderLyricsResult?> results,
         bool indexed = true, string? backendLyrics = null, bool externalIdentityFallback = false,
-        Func<string?>? readBackendLyrics = null, Action<IServiceCollection>? configure = null, string? libraryCopy = null)
+        Func<string?>? readBackendLyrics = null, Action<IServiceCollection>? configure = null, string? libraryCopy = null,
+        Action<HttpRequestMessage>? observe = null)
     {
         Song Song() => new() { Id = "ext-deezer-song-lyrics", ExternalProvider = "deezer", ExternalId = "lyrics", CanonicalRecordingId = recording, Title = "Fixture", Artist = "Artist", Album = "Album", AlbumId = "ext-deezer-album-lyrics", Duration = 10 };
         var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
@@ -457,33 +458,38 @@ public sealed partial class ProtocolRouteFixtureTests
                 ImmutableDictionary<ProviderCapabilityKind, ImmutableArray<string>>.Empty.Add(ProviderCapabilityKind.Lyrics, results.Keys.ToImmutableArray()),
                 ImmutableHashSet<string>.Empty, AudioQualityPolicy.DefaultStep, 0.07)
             { UserId = user });
-        return ClientApiFactory(request => request.RequestUri!.AbsolutePath switch
+        HttpResponseMessage Items(HttpRequestMessage request) => Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(request.RequestUri!.Query)["ids"].ToString() switch
         {
-            "/Users/Me" => Json(200, """{"Id":"listener","Policy":{"IsAdministrator":true}}"""),
-            "/Items/native-album" => Json(200, """{"Id":"native-album","Type":"MusicAlbum","Name":"Album"}"""),
-            "/Items/native" => Json(200, """{"Id":"native","Type":"Audio","Name":"Fixture","AlbumArtist":"Artist"}"""),
-            "/Audio/hidden/Lyrics" => Json(200, "{"),
-            "/Audio/native/Lyrics" => (readBackendLyrics?.Invoke() ?? backendLyrics) is { } body ? Json(200, body) : Json(404, "{}"),
-            "/Items" => Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(request.RequestUri.Query)["ids"].ToString() switch
+            "native-album" => Json(200, """{"Items":[{"Id":"native-album","Type":"MusicAlbum","Name":"Album"}]}"""),
+            "native" => Json(200, """{"Items":[{"Id":"native","Type":"Audio","Name":"Fixture","AlbumArtist":"Artist","AlbumId":"native-album","RunTimeTicks":100000000}]}"""),
+            "wrong-id" => Json(200, """{"Items":[{"Id":"native","Type":"Audio"}]}"""),
+            "folder" => Json(200, """{"Items":[{"Id":"folder","Type":"Folder"}]}"""),
+            var ids when ids.Split(',').Contains("native", StringComparer.Ordinal) => Json(200, """{"Items":[{"Id":"native","Type":"Audio","Name":"Fixture","AlbumArtist":"Artist","AlbumId":"native-album","RunTimeTicks":100000000}]}"""),
+            _ => Json(200, """{"Items":[]}""")
+        };
+        return ClientApiFactory(request =>
+        {
+            observe?.Invoke(request);
+            return request.RequestUri!.AbsolutePath switch
             {
-                "native-album" => Json(200, """{"Items":[{"Id":"native-album","Type":"MusicAlbum","Name":"Album"}]}"""),
-                "native" => Json(200, """{"Items":[{"Id":"native","Type":"Audio","Name":"Fixture","AlbumArtist":"Artist","AlbumId":"native-album","RunTimeTicks":100000000}]}"""),
-                "wrong-id" => Json(200, """{"Items":[{"Id":"native","Type":"Audio"}]}"""),
-                "folder" => Json(200, """{"Items":[{"Id":"folder","Type":"Folder"}]}"""),
-                var ids when ids.Split(',').Contains("native", StringComparer.Ordinal) => Json(200, """{"Items":[{"Id":"native","Type":"Audio","Name":"Fixture","AlbumArtist":"Artist","AlbumId":"native-album","RunTimeTicks":100000000}]}"""),
-                _ => Json(200, """{"Items":[]}""")
-            },
-            _ => Json(404, "{}")
+                "/Users/Me" => Json(200, """{"Id":"listener","Policy":{"IsAdministrator":true}}"""),
+                "/Items/native-album" => Json(200, """{"Id":"native-album","Type":"MusicAlbum","Name":"Album"}"""),
+                "/Items/native" => Json(200, """{"Id":"native","Type":"Audio","Name":"Fixture","AlbumArtist":"Artist"}"""),
+                "/Audio/hidden/Lyrics" => Json(200, "{"),
+                "/Audio/native/Lyrics" => (readBackendLyrics?.Invoke() ?? backendLyrics) is { } body ? Json(200, body) : Json(404, "{}"),
+                "/Items" or "/Users/listener/Items" => Items(request),
+                _ => Json(404, "{}")
+            };
         }, services =>
-        {
-            services.RemoveAll<IProtocolProviderGateway>();
-            services.AddSingleton(gateway.Object);
-            services.RemoveAll<ILibraryIndexService>();
-            services.AddSingleton(library.Object);
-            services.RemoveAll<IEffectiveProviderPolicyResolver>();
-            services.AddSingleton(policies.Object);
-            configure?.Invoke(services);
-        });
+            {
+                services.RemoveAll<IProtocolProviderGateway>();
+                services.AddSingleton(gateway.Object);
+                services.RemoveAll<ILibraryIndexService>();
+                services.AddSingleton(library.Object);
+                services.RemoveAll<IEffectiveProviderPolicyResolver>();
+                services.AddSingleton(policies.Object);
+                configure?.Invoke(services);
+            });
     }
 
     private static async Task<(Guid Owner, Guid Other)> SeedClientLyricsAsync(ProtocolFactory factory, Guid recording)

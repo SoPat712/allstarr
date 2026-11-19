@@ -199,7 +199,18 @@ public sealed class ItemLyricsReader(
         }
     }
 
-    private async Task<LyricsItem?> ResolveAsync(HttpContext http, ProtocolExecutionContext execution, string itemId)
+    // A track read's lyrics and version views resolve the same item one after the other; one request reads it, and the
+    // media server's own lyrics for it, once.
+    private Task<LyricsItem?> ResolveAsync(HttpContext http, ProtocolExecutionContext execution, string itemId)
+    {
+        if (http.Items[typeof(ResolvedItems)] is not ResolvedItems resolved) http.Items[typeof(ResolvedItems)] = resolved = new();
+        if (resolved.TryGetValue(itemId, out var known) && !known.IsFaulted && !known.IsCanceled) return known;
+        return resolved[itemId] = ResolveItemAsync(http, execution, itemId);
+    }
+
+    private sealed class ResolvedItems() : System.Collections.Concurrent.ConcurrentDictionary<string, Task<LyricsItem?>>(StringComparer.Ordinal);
+
+    private async Task<LyricsItem?> ResolveItemAsync(HttpContext http, ProtocolExecutionContext execution, string itemId)
     {
         using var matching = RequestTiming.Current?.Stage("match");
         if (string.IsNullOrWhiteSpace(itemId)) return null;
@@ -239,8 +250,9 @@ public sealed class ItemLyricsReader(
         if (item.TryGetProperty("ProviderIds", out var ids) && ids.TryGetProperty("Spotify", out var spotify))
             native.SpotifyId = spotify.GetString();
         var headers = CopyHeaders(http);
+        Task<LyricsInfo?>? backend = null;
         return new(MusicLyrics.ForLookup(native), itemId,
-            new(Backend: token => ReadBackendAsync(headers, itemId, token)));
+            new(Backend: token => backend is { IsFaulted: false, IsCanceled: false } ? backend : backend = ReadBackendAsync(headers, itemId, token)));
     }
 
     private async Task<LyricsInfo?> ReadBackendAsync(HttpContext http, string itemId, CancellationToken token)

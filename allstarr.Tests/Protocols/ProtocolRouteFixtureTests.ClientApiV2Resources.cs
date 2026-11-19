@@ -98,7 +98,8 @@ public sealed partial class ProtocolRouteFixtureTests
     public async Task ClientApiV2_LyricsSourcesOfALibrarySongNamedByItsRecordingAnswerFromTheLibraryCopy()
     {
         var recording = Guid.NewGuid();
-        using var factory = ClientLyricsFactory(recording, new() { ["lrclib"] = ClientLyricsResult("line") }, backendLyrics: """{"Metadata":{"IsSynced":true,"Length":100000000},"Lyrics":[{"Start":10000000,"Text":"Library line"}]}""",
+        var upstream = new System.Collections.Concurrent.ConcurrentQueue<string>();
+        using var factory = ClientLyricsFactory(recording, new() { ["lrclib"] = ClientLyricsResult("line") }, observe: request => upstream.Enqueue(request.RequestUri!.AbsolutePath), backendLyrics: """{"Metadata":{"IsSynced":true,"Length":100000000},"Lyrics":[{"Start":10000000,"Text":"Library line"}]}""",
             libraryCopy: "native");
         using var client = CreateClientApiClient(factory);
         client.DefaultRequestHeaders.Authorization = new("Bearer", "listener-token");
@@ -114,6 +115,15 @@ public sealed partial class ProtocolRouteFixtureTests
             .Replace("/allstarr/v1/providers/", "/allstarr/v2/providers/", StringComparison.Ordinal);
         var lyrics = await ReadClientLyricsJsonAsync(client, $"/allstarr/v2/tracks/{track}/lyrics");
         Assert.True(JsonNode.DeepEquals(JsonNode.Parse(original), lyrics), $"{original} vs {lyrics}");
+        // One request's lyrics and version reads share the item and its media-server lyrics, read once.
+        upstream.Clear();
+        var separate = await ReadClientLyricsJsonAsync(client, $"/allstarr/v2/tracks/{track}/lyrics/sources");
+        var separateReads = upstream.Count(path => path is "/Items/native" or "/Audio/native/Lyrics");
+        upstream.Clear();
+        var both = await ReadClientLyricsJsonAsync(client, $"/allstarr/v2/tracks/{track}?views=lyrics,lyricsSources");
+        Assert.True(JsonNode.DeepEquals(both["views"]!["lyricsSources"], separate), $"{both["views"]!["lyricsSources"]} vs {separate}");
+        Assert.True(JsonNode.DeepEquals(both["views"]!["lyrics"], lyrics), $"{both["views"]!["lyrics"]} vs {lyrics}");
+        Assert.Equal(separateReads, upstream.Count(path => path is "/Items/native" or "/Audio/native/Lyrics"));
         await AssertV2ResourceRead(client, $"/allstarr/v2/tracks/{track}/lyrics", lyrics);
     }
 
