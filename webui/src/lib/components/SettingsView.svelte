@@ -10,6 +10,7 @@
   import { Button } from "$lib/components/ui/button";
   import SettingsRestartNotice from "$lib/components/SettingsRestartNotice.svelte";
   import SettingsFields from "$lib/components/SettingsFields.svelte";
+  import ConnectCard from "$lib/components/ConnectCard.svelte";
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
   import CacheDiagnosticsCard from "$lib/components/CacheDiagnosticsCard.svelte";
   import PageStatus from "$lib/components/patterns/PageStatus.svelte";
@@ -277,9 +278,8 @@
         </div>
         {#each libraryGroups.slice(1) as item (item.id)}<SettingsFields section={item} {config} onChanged={refresh} />{/each}
       {:else if active === "apps"}
-        {#each appsGroups as item (item.id)}<SettingsFields section={item} {config} onChanged={refresh}>
-          {#snippet footer()}{#if item.id === "connecting"}{@render linkRow("Connect an app", "Step-by-step setup for each music app.", "Open", "#/connect")}{/if}{/snippet}
-        </SettingsFields>{/each}
+        {#each appsGroups as item (item.id)}<SettingsFields section={item} {config} onChanged={refresh} />{/each}
+        <ConnectCard administrator revision={config} />
         {#if browserOrigins.fields.length}<SettingsFields section={browserOrigins} {config} onChanged={refresh}>
           {#snippet footer()}{#if browserAdvanced.fields.length}<AdvancedFold label="Advanced: methods, headers and credentials"><SettingsFields embedded section={browserAdvanced} {config} onChanged={refresh} /></AdvancedFold>{/if}{/snippet}
         </SettingsFields>{/if}

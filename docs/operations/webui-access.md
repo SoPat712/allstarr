@@ -133,7 +133,7 @@ Set `ForwardedHeaders__KnownProxies` in Allstarr's Compose `environment` to the 
 | Dashboard session lifetime | 12 hours; **Keep me signed in** uses 30 days. Single sign-on uses 12 hours. These lifetimes are fixed, not dashboard settings. |
 | Sign-in limits | 20 requests per minute per client address and 60 globally across protected sign-in actions; HTTP 429 includes `Retry-After`. These limits are fixed. |
 | Install extensions from outside your home network | Off by default (Settings → Advanced). Keep it off; HTTPS music access does not need it. |
-| Music-client address | Set **Settings → Apps → Music-client address** to the HTTPS hostname. **Connect apps** shows it to listeners. This changes the instructions, not the listener binding. |
+| Music-client address | Set **Settings → Apps → Music-client address** to the HTTPS hostname. Each listener's settings show it. This changes what people copy, not the listener binding. |
 
 Validate with `caddy validate --config /etc/caddy/Caddyfile` or `nginx -t` before reloading your proxy. Then use an outside-LAN connection to check music-client sign-in, provider playback and a far seek, and confirm the dashboard is unreachable there. Allstarr exposes one selected music protocol per deployment; test the protocol your installation uses. These examples do not configure DNS, certificates, firewall rules or an existing proxy for you.
 

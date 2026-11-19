@@ -68,7 +68,7 @@ The [user guide](docs/user-guide.md) covers the dashboard in detail.
 
 Point your app at Allstarr's address, `http://<allstarr-host>:5274`, instead of your media server. Sign in with your usual media-server username and password. Use the Jellyfin or Subsonic option in the app, whichever matches your server.
 
-The dashboard's **Connect apps** page shows the address and step-by-step setup for each app it lists:
+The dashboard shows the address and your username under **Connect a music app** in your settings. The [user guide](docs/user-guide.md#connect-your-music-app) has the steps for each of these apps:
 
 - Jellyfin: Finer Player, Musiver, Feishin, Finamp, Jellyfin Web and Symfonium.
 - Subsonic: Feishin, Tempo and Symfonium.

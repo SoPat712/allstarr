@@ -17,7 +17,7 @@ Open the dashboard and sign in with your media-server username and password.
 
 ## Find your way around
 
-The sidebar shows **Home**, **Library**, **For you**, **Sources**, **Activity**, **Settings**, **Connect apps** and **Report a problem**. Your name in the sidebar opens your **Listening settings**. On a phone, Home, Library, For you and Activity sit at the bottom, and **More** holds Listening settings, Sources, Connect apps, Report a problem and, for administrators, Settings.
+The sidebar shows **Home**, **Library**, **For you**, **Sources**, **Activity**, **Settings** and **Report a problem**. Your name in the sidebar opens your **Listening settings**. On a phone, Home, Library, For you and Activity sit at the bottom, and **More** holds Listening settings, Sources, Report a problem and, for administrators, Settings.
 
 Listeners and administrators see different parts:
 
@@ -32,9 +32,9 @@ Pages update on their own when something changes, including changes made in anot
 
 ## Connect your music app
 
-Open **Connect apps** (on a phone, **More → Connect apps**). It shows your username and the server address your administrator set. Use **Copy** next to each to copy it, then sign in to your app with your usual media-server password. If the address is empty, ask your administrator for it; typing one here only changes what you copy.
+Your settings show what a music app asks for. Open **Listening settings** (your name in the sidebar; on a phone, **More → Listening settings**) and find **Connect a music app** at the bottom. Administrators find the same card in **Settings → Apps**. It shows the server address your administrator set and your username. Use **Copy** next to each, then sign in to your app with your usual media-server password. If the address is empty, ask your administrator for it; typing one there only changes what you copy. On Jellyfin, **Open web player** opens the player in your browser.
 
-Pick your app on the page to see its steps. The list depends on whether this Allstarr serves Jellyfin or Subsonic:
+Which apps work depends on whether this Allstarr serves Jellyfin or Subsonic:
 
 | App | Platform | Jellyfin | Subsonic / OpenSubsonic | Setup help |
 | --- | --- | --- | --- | --- |
@@ -42,9 +42,18 @@ Pick your app on the page to see its steps. The list depends on whether this All
 | Musiver | Mobile | Yes | — | — |
 | Feishin | Desktop | Yes | Yes | [Feishin](https://github.com/jeffvli/feishin) |
 | Finamp | Android and iOS | Yes | — | [Finamp](https://github.com/finamp-app/finamp) |
-| Jellyfin Web | Web browser | Yes | — | **Open web player** on the page; [project](https://github.com/jellyfin/jellyfin-web) |
+| Jellyfin Web | Web browser | Yes | — | **Open web player** on the card; [project](https://github.com/jellyfin/jellyfin-web) |
 | Tempo | Android | — | Yes | [Tempo](https://github.com/CappielloAntonio/tempo) |
 | Symfonium | Android, paid after a trial | Yes | Yes | [Jellyfin setup](https://docs.symfonium.app/wiki/providers/jellyfin-media-provider-configuration/) or [Subsonic setup](https://docs.symfonium.app/wiki/providers/subsonic-opensubsonic-media-provider-configuration/) |
+
+Steps for each app:
+
+- **Finer Player** and **Musiver**: add a Jellyfin server with the address, then sign in. Your imported playlists and mixes are under Playlists.
+- **Feishin**: open **Manage servers**, add a server and choose Jellyfin or Subsonic. Enter the address, your username and your password.
+- **Finamp**: add a Jellyfin server with the address, sign in, then choose your music library.
+- **Jellyfin Web**: choose **Open web player**, sign in and open your music library.
+- **Tempo**: add a Subsonic server with the address, sign in, then refresh your library.
+- **Symfonium**: add a Jellyfin or Subsonic / OpenSubsonic media provider, enter the address, your username and your password, then sync the provider.
 
 For a first listen, play a song, seek ahead, heart it, add it to a playlist and try an offline download. A download or offline cache belongs to that app; check it plays with the device offline before you travel. App-specific limits are in [client compatibility](operations/client-compatibility.md).
 
@@ -227,7 +236,7 @@ A report started from a song includes its details, such as the saved match and w
 2. Under **Connect your media server**, choose **Jellyfin** or **Subsonic**, enter its address and sign in as a media-server administrator. The password is discarded. The connection is saved in the data folder and Allstarr restarts.
 3. Sign in and work through **Set up Allstarr**. Mark each step **Reviewed, continue** or **Skip for now**; progress is saved for your account. **Finish setup** skips the remaining optional steps. Reopen it any time from **Settings → Backups and health → Walk through setup again**, or **Continue setup** on Home. Nothing is reset.
 4. Connect services in **Sources** and set their order in **Settings → Music sources**.
-5. Set the address listeners use in **Settings → Apps → Music-client address**, so **Connect apps** can show it.
+5. Set the address listeners use in **Settings → Apps → Music-client address**, so each listener's settings can show it.
 6. Test ordinary library playback in a music app before adding playlists or services.
 
 Upgrading from version 2: the setup guide has a step to review your previous settings before anything is imported. See [legacy `.env` import](operations/legacy-env-import.md).
@@ -298,7 +307,7 @@ Settings saves as you change it. Settings marked **Restarts Allstarr** restart i
 **Apps**
 
 - **Client API for apps** lets signed-in apps use Allstarr's extra features, such as song details, synced lyrics and mixes. It is off by default. See the [client API](api/README.md).
-- **Music-client address** is the address listeners use in their apps. **Connect apps** shows it.
+- **Music-client address** is the address listeners use in their apps. **Connect a music app**, below it and in each listener's settings, shows it with their username.
 - **Browser apps** lists browser origins allowed to call Allstarr.
 
 **Mixes and discovery**

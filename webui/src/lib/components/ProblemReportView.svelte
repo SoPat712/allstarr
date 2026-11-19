@@ -97,7 +97,7 @@
     { label: receipt ? "Available in Activity → Reports" : selector ? loading ? "Loading song details…" : contextError ? "Song details need attention" : "Song details are included" : "Add a note about what happened" },
   ]} />
   {#if receipt}
-    <article class="settings-card"><header><h3>Your report was saved.</h3></header><p class="settings-impact" role="status">Your administrator can review it in Activity → Reports.</p><footer><Button href="#/connect">Getting started</Button></footer></article>
+    <article class="settings-card"><header><h3>Your report was saved.</h3></header><p class="settings-impact" role="status">Your administrator can review it in Activity → Reports.</p><footer><Button href="#/">Back to Home</Button></footer></article>
   {:else}
     {#if selectionError || contextError}
       <div class="degraded-banner" role="alert"><p>{selectionError || contextError}</p>

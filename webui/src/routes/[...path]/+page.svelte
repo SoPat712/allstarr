@@ -24,7 +24,6 @@
     { href: "#/sources/services", prefix: "/integrations/", label: "Sources", mobileLabel: "Sources", icon: "sources", mobile: false },
     { href: "#/activity", label: "Activity", mobileLabel: "Activity", icon: "activity", mobile: true },
     { href: "#/settings", label: "Settings", mobileLabel: "Settings", icon: "settings", mobile: false },
-    { href: "#/connect", prefix: "/getting-started", label: "Connect apps", mobileLabel: "Connect apps", icon: "guide", mobile: false },
     { href: "#/report", label: "Report a problem", mobileLabel: "Report", icon: "report", mobile: false },
   ];
   const preferencesDestination: (typeof destinations)[number] = {
@@ -90,7 +89,7 @@
   const developmentIntelligence = $derived(session?.features?.intelligence === true);
   const navigationDestinations = $derived(destinations.filter(item => item.href !== "#/for-you" || !developmentIntelligence));
   const mobileDestinations = $derived(navigationDestinations.filter((item) => item.mobile));
-  const moreDestinations = $derived([preferencesDestination, ...["#/sources/services", "#/connect", ...(administrator ? ["#/settings"] : []), "#/report"]
+  const moreDestinations = $derived([preferencesDestination, ...["#/sources/services", ...(administrator ? ["#/settings"] : []), "#/report"]
     .map(href => navigationDestinations.find(item => item.href === href)!).filter(Boolean)]);
   const librarySections = $derived(administrator
     ? allLibrarySections
@@ -99,7 +98,8 @@
   // Addresses read like the labels people see; the older ones still open the same pages.
   function currentRoute(path: string): string {
     if (path === "/library/matches") return "/library/mappings";
-    if (path === "/connect") return "/getting-started";
+    // What a music app needs to sign in sits with the rest of a person's settings.
+    if (path === "/connect" || path === "/getting-started") return administrator ? "/settings/apps" : "/settings/listening";
     if (path.startsWith("/sources/")) return currentRoute("/integrations/" + path.slice("/sources/".length));
     if (path === "/intelligence" && !developmentIntelligence) return "/for-you";
     if (path === "/home") return "/";
@@ -208,8 +208,6 @@
                       }
                     : route === "/activity"
                       ? { administrator, currentUserId: session?.user?.allstarrUserId ?? "", initialView: routeQuery.get("view") ?? "history", initialReportId: routeQuery.get("report") ?? "", initialJobId: routeQuery.get("job") ?? "" }
-                    : route === "/getting-started"
-                      ? { administrator }
                     : route === "/report"
                       ? { query: routeQuery }
                     : {},
@@ -271,7 +269,6 @@
     }
     if (path === "/activity") return import("$lib/components/EventLogView.svelte");
     if (path === "/preferences") return import("$lib/components/ListeningPreferencesView.svelte");
-    if (path === "/getting-started") return import("$lib/components/GettingStartedView.svelte");
     if (path === "/report") return import("$lib/components/ProblemReportView.svelte");
     if (path === "/for-you") return import("$lib/components/IntelligenceView.svelte");
     if (path === "/intelligence") {
@@ -546,8 +543,8 @@
       </button>
 
       <nav class="desktop-navigation" aria-label="Primary" use:slideIndicator={"a.active"}>
-        {#each [destinations.filter(item => !["#/connect", "#/report"].includes(item.href)), destinations.filter(item => ["#/connect", "#/report"].includes(item.href))] as group, index}
-          <div class="navigation-group" role="group" aria-label={index === 0 ? "Main destinations" : "Help and connections"}>
+        {#each [destinations.filter(item => item.href !== "#/report"), destinations.filter(item => item.href === "#/report")] as group, index}
+          <div class="navigation-group" role="group" aria-label={index === 0 ? "Main destinations" : "Help"}>
             {#each group as destination}
               {@const active = activeDestination.href === destination.href || destination.href === "#/settings" && (route === "/preferences" || route.startsWith("/settings"))}
               <a
@@ -748,7 +745,7 @@
                 <span class="nav-icon"><UiIcon name={destination.icon} /></span>
                 <span>
                   <strong>{destination.label}</strong>
-                  <small>{destination.href === "#/settings/listening" ? "Quality, explicit songs and track labels for your account" : destination.href === "#/connect" ? "Connect music apps and get help" : destination.href === "#/report" ? "Send a note to your administrator" : destination.label === "Sources" ? (administrator ? "Music services, accounts and extensions" : "Music services and your accounts") : "Deployment and operator controls"}</small>
+                  <small>{destination.href === "#/settings/listening" ? "Quality, explicit songs and track labels for your account" : destination.href === "#/report" ? "Send a note to your administrator" : destination.label === "Sources" ? (administrator ? "Music services, accounts and extensions" : "Music services and your accounts") : "Deployment and operator controls"}</small>
                 </span>
               </a>
             {/each}

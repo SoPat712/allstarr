@@ -33,7 +33,7 @@ async function sharedControls(page: Page, width: number) {
     await expect(page.locator(".sidebar")).toHaveCSS("width", "200px");
     expect(await page.locator(".workspace-header h1").evaluate(element => ({ size: getComputedStyle(element).fontSize, weight: getComputedStyle(element).fontWeight }))).toEqual({ size: "32px", weight: "650" });
     await expect(page.locator('.desktop-navigation [aria-label="Main destinations"] a')).toHaveText(["Home", "Library", "For you", "Sources", "Activity", "Settings"]);
-    await expect(page.locator('.desktop-navigation [aria-label="Help and connections"] a')).toHaveText(["Connect apps", "Report a problem"]);
+    await expect(page.locator('.desktop-navigation [aria-label="Help"] a')).toHaveText(["Report a problem"]);
     expect(await page.locator(".desktop-navigation a").evaluateAll(elements => elements.every(element => element.getBoundingClientRect().height <= 40))).toBe(true);
   }
   for (const input of await page.locator('.search-field input[type="search"]').all()) {
@@ -442,10 +442,10 @@ for (const [width, theme] of themeVariants) {
     await themeShot(page, "10-connect-account", width, theme, page.locator(".sources-heading"));
 
     await page.goto("/#/connect");
-    const address = page.locator(".connection-value input").first();
+    const address = page.locator(".connect-value input").first();
     await expect(address).toBeVisible();
     const filled = await page.evaluate(() => { const probe = document.createElement("div"); probe.style.background = "var(--color-panel-raised)"; document.body.append(probe); const value = getComputedStyle(probe).backgroundColor; probe.remove(); return value; });
-    for (const field of await page.locator(".connection-value input").all()) expect(await css(field, "background-color")).toBe(filled);
+    for (const field of await page.locator(".connect-value input").all()) expect(await css(field, "background-color")).toBe(filled);
     await themeShot(page, "11-connect-fields", width, theme, address.locator("xpath=ancestor::*[contains(@class, 'settings-card') or self::section][1]"));
 
     await page.goto("/#/report");

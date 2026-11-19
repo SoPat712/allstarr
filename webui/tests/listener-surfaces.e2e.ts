@@ -164,7 +164,7 @@ test("listener navigation exposes personal surfaces and blocks operator workspac
   const more = page.getByRole("navigation", { name: "More destinations" });
   await expect(more.getByRole("link", { name: /Listening settings/ })).toBeVisible();
   await expect(more.getByRole("link", { name: /Sources/ })).toBeVisible();
-  await expect(more.getByRole("link", { name: /Connect apps/ })).toBeVisible();
+  await expect(more.getByRole("link", { name: /Connect apps/ })).toHaveCount(0);
   await expect(more.getByRole("link", { name: /Settings/ })).toHaveCount(0);
   await more.getByRole("link", { name: /Sources/ }).click();
   await expect(page.getByRole("heading", { name: "Sources", level: 1 })).toBeVisible();

@@ -18,6 +18,7 @@
   import { audioQualityOptions, playbackStartLabel, playbackStartOptions } from "$lib/settings";
   import SelectField from "$lib/components/SelectField.svelte";
   import MyLibrariesCard from "$lib/components/MyLibrariesCard.svelte";
+  import ConnectCard from "$lib/components/ConnectCard.svelte";
 
   // Settings passes the household's status so the page has one status line.
   let { administrator = false, householdStatus = [] }: { administrator?: boolean; householdStatus?: { label: string }[] } = $props();
@@ -265,6 +266,9 @@
 
         </div>
       </footer>
+
+    <!-- An administrator has this card in Settings → Apps, beside the address everyone uses. -->
+    {#if !administrator}<ConnectCard />{/if}
   </section>
 {/if}
 

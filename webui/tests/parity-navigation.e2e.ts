@@ -189,8 +189,8 @@ for (const [administrator, backend] of [[true, "Jellyfin"], [false, "Navidrome"]
     await page.goto("#/settings");
     const nav = page.locator(".desktop-navigation");
     await expect(nav.getByRole("group", { name: "Main destinations", exact: true }).getByRole("link")).toHaveText(["Home", "Library", "For you", "Sources", "Activity", "Settings"]);
-    const secondary = nav.getByRole("group", { name: "Help and connections", exact: true });
-    await expect(secondary.getByRole("link")).toHaveText(["Connect apps", "Report a problem"]);
+    const secondary = nav.getByRole("group", { name: "Help", exact: true });
+    await expect(secondary.getByRole("link")).toHaveText(["Report a problem"]);
     await expect(secondary).toHaveCSS("border-top-width", "0px");
     expect(await secondary.evaluate(element => Number.parseFloat(getComputedStyle(element).marginTop))).toBeGreaterThan(0);
     await expect(page.locator(".brand small")).toHaveText(backend);
@@ -394,9 +394,9 @@ for (const theme of ["light", "dark"] as const) {
       await expect(page.locator(".profile a[href='#/settings']")).toHaveCount(0);
       if (width > 760) {
         await expect(page.locator(".mobile-navigation")).toBeHidden();
-        await expect(primary.getByRole("link")).toHaveText(["Home", "Library", "For you", "Sources", "Activity", "Settings", "Connect apps", "Report a problem"]);
+        await expect(primary.getByRole("link")).toHaveText(["Home", "Library", "For you", "Sources", "Activity", "Settings", "Report a problem"]);
         await expect(primary.getByRole("link", { name: "Report a problem", exact: true })).toHaveCount(1);
-        await expect(primary.getByRole("link", { name: "Connect apps", exact: true })).toHaveCount(1);
+        await expect(primary.getByRole("link", { name: "Connect apps", exact: true })).toHaveCount(0);
         await expect(primary.getByRole("link", { name: "Settings", exact: true })).toHaveCount(1);
         await expect(page.getByRole("button", { name: "More destinations" })).toHaveCount(0);
       } else {
@@ -420,9 +420,8 @@ test("More restores keyboard focus and closes when returning to desktop", async 
   const sheet = page.getByRole("dialog", { name: "More", exact: true });
   await expect(sheet).toBeVisible();
   await expect(page.locator(".mobile-navigation button")).toHaveAttribute("aria-expanded", "true");
-  await expect(sheet.getByRole("link")).toHaveCount(5);
+  await expect(sheet.getByRole("link")).toHaveCount(4);
   await expect(sheet.getByRole("link", { name: /Report a problem/ })).toHaveCount(1);
-  await expect(sheet.getByRole("link", { name: /^Connect apps\b/ })).toContainText("Connect music apps and get help");
   await page.keyboard.press("Escape");
   await expect(sheet).toBeHidden();
   await expect(more).toBeFocused();
@@ -510,8 +509,8 @@ test("Responsive boundaries preserve navigation and download identity", async ({
   for (const width of [760, 761, 900, 901]) {
     await page.setViewportSize({ width, height: 844 });
     const navigation = page.locator(width <= 760 ? ".mobile-navigation" : ".desktop-navigation");
-    await expect(navigation.getByRole("link")).toHaveCount(width <= 760 ? 3 : 8);
-    await expect(navigation.locator(width <= 760 ? ":scope > :is(a, button)" : ".navigation-group > a")).toHaveCount(width <= 760 ? 4 : 8);
+    await expect(navigation.getByRole("link")).toHaveCount(width <= 760 ? 3 : 7);
+    await expect(navigation.locator(width <= 760 ? ":scope > :is(a, button)" : ".navigation-group > a")).toHaveCount(width <= 760 ? 4 : 7);
     await expect(page.locator(".sidebar")).toHaveCSS("position", "fixed");
     if (width === 900)
       await expect.poll(async () => (await page.locator(".sidebar").boundingBox())?.width ?? 0).toBe(80);
@@ -552,8 +551,7 @@ test("Sidebar uses an integrated expander and deterministic slim breakpoint", as
   expect(expanderBox!.x).toBeGreaterThan(brandBox!.x);
   expect(expanderBox!.y).toBeLessThan(brandBox!.y + brandBox!.height);
   expect(expanderBox!.y + expanderBox!.height).toBeGreaterThan(brandBox!.y);
-  await expect(page.locator(".desktop-navigation").getByRole("link")).toHaveCount(8);
-  await expect(page.locator(".desktop-navigation").getByRole("link", { name: "Connect apps", exact: true })).toBeVisible();
+  await expect(page.locator(".desktop-navigation").getByRole("link")).toHaveCount(7);
   await expect(page.locator(".desktop-navigation").getByRole("link", { name: "Intelligence" })).toHaveCount(0);
   const libraryIcon = page.locator(".desktop-navigation")
     .getByRole("link", { name: "Library" }).locator("svg");

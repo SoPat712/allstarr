@@ -422,24 +422,19 @@ for (const { width, theme } of modes) {
     expect(state.writes[1].body.expectedRevision).toBe("preferences-2");
   });
 
-  test(`Connect apps selected guide ${width} ${theme}`, async ({ page }) => {
+  test(`Connect a music app card ${width} ${theme}`, async ({ page }) => {
     await appearance(page, width, theme);
     await personalPagesFixture(page);
-    await page.goto("/#/connect");
-    await expect(page.getByRole("region", { name: "Connection status", exact: true })).toContainText("Server address ready to copy");
-    const app = page.getByRole("button", { name: "Finamp Android and iOS", exact: true });
-    await app.click();
-    await expect(app).toHaveAttribute("aria-pressed", "true");
-    const guide = page.getByRole("region", { name: "Set up Finamp", exact: true });
-    await expect(guide).toBeVisible();
-    await expect(guide.getByRole("listitem")).toHaveCount(3);
-    await expect(page.getByRole("region", { name: "Set up Finer Player", exact: true })).toHaveCount(0);
-    await expect(guide.getByLabel("Music-client address", { exact: true })).toHaveValue("http://music.test:5274");
-    await expect(guide.getByLabel("Username", { exact: true })).toHaveValue("Listener");
-    await expect(guide.getByRole("button", { name: "Copy server address", exact: true })).toBeEnabled();
-    await expect(guide.getByRole("button", { name: "Copy username", exact: true })).toBeEnabled();
-    await page.evaluate(() => { (document.activeElement as HTMLElement)?.blur(); window.scrollTo(0, 0); });
-    await shot(page, "connect-apps", width, theme);
+    await page.goto("/#/settings/listening");
+    const card = page.getByRole("region", { name: "Connect a music app", exact: true });
+    await expect(card.getByLabel("Server address", { exact: true })).toHaveValue("http://music.test:5274");
+    await expect(card.getByLabel("Username", { exact: true })).toHaveValue("Listener");
+    await expect(card.getByRole("button", { name: "Copy server address", exact: true })).toBeEnabled();
+    await expect(card.getByRole("button", { name: "Copy username", exact: true })).toBeEnabled();
+    await expect(card.getByRole("link", { name: "Open web player", exact: true })).toBeVisible();
+    await card.scrollIntoViewIfNeeded();
+    await page.evaluate(() => (document.activeElement as HTMLElement)?.blur());
+    await shot(page, "connect-card", width, theme);
   });
 
   test(`General report first frame ${width} ${theme}`, async ({ page }) => {

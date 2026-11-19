@@ -1,7 +1,6 @@
 <script lang="ts">
   import {
     Activity,
-    BookOpen,
     Check,
     Headphones,
     Flag,
@@ -18,7 +17,6 @@
   const icons = {
     activity: Activity,
     check: Check,
-    guide: BookOpen,
     headphones: Headphones,
     home: House,
     library: Library,

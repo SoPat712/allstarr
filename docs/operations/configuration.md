@@ -66,7 +66,7 @@ Most settings apply as soon as you save them. A setting marked **Restarts Allsta
 
 Set **Settings → Apps → Music-client address** to the address listeners enter in their music apps, for example `https://music.example.com`. Include the port and any path prefix your proxy uses. Use an absolute HTTP or HTTPS URL without credentials, a query or a fragment. Do not enter the media server's private address.
 
-The address shows on **Connect apps** with step-by-step setup for each app. It changes the instructions only; it does not change ports, proxy routing or the media-server connection. A version 2 `PUBLIC_LISTENER_URL` comes over through the legacy import.
+The address shows under **Connect a music app** in each listener's settings. It changes what people copy only; it does not change ports, proxy routing or the media-server connection. A version 2 `PUBLIC_LISTENER_URL` comes over through the legacy import.
 
 **Client API for apps** on the same page is off by default. Turn it on to let apps such as Songbird use Allstarr's own features (song details, synced lyrics, mixes). See the [client API](../api/README.md).
 

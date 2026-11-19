@@ -6,7 +6,7 @@ New apps built for Allstarr should use the [client API](../api/README.md). Exist
 
 ## Jellyfin apps
 
-**Connect apps** offers these for a Jellyfin server, with setup steps for each:
+These work with a Jellyfin server. The [user guide](../user-guide.md#connect-your-music-app) has the steps for each:
 
 - [Finer Player](https://monk-studio.com/finer) on iPhone
 - [Musiver](https://music.aqzscn.cn/en/) on mobile
@@ -27,7 +27,7 @@ Saved service music does not appear in library browsing. It appears in favorites
 
 ## Subsonic and OpenSubsonic apps
 
-**Connect apps** offers these for a Subsonic server:
+These work with a Subsonic server:
 
 - [Feishin](https://github.com/jeffvli/feishin) on desktop
 - [Tempo](https://github.com/CappielloAntonio/tempo) on Android

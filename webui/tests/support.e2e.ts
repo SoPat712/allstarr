@@ -56,6 +56,14 @@ async function mockSupport(page: Page, administrator = false, backend = "Jellyfi
       }
       return reply(route, { operatorSettings: { "Gateway:PublicListenerUrl": state.url ?? "" } });
     }
+    // The listener's connect card sits at the end of their listening settings, so those need to load.
+    if (path === "/api/admin/preferences") {
+      const values = { explicitFilter: "All", showExternalLabel: true, showExplicitLabel: true, playbackStart: "Balanced",
+        lyricsOrder: "backend,kept,lrclib", qualityLimit: null };
+      return reply(route, { values, householdDefaults: values, householdQuality: "CdLossless", revision: "preferences-1",
+        usesHouseholdDefaults: true, cleanOnlyLocked: false });
+    }
+    if (path === "/api/admin/preferences/libraries") return reply(route, { selected: null, available: [] });
     if (path === "/api/admin/ui/listener-context") return reply(route, { backend, username: "Listener",
       musicClientUrl: state.url, addressSource: state.url ? "configured" : "unconfigured" });
     if (path === "/api/admin/problem-reports/context") {
@@ -102,21 +110,21 @@ async function mockSupport(page: Page, administrator = false, backend = "Jellyfi
   return state;
 }
 
-test("Subsonic listeners get compatible apps and can enter an unconfigured address locally", async ({ page }) => {
+test("Subsonic listeners can enter an unconfigured address for themselves", async ({ page }) => {
   const state = await mockSupport(page, false, "Subsonic");
   state.url = null;
-  await page.goto("/#/getting-started");
-  await expect(page.getByText("Your administrator has not set a music-client address.", { exact: false })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Tempo Android", exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Finamp Android and iOS", exact: true })).toHaveCount(0);
-  await expect(page.getByRole("link", { name: "Open web player", exact: true })).toHaveCount(0);
-  const address = page.getByLabel("Music-client address", { exact: true });
+  await page.goto("/#/settings/listening");
+  const card = page.getByRole("region", { name: "Connect a music app", exact: true });
+  await expect(card).toContainText("Add a Subsonic server in your music app");
+  await expect(card.getByText("No address has been set for music apps.", { exact: false })).toBeVisible();
+  await expect(card.getByRole("link", { name: "Open web player", exact: true })).toHaveCount(0);
+  await expect(card.getByRole("button", { name: "Open web player", exact: true })).toHaveCount(0);
+  const address = card.getByLabel("Server address", { exact: true });
   await expect(address).toHaveValue("");
-  await expect(page.getByRole("button", { name: "Copy server address" })).toBeDisabled();
+  await expect(card.getByRole("button", { name: "Copy server address" })).toBeDisabled();
   await address.fill("http://music.test:5274/gateway");
-  await expect(page.getByRole("button", { name: "Copy server address" })).toBeEnabled();
+  await expect(card.getByRole("button", { name: "Copy server address" })).toBeEnabled();
   expect(state.url).toBeNull();
-  await expect(page.getByRole("link", { name: "Set the household address" })).toHaveCount(0);
 });
 
 for (const backend of ["Jellyfin", "Subsonic"]) {
@@ -131,25 +139,26 @@ for (const backend of ["Jellyfin", "Subsonic"]) {
   });
 }
 
-test("guide rejects private URL fields and offers copy selection when clipboard access is unavailable", async ({ page }) => {
+test("the connect card rejects private URL fields and offers copy selection when clipboard access is unavailable", async ({ page }) => {
   await page.addInitScript(() => Object.defineProperty(navigator, "clipboard", { value: undefined, configurable: true }));
-  await mockSupport(page, true);
-  await page.goto("/#/getting-started");
-  const address = page.getByLabel("Music-client address", { exact: true });
-  await expect(page.getByRole("link", { name: "Set the household address" })).toHaveAttribute("href", "#/settings/people");
+  const state = await mockSupport(page);
+  state.url = null;
+  await page.goto("/#/settings/listening");
+  const card = page.getByRole("region", { name: "Connect a music app", exact: true });
+  const address = card.getByLabel("Server address", { exact: true });
   await address.fill("https://listener:private@music.test/?api_key=private");
-  await expect(page.getByRole("button", { name: "Copy server address" })).toBeDisabled();
-  await page.getByRole("button", { name: "Jellyfin Web Web browser", exact: true }).click();
-  await expect(page.getByRole("button", { name: "Open web player", exact: true })).toBeDisabled();
+  await expect(card.getByRole("button", { name: "Copy server address" })).toBeDisabled();
+  await expect(card.getByRole("button", { name: "Open web player", exact: true })).toBeDisabled();
   await address.fill("https://music.test/gateway%0a");
-  await expect(page.getByRole("button", { name: "Copy server address" })).toBeDisabled();
+  await expect(card.getByRole("button", { name: "Copy server address" })).toBeDisabled();
   await address.fill("http://music.test:5274/gateway");
-  await page.getByRole("button", { name: "Copy server address" }).click();
+  await expect(card.getByRole("link", { name: "Open web player", exact: true })).toHaveAttribute("href", "http://music.test:5274/gateway/web/");
+  await card.getByRole("button", { name: "Copy server address" }).click();
   await expect(address).toBeFocused();
   expect(await address.evaluate(input => (input as HTMLInputElement).selectionEnd)).toBe("http://music.test:5274/gateway".length);
 });
 
-test("the administrator address field loads its durable value and updates the guide without restart", async ({ page }) => {
+test("the administrator address field loads its durable value and updates the connect card without restart", async ({ page }, testInfo) => {
   const state = await mockSupport(page, true);
   await page.goto("/#/settings/apps");
   const form = page.getByRole("form", { name: "Connecting settings", exact: true });
@@ -160,8 +169,17 @@ test("the administrator address field loads its durable value and updates the gu
   await expect.poll(() => state.settingsWrites.length).toBe(1);
   expect(state.settingsWrites[0]).toEqual({ PUBLIC_LISTENER_URL: "https://music.test/gateway" });
   await expect(address).toHaveValue("https://music.test/gateway");
-  await page.goto("/#/getting-started");
-  await expect(page.getByLabel("Music-client address", { exact: true })).toHaveValue("https://music.test/gateway");
+  // The card below the setting is what people copy: it follows the saved address and can't be typed in here.
+  const card = page.getByRole("region", { name: "Connect a music app", exact: true });
+  await expect(card.getByLabel("Server address", { exact: true })).toHaveValue("https://music.test/gateway");
+  await expect(card.getByLabel("Server address", { exact: true })).toHaveAttribute("readonly", "");
+  await expect(card.getByLabel("Username", { exact: true })).toHaveValue("Listener");
+  await page.evaluate(() => (document.activeElement as HTMLElement)?.blur());
+  await page.screenshot({ path: testInfo.outputPath("connect-card-apps.png"), fullPage: true });
+  // The page this replaced still opens somewhere useful.
+  await page.goto("/#/connect");
+  await expect(card).toBeVisible();
+  await expect(page.getByRole("form", { name: "Connecting settings", exact: true })).toBeVisible();
 });
 
 test("a song report posts only server selectors and saves once while a request is pending", async ({ page }) => {
@@ -338,21 +356,22 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
 }
 
 for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const) {
-  test(`Getting started uses the listener connection at ${width}px ${theme}`, async ({ page }, testInfo) => {
+  test(`A listener's settings show what a music app needs at ${width}px ${theme}`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 900 });
     await page.emulateMedia({ colorScheme: theme, reducedMotion: "reduce" });
     await mockSupport(page);
+    // The address of the page this card replaced opens the listener's own settings.
     await page.goto("/#/getting-started");
-    await expect(page.getByRole("heading", { name: "Connect apps", level: 1, exact: true })).toBeVisible();
-    await expect(page.getByLabel("Music-client address", { exact: true })).toHaveValue("http://music.test:5274");
-    await expect(page.getByLabel("Username", { exact: true })).toHaveValue("Listener");
-    await expect(page.getByRole("button", { name: "Feishin Desktop", exact: true })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Finamp Android and iOS", exact: true })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Jellyfin Web Web browser", exact: true })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Tempo Android", exact: true })).toHaveCount(0);
+    const card = page.getByRole("region", { name: "Connect a music app", exact: true });
+    await expect(card).toContainText("Add a Jellyfin server in your music app");
+    await expect(card.getByLabel("Server address", { exact: true })).toHaveValue("http://music.test:5274");
+    await expect(card.getByLabel("Server address", { exact: true })).toHaveAttribute("readonly", "");
+    await expect(card.getByLabel("Username", { exact: true })).toHaveValue("Listener");
+    await expect(card.getByRole("link", { name: "Open web player", exact: true })).toHaveAttribute("href", "http://music.test:5274/web/");
     if (width === 390) await expectContainedMobileGeometry(page);
-    await page.evaluate(() => { (document.activeElement as HTMLElement)?.blur(); window.scrollTo(0, 0); });
-    await page.screenshot({ path: testInfo.outputPath(`getting-started-${width}-${theme}.png`), fullPage: true });
+    await card.scrollIntoViewIfNeeded();
+    await page.evaluate(() => (document.activeElement as HTMLElement)?.blur());
+    await page.screenshot({ path: testInfo.outputPath(`connect-card-${width}-${theme}.png`), fullPage: true });
   });
 }
 
@@ -728,21 +747,6 @@ test("Report context failures still offer retry and preserve the note", async ({
   expect(state.previews).toHaveLength(2);
 });
 
-
-test("connection cards show one app guide and keep help nearby", async ({ page }) => {
-  await mockSupport(page);
-  await page.goto("/#/connect");
-  await page.getByRole("button", { name: "Finamp Android and iOS", exact: true }).click();
-  const steps = page.getByRole("region", { name: "Set up Finamp", exact: true });
-  await expect(steps).toBeVisible();
-  await expect(steps.getByRole("listitem")).toHaveCount(3);
-  await expect(page.getByRole("region", { name: "Set up Finer Player", exact: true })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Finamp Android and iOS", exact: true })).toHaveAttribute("aria-pressed", "true");
-  await expect(page.getByRole("link", { name: "Import your music", exact: true })).toBeVisible();
-  await page.getByText("Read the tips", { exact: true }).click();
-  await expect(page.getByText("Manual-only sources", { exact: true })).toBeVisible();
-  await expect(page.getByText("Finamp formats", { exact: true })).toBeVisible();
-});
 
 test("song reason chips use supported report kinds and still require a note", async ({ page }) => {
   const state = await mockSupport(page);

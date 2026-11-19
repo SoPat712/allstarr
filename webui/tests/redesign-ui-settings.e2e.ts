@@ -212,7 +212,7 @@ test("Settings search results open above the section links", async ({ page }) =>
   }
 });
 
-test("Settings categories scroll on their own, apart from the page", async ({ page }) => {
+test("Settings categories scroll on their own, apart from the page", async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 1280, height: 560 });
   await fixture(page);
   await page.goto("/#/settings/library");
@@ -229,7 +229,7 @@ test("Settings categories scroll on their own, apart from the page", async ({ pa
   // Reaching the end of the list leaves the page beside it where it was.
   await page.mouse.wheel(0, 5000);
   await expect(categories.getByRole("link").last()).toBeInViewport();
-  if (process.env.UI_SHOTS) await page.screenshot({ path: "test-results/settings-categories-scrolled.png" });
+  await page.screenshot({ path: testInfo.outputPath("settings-categories-scrolled.png") });
   await page.mouse.wheel(0, 600);
   await page.waitForTimeout(150);
   expect(await page.evaluate(() => window.scrollY)).toBe(0);
