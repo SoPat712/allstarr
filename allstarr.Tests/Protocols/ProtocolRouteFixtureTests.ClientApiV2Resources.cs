@@ -91,6 +91,22 @@ public sealed partial class ProtocolRouteFixtureTests
     }
 
     [Fact]
+    public async Task ClientApiV2_LyricsSourcesOfALibrarySongNamedByItsRecordingAnswerFromTheLibraryCopy()
+    {
+        var recording = Guid.NewGuid();
+        using var factory = ClientLyricsFactory(recording, new() { ["lrclib"] = ClientLyricsResult("line") }, backendLyrics: """{"Metadata":{"IsSynced":true,"Length":100000000},"Lyrics":[{"Start":10000000,"Text":"Library line"}]}""",
+            libraryCopy: "native");
+        using var client = CreateClientApiClient(factory);
+        client.DefaultRequestHeaders.Authorization = new("Bearer", "listener-token");
+        await SeedClientLyricsAsync(factory, recording);
+        // The track read and its lyricsSources view read the library copy; the route answers the same.
+        var library = await ReadClientLyricsJsonAsync(client, "/allstarr/v1/items/native/lyrics/sources");
+        var named = await ReadClientLyricsJsonAsync(client, $"/allstarr/v2/tracks/{V2Ids.Track(recording)}/lyrics/sources");
+        Assert.True(JsonNode.DeepEquals(library, named), $"{library} vs {named}");
+        Assert.Contains(named["sources"]!.AsArray(), source => source!["sourceId"]!.GetValue<string>() == "backend");
+    }
+
+    [Fact]
     public async Task ClientApiV2_MatchCanChooseRejectAndResetAPersonalAnswer()
     {
         var recording = Guid.NewGuid();

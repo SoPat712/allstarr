@@ -6,16 +6,24 @@ using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Core.ClientApiV2;
 
-public sealed class V2TrackResources(ItemLyricsReader lyrics, ItemMatchReader matches, ItemAppearancesReader appearances)
+public sealed class V2TrackResources(ItemLyricsReader lyrics, ItemMatchReader matches, ItemAppearancesReader appearances,
+    V2RowIds? rowIds = null)
 {
     public Task<V2Result> LyricsSourcesAsync(HttpContext http, ProtocolExecutionContext execution, string id, bool includeLyrics) =>
-        WithSourceAsync(id, source => lyrics.SourcesAsync(http, execution, source, includeLyrics));
+        WithSourceAsync(id, async source => await lyrics.SourcesAsync(http, execution, await ReadFromAsync(execution, source), includeLyrics));
 
     public Task<V2Result> ChooseLyricsAsync(HttpContext http, ProtocolExecutionContext execution, string id, SetClientLyricsSourceRequest request) =>
-        WithSourceAsync(id, source => lyrics.SetAsync(http, execution, source, request));
+        WithSourceAsync(id, async source => await lyrics.SetAsync(http, execution, await ReadFromAsync(execution, source), request));
 
     public Task<V2Result> ResetLyricsAsync(HttpContext http, ProtocolExecutionContext execution, string id, ClearClientLyricsSourceRequest request) =>
-        WithSourceAsync(id, source => lyrics.ClearAsync(http, execution, source, request));
+        WithSourceAsync(id, async source => await lyrics.ClearAsync(http, execution, await ReadFromAsync(execution, source), request));
+
+    // A track read reads a service song or recording the listener has in the library from the library copy, and so do its
+    // lyrics views; lyrics and appearances do the same, so lyrics answer from what is stored for that copy instead of
+    // asking services, and appearances skip finding the copy again.
+    private async Task<string> ReadFromAsync(ProtocolExecutionContext execution, string source) =>
+        rowIds == null || !V2RowIds.IsExternal(source) ? source
+            : (await rowIds.ResolveAsync(execution, [source])).GetValueOrDefault(source)?.LibraryItemId ?? source;
 
     public Task<V2Result> MatchAsync(HttpContext http, ProtocolExecutionContext execution, string id) =>
         WithSourceAsync(id, source => matches.ReadAsync(http, execution, source));
@@ -32,7 +40,7 @@ public sealed class V2TrackResources(ItemLyricsReader lyrics, ItemMatchReader ma
     public Task<V2Result> AppearancesAsync(HttpContext http, ProtocolExecutionContext execution, string id) =>
         WithSourceAsync(id, async source =>
         {
-            var result = await appearances.ReadAsync(http, execution, source);
+            var result = await appearances.ReadAsync(http, execution, await ReadFromAsync(execution, source));
             V2Ids.TryDecode(id, V2IdKind.Track, out var decoded);
             return new V2TrackAppearances(decoded.Recording is { } recording ? V2Ids.Track(recording) : V2Ids.TrackSource(source),
                 result.SongCount, result.Appearances.Select(item => new V2Appearance(item.Kind,

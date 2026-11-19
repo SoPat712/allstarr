@@ -417,7 +417,7 @@ public sealed partial class ProtocolRouteFixtureTests
 
     private static ProtocolFactory ClientLyricsFactory(Guid recording, Dictionary<string, ProviderLyricsResult?> results,
         bool indexed = true, string? backendLyrics = null, bool externalIdentityFallback = false,
-        Func<string?>? readBackendLyrics = null, Action<IServiceCollection>? configure = null)
+        Func<string?>? readBackendLyrics = null, Action<IServiceCollection>? configure = null, string? libraryCopy = null)
     {
         Song Song() => new() { Id = "ext-deezer-song-lyrics", ExternalProvider = "deezer", ExternalId = "lyrics", CanonicalRecordingId = recording, Title = "Fixture", Artist = "Artist", Album = "Album", AlbumId = "ext-deezer-album-lyrics", Duration = 10 };
         var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
@@ -446,6 +446,11 @@ public sealed partial class ProtocolRouteFixtureTests
             .ReturnsAsync((ProtocolExecutionContext _, string id, CancellationToken _) => indexed
                 ? new IndexedLibraryTrack(Guid.NewGuid(), id, "/fixture", "Fixture", "Artist", "", null, 10000, null, null, null, null, recording, new Dictionary<string, string>(), default, default, 1) : null);
         library.Setup(service => service.ResolveKnownTrackAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync((string?)null);
+        // With a library copy, the recording reads as that library song, as the library index finds it.
+        library.Setup(service => service.FindKnownRecordingTracksAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<IReadOnlyList<LibraryRecordingLookup>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ProtocolExecutionContext _, IReadOnlyList<LibraryRecordingLookup> lookups, CancellationToken _) =>
+                (IReadOnlyDictionary<string, string>)lookups.Where(lookup => libraryCopy != null && lookup.RecordingId == recording)
+                    .ToDictionary(lookup => lookup.PublicId, _ => libraryCopy!, StringComparer.Ordinal));
         var policies = new Mock<IEffectiveProviderPolicyResolver>();
         policies.Setup(service => service.ResolveForUserAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((Guid user, CancellationToken _) => new EffectiveProviderPolicySnapshot(
