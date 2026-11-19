@@ -224,6 +224,7 @@ public sealed partial class ProtocolRouteFixtureTests
             Assert.Equal("America/New_York", body.RootElement.GetProperty("period").GetProperty("timeZoneId").GetString());
             var song = Assert.Single(body.RootElement.GetProperty("topSongs").EnumerateArray());
             Assert.Equal(listener.Artist, Assert.Single(song.GetProperty("artists").EnumerateArray()).GetProperty("name").GetString());
+            Assert.Equal(listener.Artist, song.GetProperty("artist").GetString());
             Assert.Equal(JsonValueKind.Null, song.GetProperty("trackId").ValueKind);
             Assert.StartsWith("/allstarr/v2/me/stats/art?", song.GetProperty("artwork").GetProperty("url").GetString());
             Assert.DoesNotContain("/allstarr/v1/", body.RootElement.GetRawText());

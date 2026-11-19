@@ -9958,6 +9958,23 @@
           },
           "artwork": {
             "$ref": "#/components/schemas/V2Artwork"
+          },
+          "libraryId": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "description": "The media server artist when it is in the library."
+          },
+          "aliases": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "The older service id of an artist that is not in the library, which the media-server routes accept."
           }
         }
       },
@@ -9967,6 +9984,7 @@
           "aliases",
           "libraryItemId",
           "title",
+          "artist",
           "artists",
           "album",
           "playCount",
@@ -9997,6 +10015,10 @@
           "title": {
             "type": "string"
           },
+          "artist": {
+            "type": "string",
+            "description": "The artist as the plays were counted under."
+          },
           "artists": {
             "type": "array",
             "items": {
@@ -10011,6 +10033,7 @@
             ],
             "anyOf": [
               {
+                "description": "The album as the plays were counted under, with the id its page opens by when the song\u0027s album is known.",
                 "$ref": "#/components/schemas/V2AlbumRef"
               },
               {

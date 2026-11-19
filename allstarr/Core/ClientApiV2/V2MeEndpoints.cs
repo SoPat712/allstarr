@@ -63,11 +63,14 @@ public sealed class V2MeEndpoints(ClientListeningHistory history, ListeningHisto
                     return new(200, new V2ListeningStats(listening, listening.TopSongs.Select(song =>
                     {
                         var byName = V2ListeningStats.Artwork(song.Artist, title: song.Title);
+                        IReadOnlyList<V2Ref> counted = string.IsNullOrWhiteSpace(song.Artist) ? [] : [new(null, song.Artist)];
                         if (song.ItemId == null || !songRows.TryGetValue(song.ItemId, out var row))
-                            return new V2StatsSong(null, [], null, song.Title, string.IsNullOrWhiteSpace(song.Artist) ? [] : [new(null, song.Artist)],
+                            return new V2StatsSong(null, [], null, song.Title, song.Artist, counted,
                                 string.IsNullOrWhiteSpace(song.Album) ? null : new(null, song.Album), song.PlayCount, byName);
-                        return new V2StatsSong(row.Id.Id, row.Id.Aliases, row.Id.LibraryItemId, song.Title, row.Refs.Artists, row.Refs.Album,
-                            song.PlayCount, row.Refs.Artwork ?? byName);
+                        // Names read as the plays were counted, as v1 shows them; the refs give the ids pages open by.
+                        return new V2StatsSong(row.Id.Id, row.Id.Aliases, row.Id.LibraryItemId, song.Title, song.Artist,
+                            row.Refs.Artists.Count > 0 ? row.Refs.Artists : counted,
+                            string.IsNullOrWhiteSpace(song.Album) ? row.Refs.Album : new(row.Refs.Album?.Id, song.Album), song.PlayCount, row.Refs.Artwork ?? byName);
                     }).ToArray()));
                 case "sound":
                     var profile = await sound.GetAsync(owner, token);
@@ -127,7 +130,10 @@ public sealed class V2MeEndpoints(ClientListeningHistory history, ListeningHisto
                 return new V2HistoryRow(null, [], null, play.Title, string.IsNullOrWhiteSpace(play.Artist) ? [] : [new(null, play.Artist)],
                     string.IsNullOrWhiteSpace(play.Album) ? null : new(null, play.Album), play.DurationMs, byName, play.PlayedAt, play.IsExternal, play.Provider);
             var inLibrary = row.Id.LibraryItemId != null;
-            return new V2HistoryRow(row.Id.Id, row.Id.Aliases, row.Id.LibraryItemId, play.Title, row.Refs.Artists, row.Refs.Album, play.DurationMs,
+            // A service song's current details can lack an album or artist the play recorded; the recorded one stands in, without an id.
+            IReadOnlyList<V2Ref> artists = row.Refs.Artists.Count > 0 || string.IsNullOrWhiteSpace(play.Artist) ? row.Refs.Artists : [new(null, play.Artist)];
+            var album = row.Refs.Album ?? (string.IsNullOrWhiteSpace(play.Album) ? null : new V2AlbumRef(null, play.Album));
+            return new V2HistoryRow(row.Id.Id, row.Id.Aliases, row.Id.LibraryItemId, play.Title, artists, album, play.DurationMs,
                 inLibrary ? row.Refs.Artwork : row.Refs.Artwork ?? byName, play.PlayedAt, !inLibrary, inLibrary ? null : play.Provider);
         }).ToArray(), page.Next);
     }

@@ -44,8 +44,9 @@ public sealed record V2StatsSong(
     [property: JsonPropertyName("aliases")] IReadOnlyList<string> Aliases,
     [property: JsonPropertyName("libraryItemId"), Description("The media server item when the song is in the library.")] string? LibraryItemId,
     [property: JsonPropertyName("title")] string Title,
+    [property: JsonPropertyName("artist"), Description("The artist as the plays were counted under.")] string Artist,
     [property: JsonPropertyName("artists"), Description("The song's artists with the ids their pages open by; the counted name, without an id, when the song is unavailable.")] IReadOnlyList<V2Ref> Artists,
-    [property: JsonPropertyName("album")] V2AlbumRef? Album,
+    [property: JsonPropertyName("album"), Description("The album as the plays were counted under, with the id its page opens by when the song's album is known.")] V2AlbumRef? Album,
     [property: JsonPropertyName("playCount")] long PlayCount,
     [property: JsonPropertyName("artwork")] V2Artwork Artwork);
 
@@ -53,7 +54,14 @@ public sealed record V2StatsArtist(
     [property: JsonPropertyName("id")] string? Id,
     [property: JsonPropertyName("name")] string Name,
     [property: JsonPropertyName("playCount")] long PlayCount,
-    [property: JsonPropertyName("artwork")] V2Artwork Artwork);
+    [property: JsonPropertyName("artwork")] V2Artwork Artwork)
+{
+    [JsonPropertyName("libraryId"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull), Description("The media server artist when it is in the library.")]
+    public string? LibraryId => V2Ids.LibrarySource(Id, V2IdKind.Artist);
+
+    [JsonPropertyName("aliases"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull), Description("The older service id of an artist that is not in the library, which the media-server routes accept.")]
+    public IReadOnlyList<string>? Aliases => V2Ids.ServiceSource(Id, V2IdKind.Artist) is { } source ? [source] : null;
+}
 
 public sealed record V2StatsAlbum(
     [property: JsonPropertyName("title")] string Title,
