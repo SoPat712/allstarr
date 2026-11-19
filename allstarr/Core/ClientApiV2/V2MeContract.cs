@@ -40,10 +40,12 @@ public sealed record V2HistoryPlay(
     [property: JsonPropertyName("provider")] string? Provider);
 
 public sealed record V2StatsSong(
-    [property: JsonPropertyName("track")] V2Track? Track,
+    [property: JsonPropertyName("trackId"), Description("The id a track read gives this song, or null when the song is unavailable.")] string? TrackId,
+    [property: JsonPropertyName("aliases")] IReadOnlyList<string> Aliases,
+    [property: JsonPropertyName("libraryItemId"), Description("The media server item when the song is in the library.")] string? LibraryItemId,
     [property: JsonPropertyName("title")] string Title,
-    [property: JsonPropertyName("artist")] string Artist,
-    [property: JsonPropertyName("album")] string? Album,
+    [property: JsonPropertyName("artists"), Description("The song's artists with the ids their pages open by; the counted name, without an id, when the song is unavailable.")] IReadOnlyList<V2Ref> Artists,
+    [property: JsonPropertyName("album")] V2AlbumRef? Album,
     [property: JsonPropertyName("playCount")] long PlayCount,
     [property: JsonPropertyName("artwork")] V2Artwork Artwork);
 

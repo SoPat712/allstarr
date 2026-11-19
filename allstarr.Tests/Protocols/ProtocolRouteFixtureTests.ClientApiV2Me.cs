@@ -141,7 +141,12 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.Equal(HttpStatusCode.OK, stats.StatusCode);
         using var statsBody = JsonDocument.Parse(await stats.Content.ReadAsStringAsync());
         var song = statsBody.RootElement.GetProperty("topSongs").EnumerateArray().Single(item => item.GetProperty("title").GetString() == "Recorded title");
-        Assert.Equal(V2Ids.TrackSource("native1"), song.GetProperty("track").GetProperty("id").GetString());
+        // Top songs are light rows with the same ids and refs a track read gives.
+        Assert.Equal(V2Ids.TrackSource("native1"), song.GetProperty("trackId").GetString());
+        Assert.Equal("native1", song.GetProperty("libraryItemId").GetString());
+        Assert.Equal(resolved.GetProperty("track").GetProperty("artists").GetRawText(), song.GetProperty("artists").GetRawText());
+        Assert.Equal(resolved.GetProperty("track").GetProperty("artwork").GetProperty("url").GetString(), song.GetProperty("artwork").GetProperty("url").GetString());
+        Assert.False(song.TryGetProperty("track", out _));
         client.DefaultRequestHeaders.Authorization = new("Bearer", "other-token");
         using var otherResponse = await client.GetAsync("/allstarr/v2/me/history");
         var otherBody = await otherResponse.Content.ReadAsStringAsync();
@@ -218,8 +223,8 @@ public sealed partial class ProtocolRouteFixtureTests
             Assert.Equal(1, body.RootElement.GetProperty("playCount").GetInt64());
             Assert.Equal("America/New_York", body.RootElement.GetProperty("period").GetProperty("timeZoneId").GetString());
             var song = Assert.Single(body.RootElement.GetProperty("topSongs").EnumerateArray());
-            Assert.Equal(listener.Artist, song.GetProperty("artist").GetString());
-            Assert.Equal(JsonValueKind.Null, song.GetProperty("track").ValueKind);
+            Assert.Equal(listener.Artist, Assert.Single(song.GetProperty("artists").EnumerateArray()).GetProperty("name").GetString());
+            Assert.Equal(JsonValueKind.Null, song.GetProperty("trackId").ValueKind);
             Assert.StartsWith("/allstarr/v2/me/stats/art?", song.GetProperty("artwork").GetProperty("url").GetString());
             Assert.DoesNotContain("/allstarr/v1/", body.RootElement.GetRawText());
             Assert.DoesNotContain(listener.Artist == "Own artist" ? "Other artist" : "Own artist", body.RootElement.GetRawText());

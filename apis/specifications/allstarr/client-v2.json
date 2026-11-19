@@ -9963,39 +9963,59 @@
       },
       "V2StatsSong": {
         "required": [
-          "track",
+          "trackId",
+          "aliases",
+          "libraryItemId",
           "title",
-          "artist",
+          "artists",
           "album",
           "playCount",
           "artwork"
         ],
         "type": "object",
         "properties": {
-          "track": {
+          "trackId": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "description": "The id a track read gives this song, or null when the song is unavailable."
+          },
+          "aliases": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "libraryItemId": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "description": "The media server item when the song is in the library."
+          },
+          "title": {
+            "type": "string"
+          },
+          "artists": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/V2Ref"
+            },
+            "description": "The song\u0027s artists with the ids their pages open by; the counted name, without an id, when the song is unavailable."
+          },
+          "album": {
             "type": [
               "null",
               "object"
             ],
             "anyOf": [
               {
-                "$ref": "#/components/schemas/V2Track"
+                "$ref": "#/components/schemas/V2AlbumRef"
               },
               {
                 "type": "null"
               }
-            ]
-          },
-          "title": {
-            "type": "string"
-          },
-          "artist": {
-            "type": "string"
-          },
-          "album": {
-            "type": [
-              "null",
-              "string"
             ]
           },
           "playCount": {
