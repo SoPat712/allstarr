@@ -104,7 +104,10 @@ public sealed class ClientLibraryAdditions(IDbContextFactory<AllstarrDbContext> 
             var album = await providers.GetAlbumAsync(context, parsed.provider!, parsed.externalId!) ?? throw new KeyNotFoundException();
             itemId = album.Songs.FirstOrDefault()?.Id ?? throw new KeyNotFoundException();
         }
-        var recording = await identities.ResolveRecordingAsync(context.RequireActor(), itemId, token) ?? throw new KeyNotFoundException();
+        var song = LocalLibraryService.ParseExternalResource(itemId);
+        var recording = await identities.ResolveRecordingAsync(context.RequireActor(), itemId, token) ??
+            (song.isExternal ? await providers.ResolveRecordingOnlySongAsync(context, song.provider!, song.externalId!) : null) ??
+            throw new KeyNotFoundException();
         var profile = (await profiles.GetMineAsync(context, token)).Values;
         var root = await roots.RequireAsync(profile.LibraryRootId ?? Guid.Empty, token);
         if (string.IsNullOrWhiteSpace(root.BackendLibraryId) || !(await access.ResolveAsync(context, token)).Allows(root.BackendLibraryId))

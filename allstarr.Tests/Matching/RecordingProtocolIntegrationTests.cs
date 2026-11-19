@@ -181,6 +181,58 @@ public sealed partial class TrackIdentityServiceTests
     }
 
     [Fact]
+    public async Task SongOnlyShownFromAServiceThatCannotPlay_PlaysThroughTheRecordingItsIsrcNames()
+    {
+        var created = await _service.CreateRecordingAsync(Actor(_userA), "listened", "USAT21900001");
+        await Link(created.Recording.Id, Context(Actor(_userA), "qobuz"), "available");
+        var streaming = new Mock<IProviderStreamingCapability>(MockBehavior.Strict);
+        streaming.SetupGet(item => item.ProviderId).Returns("qobuz");
+        streaming.SetupGet(item => item.Capability).Returns(ProviderCapabilityKind.Streaming);
+        streaming.Setup(item => item.GetStreamLeaseAsync(It.IsAny<ProviderExecutionContext>(),
+                It.Is<ProviderStreamLeaseRequest>(request => request.TrackId.Value == "available")))
+            .ReturnsAsync(ProviderOutcome<ProviderStreamLease>.Success(new("lease", new Uri("https://media.example.test/track"),
+                DateTimeOffset.UtcNow.AddMinutes(1), true, true, new("audio/flac", "flac", "flac"),
+                ProviderStreamRetryBehavior.DoNotRetry, (_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new ByteArrayContent([0x66, 0x4c, 0x61, 0x43])
+                }))));
+        var catalog = new Mock<IProviderMetadataCapability>();
+        catalog.SetupGet(item => item.ProviderId).Returns("catalog");
+        catalog.SetupGet(item => item.Capability).Returns(ProviderCapabilityKind.Metadata);
+        catalog.Setup(item => item.GetTrackAsync(It.IsAny<ProviderExecutionContext>(),
+                It.Is<ProviderTrackLookupRequest>(request => request.Id.Value == "shown")))
+            .ReturnsAsync(ProviderOutcome<ProviderTrackMetadata>.Success(new(new("catalog", ProviderResourceKind.Track, "shown"),
+                "Track", [new("Artist")], isrc: "USAT21900001")));
+        var registry = new ProviderRegistry([
+            new ProviderRegistration(new("qobuz", "Qobuz", "Fixture", ProviderOrigin.BuiltIn, "1", "1", [
+                new(ProviderCapabilityKind.Streaming, ProviderCapabilitySupportState.Supported, ProviderAccountRequirement.None, "1", ["getStreamLease"])
+            ], new()), [streaming.Object]),
+            new ProviderRegistration(new("catalog", "Catalog", "Fixture", ProviderOrigin.BuiltIn, "1", "1", [
+                new(ProviderCapabilityKind.Metadata, ProviderCapabilitySupportState.Supported, ProviderAccountRequirement.None, "1", ["searchTracks", "getTrack"])
+            ], new()), [catalog.Object])]);
+        var health = new Mock<IProviderRouteHealthSource>();
+        health.Setup(item => item.Get(It.IsAny<string>(), It.IsAny<Guid?>(), It.IsAny<ProviderCapabilityKind>()))
+            .Returns(new ProviderRouteHealthSnapshot(ProviderRouteHealthState.Healthy, false));
+        var router = new ProviderRouter(registry, Mock.Of<IProviderRouteAccountResolver>(MockBehavior.Strict), health.Object,
+            Mock.Of<IProviderRouteSidecarSource>(MockBehavior.Strict), _service);
+        var gateway = new ProtocolProviderGateway(router, registry, Mock.Of<IHttpClientFactory>(MockBehavior.Strict), identities: _service, audioVerifier: FixtureAudioVerifier.Instance);
+        var protocol = new ProtocolExecutionContext(ProtocolKind.Jellyfin, "fixture", _userA.ToString("N"),
+            new AllstarrPrincipal(_userA, "jellyfin", "fixture", _userA.ToString("N"), "User", false), "shown-play",
+            DateTimeOffset.UtcNow.AddMinutes(1), default, new ProtocolClientDescriptor("client", "device"));
+
+        // Shown on an artist page, the song was never stored, so nothing names its recording until it is played.
+        Assert.Null(await _service.ResolveRecordingAsync(Actor(_userA), "ext-catalog-song-shown"));
+        var stream = await gateway.OpenStreamAsync(protocol, "catalog", "shown", ProviderAudioQuality.Any, null);
+
+        Assert.NotNull(stream);
+        Assert.Equal("qobuz", stream.ServingProviderId);
+        Assert.Equal("available", stream.ServingExternalId);
+        Assert.Equal(created.Recording.Id, (await _service.ResolveRecordingAsync(Actor(_userA), "ext-catalog-song-shown"))?.Id);
+        stream.Response.Dispose();
+        streaming.VerifyAll();
+    }
+
+    [Fact]
     public async Task MergedGeneratedId_ResolvesMetadataAndPlaysWithoutRevivingTheLoser()
     {
         var first = await _service.CreateRecordingAsync(Actor(_userA), "first", null, null, "ext-deezer-first");

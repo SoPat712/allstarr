@@ -195,6 +195,32 @@ public sealed partial class ProtocolProviderGateway
         }
     }
 
+    // A song from a service that can't play it plays and is added as its recording. One only shown so far, on an artist
+    // page or in search, has no recording yet, so its own service is read once to name one by its ISRC.
+    public async Task<CanonicalRecordingIdentity?> ResolveRecordingOnlySongAsync(ProtocolExecutionContext protocol, string providerId,
+        string externalId)
+    {
+        providerId = NormalizeProvider(providerId);
+        if (identities == null || !RecordingOnlySongs.IsRecordingOnly(registry, providerId)) return null;
+        var actor = protocol.RequireActor();
+        var publicId = $"ext-{providerId}-song-{externalId}";
+        if (await identities.ResolveRecordingAsync(actor, publicId, protocol.CancellationToken) is { } known) return known;
+        if (protocol.IsReadOnly || await GetExactSongAsync(protocol, providerId, externalId) is not { } song) return null;
+        var track = new ProviderExternalResourceId(providerId, ProviderResourceKind.Track, externalId);
+        var routed = await PlanExactAsync<IProviderMetadataCapability>(protocol, providerId,
+            ProviderCapabilityKind.Metadata, "remember-track", track);
+        if (routed.Candidate is not { } candidate) return null;
+        try
+        {
+            await identities.RememberSourceAsync(candidate.Context, track, publicId,
+                candidate.Context.Account != null && !IsPublicMetadataProvider(providerId)
+                    ? ProviderIdentityScope.Account : ProviderIdentityScope.Catalog, song.Isrc, protocol.CancellationToken);
+            await identities.RememberPlaybackMetadataAsync(candidate.Context, track, song, protocol.CancellationToken);
+        }
+        catch (RecordingMergeConflictException) { }
+        return await identities.ResolveRecordingAsync(actor, publicId, protocol.CancellationToken);
+    }
+
     private async Task RememberPlayedTrackAsync(ProviderExecutionContext context,
         ProviderExternalResourceId track, string requestedItemId)
     {

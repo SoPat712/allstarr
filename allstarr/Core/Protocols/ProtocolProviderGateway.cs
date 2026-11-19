@@ -108,6 +108,9 @@ public interface IProtocolProviderGateway
 
     Task RememberTrackAsync(ProtocolExecutionContext protocol, string itemId);
 
+    Task<CanonicalRecordingIdentity?> ResolveRecordingOnlySongAsync(ProtocolExecutionContext protocol, string providerId, string externalId) =>
+        Task.FromResult<CanonicalRecordingIdentity?>(null);
+
     Task<Song?> GetPublicSongAsync(string providerId, string externalId, CancellationToken cancellationToken = default);
 
     Task<Album?> GetAlbumAsync(ProtocolExecutionContext protocol, string providerId, string externalId);
@@ -1366,8 +1369,7 @@ public sealed partial class ProtocolProviderGateway(
         if (protocol.IsOriginalDownload) quality = ProviderAudioQuality.Any;
         providerId = NormalizeProvider(providerId);
         var actor = protocol.RequireActor();
-        if (identities != null && RecordingOnlySongs.IsRecordingOnly(registry, providerId) &&
-            await identities.ResolveRecordingAsync(actor, $"ext-{providerId}-song-{externalId}", protocol.CancellationToken) is { } named)
+        if (await ResolveRecordingOnlySongAsync(protocol, providerId, externalId) is { } named)
             (providerId, externalId) = ("allstarr", named.Id.ToString("D"));
         var effectivePolicy = await ResolveEffectivePolicyAsync(protocol);
         if (providerId != "allstarr" && effectivePolicy?.IsEnabled(providerId) == false)
