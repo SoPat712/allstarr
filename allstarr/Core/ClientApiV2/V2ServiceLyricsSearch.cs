@@ -162,7 +162,10 @@ public sealed partial class V2ServiceLyricsSearch(IHttpClientFactory clients, IA
                 ? string.Join(", ", singers.EnumerateArray().Select(item => Text(item, "name")).Where(name => name.Length > 0)) : "";
             var lines = Text(song, "content").Replace("\\n", "\n", StringComparison.Ordinal).Split('\n').Select(line => line.Trim());
             var line = lines.FirstOrDefault(line => phrase.Length > 0 && Normalize(line).Contains(phrase, StringComparison.Ordinal));
-            if (title.Length > 0 && artist.Length > 0 && line != null) hits.Add(new(title, artist, line, Highlight(line, query), "qqlyrics"));
+            if (title.Length == 0 || artist.Length == 0 || line == null) continue;
+            // QQ Music can mark the matching words with <em>; the text goes out plain with the marks as highlights.
+            var (text, highlights) = Unmark(line);
+            if (text.Length > 0) hits.Add(new(title, artist, text, highlights.Count > 0 ? highlights : Highlight(text, query), "qqlyrics"));
         }
         return hits;
     }
@@ -289,6 +292,7 @@ public sealed partial class V2ServiceLyricsSearch(IHttpClientFactory clients, IA
         return string.Join(' ', text.ToString().Split(' ', StringSplitOptions.RemoveEmptyEntries));
     }
 
+    /// <summary>NetEase marks matching words with &lt;b&gt; and QQ Music with &lt;em&gt;; both become highlights on plain text.</summary>
     private static (string Text, IReadOnlyList<LyricsSearchHighlight> Highlights) Unmark(string marked)
     {
         var text = new StringBuilder();
@@ -296,17 +300,20 @@ public sealed partial class V2ServiceLyricsSearch(IHttpClientFactory clients, IA
         var start = -1;
         for (var index = 0; index < marked.Length;)
         {
-            if (string.Compare(marked, index, "<b>", 0, 3, StringComparison.OrdinalIgnoreCase) == 0) { start = text.Length; index += 3; continue; }
-            if (string.Compare(marked, index, "</b>", 0, 4, StringComparison.OrdinalIgnoreCase) == 0)
+            if (Tag(marked, index, ["<b>", "<em>"]) is { } open) { start = text.Length; index += open; continue; }
+            if (Tag(marked, index, ["</b>", "</em>"]) is { } close)
             {
                 if (start >= 0 && text.Length > start) highlights.Add(new(start, text.Length - start));
                 start = -1;
-                index += 4;
+                index += close;
                 continue;
             }
             text.Append(marked[index++]);
         }
         return (text.ToString().Trim(), highlights);
+
+        static int? Tag(string value, int at, string[] tags) =>
+            tags.FirstOrDefault(tag => string.Compare(value, at, tag, 0, tag.Length, StringComparison.OrdinalIgnoreCase) == 0)?.Length;
     }
 
     private static IReadOnlyList<LyricsSearchHighlight> Highlight(string line, string query)

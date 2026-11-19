@@ -42,6 +42,18 @@ public sealed class ServiceLyricsSearchTests
     }
 
     [Fact]
+    public void QqMarkedWordsBecomeHighlightsOnPlainText()
+    {
+        using var json = JsonDocument.Parse("""
+            {"data":{"lyric":{"list":[
+              {"songname":"Walk","singer":[{"name":"Griff"}],"content":"Walk - Griff\\n <em>Something in the way that you walk</em>, oh"}]}}}
+            """);
+        var hit = Assert.Single(V2ServiceLyricsSearch.Qq(json.RootElement, Query));
+        Assert.Equal("Something in the way that you walk, oh", hit.Line);
+        Assert.Equal(new LyricsSearchHighlightValue(0, Query.Length), Value(Assert.Single(hit.Highlights)));
+    }
+
+    [Fact]
     public void WholePhraseHitsComeFirstAndTheSameSongAppearsOnce()
     {
         var ranked = V2ServiceLyricsSearch.Rank([
