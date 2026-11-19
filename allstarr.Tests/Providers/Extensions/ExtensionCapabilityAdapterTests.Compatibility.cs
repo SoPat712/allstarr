@@ -437,7 +437,7 @@ public sealed partial class ExtensionCapabilityAdapterTests
                 return {id:id,name:'Starship',biography:'answer ' + calls,
                   albums:[{id:'album-1',name:'Knee Deep in the Hoopla',year:1985,total_tracks:10},
                           {id:'album-2',name:'No Protection',artists:[{id:'artist-2',name:'Starship & Friends'}],total_tracks:10},
-                          {id:'album-3',name:'Love Among the Cannibals',total_tracks:11}],
+                          {id:'album-3',name:'Love Among the Cannibals\u00a0\u00a0',total_tracks:11}],
                   top_tracks:[{id:'track-1',name:"Nothing's Gonna Stop Us Now",artists:'Starship',album_id:'album-2',album_name:'No Protection',duration_ms:270000}]};
               }
             });
@@ -456,6 +456,7 @@ public sealed partial class ExtensionCapabilityAdapterTests
         Assert.Equal("Starship", artist.Name);
         Assert.Equal(["Knee Deep in the Hoopla", "No Protection"], first.Items.Select(album => album.Title));
         Assert.Equal("2", first.NextCursor);
+        // A title padded with non-breaking spaces is trimmed rather than failing the page.
         Assert.Equal(["Love Among the Cannibals"], rest.Items.Select(album => album.Title));
         Assert.Null(rest.NextCursor);
         // Albums listed without credits are the artist's; ones that name their artists keep them.

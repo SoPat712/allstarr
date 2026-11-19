@@ -712,7 +712,7 @@ public static class SpotiFlacExtensionCompatibility
           var ids = Array.isArray(fallbackId) ? fallbackId : String(fallbackId || '').split(',');
           return value.map(function(item, index) {
             return item && typeof item === 'object'
-              ? { name: String(item.name || item.title || ''), id: _sfFirst(item, ['id','artist_id','artistId','browse_id','browseId']) }
+              ? { name: String(item.name || item.title || '').trim(), id: _sfFirst(item, ['id','artist_id','artistId','browse_id','browseId']) }
               : { name: String(item || '').trim(), id: ids[index] ? String(ids[index]).trim() : null };
           }).filter(function(item) { return item.name; });
         }
@@ -788,7 +788,7 @@ public static class SpotiFlacExtensionCompatibility
           var lyrics = _sfFirst(value, ['explicitContentLyrics','explicit_content_lyrics']);
           return {
             id: String(_sfFirst(value, ['id','track_id','trackId']) || ''),
-            title: String(value.name || value.title || ''),
+            title: String(value.name || value.title || '').trim(),
             artists: _sfArtists(value),
             albumId: albumId == null ? null : String(albumId),
             albumTitle: String(value.album_name || value.albumTitle || value.album_title || album.name || album.title || (typeof value.album === 'string' ? value.album : '')).trim() || null,
@@ -1121,7 +1121,7 @@ public static class SpotiFlacExtensionCompatibility
             if (nativeId.indexOf(prefix) === 0) nativeId = nativeId.substring(prefix.length);
             ids[catalog] = nativeId;
           }
-          return { id: String(value.id || ''), title: String(value.name || value.title || ''), artists: _sfArtists(value),
+          return { id: String(value.id || ''), title: String(value.name || value.title || '').trim(), artists: _sfArtists(value),
             trackCount: _sfPositive(_sfFirst(value, ['trackCount','total_tracks','tracks_count']) || (value.tracks && value.tracks.length)),
             artworkUrl: _sfArtwork(value), snapshotVersion: _sfFirst(value, ['snapshotVersion','snapshot_version']),
             year: _sfPositive(value.year), releaseDate: _sfFirst(value, ['releaseDate','release_date']),
@@ -1133,7 +1133,7 @@ public static class SpotiFlacExtensionCompatibility
         }
         function _sfArtist(value) {
           value = value && (value.artist || value) || {};
-          return { id: String(value.id || ''), name: String(value.name || value.title || ''), artworkUrl: _sfArtwork(value),
+          return { id: String(value.id || ''), name: String(value.name || value.title || '').trim(), artworkUrl: _sfArtwork(value),
             snapshotVersion: _sfFirst(value, ['snapshotVersion','snapshot_version']), biography: value.biography || value.description || null,
             providerIds: _sfProviderIds(value), lastFmUrl: _sfFirst(value, ['lastFmUrl','last_fm_url']), genres: _sfGenres(value) };
         }
@@ -1201,7 +1201,7 @@ public static class SpotiFlacExtensionCompatibility
         }
         function _sfPlaylist(value) {
           value = value && (value.playlist || value) || {};
-          return { id: String(value.id || ''), name: String(value.name || value.title || ''),
+          return { id: String(value.id || ''), name: String(value.name || value.title || '').trim(),
             owner: { providerUserId: String(value.owner_id || value.owner || 'spotiflac'), displayName: String(value.owner_name || value.owner || 'SpotiFLAC') },
             sourceRevision: String(value.revision || value.snapshot_id || '1'), description: value.description ? String(value.description) : null, artworkUrl: _sfArtwork(value),
             trackCount: Number(value.total_tracks || (value.tracks && value.tracks.length) || 0), sourceETag: null };

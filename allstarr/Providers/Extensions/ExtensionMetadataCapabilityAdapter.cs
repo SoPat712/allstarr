@@ -96,8 +96,16 @@ public sealed class ExtensionMetadataCapabilityAdapter : ExtensionCapabilityAdap
     private static object ArtistItemsRequest(ProviderArtistItemsRequest request) =>
         new { id = request.Id.Value, page = new { request.Page.Limit, request.Page.Cursor }, request.ExpectedSnapshotVersion };
 
+    // One malformed item (an untrimmed title, say) is left out instead of failing the whole page.
     private ProviderPage<T> MapPage<T>(JsonElement value, Func<JsonElement, T> map) => new(ProviderId,
-        value.GetProperty("items").EnumerateArray().Select(map), OptionalText(value, "nextCursor"),
+        value.GetProperty("items").EnumerateArray().Select(item =>
+        {
+            try { return (Valid: true, Item: map(item)); }
+            catch (Exception error) when (error is ArgumentException or InvalidOperationException or KeyNotFoundException or FormatException)
+            {
+                return (Valid: false, Item: default(T)!);
+            }
+        }).Where(item => item.Valid).Select(item => item.Item).ToArray(), OptionalText(value, "nextCursor"),
         Bool(value, "isPartial"), OptionalText(value, "snapshotVersion"));
 
     private ProviderTrackMetadata MapTrack(JsonElement value)

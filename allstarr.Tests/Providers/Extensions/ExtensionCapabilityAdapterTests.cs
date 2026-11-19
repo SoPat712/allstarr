@@ -2366,6 +2366,24 @@ public sealed partial class ExtensionCapabilityAdapterTests
     }
 
     [Fact]
+    public async Task Metadata_OneMalformedItemIsLeftOutOfItsPage()
+    {
+        var manifest = Manifest(ProviderCapabilityKind.Metadata, "getArtistAlbums");
+        var sandbox = Sandbox(manifest, """
+            registerExtension({ getArtistAlbums: function() { return { items: [
+              { id: 'album-1', title: 'Night Shades', artists: [{ id: 'artist-1', name: 'Artist' }] },
+              { id: 'album-2', title: 'Padded EP\u00a0\u00a0', artists: [{ id: 'artist-1', name: 'Artist' }] },
+              { id: 'album-3', title: 'Hot Mess', artists: [{ id: 'artist-1', name: 'Artist' }] }] }; } });
+            """);
+        var adapter = new ExtensionMetadataCapabilityAdapter(sandbox, manifest);
+
+        var page = (await adapter.GetArtistAlbumsAsync(Context(), new ProviderArtistItemsRequest(Id(ProviderResourceKind.Artist, "artist-1"),
+            new ProviderPageRequest(10)))).RequireValue();
+
+        Assert.Equal(["Night Shades", "Hot Mess"], page.Items.Select(album => album.Title));
+    }
+
+    [Fact]
     public void LegacyMetadataMapping_PreservesPositiveBitrate()
     {
         var sandbox = Sandbox(Manifest(ProviderCapabilityKind.Metadata, "getTrack"), """
