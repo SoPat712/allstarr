@@ -69,6 +69,26 @@ public sealed class V2TrackReader(
         // Facts also decide what this listener may see: anything they leave out is reported missing.
         var (read, detailSongs) = await details.ReadWithSongsAsync(http, execution, targetIds, observedSongs: searchSongs);
         var facts = read.Items.ToDictionary(item => item.Id, StringComparer.Ordinal);
+        // A service song not played or saved yet has no recording to find its library copy by; its ISRC still names one.
+        var unowned = targetIds.Where(id => IsExternal(id) && !copies.ContainsValue(id) &&
+            !string.IsNullOrWhiteSpace((detailSongs.GetValueOrDefault(id) ?? searchSongs?.GetValueOrDefault(id))?.Isrc)).Select(id =>
+        {
+            var parsed = LocalLibraryService.ParseExternalResource(id);
+            return parsed.provider is null or "allstarr" || parsed.externalId == null ? null : new LibraryRecordingLookup(id, null,
+                (detailSongs.GetValueOrDefault(id) ?? searchSongs!.GetValueOrDefault(id))!.Isrc, registry.ResolveProviderId(parsed.provider), parsed.externalId);
+        }).OfType<LibraryRecordingLookup>().ToArray();
+        if (unowned.Length > 0)
+        {
+            var owned = await libraryIndex.FindKnownRecordingTracksAsync(execution, unowned, token);
+            if (owned.Count > 0)
+            {
+                targets = targets.ToDictionary(pair => pair.Key, pair => owned.GetValueOrDefault(pair.Value) ?? pair.Value, StringComparer.Ordinal);
+                var added = owned.Values.Distinct(StringComparer.Ordinal).Where(id => !facts.ContainsKey(id)).ToArray();
+                targetIds = targets.Values.Distinct(StringComparer.Ordinal).ToArray();
+                if (added.Length > 0)
+                    foreach (var item in (await details.ReadWithSongsAsync(http, execution, added)).Item1.Items) facts[item.Id] = item;
+            }
+        }
         // A song the search already read is the fuller copy; it gets the same stored media facts as the rest.
         var songs = new Dictionary<string, Song>(detailSongs, StringComparer.Ordinal);
         var observed = searchSongs?.Where(pair => songs.ContainsKey(pair.Key)).ToArray() ?? [];

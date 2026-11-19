@@ -4,9 +4,12 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using allstarr.Core.Capabilities;
 using allstarr.Core.ClientApiV2;
+using allstarr.Core.Identity;
+using allstarr.Core.Matching;
 using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
 using allstarr.Models.Domain;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Moq;
@@ -78,6 +81,76 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.Equal(["unknown"], json.RootElement.GetProperty("missing").EnumerateArray().Select(value => value.GetString()!).ToArray());
         Assert.NotEmpty(authorizations);
         Assert.All(authorizations, value => Assert.Equal("MediaBrowser Token=\"listener-token\"", value));
+    }
+
+    [Fact]
+    public async Task ClientApiV2_AServiceSongNotPlayedYetReadsAsTheLibraryCopyItsIsrcNames()
+    {
+        var gateway = new Mock<IProtocolProviderGateway>();
+        gateway.Setup(service => service.GetPlayableProviderOrderAsync(It.IsAny<ProviderActorContext>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(["deezer"]);
+        Song Shown() => new()
+        {
+            Id = "ext-deezer-song-shown",
+            Title = "Shown song",
+            Artist = "Library artist",
+            Duration = 200,
+            ExternalProvider = "deezer",
+            ExternalId = "shown",
+            Isrc = "USAT21900001"
+        };
+        gateway.Setup(service => service.GetStoredSongAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), It.IsAny<string>())).ReturnsAsync(Shown);
+        gateway.Setup(service => service.GetSongAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), It.IsAny<string>())).ReturnsAsync(Shown);
+        // Nothing names a recording for the song yet, so the library index is asked by ISRC alone.
+        var library = new Mock<ILibraryIndexService> { DefaultValue = DefaultValue.Mock };
+        library.Setup(service => service.FindKnownRecordingTracksAsync(It.IsAny<ProtocolExecutionContext>(),
+                It.IsAny<IReadOnlyList<LibraryRecordingLookup>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ProtocolExecutionContext _, IReadOnlyList<LibraryRecordingLookup> lookups, CancellationToken _) =>
+                (IReadOnlyDictionary<string, string>)lookups.Where(lookup => lookup.RecordingId == null && lookup.Isrc == "USAT21900001")
+                    .ToDictionary(lookup => lookup.PublicId, _ => "native1", StringComparer.Ordinal));
+        using var factory = ClientDetailsFactory(request => request.RequestUri!.AbsolutePath == "/Users/Me"
+            ? Json(200, """{"Id":"listener"}""") : Json(200, V2LibrarySong), services =>
+            {
+                services.RemoveAll<IProtocolProviderGateway>();
+                services.AddSingleton(gateway.Object);
+                services.RemoveAll<ILibraryIndexService>();
+                services.AddSingleton(library.Object);
+            });
+        using var fixtures = new ProviderIconFiles();
+        using var client = CreateClientApiClient(factory);
+        fixtures.Use(factory.Services);
+        client.DefaultRequestHeaders.Authorization = new("Bearer", "listener-token");
+        // The song was read once for a page, so its details are kept, but no play or save has named its recording.
+        var principal = await factory.Services.GetRequiredService<BackendIdentityResolver>().ResolveAsync(new BackendIdentityDescriptor("Jellyfin", "listener"));
+        await using (var db = await factory.Services.GetRequiredService<IDbContextFactory<AllstarrDbContext>>().CreateDbContextAsync())
+        {
+            db.ExternalMetadataSnapshots.Add(new()
+            {
+                Id = Guid.NewGuid(),
+                OwnerUserId = principal!.UserId,
+                Protocol = "jellyfin",
+                BackendInstanceId = "primary",
+                BackendPrincipalId = "listener",
+                ProviderId = "deezer",
+                ResourceKind = "track",
+                ExternalIdHash = CanonicalCatalogKeys.Hash("shown"),
+                SnapshotVersion = 1,
+                PayloadJson = JsonSerializer.Serialize(Shown()),
+                PayloadSha256 = CanonicalCatalogKeys.Hash(JsonSerializer.Serialize(Shown())),
+                RetrievedAt = DateTimeOffset.UtcNow
+            });
+            await db.SaveChangesAsync();
+        }
+        using var response = await client.GetAsync("/allstarr/v2/tracks?ids=ext-deezer-song-shown");
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.True(response.StatusCode == HttpStatusCode.OK, body);
+        using var json = JsonDocument.Parse(body);
+        Assert.True(json.RootElement.GetProperty("tracks").GetArrayLength() == 1, body);
+        var track = json.RootElement.GetProperty("tracks")[0];
+        Assert.Equal("native1", track.GetProperty("libraryItemId").GetString());
+        Assert.False(track.GetProperty("isExternal").GetBoolean());
+        Assert.Equal("Library song", track.GetProperty("title").GetString());
+        Assert.Contains("ext-deezer-song-shown", track.GetProperty("aliases").EnumerateArray().Select(value => value.GetString()!));
     }
 
     [Fact]
