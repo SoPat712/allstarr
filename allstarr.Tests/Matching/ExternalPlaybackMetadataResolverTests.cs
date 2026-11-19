@@ -64,6 +64,37 @@ public sealed class ExternalPlaybackMetadataResolverTests
         service.VerifyNoOtherCalls();
     }
 
+    [Theory]
+    // Saved art first, then the song as the listener reads it, then its album; a service's mark is never a cover.
+    [InlineData("https://cdn.example/saved.png", null, null, true)]
+    [InlineData(null, "https://cdn.example/song.png", null, true)]
+    [InlineData(null, "/api/admin/providers/deezer/cover", "https://cdn.example/album.png", true)]
+    [InlineData(null, "/api/admin/providers/deezer/cover", "/api/admin/providers/deezer/cover", false)]
+    [InlineData(null, null, null, false)]
+    public async Task ACoverForAFileIsTheSongsRealOneOrNothing(string? saved, string? songCover, string? albumCover, bool found)
+    {
+        var context = new allstarr.Core.Protocols.ProtocolExecutionContext(allstarr.Core.Protocols.ProtocolKind.Jellyfin, "primary", "listener",
+            null, "correlation", DateTimeOffset.UtcNow.AddMinutes(1), CancellationToken.None);
+        var service = new Mock<IProtocolProviderGateway>();
+        service.Setup(item => item.GetStoredSongArtworkAsync(context, "deezer", "42")).ReturnsAsync(saved);
+        service.Setup(item => item.GetSongAsync(context, "deezer", "42"))
+            .ReturnsAsync(new Song { CoverArtUrl = songCover, AlbumId = "ext-deezer-album-7", ExternalProvider = "deezer" });
+        service.Setup(item => item.GetAlbumAsync(context, "deezer", "7")).ReturnsAsync(new Album { CoverArtUrl = albumCover });
+        var resolver = new ExternalPlaybackMetadataResolver(
+            service.Object,
+            new TestMemoryApplicationCache(),
+            new StubHttpClientFactory(new HttpClient(new StubHandler())),
+            new SystemPlatformClock(),
+            NullLogger<ExternalPlaybackMetadataResolver>.Instance);
+
+        var result = await resolver.ResolveArtworkAsync("ext-deezer-song-42", context, CancellationToken.None);
+
+        Assert.Equal(found, result != null);
+        if (found) Assert.Equal([1, 2, 3], result!.Content);
+        // The public read, which answers with the service's mark for apps to show, is never used for a file.
+        service.Verify(item => item.GetPublicSongAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
     [Fact]
     public async Task MetadataMissesUseTheNegativeCache()
     {

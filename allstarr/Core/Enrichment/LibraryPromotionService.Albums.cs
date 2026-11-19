@@ -419,18 +419,19 @@ public sealed partial class LibraryPromotionService
                         try { coverBytes = (await artwork.ResolveArtworkAsync($"ext-{track.Song.ExternalProvider}-song-{track.Song.ExternalId}", access.Context, token))?.Content; }
                         catch (HttpRequestException) { }
                     }
-                    if (album.Profile.CoverMode != "none" && (coverBytes == null || !PromotionCover.Supported(coverBytes)))
+                    if (album.Profile.CoverMode != "none" && !PromotionCover.IsCover(coverBytes))
                     {
                         using var file = TagLib.File.Create(path);
                         coverBytes = file.Tag.Pictures.FirstOrDefault()?.Data.Data;
                     }
-                    if (coverBytes != null && PromotionCover.Supported(coverBytes))
+                    // A file with no real cover gets none: a service's mark or a thumbnail is not written as one.
+                    if (PromotionCover.IsCover(coverBytes))
                     {
                         if (album.Profile.CoverMode is "both" or "embedded") tags["cover"] = Convert.ToBase64String(coverBytes);
                         if (album.Profile.CoverMode is "both" or "cover.jpg" && PromotionCover.Jpeg(coverBytes) is { } jpeg)
                             await WritePrivateBytesAsync(Path.Combine(workspace, "cover.jpg"), jpeg, token);
                     }
-                    if (album.Profile.CoverMode is "none" or "cover.jpg") tags["cover"] = "";
+                    if (album.Profile.CoverMode is "none" or "cover.jpg" || !PromotionCover.IsCover(coverBytes)) tags["cover"] = "";
                     await WriteTrackTagsAsync(run, track, tags, Persist, token, new("Tags", "Complete", "Release metadata and profile artwork written."));
                     await Step(track, "Tags", "Complete", "Release metadata and profile artwork written.");
                 }

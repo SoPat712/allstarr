@@ -320,8 +320,8 @@ public sealed partial class LibraryPromotionService(IDbContextFactory<AllstarrDb
                 {
                     var cover = artwork != null && plan.ExternalId != null
                         ? await artwork.ResolveArtworkAsync($"ext-{plan.Provider}-song-{plan.ExternalId}", access.Context, token) : null;
-                    var valid = cover?.Content is { Length: > 8 and <= 5242880 } bytes &&
-                        (bytes.AsSpan().StartsWith(new byte[] { 255, 216, 255 }) || bytes.AsSpan().StartsWith(new byte[] { 137, 80, 78, 71, 13, 10, 26, 10 }));
+                    // Only a real cover is embedded; a service's mark or a thumbnail is left out.
+                    var valid = PromotionCover.IsCover(cover?.Content);
                     var temporaryCover = coverPath + ".partial";
                     PromotionRoots.RejectLinks(temporaryCover);
                     await File.WriteAllTextAsync(temporaryCover, JsonSerializer.Serialize(valid ? Convert.ToBase64String(cover!.Content) : ""), token);

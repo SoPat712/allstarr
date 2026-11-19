@@ -3,6 +3,9 @@ using allstarr.Core.Caching;
 using System.Collections.Concurrent;
 using allstarr.Core.Operations;
 using allstarr.Core.Protocols;
+using allstarr.Models.Domain;
+using allstarr.Core.Capabilities;
+using allstarr.Services.Local;
 
 namespace allstarr.Core.Playback;
 
@@ -143,20 +146,7 @@ public sealed class ExternalPlaybackMetadataResolver(
                     96, cancellationToken, artworkUrl);
                 return fallback == null ? null : new PlaybackArtwork(fallback.Bytes, fallback.ContentType);
             }
-            if (!OutboundRequestGuard.TryCreateSafeHttpUri(
-                    artworkUrl, out var artworkUri, out _) || artworkUri == null)
-                return null;
-            using var response = await httpClientFactory.CreateClient().GetAsync(
-                artworkUri, cancellationToken);
-            var contentType = response.Content.Headers.ContentType?.MediaType;
-            if (!response.IsSuccessStatusCode ||
-                contentType?.StartsWith("image/", StringComparison.OrdinalIgnoreCase) != true ||
-                response.Content.Headers.ContentLength > MaximumArtworkBytes)
-                return null;
-            await response.Content.LoadIntoBufferAsync(MaximumArtworkBytes, cancellationToken);
-            return new PlaybackArtwork(
-                await response.Content.ReadAsByteArrayAsync(cancellationToken),
-                contentType);
+            return await FetchAsync(artworkUrl, cancellationToken);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -167,6 +157,61 @@ public sealed class ExternalPlaybackMetadataResolver(
             logger.LogDebug("Unable to resolve public playback artwork.");
             return null;
         }
+    }
+
+    /// <summary>
+    /// The song's real cover, read as the listener, for writing into a file. A service that gives no cover of its own for
+    /// a song shows its mark in apps; that mark is never a cover, so the saved art, the song as the listener reads it and
+    /// then its album are asked instead, and nothing is returned when none of them has one.
+    /// </summary>
+    public async Task<PlaybackArtwork?> ResolveArtworkAsync(string itemId, ProtocolExecutionContext context, CancellationToken cancellationToken)
+    {
+        var identity = ParseTrackIdentity(itemId);
+        if (identity == null) return null;
+        var (provider, externalId) = identity.Value;
+        bool Missing(string? url) => string.IsNullOrWhiteSpace(url) || ProviderArtworkFallback.IsFallback(provider, url, "song");
+        try
+        {
+            var url = await providerGateway.GetStoredSongArtworkAsync(context, provider, externalId);
+            Song? song = null;
+            if (Missing(url))
+            {
+                song = await providerGateway.GetSongAsync(context, provider, externalId);
+                url = song?.CoverArtUrlLarge ?? song?.CoverArtUrl;
+            }
+            if (Missing(url))
+                url = (await providerGateway.GetPublicArtworkUriAsync(provider, ProviderResourceKind.Track, externalId, cancellationToken))?.AbsoluteUri;
+            if (Missing(url) && LocalLibraryService.ParseExternalResource(song?.AlbumId ?? "") is { isExternal: true, type: "album", provider: { } albumProvider, externalId: { } albumId })
+                url = (await providerGateway.GetAlbumAsync(context, albumProvider, albumId))?.CoverArtUrl;
+            return Missing(url) ? null : await FetchAsync(url, cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception)
+        {
+            logger.LogDebug("Unable to resolve a song's cover.");
+            return null;
+        }
+    }
+
+    private async Task<PlaybackArtwork?> FetchAsync(string? artworkUrl, CancellationToken cancellationToken)
+    {
+        if (!OutboundRequestGuard.TryCreateSafeHttpUri(
+                artworkUrl, out var artworkUri, out _) || artworkUri == null)
+            return null;
+        using var response = await httpClientFactory.CreateClient().GetAsync(
+            artworkUri, cancellationToken);
+        var contentType = response.Content.Headers.ContentType?.MediaType;
+        if (!response.IsSuccessStatusCode ||
+            contentType?.StartsWith("image/", StringComparison.OrdinalIgnoreCase) != true ||
+            response.Content.Headers.ContentLength > MaximumArtworkBytes)
+            return null;
+        await response.Content.LoadIntoBufferAsync(MaximumArtworkBytes, cancellationToken);
+        return new PlaybackArtwork(
+            await response.Content.ReadAsByteArrayAsync(cancellationToken),
+            contentType);
     }
 
     internal static (string Provider, string ExternalId)? ParseTrackIdentity(string itemId)

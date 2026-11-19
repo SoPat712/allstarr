@@ -7,6 +7,18 @@ internal static class PromotionCover
     public static bool Supported(byte[] bytes) => bytes.Length is > 8 and <= 5242880 &&
         (bytes.AsSpan().StartsWith(new byte[] { 255, 216, 255 }) || bytes.AsSpan().StartsWith(new byte[] { 137, 80, 78, 71, 13, 10, 26, 10 }));
 
+    // Album art is never this small; a picture under it is a service's mark or a thumbnail that was saved as the cover.
+    private const int SmallestCoverSide = 300;
+
+    /// <summary>A supported picture large enough to be a cover.</summary>
+    public static bool IsCover([System.Diagnostics.CodeAnalysis.NotNullWhen(true)] byte[]? bytes)
+    {
+        if (bytes == null || !Supported(bytes)) return false;
+        using var data = SKData.CreateCopy(bytes);
+        using var codec = SKCodec.Create(data);
+        return codec != null && Math.Min(codec.Info.Width, codec.Info.Height) >= SmallestCoverSide;
+    }
+
     public static byte[]? Jpeg(byte[] bytes)
     {
         if (!Supported(bytes)) return null;
