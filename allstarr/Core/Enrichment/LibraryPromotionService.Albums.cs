@@ -449,8 +449,12 @@ public sealed partial class LibraryPromotionService
                             await WritePrivateBytesAsync(Path.Combine(workspace, "cover.jpg"), jpeg, token);
                     }
                     if (album.Profile.CoverMode is "none" or "cover.jpg" || !PromotionCover.IsCover(coverBytes)) tags["cover"] = "";
-                    await WriteTrackTagsAsync(run, track, tags, Persist, token, new("Tags", "Complete", "Release metadata and profile artwork written."));
-                    await Step(track, "Tags", "Complete", "Release metadata and profile artwork written.");
+                    // Says so when the names are the service's own: MusicBrainz had no release that agreed, or did not answer.
+                    var tagged = !album.Profile.MusicBrainzTags || track.Song.ProviderIds.ContainsKey("musicbrainz_releaseid")
+                        ? "Release metadata and profile artwork written."
+                        : "The service's own tags and profile artwork written; MusicBrainz gave no release for this song.";
+                    await WriteTrackTagsAsync(run, track, tags, Persist, token, new("Tags", "Complete", tagged));
+                    await Step(track, "Tags", "Complete", tagged);
                 }
                 track.Outcome = "Ready";
                 await Persist();

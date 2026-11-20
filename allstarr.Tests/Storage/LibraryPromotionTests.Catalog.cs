@@ -287,7 +287,10 @@ public sealed partial class LibraryPromotionTests
         musicBrainz.Setup(item => item.LookupByIsrcAsync("GBAYE1900594", It.IsAny<CancellationToken>()))
             .ReturnsAsync(new MusicBrainzRecording { Id = recordingMbid, Title = "Working Bitch", Isrcs = ["GBAYE1900594"] });
         // The releases a recording is on come with the recording itself, not with the ISRC read.
-        musicBrainz.Setup(item => item.LookupByMbidAsync(recordingMbid, It.IsAny<CancellationToken>())).ReturnsAsync(new MusicBrainzRecording
+        // MusicBrainz answers "busy" to the first ask, as it often does, and is asked again.
+        PromotionCatalog.BusyWait = TimeSpan.FromMilliseconds(1);
+        musicBrainz.SetupSequence(item => item.LookupByMbidAsync(recordingMbid, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new MusicBrainzLookupException("busy", "MusicBrainz is busy.", true)).ReturnsAsync(new MusicBrainzRecording
         {
             Id = recordingMbid,
             Title = "Working Bitch",
@@ -391,6 +394,7 @@ public sealed partial class LibraryPromotionTests
         };
         var providers = new Mock<IProtocolProviderGateway>();
         providers.Setup(item => item.GetAlbumAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "album")).ReturnsAsync(new Album { SongCount = 1, Songs = [song] });
+        PromotionCatalog.BusyWait = TimeSpan.FromMilliseconds(1);
         var failing = new Mock<IMusicBrainzCatalogClient>();
         failing.Setup(item => item.LookupByIsrcAsync("USAT21900001", It.IsAny<CancellationToken>()))
             .ThrowsAsync(new MusicBrainzLookupException("unavailable", "MusicBrainz is unavailable.", true));

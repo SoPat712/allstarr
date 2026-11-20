@@ -154,7 +154,24 @@ public sealed class PromotionCatalog(IDbContextFactory<AllstarrDbContext> factor
 
     // MusicBrainz answers one request a second and the add is waiting: three releases by ISRC, three by name.
     private const int MaximumReleaseLookups = 3;
-    private static readonly TimeSpan ReleaseLookupTime = TimeSpan.FromSeconds(12);
+    private static readonly TimeSpan ReleaseLookupTime = TimeSpan.FromSeconds(20);
+    private const int BusyRetries = 3;
+
+    // MusicBrainz often answers "busy" and takes the same question a moment later. Without asking again, one busy
+    // answer left an added song with the service's own tags and album name.
+    private static async Task<T> AskAsync<T>(Func<Task<T>> ask, CancellationToken token)
+    {
+        for (var attempt = 0; ; attempt++)
+        {
+            try { return await ask(); }
+            catch (MusicBrainzLookupException error) when (error.Retryable && attempt < BusyRetries)
+            {
+                await Task.Delay(error.RetryAfter is { } wait && wait > TimeSpan.Zero && wait < TimeSpan.FromSeconds(3) ? wait : BusyWait, token);
+            }
+        }
+    }
+
+    internal static TimeSpan BusyWait { get; set; } = TimeSpan.FromSeconds(1.5);
     private const long NamedLengthMilliseconds = 3000;
 
     private sealed record FoundRelease(MusicBrainzRelease Release, string RecordingId, MusicBrainzMedium Disc, MusicBrainzReleaseTrack Track);
@@ -163,7 +180,7 @@ public sealed class PromotionCatalog(IDbContextFactory<AllstarrDbContext> factor
     {
         var album = FuzzyMatcher.NormalizeAlbumForMatching(song.Album);
         if (album.Length == 0) return null;
-        // The listener is waiting for the add to be accepted, so MusicBrainz gets a few seconds and no more.
+        // The listener is waiting for the add to be accepted, so MusicBrainz gets twenty seconds and no more.
         using var limited = CancellationTokenSource.CreateLinkedTokenSource(token);
         limited.CancelAfter(ReleaseLookupTime);
         try
@@ -173,8 +190,9 @@ public sealed class PromotionCatalog(IDbContextFactory<AllstarrDbContext> factor
             if (!string.IsNullOrWhiteSpace(song.Isrc))
             {
                 // The ISRC names the recording; the releases it is on come with the recording itself.
-                var named = await musicBrainz.LookupByIsrcAsync(song.Isrc, limited.Token);
-                if (Guid.TryParse(named?.Id, out _) && await musicBrainz.LookupByMbidAsync(named!.Id!, limited.Token) is { } known) byCode = [known];
+                var named = await AskAsync(() => musicBrainz.LookupByIsrcAsync(song.Isrc, limited.Token), limited.Token);
+                if (Guid.TryParse(named?.Id, out _) &&
+                    await AskAsync(() => musicBrainz.LookupByMbidAsync(named!.Id!, limited.Token), limited.Token) is { } known) byCode = [known];
             }
             if (await ReleaseOfAsync(song, byCode, album, total, limited.Token) is { } release) return release;
             // Many services give no ISRC, MusicBrainz does not know every one, and it may hold the album's take of a song
@@ -209,7 +227,7 @@ public sealed class PromotionCatalog(IDbContextFactory<AllstarrDbContext> factor
             .Take(MaximumReleaseLookups).ToArray();
         foreach (var (recording, _, candidate) in candidates)
         {
-            var release = await musicBrainz.LookupReleaseByMbidAsync(candidate.Id!, token);
+            var release = await AskAsync(() => musicBrainz.LookupReleaseByMbidAsync(candidate.Id!, token), token);
             var media = release?.Media ?? [];
             if (media.Count == 0 || media.Any(disc => disc.Tracks == null || disc.Tracks.Count != disc.TrackCount)) continue;
             var places = media.SelectMany(disc => disc.Tracks!.Select(track => (Disc: disc, Track: track)))
@@ -230,7 +248,7 @@ public sealed class PromotionCatalog(IDbContextFactory<AllstarrDbContext> factor
         if (string.IsNullOrWhiteSpace(song.Title) || string.IsNullOrWhiteSpace(artist) || song.Track is not > 0 && song.Duration is not > 0) return [];
         var title = FuzzyMatcher.NormalizeTitleForMatching(song.Title, song.Artist);
         var lead = FuzzyMatcher.NormalizeForMatching(artist);
-        return (await musicBrainz.SearchRecordingsAsync(song.Title, artist, 10, token))
+        return (await AskAsync(() => musicBrainz.SearchRecordingsAsync(song.Title, artist, 10, token), token))
             .Where(recording => Guid.TryParse(recording.Id, out _) && recording.Releases is { Count: > 0 } &&
                 FuzzyMatcher.NormalizeTitleForMatching(recording.Title ?? "", song.Artist) == title &&
                 FuzzyMatcher.NormalizeForMatching(recording.ArtistCredit?.FirstOrDefault()?.Name ?? recording.ArtistCredit?.FirstOrDefault()?.Artist?.Name ?? "") == lead &&
