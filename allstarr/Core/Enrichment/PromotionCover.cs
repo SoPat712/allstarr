@@ -19,6 +19,27 @@ internal static class PromotionCover
         return codec != null && Math.Min(codec.Info.Width, codec.Info.Height) >= SmallestCoverSide;
     }
 
+    // A picture inside a song file is carried by every song of an album and read whole by players. It is kept sharp
+    // enough for a phone or a television and no larger; a service's full-size cover can be several megabytes.
+    private const int LargestEmbeddedSide = 1200;
+
+    /// <summary>The cover as it is put inside a song file: at most 1,200 pixels a side.</summary>
+    public static byte[] Embedded(byte[] bytes)
+    {
+        using var data = SKData.CreateCopy(bytes);
+        using var codec = SKCodec.Create(data);
+        if (codec == null || Math.Max(codec.Info.Width, codec.Info.Height) <= LargestEmbeddedSide) return bytes;
+        using var bitmap = SKBitmap.Decode(codec);
+        if (bitmap == null) return bytes;
+        var scale = LargestEmbeddedSide / (double)Math.Max(bitmap.Width, bitmap.Height);
+        using var smaller = bitmap.Resize(new SKImageInfo(Math.Max(1, (int)Math.Round(bitmap.Width * scale)),
+            Math.Max(1, (int)Math.Round(bitmap.Height * scale))), new SKSamplingOptions(SKCubicResampler.Mitchell));
+        if (smaller == null) return bytes;
+        using var image = SKImage.FromBitmap(smaller);
+        using var encoded = image.Encode(SKEncodedImageFormat.Jpeg, 90);
+        return encoded?.ToArray() ?? bytes;
+    }
+
     public static byte[]? Jpeg(byte[] bytes)
     {
         if (!Supported(bytes)) return null;

@@ -229,7 +229,7 @@ public sealed partial class LibraryPromotionService
             item.BackendInstanceId == context.BackendInstanceId && item.BackendLibraryId == library &&
             (item.CanonicalRecordingId == track.RecordingId || isrc != null && isrc != "" && item.Isrc != null &&
                 item.Isrc.Replace("-", "").ToUpper() == isrc || mbid != null && item.MusicBrainzRecordingId == mbid))
-            .Select(item => item.BackendItemId).Distinct().Take(50).ToArrayAsync(token);
+            .Select(item => item.BackendItemId).Distinct().OrderBy(item => item).Take(50).ToArrayAsync(token);
         if (copies.Length == 0 || scanners == null) return copies.Length > 0;
         // The index keeps a song after it is deleted from the media server. A copy the server no longer has is not in
         // the library, or a deleted song could never be added again.
@@ -437,7 +437,7 @@ public sealed partial class LibraryPromotionService
                     // A file with no real cover gets none: a service's mark or a thumbnail is not written as one.
                     if (PromotionCover.IsCover(coverBytes))
                     {
-                        if (album.Profile.CoverMode is "both" or "embedded") tags["cover"] = Convert.ToBase64String(coverBytes);
+                        if (album.Profile.CoverMode is "both" or "embedded") tags["cover"] = Convert.ToBase64String(PromotionCover.Embedded(coverBytes));
                         if (album.Profile.CoverMode is "both" or "cover.jpg" && PromotionCover.Jpeg(coverBytes) is { } jpeg)
                             await WritePrivateBytesAsync(Path.Combine(workspace, "cover.jpg"), jpeg, token);
                     }

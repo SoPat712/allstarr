@@ -79,6 +79,29 @@ public sealed class PromotionCoverTests
         Assert.Equal(12u, tag.TrackCount);
     }
 
+    [Theory]
+    // A service's full-size cover is brought down to 1,200 pixels a side for the copy inside the file, its shape kept.
+    [InlineData(4000, 4000, 1200, 1200)]
+    [InlineData(3000, 1500, 1200, 600)]
+    // A cover already that small is embedded as it came.
+    [InlineData(1200, 1200, 1200, 1200)]
+    [InlineData(500, 500, 500, 500)]
+    public void TheCoverInsideAFileIsAtMost1200PixelsASide(int width, int height, int embeddedWidth, int embeddedHeight)
+    {
+        using var bitmap = new SkiaSharp.SKBitmap(width, height);
+        bitmap.Erase(SkiaSharp.SKColors.Teal);
+        using var image = SkiaSharp.SKImage.FromBitmap(bitmap);
+        using var jpeg = image.Encode(SkiaSharp.SKEncodedImageFormat.Jpeg, 90);
+        var cover = jpeg.ToArray();
+
+        var embedded = PromotionCover.Embedded(cover);
+
+        using var codec = SkiaSharp.SKCodec.Create(SkiaSharp.SKData.CreateCopy(embedded));
+        Assert.Equal((embeddedWidth, embeddedHeight), (codec.Info.Width, codec.Info.Height));
+        Assert.True(PromotionCover.IsCover(embedded));
+        Assert.Equal(width <= 1200, ReferenceEquals(cover, embedded));
+    }
+
     [MediaToolsTheory]
     // Every tag an add writes is read back before the file is placed, so each must survive each kind of file.
     [InlineData("flac", "flac")]
