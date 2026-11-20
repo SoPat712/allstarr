@@ -1200,6 +1200,17 @@ public sealed partial class ProtocolRouteFixtureTests
         using var pathBitmap = SKBitmap.Decode(await pathImageResponse.Content.ReadAsByteArrayAsync());
         Assert.Equal(300, pathBitmap.Width);
         Assert.Equal(300, pathBitmap.Height);
+
+        // An app on the native API draws its own placeholder, so the same song has no picture there, while a song
+        // with a cover of its own still has one.
+        factory.Services.GetRequiredService<DurableStorageState>().Set(DurableStorageReadiness.Ready);
+        await SetClientApiEnabledAsync(factory, true);
+        static string Native(string item) => "/allstarr/v2/artwork/" + Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(item + "\nno-art"))
+            .TrimEnd('=').Replace('+', '-').Replace('/', '_');
+        using var nativeRequest = new HttpRequestMessage(HttpMethod.Get, Native("ext-deezer-song-no-art"));
+        nativeRequest.Headers.Authorization = new("Bearer", "fixture-key");
+        using var nativeResponse = await client.SendAsync(nativeRequest);
+        Assert.Equal(HttpStatusCode.NotFound, nativeResponse.StatusCode);
         gateway.VerifyAll();
     }
 

@@ -9,6 +9,8 @@ namespace allstarr.Core.ClientApiV2;
 public static class V2ArtworkUrls
 {
     public const string PathPrefix = "/allstarr/v2/artwork/";
+    /// <summary>Marks a request that came in by an artwork url of this API, for the image route that serves it.</summary>
+    public const string RequestMark = "allstarr.v2.artwork";
     public const int DefaultWidth = 600;
     private const int MinimumWidth = 32;
     private const int MaximumWidth = 2048;

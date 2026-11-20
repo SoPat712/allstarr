@@ -550,9 +550,20 @@ public partial class JellyfinController : ControllerBase
             imageKey += ":artist-v1:" + Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(url)));
         }
 
-        return await CachedImageAsync(imageKey!, provider!, maxWidth ?? maxHeight, requestedFormat, ReadAsync, artist: type == "artist");
+        // An app on the native API draws its own placeholder for a cover that does not exist. It is answered "no
+        // picture" where other apps get the service's mark, and its pictures are remembered apart from theirs.
+        var native = HttpContext.Items.ContainsKey(allstarr.Core.ClientApiV2.V2ArtworkUrls.RequestMark);
+        if (native) imageKey += ":native";
+        return await CachedImageAsync(imageKey!, provider!, maxWidth ?? maxHeight, requestedFormat, ReadAsync, artist: type == "artist" || native);
 
         async Task<ResolvedMediaAsset?> ReadAsync(CancellationToken token)
+        {
+            var asset = await ReadAnyAsync(token);
+            return asset != null && native &&
+                await ProviderArtworkFallback.IsStandInAsync(HttpContext.RequestServices, provider!, asset.Bytes, token) ? null : asset;
+        }
+
+        async Task<ResolvedMediaAsset?> ReadAnyAsync(CancellationToken token)
         {
             try
             {

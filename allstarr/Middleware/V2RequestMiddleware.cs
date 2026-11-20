@@ -65,6 +65,7 @@ public sealed class V2RequestMiddleware(RequestDelegate next)
         }
         request.Path = target.Value.Path;
         request.QueryString = target.Value.Query;
+        context.Items[V2ArtworkUrls.RequestMark] = true;
         await next(context);
     }
 }
