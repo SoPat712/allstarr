@@ -27,26 +27,6 @@ internal static class ProviderArtworkFallback
         return null;
     }
 
-    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, (DateTimeOffset At, string[] Hashes)> StandIns = new(StringComparer.Ordinal);
-
-    /// <summary>
-    /// Whether a picture is the mark Allstarr puts in a missing cover's place for this service. Apps on the native
-    /// API draw their own placeholder for a cover that does not exist, so they are not sent this one.
-    /// </summary>
-    internal static async Task<bool> IsStandInAsync(IServiceProvider services, string provider, byte[] picture, CancellationToken token)
-    {
-        // An extension's icon can change with the extension, so its mark is worked out again every few minutes.
-        if (!StandIns.TryGetValue(provider, out var known) || DateTimeOffset.UtcNow - known.At > TimeSpan.FromMinutes(10))
-        {
-            var hashes = new List<string>();
-            foreach (var size in new[] { 96, 600 })
-                if (await ReadAsync(services, provider, size, token) is { } mark)
-                    hashes.Add(Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(mark.Bytes)));
-            StandIns[provider] = known = (DateTimeOffset.UtcNow, hashes.ToArray());
-        }
-        return known.Hashes.Contains(Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(picture)), StringComparer.Ordinal);
-    }
-
     internal static async Task<MediaAssetSource?> ReadAsync(IServiceProvider services, string provider, int? size,
         CancellationToken token, string? cover = null)
     {

@@ -558,17 +558,10 @@ public partial class JellyfinController : ControllerBase
 
         async Task<ResolvedMediaAsset?> ReadAsync(CancellationToken token)
         {
-            var asset = await ReadAnyAsync(token);
-            return asset != null && native &&
-                await ProviderArtworkFallback.IsStandInAsync(HttpContext.RequestServices, provider!, asset.Bytes, token) ? null : asset;
-        }
-
-        async Task<ResolvedMediaAsset?> ReadAnyAsync(CancellationToken token)
-        {
             try
             {
                 var asset = await ResolveExternalImageAsync(provider!, type!, externalId!, retryTransientFailures: true,
-                    maxWidth, maxHeight, imageRevision: tag, cancellationToken: token);
+                    maxWidth, maxHeight, imageRevision: tag, cancellationToken: token, standIn: !native);
                 if (asset != null) return asset;
             }
             catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
@@ -576,7 +569,7 @@ public partial class JellyfinController : ControllerBase
 
             if (type == "artist")
                 return await ResolveExternalImageAsync(provider!, type, externalId!, width: maxWidth, height: maxHeight,
-                    imageRevision: tag, cancellationToken: token);
+                    imageRevision: tag, cancellationToken: token, standIn: !native);
 
             if (type == "song" && HttpContext.GetProtocolExecutionContext() is { } protocol)
             {
@@ -586,7 +579,7 @@ public partial class JellyfinController : ControllerBase
                     var album = _localLibraryService.ParseExternalId(song?.AlbumId ?? "");
                     if (album.isExternal && album.type == "album")
                         return await ResolveExternalImageAsync(album.provider!, "album", album.externalId!,
-                            width: maxWidth, height: maxHeight, storedOnly: true, imageRevision: tag, cancellationToken: token);
+                            width: maxWidth, height: maxHeight, storedOnly: true, imageRevision: tag, cancellationToken: token, standIn: !native);
                 }
                 catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
                 catch (Exception ex) { _logger.LogDebug(ex, "Stored album artwork unavailable for {ItemId}", itemId); }
@@ -622,7 +615,8 @@ public partial class JellyfinController : ControllerBase
         int? height = null,
         bool storedOnly = false,
         string? imageRevision = null,
-        CancellationToken? cancellationToken = null)
+        CancellationToken? cancellationToken = null,
+        bool standIn = true)
     {
         var requestToken = cancellationToken ?? HttpContext.RequestAborted;
         var actor = HttpContext.GetProtocolExecutionContext()?.Actor;
@@ -642,6 +636,13 @@ public partial class JellyfinController : ControllerBase
             revision = "artist-v1:" + Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(artistImage)));
         }
         if (imageRevision != null) revision += ":" + imageRevision;
+        // A request that wants no stand-in keeps its pictures apart: a picture is remembered resized, and a resized mark
+        // can no longer be told from a cover.
+        if (!standIn)
+        {
+            revision += ":no-stand-in";
+            sourceRevision += ":no-stand-in";
+        }
         var identity = new MediaAssetIdentity(
             resourceKind is "song" or "album" or "artist" ? null : actor?.EffectiveUserId,
             null,
@@ -692,8 +693,8 @@ public partial class JellyfinController : ControllerBase
                         coverUrl = songCover;
                 }
                 if (ProviderArtworkFallback.IsFallback(provider, coverUrl, resourceKind))
-                    return await ProviderArtworkFallback.ReadAsync(HttpContext.RequestServices, provider,
-                        width.HasValue && height.HasValue ? Math.Max(width.Value, height.Value) : width ?? height, token, coverUrl);
+                    return standIn ? await ProviderArtworkFallback.ReadAsync(HttpContext.RequestServices, provider,
+                        width.HasValue && height.HasValue ? Math.Max(width.Value, height.Value) : width ?? height, token, coverUrl) : null;
                 if (!OutboundRequestGuard.TryCreateSafeHttpUri(
                         coverUrl, out var coverUri, out var validationReason) ||
                     coverUri == null)
@@ -757,7 +758,7 @@ public partial class JellyfinController : ControllerBase
                 _ => Task.FromResult<MediaAssetSource?>(null), MaximumArtworkBytes, requestToken);
         if (shared != null || !albumFallback || actor?.EffectiveUserId is not { } listener) return shared;
         return await _mediaAssets.ResolveAsync(
-            identity with { UserId = listener, Revision = JellyfinItemArtwork.AlbumArtRevision + ":saved" + (imageRevision == null ? "" : ":" + imageRevision) },
+            identity with { UserId = listener, Revision = JellyfinItemArtwork.AlbumArtRevision + ":saved" + (imageRevision == null ? "" : ":" + imageRevision) + (standIn ? "" : ":no-stand-in") },
             token => FetchAsync(token, true), MaximumArtworkBytes, requestToken);
     }
 
