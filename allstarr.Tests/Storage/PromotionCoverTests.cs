@@ -79,6 +79,73 @@ public sealed class PromotionCoverTests
         Assert.Equal(12u, tag.TrackCount);
     }
 
+    [MediaToolsTheory]
+    // Every tag an add writes is read back before the file is placed, so each must survive each kind of file.
+    [InlineData("flac", "flac")]
+    [InlineData("m4a", "aac")]
+    [InlineData("m4a", "alac")]
+    [InlineData("wav", "pcm_s24le")]
+    public async Task ReleaseTagsAreReadBackFromARealFile(string extension, string codec)
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "allstarr-release-tags", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var path = Path.Combine(directory, "song." + extension);
+            await ExtensionDownloadDecryptionTests.RunAsync("ffmpeg",
+                ["-v", "error", "-nostdin", "-f", "lavfi", "-i", "sine=frequency=440:duration=1", "-threads", "1", "-c:a", codec, "-y", path]);
+            var tags = new Dictionary<string, string>
+            {
+                ["title"] = "Working Bitch",
+                ["artist"] = "Ashnikko",
+                ["album"] = "Hi, It\u2019s Me",
+                ["albumArtist"] = "Ashnikko",
+                ["track"] = "4",
+                ["totaltracks"] = "5",
+                ["disc"] = "1",
+                ["totaldiscs"] = "1",
+                ["year"] = "2019",
+                ["date"] = "2019-07-12",
+                ["originaldate"] = "2019-07-12",
+                ["isrc"] = "GBAYE1900594",
+                ["musicbrainz_recordingid"] = "6d7b21c8-922c-4aa4-aff5-36b1505107b8",
+                ["musicbrainz_releaseid"] = "b266145e-3601-481e-89cf-f0cf0afc2c83",
+                ["musicbrainz_releasegroupid"] = "dc0eec68-ee74-4c2f-bb4c-dd6e7dd39a15",
+                ["musicbrainz_artistid"] = "6dee6b6f-aa72-424c-9c8c-0d31ba5ff673",
+                ["musicbrainz_albumartistid"] = "6dee6b6f-aa72-424c-9c8c-0d31ba5ff673",
+                ["musicbrainz_releasetrackid"] = "ba028898-252b-4c58-be7d-6dac896ae5a3",
+                ["artists"] = "Ashnikko;Yung Baby Tate",
+                ["artistsort"] = "Ashnikko",
+                ["albumartistsort"] = "Ashnikko",
+                ["originalyear"] = "2019",
+                ["releasecountry"] = "XW",
+                ["releasestatus"] = "official",
+                ["releasetype"] = "ep",
+                ["media"] = "Digital Media",
+                ["script"] = "Latn",
+                ["barcode"] = "190295416812",
+                ["label"] = "Parlophone",
+                ["catalognumber"] = "DP019"
+            };
+            Assert.All(TagLibManagedTagFileMutator.ReleaseTags, key => Assert.Contains(key, tags.Keys));
+            var mutator = new TagLibManagedTagFileMutator();
+
+            mutator.Apply(path, tags, default);
+
+            Assert.True(mutator.Matches(path, tags));
+            using var file = TagLib.File.Create(path);
+            Assert.Equal("6dee6b6f-aa72-424c-9c8c-0d31ba5ff673", file.Tag.MusicBrainzReleaseArtistId);
+            Assert.Equal("XW", file.Tag.MusicBrainzReleaseCountry);
+            if (extension != "flac") return;
+            var xiph = (TagLib.Ogg.XiphComment)file.GetTag(TagLib.TagTypes.Xiph);
+            Assert.Equal(["Ashnikko", "Yung Baby Tate"], xiph.GetField("ARTISTS"));
+            Assert.Equal("4", xiph.GetFirstField("TRACKNUMBER"));
+            Assert.Equal("5", xiph.GetFirstField("TOTALTRACKS"));
+            Assert.Equal("ba028898-252b-4c58-be7d-6dac896ae5a3", xiph.GetFirstField("MUSICBRAINZ_RELEASETRACKID"));
+        }
+        finally { Directory.Delete(directory, true); }
+    }
+
     [Fact]
     public void EmptyCover_RemovesCopiedEmbeddedArtwork()
     {
