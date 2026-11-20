@@ -367,16 +367,16 @@ If the container can't reach the folder, mount it once, for example `- /path/to/
 
 The rest of the page is a profile: the **Household default**, which listeners follow, or **Your profile**.
 
-- **Default unit**: **Whole album** or **Just the song**. **Remove kept copy** releases the kept copy once Jellyfin has the song.
+- **Default unit**: **Whole album** or **Just the song**. **Remove kept copy** releases the kept copy once Jellyfin has the song; it is on unless you turn it off.
 - **Who adds without approval**: **Admins and trusted listeners**, or **Admins**. Everyone else sends a request, which appears in **To library** for you to **Approve and add** or **Decline…**.
 - **How added files are named**: **Autodetect** reads the chosen folder and resets the pattern to what it finds, but only when at least five songs are sampled and all of them match. Otherwise your pattern stays and you choose one yourself. Review the examples, then **Use this naming pattern**. Changing the folder or pattern needs this confirmation again.
 - **Quality of added songs** and **Tags and extras** set the lowest quality to add, the hi-res ceiling, lossy fallback, MusicBrainz tags, cover art, synced lyrics and ReplayGain.
 
-With **MusicBrainz tags** on, Allstarr finds the song's release on MusicBrainz by its ISRC and tags the file from it, the way a music tagger does: the MusicBrainz ids, sort names, label, barcode, release country, status and type, original date, and the album's name as MusicBrainz writes it (a service's "- EP" or "- Single" is dropped). The release must agree with the service's album on name, track number and track count. When none does, or MusicBrainz doesn't answer within a few seconds, the service's own tags are used.
+With **MusicBrainz tags** on, Allstarr finds the song's release on MusicBrainz by its ISRC, or by its title, artist and length when the service gives no ISRC or MusicBrainz does not know it, and tags the file from it, the way a music tagger does: the MusicBrainz ids, sort names, label, barcode, release country, status and type, original date, and the album's name as MusicBrainz writes it (a service's "- EP" or "- Single" is dropped). The release must agree with the service's album on name, track number and track count. When none does, or MusicBrainz doesn't answer within a few seconds, the service's own tags are used.
 
 An added file gets the song's real cover or none; a service's logo is never written as one. **Embedded cover size** sets how large the copy inside the file may be: 1,000 pixels a side unless you change it, or **Full size** to keep the service's own. `cover.jpg`, when you ask for one, is always full size.
 
-Lyrics inside a song file are timed by line. Word-by-word timing is kept in the `.lrc` file when you ask for one: a media server reads that file as it stands, but reads word times from inside a song file unreliably (Jellyfin shows such lines with the spaces between words gone).
+Lyrics inside a song file go in twice. The tag every player and media server reads as lyrics holds them line by line, the form all of them understand. Word-by-word timing goes in a tag of its own (`WORDLYRICS`), which Allstarr reads back from the file for its own apps, and in the `.lrc` file when you ask for one. Word times are kept out of the usual tag because a media server that meets them there serves the lines mangled (Jellyfin drops the spaces between words).
 
 A song you deleted from your media server can be added again. The new file takes over the plays and matches of the one that is gone; the heart on the deleted copy goes with it, so heart the song again.
 
