@@ -14,6 +14,28 @@ public sealed partial class EfManagedFileOwnershipStore(AllstarrDbContext dbCont
     public Task<bool> IsPathReservedAsync(string canonicalPath, CancellationToken cancellationToken) =>
         Files.AsNoTracking().AnyAsync(item => item.CanonicalPath == canonicalPath, cancellationToken);
 
+    public async Task ForgetMissingAsync(string canonicalPath, CancellationToken cancellationToken)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var file = await Files.SingleOrDefaultAsync(item => item.CanonicalPath == canonicalPath, cancellationToken);
+        if (file == null) return;
+        // References first: the file's count follows them, and a file with any left cannot be closed.
+        foreach (var reference in await References.Where(item => item.ManagedFileId == file.Id && item.ReleasedAt == null).ToListAsync(cancellationToken))
+        {
+            reference.ReleasedAt = now;
+            reference.Revision++;
+        }
+        await dbContext.SaveChangesAsync(cancellationToken);
+        await dbContext.Entry(file).ReloadAsync(cancellationToken);
+        file.RemovedAt ??= now;
+        // A path belongs to one record at a time. The closed record keeps the path it had, marked, so its history reads
+        // true and the name is free.
+        file.CanonicalPath = $"{canonicalPath}#deleted-{file.Id:N}";
+        file.Revision++;
+        await dbContext.SaveChangesAsync(cancellationToken);
+        dbContext.ChangeTracker.Clear();
+    }
+
     public async Task<ManagedFileRecord?> FindCompatibleAsync(Guid rootId, string contentSha256, string scopeKey, CancellationToken cancellationToken) =>
         Map(await Files.AsNoTracking().OrderBy(item => item.CreatedAt).FirstOrDefaultAsync(item =>
             item.RootId == rootId && item.ContentSha256 == contentSha256 && item.ScopeKey == scopeKey && item.RemovedAt == null, cancellationToken));

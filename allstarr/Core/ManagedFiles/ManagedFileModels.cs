@@ -96,6 +96,12 @@ public interface IManagedFileOwnershipStore
     Task<ManagedFileRecord> AddAsync(ManagedFileRecord record, ManagedFileReference reference, CancellationToken cancellationToken);
     Task<ManagedFileRecord> AddReferenceAsync(Guid id, ManagedFileReference reference, CancellationToken cancellationToken);
     Task<ManagedFileRecord> ReleaseReferenceAsync(Guid id, string referenceKey, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Gives a path back after the file Allstarr put there was deleted by someone else. The record that held the path
+    /// is closed and no longer claims it, so a new file can be placed under that name.
+    /// </summary>
+    Task ForgetMissingAsync(string canonicalPath, CancellationToken cancellationToken) => Task.CompletedTask;
 }
 
 public interface IManagedFileOperations

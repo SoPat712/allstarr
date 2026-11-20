@@ -83,6 +83,11 @@ public sealed partial class FilePlacementService(IManagedFileOwnershipStore owne
             pending = null;
         }
 
+        // A library file Allstarr placed and someone has since deleted leaves its record holding the name. That record
+        // is closed here, so a song added again gets its own name back and not "(2)".
+        if (numberedCollisions && !File.Exists(requestedTarget) && !Directory.Exists(requestedTarget) &&
+            await ownership.IsPathReservedAsync(requestedTarget, cancellationToken))
+            await ownership.ForgetMissingAsync(requestedTarget, cancellationToken);
         if (exactDestination && (File.Exists(requestedTarget) || Directory.Exists(requestedTarget) ||
             await ownership.IsPathReservedAsync(requestedTarget, cancellationToken)))
             throw new IOException("The promotion destination already exists; no existing file was overwritten.");

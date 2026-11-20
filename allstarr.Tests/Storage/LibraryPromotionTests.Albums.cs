@@ -252,6 +252,40 @@ public sealed partial class LibraryPromotionTests
     }
 
     [Fact]
+    public async Task Album_ASongDeletedFromTheLibraryIsAddedAgainUnderItsOwnName()
+    {
+        await SaveBatchProfileAsync();
+        var song = new Song { CanonicalRecordingId = recordingId, Title = "Song", Artist = "Artist", Album = "Album", Track = 1 };
+        var catalog = new Mock<IPromotionCatalog>();
+        catalog.Setup(item => item.ResolveAsync(It.IsAny<ProtocolExecutionContext>(), recordingId, "song", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { song });
+        var acquisition = new Mock<IPromotionAcquisition>();
+        var source = await WaveSourceAsync();
+        acquisition.Setup(item => item.AcquireAsync(owner, It.IsAny<Guid>(), It.IsAny<PromotionTrack>(), It.IsAny<PromotionProfile>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PromotionAcquisitionResult(source, false, "Verified source."));
+        var batch = BatchService(catalog.Object, acquisition.Object);
+        var first = await batch.StartAsync(Context, Request("first") with { Unit = "song", ArtifactId = Guid.Empty });
+        await ExecuteBatchAsync(batch);
+        var placed = Assert.Single((await batch.GetAsync(Context, first.Id)).Tracks).DestinationPath!;
+
+        // Someone deletes the file in the media server; Allstarr's record of it still holds the name.
+        File.Delete(placed);
+        var second = await batch.StartAsync(Context, Request("second") with { Unit = "song", ArtifactId = Guid.Empty });
+        await ExecuteBatchAsync(batch);
+
+        Assert.Equal(placed, Assert.Single((await batch.GetAsync(Context, second.Id)).Tracks).DestinationPath);
+        Assert.True(File.Exists(placed));
+        await using var db = factory.CreateDbContext();
+        var records = await db.ManagedFiles.AsNoTracking().OrderBy(item => item.CreatedAt).ToArrayAsync();
+        Assert.Equal(2, records.Length);
+        Assert.NotNull(records[0].RemovedAt);
+        Assert.Equal(0, records[0].ReferenceCount);
+        Assert.StartsWith(placed + "#deleted-", records[0].CanonicalPath);
+        Assert.Null(records[1].RemovedAt);
+        Assert.Equal(placed, records[1].CanonicalPath);
+    }
+
+    [Fact]
     public async Task Album_PlacementPreservesUnownedCollision()
     {
         await SaveBatchProfileAsync();
