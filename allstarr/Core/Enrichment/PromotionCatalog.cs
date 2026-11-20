@@ -247,6 +247,7 @@ public sealed class PromotionCatalog(IDbContextFactory<AllstarrDbContext> factor
         Add(track, "releasetype", string.Join(';', new[] { release.ReleaseGroup?.PrimaryType }.Concat(release.ReleaseGroup?.SecondaryTypes ?? [])
             .OfType<string>().Where(type => type.Length > 0).Select(type => type.ToLowerInvariant())));
         Add(track, "media", disc.Format);
+        Add(track, "script", release.TextRepresentation?.Script);
         Add(track, "barcode", release.Barcode);
         Add(track, "label", release.LabelInfo?.Select(info => info.Label?.Name).FirstOrDefault(name => !string.IsNullOrWhiteSpace(name)));
         Add(track, "catalognumber", release.LabelInfo?.Select(info => info.CatalogNumber).FirstOrDefault(number => !string.IsNullOrWhiteSpace(number)));

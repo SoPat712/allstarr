@@ -33,7 +33,8 @@ public sealed class TagLibManagedTagFileMutator : IManagedTagFileMutator
     {
         "musicbrainz_recordingid", "musicbrainz_releaseid", "musicbrainz_releasegroupid", "musicbrainz_artistid", "originaldate",
         "musicbrainz_albumartistid", "artistsort", "albumartistsort", "releasecountry",
-        "musicbrainz_releasetrackid", "releasestatus", "releasetype", "media", "barcode", "label", "catalognumber", "artists", "originalyear"
+        "musicbrainz_releasetrackid", "releasestatus", "releasetype", "media", "barcode", "label", "catalognumber", "artists", "originalyear",
+        "script"
     };
 
     // Fields with no place of their own in the tag library, written under the names music taggers use in FLAC and Ogg
@@ -48,7 +49,8 @@ public sealed class TagLibManagedTagFileMutator : IManagedTagFileMutator
         ["label"] = "LABEL",
         ["catalognumber"] = "CATALOGNUMBER",
         ["artists"] = "ARTISTS",
-        ["originalyear"] = "ORIGINALYEAR"
+        ["originalyear"] = "ORIGINALYEAR",
+        ["script"] = "SCRIPT"
     };
 
     public static void ApplyTags(Tag tag, IReadOnlyDictionary<string, string> tags)
@@ -81,11 +83,18 @@ public sealed class TagLibManagedTagFileMutator : IManagedTagFileMutator
         if (tags.TryGetValue("releasecountry", out var country)) tag.MusicBrainzReleaseCountry = country;
         if (tags.TryGetValue("artistsort", out var artistSort)) tag.PerformersSort = [artistSort];
         if (tags.TryGetValue("albumartistsort", out var albumArtistSort)) tag.AlbumArtistsSort = [albumArtistSort];
-        foreach (var (key, field) in XiphFields)
-            if (tags.TryGetValue(key, out var value))
-                foreach (var xiph in Components(tag).OfType<TagLib.Ogg.XiphComment>())
-                    // Several artists are several fields, as taggers write them.
-                    xiph.SetField(field, key == "artists" ? value.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) : [value]);
+        foreach (var xiph in Components(tag).OfType<TagLib.Ogg.XiphComment>())
+        {
+            // As music taggers write them: the track number unpadded, and each total under both of its names.
+            if (tags.ContainsKey("track") && tag.Track > 0) xiph.SetField("TRACKNUMBER", tag.Track.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            if (tags.ContainsKey("totaltracks") && tag.TrackCount > 0) xiph.SetField("TOTALTRACKS", tag.TrackCount.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            if (tags.ContainsKey("totaldiscs") && tag.DiscCount > 0) xiph.SetField("TOTALDISCS", tag.DiscCount.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            foreach (var (key, field) in XiphFields)
+                if (tags.TryGetValue(key, out var value))
+                    // Several artists or release types are several fields.
+                    xiph.SetField(field, key is "artists" or "releasetype"
+                        ? value.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) : [value]);
+        }
         if (tags.TryGetValue("cover", out var cover))
             tag.Pictures = cover.Length == 0 ? [] : [new Picture(new ByteVector(Convert.FromBase64String(cover))) { Type = PictureType.FrontCover }];
     }

@@ -56,8 +56,13 @@ public sealed class PromotionCoverTests
             ["media"] = "Digital Media",
             ["releasecountry"] = "XW",
             ["releasestatus"] = "official",
-            ["releasetype"] = "single",
-            ["originalyear"] = "2019"
+            ["releasetype"] = "album;compilation",
+            ["originalyear"] = "2019",
+            ["script"] = "Latn",
+            ["track"] = "4",
+            ["totaltracks"] = "12",
+            ["disc"] = "1",
+            ["totaldiscs"] = "2"
         });
         Assert.Equal(["Doja Cat", "Tyga"], tag.GetField("ARTISTS"));
         Assert.Equal("6dee6b6f-aa72-424c-9c8c-0d31ba5ff673", tag.GetFirstField("MUSICBRAINZ_ALBUMARTISTID"));
@@ -65,8 +70,13 @@ public sealed class PromotionCoverTests
         Assert.Equal("Doja Cat & Tyga", tag.GetFirstField("ARTISTSORT"));
         Assert.Equal("Doja Cat", tag.GetFirstField("ALBUMARTISTSORT"));
         foreach (var (field, value) in new[] { ("BARCODE", "886447753231"), ("LABEL", "Kemosabe"), ("CATALOGNUMBER", "G010004101434I"),
-                     ("MEDIA", "Digital Media"), ("RELEASECOUNTRY", "XW"), ("RELEASESTATUS", "official"), ("RELEASETYPE", "single"), ("ORIGINALYEAR", "2019") })
+                     ("MEDIA", "Digital Media"), ("RELEASECOUNTRY", "XW"), ("RELEASESTATUS", "official"), ("ORIGINALYEAR", "2019"), ("SCRIPT", "Latn"),
+                     // The track number is written unpadded and each total under both of its names.
+                     ("TRACKNUMBER", "4"), ("TRACKTOTAL", "12"), ("TOTALTRACKS", "12"), ("DISCNUMBER", "1"), ("DISCTOTAL", "2"), ("TOTALDISCS", "2") })
             Assert.Equal(value, tag.GetFirstField(field));
+        Assert.Equal(["album", "compilation"], tag.GetField("RELEASETYPE"));
+        Assert.Equal(4u, tag.Track);
+        Assert.Equal(12u, tag.TrackCount);
     }
 
     [Fact]

@@ -308,6 +308,7 @@ public sealed partial class LibraryPromotionTests
             Country = "XW",
             Status = "Official",
             Barcode = "190295416812",
+            TextRepresentation = new() { Language = "eng", Script = "Latn" },
             ArtistCredit = credit,
             LabelInfo = [new() { CatalogNumber = "DP019", Label = new() { Name = "Digital Picnic" } }],
             ReleaseGroup = new() { Id = groupId, PrimaryType = "EP", FirstReleaseDate = "2019-07-12" },
@@ -359,6 +360,7 @@ public sealed partial class LibraryPromotionTests
         Assert.Equal("Digital Picnic", added.ProviderIds["label"]);
         Assert.Equal("DP019", added.ProviderIds["catalognumber"]);
         Assert.Equal("Digital Media", added.ProviderIds["media"]);
+        Assert.Equal("Latn", added.ProviderIds["script"]);
         Assert.Equal("XW", added.ProviderIds["releasecountry"]);
         Assert.Equal("official", added.ProviderIds["releasestatus"]);
         Assert.Equal("ep", added.ProviderIds["releasetype"]);

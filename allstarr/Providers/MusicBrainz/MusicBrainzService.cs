@@ -677,6 +677,16 @@ public sealed class MusicBrainzRelease
     public List<MusicBrainzLabelInfo>? LabelInfo { get; set; }
     [JsonPropertyName("media")]
     public List<MusicBrainzMedium>? Media { get; set; }
+    [JsonPropertyName("text-representation")]
+    public MusicBrainzTextRepresentation? TextRepresentation { get; set; }
+}
+
+public sealed class MusicBrainzTextRepresentation
+{
+    [JsonPropertyName("language")]
+    public string? Language { get; set; }
+    [JsonPropertyName("script")]
+    public string? Script { get; set; }
 }
 
 public sealed class MusicBrainzReleaseGroup
