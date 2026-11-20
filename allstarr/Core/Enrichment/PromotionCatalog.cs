@@ -153,6 +153,7 @@ public sealed class PromotionCatalog(IDbContextFactory<AllstarrDbContext> factor
     }
 
     private const int MaximumReleaseLookups = 4;
+    private static readonly TimeSpan ReleaseLookupTime = TimeSpan.FromSeconds(12);
 
     private sealed record FoundRelease(MusicBrainzRelease Release, string RecordingId, MusicBrainzMedium Disc, MusicBrainzReleaseTrack Track);
 
@@ -160,11 +161,14 @@ public sealed class PromotionCatalog(IDbContextFactory<AllstarrDbContext> factor
     {
         var album = FuzzyMatcher.NormalizeAlbumForMatching(song.Album);
         if (string.IsNullOrWhiteSpace(song.Isrc) || album.Length == 0) return null;
+        // The listener is waiting for the add to be accepted, so MusicBrainz gets a few seconds and no more.
+        using var limited = CancellationTokenSource.CreateLinkedTokenSource(token);
+        limited.CancelAfter(ReleaseLookupTime);
         try
         {
             // The ISRC names the recording; the releases it is on come with the recording itself.
-            var named = await musicBrainz.LookupByIsrcAsync(song.Isrc, token);
-            var recording = Guid.TryParse(named?.Id, out _) ? await musicBrainz.LookupByMbidAsync(named!.Id!, token) : null;
+            var named = await musicBrainz.LookupByIsrcAsync(song.Isrc, limited.Token);
+            var recording = Guid.TryParse(named?.Id, out _) ? await musicBrainz.LookupByMbidAsync(named!.Id!, limited.Token) : null;
             if (!Guid.TryParse(recording?.Id, out _) || recording!.Releases is not { Count: > 0 } releases) return null;
             var total = providerAlbum?.SongCount is > 0 and var counted ? counted : providerAlbum?.Songs.Count is > 0 and var listed ? listed : song.TotalTracks;
             // The service's own release day first, then a worldwide release, then the earliest: one answer however they are listed.
@@ -178,7 +182,7 @@ public sealed class PromotionCatalog(IDbContextFactory<AllstarrDbContext> factor
                 .Take(MaximumReleaseLookups).ToArray();
             foreach (var candidate in candidates)
             {
-                var release = await musicBrainz.LookupReleaseByMbidAsync(candidate.Id!, token);
+                var release = await musicBrainz.LookupReleaseByMbidAsync(candidate.Id!, limited.Token);
                 var media = release?.Media ?? [];
                 if (media.Count == 0 || media.Any(disc => disc.Tracks == null || disc.Tracks.Count != disc.TrackCount)) continue;
                 var places = media.SelectMany(disc => disc.Tracks!.Select(track => (Disc: disc, Track: track)))
@@ -189,8 +193,11 @@ public sealed class PromotionCatalog(IDbContextFactory<AllstarrDbContext> factor
                 return new(release!, recording.Id!, places[0].Disc, places[0].Track);
             }
         }
-        // MusicBrainz not answering leaves the service's own tags; it never stops an add.
-        catch (Exception error) when (error is MusicBrainzLookupException or HttpRequestException or System.Text.Json.JsonException) { }
+        // MusicBrainz not answering, or not in time, leaves the service's own tags; it never stops an add.
+        catch (Exception error) when (error is MusicBrainzLookupException or HttpRequestException or System.Text.Json.JsonException ||
+            error is OperationCanceledException && !token.IsCancellationRequested)
+        {
+        }
         return null;
     }
 
