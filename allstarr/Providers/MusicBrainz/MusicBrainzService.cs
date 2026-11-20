@@ -39,6 +39,10 @@ public interface IMusicBrainzCatalogClient
     Task<MusicBrainzArtist?> LookupArtistByMbidAsync(string mbid, CancellationToken cancellationToken = default);
     Task<MusicBrainzReleaseGroup?> LookupReleaseGroupByMbidAsync(string mbid, CancellationToken cancellationToken = default);
     Task<MusicBrainzRelease?> LookupReleaseByMbidAsync(string mbid, CancellationToken cancellationToken = default);
+
+    /// <summary>The recordings a search by title and artist finds, each with the releases it is on.</summary>
+    Task<IReadOnlyList<MusicBrainzRecording>> SearchRecordingsAsync(string title, string artist, int limit = 10,
+        CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<MusicBrainzRecording>>([]);
 }
 
 public sealed class MusicBrainzService : IMusicBrainzCatalogClient

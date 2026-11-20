@@ -117,7 +117,7 @@ public sealed partial class LibraryPromotionTests
                 ReleaseDate = "2026-01-02",
                 Songs = [song, new() { CanonicalRecordingId = Guid.NewGuid(), Title = "Second song", Artist = "Artist", Album = "Release", Track = 4, Year = 2026, ReleaseDate = "2026-01-02" }]
             });
-        var catalog = new PromotionCatalog(factory, identities.Object, providers.Object, Mock.Of<IMusicBrainzCatalogClient>(MockBehavior.Strict));
+        var catalog = new PromotionCatalog(factory, identities.Object, providers.Object, UnknownToMusicBrainz());
         var promotions = BatchService(catalog, Mock.Of<IPromotionAcquisition>(), identityService: identities.Object);
         await new PromotionProfiles(factory).SaveMineAsync(Context, new()
         {
@@ -195,7 +195,7 @@ public sealed partial class LibraryPromotionTests
                     new Song { ExternalProvider = "apple-download", ExternalId = "track", Isrc = isrc, Track = 3 }
                 ]
             });
-        var catalog = new PromotionCatalog(factory, identities.Object, providers.Object, Mock.Of<IMusicBrainzCatalogClient>());
+        var catalog = new PromotionCatalog(factory, identities.Object, providers.Object, UnknownToMusicBrainz());
 
         var album = await catalog.ResolveAsync(Context, recordingId, "album", default);
         var single = await catalog.ResolveAsync(Context, recordingId, "song", default);
@@ -401,15 +401,111 @@ public sealed partial class LibraryPromotionTests
         var elsewhere = new Mock<IMusicBrainzCatalogClient>(MockBehavior.Strict);
         var known = Guid.NewGuid().ToString("D");
         elsewhere.Setup(item => item.LookupByIsrcAsync("USAT21900001", It.IsAny<CancellationToken>())).ReturnsAsync(new MusicBrainzRecording { Id = known });
-        elsewhere.Setup(item => item.LookupByMbidAsync(known, It.IsAny<CancellationToken>())).ReturnsAsync(new MusicBrainzRecording
+        var onAnotherAlbum = new MusicBrainzRecording
         {
             Id = known,
+            Title = "Song",
+            ArtistCredit = [new() { Name = "Artist" }],
             Releases = [new() { Id = Guid.NewGuid().ToString("D"), Title = "Greatest Hits", Status = "Official" }]
-        });
+        };
+        elsewhere.Setup(item => item.LookupByMbidAsync(known, It.IsAny<CancellationToken>())).ReturnsAsync(onAnotherAlbum);
+        // Asked by name next, MusicBrainz offers the same recording, which is not looked at twice.
+        elsewhere.Setup(item => item.SearchRecordingsAsync("Song", "Artist", 10, It.IsAny<CancellationToken>())).ReturnsAsync(new[] { onAnotherAlbum });
         var kept = Assert.Single(await new PromotionCatalog(factory, CatalogIdentities(song).Object, providers.Object, elsewhere.Object)
             .ResolveAsync(Context, recordingId, "song", default));
         Assert.Equal("Album - Single", kept.Album);
         Assert.DoesNotContain("musicbrainz_releaseid", kept.ProviderIds.Keys);
+    }
+
+    [Theory]
+    // No ISRC: the song's name, artist and length find the recording, and its place on the album confirms the release.
+    [InlineData(true)]
+    // With neither a length nor a track number there is nothing to tell the song from a namesake: MusicBrainz is not
+    // asked, and the service's tags stay.
+    [InlineData(false)]
+    public async Task PromotionCatalog_WithoutAnIsrcFindsTheReleaseByNameArtistAndLength(bool placed)
+    {
+        var mbid = Guid.NewGuid().ToString("D");
+        var releaseId = Guid.NewGuid().ToString("D");
+        var liveReleaseId = Guid.NewGuid().ToString("D");
+        var song = new Song
+        {
+            CanonicalRecordingId = recordingId,
+            Title = "Juicy",
+            Artist = "Doja Cat",
+            Artists = ["Doja Cat"],
+            Album = "Amala (Deluxe Version)",
+            AlbumId = "ext-spotiflac-ytmusic-album-1",
+            ExternalProvider = "spotiflac-ytmusic",
+            ExternalId = "track",
+            Track = placed ? 2 : null,
+            Duration = placed ? 203 : null
+        };
+        var providers = new Mock<IProtocolProviderGateway>();
+        providers.Setup(item => item.GetAlbumAsync(It.IsAny<ProtocolExecutionContext>(), "spotiflac-ytmusic", "1"))
+            .ReturnsAsync(new Album { Title = "Amala (Deluxe Version)", SongCount = 2, Songs = [new Song { Title = "Go to Town", Artist = "Doja Cat", Track = 1, ExternalProvider = "spotiflac-ytmusic", ExternalId = "first", CanonicalRecordingId = Guid.NewGuid() }, song] });
+        var credit = new List<MusicBrainzArtistCredit> { new() { Name = "Doja Cat", Artist = new() { Id = Guid.NewGuid().ToString("D"), Name = "Doja Cat", SortName = "Doja Cat" } } };
+        MusicBrainzRecording Found(string id, int length, string release) => new()
+        {
+            Id = id,
+            Title = "Juicy",
+            Length = length,
+            Score = 100,
+            ArtistCredit = credit,
+            Releases = [new() { Id = release, Title = "Amala (Deluxe Version)", Status = "Official", Date = "2019-03-01" }]
+        };
+        var musicBrainz = new Mock<IMusicBrainzCatalogClient>(MockBehavior.Strict);
+        // A live take of the same name on a same-named release is a minute longer: it is never the song.
+        musicBrainz.Setup(item => item.SearchRecordingsAsync("Juicy", "Doja Cat", 10, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { Found(Guid.NewGuid().ToString("D"), 263000, liveReleaseId), Found(mbid, 203400, releaseId) });
+        musicBrainz.Setup(item => item.LookupReleaseByMbidAsync(releaseId, It.IsAny<CancellationToken>())).ReturnsAsync(new MusicBrainzRelease
+        {
+            Id = releaseId,
+            Title = "Amala (Deluxe Version)",
+            Date = "2019-03-01",
+            Status = "Official",
+            ArtistCredit = credit,
+            ReleaseGroup = new() { Id = Guid.NewGuid().ToString("D"), PrimaryType = "Album", FirstReleaseDate = "2018-03-30" },
+            Media =
+            [
+                new()
+                {
+                    Position = 1,
+                    Format = "Digital Media",
+                    TrackCount = 2,
+                    Tracks =
+                    [
+                        new() { Id = Guid.NewGuid().ToString("D"), Position = 1, Title = "Go to Town", Recording = new() { Id = Guid.NewGuid().ToString("D") }, ArtistCredit = credit },
+                        new() { Id = Guid.NewGuid().ToString("D"), Position = 2, Title = "Juicy", Recording = new() { Id = mbid }, ArtistCredit = credit }
+                    ]
+                }
+            ]
+        });
+        var catalog = new PromotionCatalog(factory, CatalogIdentities(song).Object, providers.Object, musicBrainz.Object);
+
+        var added = Assert.Single(await catalog.ResolveAsync(Context, recordingId, "song", default));
+
+        Assert.Equal("spotiflac-ytmusic", added.ExternalProvider);
+        if (!placed)
+        {
+            Assert.DoesNotContain("musicbrainz_releaseid", added.ProviderIds.Keys);
+            musicBrainz.VerifyNoOtherCalls();
+            return;
+        }
+        Assert.Equal(mbid, added.ProviderIds["musicbrainz_recordingid"]);
+        Assert.Equal(releaseId, added.ProviderIds["musicbrainz_releaseid"]);
+        Assert.Equal("2018", added.ProviderIds["originalyear"]);
+        musicBrainz.Verify(item => item.LookupReleaseByMbidAsync(liveReleaseId, It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    // A MusicBrainz that knows neither the song's ISRC nor its name.
+    private static IMusicBrainzCatalogClient UnknownToMusicBrainz()
+    {
+        var musicBrainz = new Mock<IMusicBrainzCatalogClient>(MockBehavior.Strict);
+        musicBrainz.Setup(item => item.LookupByIsrcAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync((MusicBrainzRecording?)null);
+        musicBrainz.Setup(item => item.SearchRecordingsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<MusicBrainzRecording>());
+        return musicBrainz.Object;
     }
 
     private Mock<ITrackIdentityService> CatalogIdentities(Song song, string? mbid = null)

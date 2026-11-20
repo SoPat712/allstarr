@@ -152,46 +152,36 @@ public sealed class PromotionCatalog(IDbContextFactory<AllstarrDbContext> factor
         return providerAlbum.Songs;
     }
 
-    private const int MaximumReleaseLookups = 4;
+    // MusicBrainz answers one request a second and the add is waiting: three releases by ISRC, three by name.
+    private const int MaximumReleaseLookups = 3;
     private static readonly TimeSpan ReleaseLookupTime = TimeSpan.FromSeconds(12);
+    private const long NamedLengthMilliseconds = 3000;
 
     private sealed record FoundRelease(MusicBrainzRelease Release, string RecordingId, MusicBrainzMedium Disc, MusicBrainzReleaseTrack Track);
 
     private async Task<FoundRelease?> FindReleaseAsync(Song song, Album? providerAlbum, CancellationToken token)
     {
         var album = FuzzyMatcher.NormalizeAlbumForMatching(song.Album);
-        if (string.IsNullOrWhiteSpace(song.Isrc) || album.Length == 0) return null;
+        if (album.Length == 0) return null;
         // The listener is waiting for the add to be accepted, so MusicBrainz gets a few seconds and no more.
         using var limited = CancellationTokenSource.CreateLinkedTokenSource(token);
         limited.CancelAfter(ReleaseLookupTime);
         try
         {
-            // The ISRC names the recording; the releases it is on come with the recording itself.
-            var named = await musicBrainz.LookupByIsrcAsync(song.Isrc, limited.Token);
-            var recording = Guid.TryParse(named?.Id, out _) ? await musicBrainz.LookupByMbidAsync(named!.Id!, limited.Token) : null;
-            if (!Guid.TryParse(recording?.Id, out _) || recording!.Releases is not { Count: > 0 } releases) return null;
             var total = providerAlbum?.SongCount is > 0 and var counted ? counted : providerAlbum?.Songs.Count is > 0 and var listed ? listed : song.TotalTracks;
-            // The service's own release day first, then a worldwide release, then the earliest: one answer however they are listed.
-            var candidates = releases.Where(release => Guid.TryParse(release.Id, out _) &&
-                    FuzzyMatcher.NormalizeAlbumForMatching(release.Title) == album &&
-                    (release.Status == null || release.Status.Equals("Official", StringComparison.OrdinalIgnoreCase)))
-                .OrderByDescending(release => song.ReleaseDate != null && release.Date == song.ReleaseDate)
-                .ThenByDescending(release => song.Year is { } year && release.Date?.StartsWith(year.ToString(System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal) == true)
-                .ThenByDescending(release => release.Country == "XW")
-                .ThenBy(release => release.Date ?? "9999", StringComparer.Ordinal).ThenBy(release => release.Id, StringComparer.Ordinal)
-                .Take(MaximumReleaseLookups).ToArray();
-            foreach (var candidate in candidates)
+            IReadOnlyList<MusicBrainzRecording> byCode = [];
+            if (!string.IsNullOrWhiteSpace(song.Isrc))
             {
-                var release = await musicBrainz.LookupReleaseByMbidAsync(candidate.Id!, limited.Token);
-                var media = release?.Media ?? [];
-                if (media.Count == 0 || media.Any(disc => disc.Tracks == null || disc.Tracks.Count != disc.TrackCount)) continue;
-                var places = media.SelectMany(disc => disc.Tracks!.Select(track => (Disc: disc, Track: track)))
-                    .Where(place => place.Track.Recording?.Id == recording.Id).ToArray();
-                // The song is on it once, where the service says it is, among as many songs.
-                if (places.Length != 1 || song.Track is > 0 && places[0].Track.Position != song.Track ||
-                    total is > 0 && media.Sum(disc => disc.TrackCount) != total) continue;
-                return new(release!, recording.Id!, places[0].Disc, places[0].Track);
+                // The ISRC names the recording; the releases it is on come with the recording itself.
+                var named = await musicBrainz.LookupByIsrcAsync(song.Isrc, limited.Token);
+                if (Guid.TryParse(named?.Id, out _) && await musicBrainz.LookupByMbidAsync(named!.Id!, limited.Token) is { } known) byCode = [known];
             }
+            if (await ReleaseOfAsync(song, byCode, album, total, limited.Token) is { } release) return release;
+            // Many services give no ISRC, MusicBrainz does not know every one, and it may hold the album's take of a song
+            // apart from the one the ISRC is filed under. The song's own name and artist find the recordings it could
+            // be; the release check is what makes one of them the song.
+            var byName = (await NamedRecordingsAsync(song, limited.Token)).Where(recording => byCode.All(tried => tried.Id != recording.Id)).ToArray();
+            return await ReleaseOfAsync(song, byName, album, total, limited.Token);
         }
         // MusicBrainz not answering, or not in time, leaves the service's own tags; it never stops an add.
         catch (Exception error) when (error is MusicBrainzLookupException or HttpRequestException or System.Text.Json.JsonException ||
@@ -199,6 +189,55 @@ public sealed class PromotionCatalog(IDbContextFactory<AllstarrDbContext> factor
         {
         }
         return null;
+    }
+
+    // The official release, among those these recordings are on, that agrees with the album the service gave: its name,
+    // the song once and at the service's track number, and as many songs.
+    private async Task<FoundRelease?> ReleaseOfAsync(Song song, IReadOnlyList<MusicBrainzRecording> recordings, string album, int? total,
+        CancellationToken token)
+    {
+        // The service's own release day first, then a worldwide release, then the earliest: one answer however they are listed.
+        var candidates = recordings.SelectMany((recording, rank) => (recording.Releases ?? []).Where(release => Guid.TryParse(release.Id, out _) &&
+                    FuzzyMatcher.NormalizeAlbumForMatching(release.Title) == album &&
+                    (release.Status == null || release.Status.Equals("Official", StringComparison.OrdinalIgnoreCase)))
+                .Select(release => (Recording: recording, Rank: rank, Release: release)))
+            .OrderBy(item => item.Rank)
+            .ThenByDescending(item => song.ReleaseDate != null && item.Release.Date == song.ReleaseDate)
+            .ThenByDescending(item => song.Year is { } year && item.Release.Date?.StartsWith(year.ToString(System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal) == true)
+            .ThenByDescending(item => item.Release.Country == "XW")
+            .ThenBy(item => item.Release.Date ?? "9999", StringComparer.Ordinal).ThenBy(item => item.Release.Id, StringComparer.Ordinal)
+            .Take(MaximumReleaseLookups).ToArray();
+        foreach (var (recording, _, candidate) in candidates)
+        {
+            var release = await musicBrainz.LookupReleaseByMbidAsync(candidate.Id!, token);
+            var media = release?.Media ?? [];
+            if (media.Count == 0 || media.Any(disc => disc.Tracks == null || disc.Tracks.Count != disc.TrackCount)) continue;
+            var places = media.SelectMany(disc => disc.Tracks!.Select(track => (Disc: disc, Track: track)))
+                .Where(place => place.Track.Recording?.Id == recording.Id).ToArray();
+            if (places.Length != 1 || song.Track is > 0 && places[0].Track.Position != song.Track ||
+                total is > 0 && media.Sum(disc => disc.TrackCount) != total) continue;
+            return new(release!, recording.Id!, places[0].Disc, places[0].Track);
+        }
+        return null;
+    }
+
+    // The recordings MusicBrainz lists under the song's own title and artist, the closest in length first. A name is
+    // weaker than an ISRC, so the song must also say where it sits on its album or how long it is; with neither, a
+    // same-named recording on a same-named album could not be told from it.
+    private async Task<IReadOnlyList<MusicBrainzRecording>> NamedRecordingsAsync(Song song, CancellationToken token)
+    {
+        var artist = song.Artists.FirstOrDefault(name => !string.IsNullOrWhiteSpace(name)) ?? song.AlbumArtist ?? song.Artist;
+        if (string.IsNullOrWhiteSpace(song.Title) || string.IsNullOrWhiteSpace(artist) || song.Track is not > 0 && song.Duration is not > 0) return [];
+        var title = FuzzyMatcher.NormalizeTitleForMatching(song.Title, song.Artist);
+        var lead = FuzzyMatcher.NormalizeForMatching(artist);
+        return (await musicBrainz.SearchRecordingsAsync(song.Title, artist, 10, token))
+            .Where(recording => Guid.TryParse(recording.Id, out _) && recording.Releases is { Count: > 0 } &&
+                FuzzyMatcher.NormalizeTitleForMatching(recording.Title ?? "", song.Artist) == title &&
+                FuzzyMatcher.NormalizeForMatching(recording.ArtistCredit?.FirstOrDefault()?.Name ?? recording.ArtistCredit?.FirstOrDefault()?.Artist?.Name ?? "") == lead &&
+                (song.Duration is not > 0 || recording.Length is not > 0 || Math.Abs(recording.Length.Value - song.Duration.Value * 1000L) <= NamedLengthMilliseconds))
+            .OrderBy(recording => song.Duration is > 0 && recording.Length is > 0 ? Math.Abs(recording.Length.Value - song.Duration.Value * 1000L) : long.MaxValue)
+            .ThenByDescending(recording => recording.Score ?? 0).ThenBy(recording => recording.Id, StringComparer.Ordinal)
+            .Take(3).ToArray();
     }
 
     // The service's songs take the found release's names and identities: the song the release was found by, and, for a
