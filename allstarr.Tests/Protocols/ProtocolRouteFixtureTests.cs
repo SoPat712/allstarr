@@ -1201,6 +1201,13 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.Equal(300, pathBitmap.Width);
         Assert.Equal(300, pathBitmap.Height);
 
+        // An app that draws its own placeholder says so on this route with standin=0 and gets no picture, at whatever
+        // width; an app that does not say so still gets the mark.
+        using var optedOut = await client.GetAsync("/Items/ext-deezer-song-no-art/Images/Primary?fillWidth=300&quality=90&standin=0&api_key=fixture-key");
+        Assert.Equal(HttpStatusCode.NotFound, optedOut.StatusCode);
+        using var marked = await client.GetAsync("/Items/ext-deezer-song-no-art/Images/Primary?fillWidth=300&quality=90&api_key=fixture-key");
+        Assert.Equal(HttpStatusCode.OK, marked.StatusCode);
+
         // An app on the native API draws its own placeholder, so the same song has no picture there, while a song
         // with a cover of its own still has one.
         factory.Services.GetRequiredService<DurableStorageState>().Set(DurableStorageReadiness.Ready);

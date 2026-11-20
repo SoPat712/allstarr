@@ -550,9 +550,10 @@ public partial class JellyfinController : ControllerBase
             imageKey += ":artist-v1:" + Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(url)));
         }
 
-        // An app on the native API draws its own placeholder for a cover that does not exist. It is answered "no
-        // picture" where other apps get the service's mark, and its pictures are remembered apart from theirs.
-        var native = HttpContext.Items.ContainsKey(allstarr.Core.ClientApiV2.V2ArtworkUrls.RequestMark);
+        // An app that draws its own placeholder for a cover that does not exist is answered "no picture" where other
+        // apps get the service's mark, and its pictures are remembered apart from theirs. Every address of the native
+        // API asks that way; on this route an app says so with standin=0.
+        var native = HttpContext.Items.ContainsKey(allstarr.Core.ClientApiV2.V2ArtworkUrls.RequestMark) || Request.Query["standin"] == "0";
         if (native) imageKey += ":native";
         return await CachedImageAsync(imageKey!, provider!, maxWidth ?? maxHeight, requestedFormat, ReadAsync, artist: type == "artist" || native);
 
