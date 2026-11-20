@@ -293,6 +293,9 @@
       <section class="settings-card" aria-labelledby="promotion-extras"><header><h3 id="promotion-extras">Tags and extras</h3></header>
         {@render toggle("musicBrainzTags", "MusicBrainz tags", "Release, recording and artist IDs, like Picard")}
         <div class="settings-row"><div><strong>Cover art</strong></div><SelectField label="Cover art" value={profile.coverMode} options={[{ value: "both", label: "cover.jpg and embedded" }, { value: "cover.jpg", label: "cover.jpg" }, { value: "embedded", label: "Embedded" }, { value: "none", label: "Off" }]} onchange={value => update({ coverMode: value as PromotionProfile["coverMode"] })} /></div>
+        {#if profile.coverMode === "both" || profile.coverMode === "embedded"}
+          <div class="settings-row"><div><strong>Embedded cover size</strong> <small>{profile.coverMode === "both" ? "Larger covers are scaled down inside the file; cover.jpg stays full size" : "Larger covers are scaled down inside the file"}</small></div><SelectField label="Embedded cover size" value={String(profile.embeddedCoverSize ?? 1000)} options={[{ value: "500", label: "500 px" }, { value: "1000", label: "1,000 px" }, { value: "1500", label: "1,500 px" }, { value: "2000", label: "2,000 px" }, { value: "0", label: "Full size" }]} onchange={value => update({ embeddedCoverSize: Number(value) })} /></div>
+        {/if}
         <div class="settings-row"><div><strong>Synced lyrics</strong> <small>Only when the timing fits the file</small></div><SelectField label="Synced lyrics" value={profile.lyricsMode} options={[{ value: ".lrc", label: ".lrc next to the song" }, { value: "both", label: ".lrc and embedded" }, { value: "embedded", label: "Embedded" }, { value: "off", label: "Off" }]} onchange={value => update({ lyricsMode: value as PromotionProfile["lyricsMode"] })} /></div>
         {@render toggle("replayGain", "ReplayGain", "Track and album gain (rsgain)")}
       </section>

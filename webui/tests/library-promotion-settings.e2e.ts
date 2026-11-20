@@ -128,14 +128,14 @@ test("Autosaves the quality, extras and placement groups through the personal pr
   await select(page, "Keep hi-res up to", "24-bit / 192 kHz");
   await page.getByRole("switch", { name: "Check lossless copies are real", exact: true }).click();
   await page.getByRole("switch", { name: "MusicBrainz tags", exact: true }).click();
-  await select(page, "Cover art", "Embedded"); await select(page, "Synced lyrics", "Off");
+  await select(page, "Cover art", "Embedded"); await select(page, "Embedded cover size", "500 px"); await select(page, "Synced lyrics", "Off");
   await page.getByRole("switch", { name: "ReplayGain", exact: true }).click();
   const music = page.getByRole("list", { name: "Library folders", exact: true }).getByRole("listitem").filter({ hasText: "Music" });
   await expect(music).toContainText("Adds go here"); await expect(music.getByRole("button")).toHaveCount(0);
   await page.getByRole("radio", { name: "Just the song", exact: true }).click();
   await expect(page.getByRole("switch", { name: "After adding", exact: true })).toHaveCount(0);
   await page.getByRole("switch", { name: "Remove kept copy", exact: true }).click();
-  await expect.poll(() => state.personal).toMatchObject({ qualityFloor: { codecFamily: "any", minBitDepth: 0, minSampleRate: 44100 }, hiResCeiling: { maxBitDepth: 24, maxSampleRate: 192000 }, allowLossy: true, fakeLosslessCheck: false, musicBrainzTags: false, coverMode: "embedded", lyricsMode: "off", replayGain: false, libraryRootId: null, defaultUnit: "song", removeKeptCopy: false });
+  await expect.poll(() => state.personal).toMatchObject({ qualityFloor: { codecFamily: "any", minBitDepth: 0, minSampleRate: 44100 }, hiResCeiling: { maxBitDepth: 24, maxSampleRate: 192000 }, allowLossy: true, fakeLosslessCheck: false, musicBrainzTags: false, coverMode: "embedded", embeddedCoverSize: 500, lyricsMode: "off", replayGain: false, libraryRootId: null, defaultUnit: "song", removeKeptCopy: false });
   expect(state.writes.every(write => write.scope === "me" && !("values" in write.body))).toBe(true);
   await page.reload(); await expect(page.getByRole("switch", { name: "ReplayGain", exact: true })).not.toBeChecked();
 });

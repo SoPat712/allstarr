@@ -11,6 +11,8 @@ export type PromotionProfile = {
   allowLossy: boolean;
   musicBrainzTags: boolean;
   coverMode: "none" | "embedded" | "cover.jpg" | "both";
+  /** Longest side in pixels of the cover inside a song file; 0 embeds it full size. */
+  embeddedCoverSize?: number;
   lyricsMode: "off" | ".lrc" | "embedded" | "both";
   replayGain: boolean;
   defaultUnit: "album" | "song";

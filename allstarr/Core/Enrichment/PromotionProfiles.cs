@@ -20,6 +20,9 @@ public sealed record PromotionProfile
     public bool AllowLossy { get; init; }
     public bool MusicBrainzTags { get; init; } = true;
     public string CoverMode { get; init; } = "both";
+    /// <summary>The longest side, in pixels, of the cover put inside a song file; 0 embeds it as the service gives it.</summary>
+    public int EmbeddedCoverSize { get; init; } = DefaultEmbeddedCoverSize;
+    public const int DefaultEmbeddedCoverSize = 1000;
     public string LyricsMode { get; init; } = "both";
     public bool ReplayGain { get; init; } = true;
     public string DefaultUnit { get; init; } = "album";
@@ -154,6 +157,7 @@ public sealed class PromotionProfiles(IDbContextFactory<AllstarrDbContext> facto
             ceiling.MaxSampleRate is < 44100 or > 768000 || floor.MinBitDepth > ceiling.MaxBitDepth || floor.MinSampleRate > ceiling.MaxSampleRate ||
             floor.CodecFamily is "lossy" or "any" && !profile.AllowLossy ||
             profile.CoverMode is not ("none" or "embedded" or "cover.jpg" or "both") ||
+            profile.EmbeddedCoverSize is not (0 or >= PromotionCover.SmallestCoverSide and <= 4096) ||
             profile.LyricsMode is not ("off" or ".lrc" or "embedded" or "both") || profile.DefaultUnit is not ("album" or "song"))
             throw new ArgumentException("The promotion profile contains an invalid quality, root or mode.");
         if (roots != null && profile.LibraryRootId is { } rootId && !(await roots.ReadAsync(token)).Any(item => item.Id == rootId))

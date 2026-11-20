@@ -149,6 +149,10 @@ public sealed class PromotionProfileTests : IAsyncLifetime
             profiles.SaveMineAsync(Context(listener), new() { NamingScript = "%title%/$unknown(x)" }));
         Assert.Contains(error.Errors, item => item.Position == 8);
         await Assert.ThrowsAsync<ArgumentException>(() => profiles.SaveMineAsync(Context(listener), new() { CoverMode = "invalid" }));
+        // The cover inside a file is full size (0) or a side a cover can have; a thumbnail's is refused.
+        await Assert.ThrowsAsync<ArgumentException>(() => profiles.SaveMineAsync(Context(listener), new() { EmbeddedCoverSize = 96 }));
+        await Assert.ThrowsAsync<ArgumentException>(() => profiles.SaveMineAsync(Context(listener), new() { EmbeddedCoverSize = -1 }));
+        Assert.Equal(1000, new PromotionProfile().EmbeddedCoverSize);
         await Assert.ThrowsAsync<ArgumentException>(() => profiles.SaveMineAsync(Context(listener), new() { LibraryRootId = Guid.Empty }));
         await Assert.ThrowsAsync<ArgumentException>(() => profiles.SaveMineAsync(Context(listener), new() { QualityFloor = new("lossless", 24, 192000) }));
         await Assert.ThrowsAsync<ArgumentException>(() => profiles.SaveMineAsync(Context(listener), new() { QualityFloor = new("lossy", 0, 44100) }));

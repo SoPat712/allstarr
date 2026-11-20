@@ -437,7 +437,7 @@ public sealed partial class LibraryPromotionService
                     // A file with no real cover gets none: a service's mark or a thumbnail is not written as one.
                     if (PromotionCover.IsCover(coverBytes))
                     {
-                        if (album.Profile.CoverMode is "both" or "embedded") tags["cover"] = Convert.ToBase64String(PromotionCover.Embedded(coverBytes));
+                        if (album.Profile.CoverMode is "both" or "embedded") tags["cover"] = Convert.ToBase64String(PromotionCover.Embedded(coverBytes, album.Profile.EmbeddedCoverSize));
                         if (album.Profile.CoverMode is "both" or "cover.jpg" && PromotionCover.Jpeg(coverBytes) is { } jpeg)
                             await WritePrivateBytesAsync(Path.Combine(workspace, "cover.jpg"), jpeg, token);
                     }

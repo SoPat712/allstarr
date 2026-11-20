@@ -374,7 +374,7 @@ The rest of the page is a profile: the **Household default**, which listeners fo
 
 With **MusicBrainz tags** on, Allstarr finds the song's release on MusicBrainz by its ISRC and tags the file from it, the way a music tagger does: the MusicBrainz ids, sort names, label, barcode, release country, status and type, original date, and the album's name as MusicBrainz writes it (a service's "- EP" or "- Single" is dropped). The release must agree with the service's album on name, track number and track count. When none does, or MusicBrainz doesn't answer within a few seconds, the service's own tags are used.
 
-An added file gets the song's real cover or none; a service's logo is never written as one. The copy inside the file is at most 1,200 pixels a side, and `cover.jpg`, when you ask for one, is full size.
+An added file gets the song's real cover or none; a service's logo is never written as one. **Embedded cover size** sets how large the copy inside the file may be: 1,000 pixels a side unless you change it, or **Full size** to keep the service's own. `cover.jpg`, when you ask for one, is always full size.
 
 A song you deleted from your media server can be added again. The new file takes over the plays and matches of the one that is gone; the heart on the deleted copy goes with it, so heart the song again.
 

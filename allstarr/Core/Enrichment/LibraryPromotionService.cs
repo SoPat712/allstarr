@@ -325,7 +325,7 @@ public sealed partial class LibraryPromotionService(IDbContextFactory<AllstarrDb
                     var valid = PromotionCover.IsCover(cover?.Content);
                     var temporaryCover = coverPath + ".partial";
                     PromotionRoots.RejectLinks(temporaryCover);
-                    await File.WriteAllTextAsync(temporaryCover, JsonSerializer.Serialize(valid ? Convert.ToBase64String(PromotionCover.Embedded(cover!.Content)) : ""), token);
+                    await File.WriteAllTextAsync(temporaryCover, JsonSerializer.Serialize(valid ? Convert.ToBase64String(PromotionCover.Embedded(cover!.Content, PromotionProfile.DefaultEmbeddedCoverSize)) : ""), token);
                     File.Move(temporaryCover, coverPath, false);
                 }
                 var coverData = JsonSerializer.Deserialize<string>(await File.ReadAllTextAsync(coverPath, token))!;
