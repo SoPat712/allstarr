@@ -131,23 +131,38 @@ public sealed partial class TrackIdentityService
             (item.Scope == ProviderIdentityScope.Catalog || db.ProviderAccounts.Any(account =>
                 account.Id == item.ProviderAccountId && account.Enabled &&
                 (account.OwnerUserId == null || account.OwnerUserId == user))));
+        ProviderTrackIdentityRecord[] links;
         if (focusTrack != null)
         {
             var focusIsrc = NormalizeLibraryIsrc(focusTrack.Isrc);
             var focusMbid = LibraryMbid(focusTrack.MusicBrainzRecordingId);
             var titleWord = LibraryLinkTitle(focusTrack.Title, focusTrack.Artist).Split(' ').FirstOrDefault() ?? "";
             var escapedWord = JsonEncodedText.Encode(titleWord).ToString().ToLowerInvariant();
-            linkQuery = linkQuery.Where(link => link.CanonicalRecordingId == focusTrack.CanonicalRecordingId ||
+            // The sources whose saved metadata mentions the song's first title word are found first, in one pass over
+            // the listener's snapshots. Asked the other way round, per source, the database read every unattached
+            // snapshot once for each source: minutes of work for each song new to the library, a third of it spent
+            // holding the lock every other write waits for.
+            var mentioned = titleWord == "" ? [] : await db.ExternalMetadataSnapshots.AsNoTracking().Where(snapshot => snapshot.OwnerUserId == user &&
+                    (snapshot.ResourceKind == "track" || snapshot.ResourceKind == "playback-metadata") &&
+                    (snapshot.PayloadJson.ToLower().Contains(titleWord) || snapshot.PayloadJson.ToLower().Contains(escapedWord)))
+                .Select(snapshot => new { snapshot.ProviderTrackIdentityId, snapshot.ProviderId, snapshot.ExternalIdHash })
+                .Distinct().ToArrayAsync(cancellationToken);
+            var attached = mentioned.Where(item => item.ProviderTrackIdentityId != null)
+                .Select(item => item.ProviderTrackIdentityId!.Value).Distinct().ToArray();
+            var unattached = mentioned.Where(item => item.ProviderTrackIdentityId == null)
+                .Select(item => (item.ProviderId, item.ExternalIdHash)).ToHashSet();
+            var unattachedHashes = unattached.Select(item => item.ExternalIdHash).Distinct().ToArray();
+            var named = await linkQuery.Where(link => link.CanonicalRecordingId == focusTrack.CanonicalRecordingId ||
                 db.RecordingIdentifiers.Any(identifier => identifier.RecordingId == link.CanonicalRecordingId &&
                     (focusIsrc != null && identifier.Kind == RecordingIdentifierKinds.Isrc && identifier.Value == focusIsrc ||
                      focusMbid != null && identifier.Kind == RecordingIdentifierKinds.MusicBrainz && identifier.Value == focusMbid)) ||
-                titleWord != "" && db.ExternalMetadataSnapshots.Any(snapshot => snapshot.OwnerUserId == user &&
-                    (snapshot.ResourceKind == "track" || snapshot.ResourceKind == "playback-metadata") &&
-                    (snapshot.ProviderTrackIdentityId == link.Id || snapshot.ProviderTrackIdentityId == null &&
-                        snapshot.ProviderId == link.ProviderId && snapshot.ExternalIdHash == link.ExternalIdHash) &&
-                    (snapshot.PayloadJson.ToLower().Contains(titleWord) || snapshot.PayloadJson.ToLower().Contains(escapedWord))));
+                attached.Contains(link.Id)).ToArrayAsync(cancellationToken);
+            // A snapshot saved before its source was known is tied to it by service and id; the id alone may be shared.
+            var loose = unattachedHashes.Length == 0 ? [] : (await linkQuery.Where(link => unattachedHashes.Contains(link.ExternalIdHash))
+                .ToArrayAsync(cancellationToken)).Where(link => unattached.Contains((link.ProviderId, link.ExternalIdHash)));
+            links = named.Concat(loose).DistinctBy(link => link.Id).ToArray();
         }
-        var links = await linkQuery.ToArrayAsync(cancellationToken);
+        else links = await linkQuery.ToArrayAsync(cancellationToken);
         var automaticProviders = new HashSet<string>(StringComparer.Ordinal);
         foreach (var provider in links.Select(item => item.ProviderId).Distinct())
             if (await CanAutomaticallyLinkAsync(actor, provider, cancellationToken)) automaticProviders.Add(provider);

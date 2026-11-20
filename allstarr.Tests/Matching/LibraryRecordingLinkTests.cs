@@ -345,10 +345,20 @@ public sealed partial class TrackIdentityServiceTests
         Assert.All(await db.LibraryTracks.ToArrayAsync(), track => Assert.Null(track.CanonicalRecordingId));
     }
 
-    [Fact]
-    public async Task LibraryRecordingLink_UpsertConnectsExistingProviderMetadata()
+    [Theory]
+    // The saved metadata that names the song is tied to its source directly, or, when it was saved before the source
+    // was known, by service and id.
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task LibraryRecordingLink_UpsertConnectsExistingProviderMetadata(bool attached)
     {
         var source = await SeedLinkSourceAsync();
+        if (!attached)
+        {
+            await using var db = await _factory.CreateDbContextAsync();
+            Assert.NotEqual(0, await db.ExternalMetadataSnapshots.ExecuteUpdateAsync(update =>
+                update.SetProperty(item => item.ProviderTrackIdentityId, (Guid?)null)));
+        }
         var (index, context) = LinkLibraryIndex();
         var indexed = await index.UpsertAsync(context, new("music", "native-track", "/music/track.flac", "Stay Alive",
             "전정국", "Album", "Jung Kook", 210928, "backend", _clock.UtcNow, null,
