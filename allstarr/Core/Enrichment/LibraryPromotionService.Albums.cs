@@ -416,7 +416,8 @@ public sealed partial class LibraryPromotionService
                     {
                         if (album.Profile.LyricsMode is "both" or ".lrc") await WritePrivateAsync(Path.ChangeExtension(path, ".lrc"), found, token);
                     }
-                    await WriteTrackTagsAsync(run, track, new() { ["lyrics"] = found != null && album.Profile.LyricsMode is "both" or "embedded" ? found : "" }, Persist, token, lyricsStep);
+                    // The file's own tag carries line times only; word times stay in the sidecar, which is read as written.
+                    await WriteTrackTagsAsync(run, track, new() { ["lyrics"] = found != null && album.Profile.LyricsMode is "both" or "embedded" ? LyricsTiming.TagContent(found) : "" }, Persist, token, lyricsStep);
                     await Step(track, lyricsStep.Name, lyricsStep.Outcome, lyricsStep.Reason);
                 }
                 if (!track.Steps.Any(item => item.Name == "Tags"))

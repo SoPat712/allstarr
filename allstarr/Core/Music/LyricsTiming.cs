@@ -6,9 +6,34 @@ using allstarr.Models.Lyrics;
 
 namespace allstarr.Core.Music;
 
-internal static class LyricsTiming
+internal static partial class LyricsTiming
 {
     internal static bool IsTimedText(string? content) => content?.TrimStart().StartsWith('<') == true;
+
+    /// <summary>
+    /// The lyrics as they are written into a song file's own tag: each line with its time, in hundredths of a second,
+    /// and no word times. A media server reads that tag through a general tag library, and the one Jellyfin uses
+    /// writes a word-timed line back out with the spaces between its words gone ("I'maworkingbitch") and some times
+    /// misrounded, for every app that then asks it. A sidecar file is read as it stands, so word times stay there.
+    /// </summary>
+    internal static string TagContent(string sidecar) => string.Join('\n', sidecar.Split('\n').Select(line =>
+    {
+        var text = WordTimeRegex().Replace(line, string.Empty);
+        var time = LineTimeRegex().Match(text);
+        if (!time.Success) return text;
+        var fraction = time.Groups[3].Value;
+        var milliseconds = long.Parse(time.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture) * 60_000 +
+            long.Parse(time.Groups[2].Value, System.Globalization.CultureInfo.InvariantCulture) * 1000 +
+            long.Parse(fraction, System.Globalization.CultureInfo.InvariantCulture) * (fraction.Length == 2 ? 10 : 1);
+        var hundredths = (milliseconds + 5) / 10;
+        return FormattableString.Invariant($"[{hundredths / 6000:00}:{hundredths / 100 % 60:00}.{hundredths % 100:00}]") + text[time.Length..];
+    }));
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"<\d+:\d{2}\.\d{2,3}>")]
+    private static partial System.Text.RegularExpressions.Regex WordTimeRegex();
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"^\[(\d+):(\d{2})\.(\d{2,3})\]")]
+    private static partial System.Text.RegularExpressions.Regex LineTimeRegex();
 
     internal static IReadOnlyList<ProviderLyricsTimedLine>? ReadLines(LyricsInfo lyrics)
     {

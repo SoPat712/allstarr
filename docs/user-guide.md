@@ -376,6 +376,8 @@ With **MusicBrainz tags** on, Allstarr finds the song's release on MusicBrainz b
 
 An added file gets the song's real cover or none; a service's logo is never written as one. **Embedded cover size** sets how large the copy inside the file may be: 1,000 pixels a side unless you change it, or **Full size** to keep the service's own. `cover.jpg`, when you ask for one, is always full size.
 
+Lyrics inside a song file are timed by line. Word-by-word timing is kept in the `.lrc` file when you ask for one: a media server reads that file as it stands, but reads word times from inside a song file unreliably (Jellyfin shows such lines with the spaces between words gone).
+
 A song you deleted from your media server can be added again. The new file takes over the plays and matches of the one that is gone; the heart on the deleted copy goes with it, so heart the song again.
 
 Before adding, Allstarr checks the destination again:

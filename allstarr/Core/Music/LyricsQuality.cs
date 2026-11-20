@@ -35,6 +35,16 @@ internal static class LyricsQuality
             score += fits ? 0.1 : -0.25;
             reasons.Add(fits ? "duration_fits" : "duration_mismatch");
         }
+        // A media server can hand back a word-timed line with the spaces between its words lost ("I'maworkingbitch").
+        // Such a version is unreadable, so any version that reads properly comes before it. Scripts written without
+        // spaces are left alone.
+        var wordy = lines.Where(line => line.Words.Count(word => !string.IsNullOrWhiteSpace(word.Text)) >= 3 &&
+            line.Text.Where(char.IsLetter).All(letter => letter < '\u0530')).ToArray();
+        if (wordy.Length >= 3 && wordy.Count(line => line.Text.Length >= 10 && !line.Text.Any(char.IsWhiteSpace)) * 2 > wordy.Length)
+        {
+            score -= 0.6;
+            reasons.Add("words_run_together");
+        }
         var censored = lines.Count(line => System.Text.RegularExpressions.Regex.IsMatch(line.Text, @"\p{L}\*+|\*+\p{L}"));
         if (censored > 0)
         {
