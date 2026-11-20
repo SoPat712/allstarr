@@ -22,7 +22,7 @@ public sealed class ItemLyricsReader(
     ITrackIdentityService identities,
     IRecordingLyricsReview review,
     IRecordingLyricsChoices choices,
-    IProviderRegistry? registry = null, IEffectiveProviderPolicyResolver? policies = null)
+    IProviderRegistry? registry = null, IEffectiveProviderPolicyResolver? policies = null, LibraryFileLyrics? fileLyrics = null)
 {
     public async Task<Guid?> ResolveRecordingIdAsync(HttpContext http, ProtocolExecutionContext execution, string itemId)
     {
@@ -250,9 +250,21 @@ public sealed class ItemLyricsReader(
         if (item.TryGetProperty("ProviderIds", out var ids) && ids.TryGetProperty("Spotify", out var spotify))
             native.SpotifyId = spotify.GetString();
         var headers = CopyHeaders(http);
+        var path = item.TryGetProperty("Path", out var itemPath) && itemPath.ValueKind == JsonValueKind.String ? itemPath.GetString() : null;
         Task<LyricsInfo?>? backend = null;
         return new(MusicLyrics.ForLookup(native), itemId,
-            new(Backend: token => backend is { IsFaulted: false, IsCanceled: false } ? backend : backend = ReadBackendAsync(headers, itemId, token)));
+            new(Backend: token => backend is { IsFaulted: false, IsCanceled: false } ? backend : backend = ReadLibraryAsync(execution, headers, itemId, path, token)));
+    }
+
+    // The media server's lyrics for a library song, with the word times its own file holds when Allstarr can read it.
+    private async Task<LyricsInfo?> ReadLibraryAsync(ProtocolExecutionContext execution, IHeaderDictionary headers, string itemId, string? path,
+        CancellationToken token)
+    {
+        var fromServer = await ReadBackendAsync(headers, itemId, token);
+        if (fileLyrics == null || fromServer == null) return fromServer;
+        // A listener the media server shows no file paths to is still read by the path the index holds.
+        path ??= (await library.FindByBackendItemAsync(execution, itemId, token))?.FilePath;
+        return await fileLyrics.WithWordTimesAsync(fromServer, path, token);
     }
 
     private async Task<LyricsInfo?> ReadBackendAsync(HttpContext http, string itemId, CancellationToken token)

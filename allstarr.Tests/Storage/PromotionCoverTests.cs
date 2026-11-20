@@ -153,11 +153,22 @@ public sealed class PromotionCoverTests
                 ["catalognumber"] = "DP019"
             };
             Assert.All(TagLibManagedTagFileMutator.ReleaseTags, key => Assert.Contains(key, tags.Keys));
+            // Lyrics go in twice: by line where everything reads them, and by word in a tag of their own.
+            const string words = "[00:00.100]<00:00.100>I'm <00:00.300>a <00:00.400>work<00:00.500>ing <00:00.600>bitch<00:00.900>";
+            tags["lyrics"] = "[00:00.10]I'm a working bitch";
+            tags["wordlyrics"] = words;
             var mutator = new TagLibManagedTagFileMutator();
 
             mutator.Apply(path, tags, default);
 
             Assert.True(mutator.Matches(path, tags));
+            Assert.Equal(words, TagLibManagedTagFileMutator.ReadWordLyrics(path));
+            using (var lyrics = TagLib.File.Create(path)) Assert.Equal("[00:00.10]I'm a working bitch", lyrics.Tag.Lyrics);
+            // An add without word times takes the tag away again.
+            var without = new Dictionary<string, string> { ["wordlyrics"] = "" };
+            mutator.Apply(path, without, default);
+            Assert.True(mutator.Matches(path, without));
+            Assert.Null(TagLibManagedTagFileMutator.ReadWordLyrics(path));
             using var file = TagLib.File.Create(path);
             Assert.Equal("6dee6b6f-aa72-424c-9c8c-0d31ba5ff673", file.Tag.MusicBrainzReleaseArtistId);
             Assert.Equal("XW", file.Tag.MusicBrainzReleaseCountry);

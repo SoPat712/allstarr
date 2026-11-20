@@ -71,6 +71,7 @@ public sealed class TagLibManagedTagFileMutator : IManagedTagFileMutator
         if (tags.TryGetValue("date", out var date)) WriteDate(tag, date, original: false);
         if (tags.TryGetValue("originaldate", out var originalDate)) WriteDate(tag, originalDate, original: true);
         if (tags.TryGetValue("lyrics", out var lyrics)) WriteLyrics(tag, lyrics);
+        if (tags.TryGetValue("wordlyrics", out var wordLyrics)) WriteWordLyrics(tag, wordLyrics);
         ApplyReplayGain(tag, tags, "REPLAYGAIN_TRACK_GAIN", value => tag.ReplayGainTrackGain = value);
         ApplyReplayGain(tag, tags, "REPLAYGAIN_TRACK_PEAK", value => tag.ReplayGainTrackPeak = value);
         ApplyReplayGain(tag, tags, "REPLAYGAIN_ALBUM_GAIN", value => tag.ReplayGainAlbumGain = value);
@@ -116,6 +117,7 @@ public sealed class TagLibManagedTagFileMutator : IManagedTagFileMutator
         "date" => ReadDate(tag, original: false),
         "originaldate" => ReadDate(tag, original: true),
         "lyrics" => tag.Lyrics ?? string.Empty,
+        "wordlyrics" => ReadWordLyrics(tag) ?? string.Empty,
         "REPLAYGAIN_TRACK_GAIN" => PromotionReplayGain.FormatGain(tag.ReplayGainTrackGain),
         "REPLAYGAIN_TRACK_PEAK" => PromotionReplayGain.FormatPeak(tag.ReplayGainTrackPeak),
         "REPLAYGAIN_ALBUM_GAIN" => PromotionReplayGain.FormatGain(tag.ReplayGainAlbumGain),
@@ -138,6 +140,7 @@ public sealed class TagLibManagedTagFileMutator : IManagedTagFileMutator
     {
         // A field only FLAC and Ogg files carry has nothing to be checked against elsewhere.
         if (XiphFields.ContainsKey(key) && !Components(tag).OfType<TagLib.Ogg.XiphComment>().Any()) return true;
+        if (key == "wordlyrics" && !Components(tag).Any(HoldsText)) return true;
         var actual = ReadTag(tag, key);
         if (!key.StartsWith("REPLAYGAIN_", StringComparison.Ordinal))
             return actual.Equals(expected, StringComparison.Ordinal);
@@ -234,6 +237,55 @@ public sealed class TagLibManagedTagFileMutator : IManagedTagFileMutator
             if (value is not null) return value;
         }
         return string.Empty;
+    }
+
+    /// <summary>
+    /// The tag that holds an added song's word-by-word lyrics. The tag every player and media server reads as lyrics
+    /// holds them line by line, because a server that meets word times there serves them mangled; this one has a name
+    /// nothing else reads as lyrics, and Allstarr reads it back from the file itself.
+    /// </summary>
+    public const string WordLyricsTag = "WORDLYRICS";
+
+    private static bool HoldsText(Tag tag) => tag is TagLib.Ogg.XiphComment or TagLib.Id3v2.Tag or TagLib.Mpeg4.AppleTag;
+
+    private static void WriteWordLyrics(Tag tag, string lyrics)
+    {
+        if (lyrics.Length > 1024 * 1024) throw new InvalidDataException("Embedded lyrics exceed their size limit.");
+        foreach (var component in Components(tag))
+        {
+            if (lyrics.Length > 0)
+            {
+                WriteText(component, WordLyricsTag, lyrics);
+                continue;
+            }
+            switch (component)
+            {
+                case TagLib.Ogg.XiphComment xiph:
+                    xiph.RemoveField(WordLyricsTag);
+                    break;
+                case TagLib.Id3v2.Tag id3 when TagLib.Id3v2.UserTextInformationFrame.Get(id3, WordLyricsTag, false) is { } frame:
+                    id3.RemoveFrame(frame);
+                    break;
+                case TagLib.Mpeg4.AppleTag apple when apple.GetDashBox("com.apple.iTunes", WordLyricsTag) is { Length: > 0 }:
+                    apple.SetDashBox("com.apple.iTunes", WordLyricsTag, string.Empty);
+                    break;
+            }
+        }
+    }
+
+    private static string? ReadWordLyrics(Tag tag) => Components(tag).Select(component => component switch
+    {
+        TagLib.Ogg.XiphComment xiph => xiph.GetFirstField(WordLyricsTag),
+        TagLib.Id3v2.Tag id3 => TagLib.Id3v2.UserTextInformationFrame.Get(id3, WordLyricsTag, false)?.Text.FirstOrDefault(),
+        TagLib.Mpeg4.AppleTag apple => apple.GetDashBox("com.apple.iTunes", WordLyricsTag),
+        _ => null
+    }).FirstOrDefault(value => !string.IsNullOrEmpty(value));
+
+    /// <summary>The word-by-word lyrics in a song file's own tag, or null when it has none.</summary>
+    public static string? ReadWordLyrics(string path)
+    {
+        using var file = TagLib.File.Create(path, TagLib.ReadStyle.PictureLazy);
+        return ReadWordLyrics(file.Tag);
     }
 
     private static void WriteLyrics(Tag tag, string lyrics)

@@ -1,6 +1,7 @@
 using allstarr.Core.Downloads;
 using allstarr.Core.Enrichment;
 using allstarr.Core.Protocols;
+using allstarr.Core.Settings;
 using allstarr.Core.Storage;
 using allstarr.Core.ManagedFiles;
 using allstarr.Core.Jobs;
@@ -373,6 +374,71 @@ public sealed partial class LibraryPromotionTests
         using var file = TagLib.File.Create(track.DestinationPath!);
         Assert.Equal(16, file.Properties.BitsPerSample);
         Assert.Equal(48000, file.Properties.AudioSampleRate);
+    }
+
+    [Fact]
+    public async Task PromotionLyrics_EmbeddedModeWritesLinesWhereEverythingReadsThemAndWordsInATagOfTheirOwn()
+    {
+        await new PromotionProfiles(factory).SaveMineAsync(Context, new()
+        {
+            NamingConfirmed = true,
+            NamingScript = "%title%.%_extension%",
+            FakeLosslessCheck = false,
+            ReplayGain = false,
+            CoverMode = "none",
+            LyricsMode = "embedded"
+        });
+        var catalog = new Mock<IPromotionCatalog>();
+        catalog.Setup(item => item.ResolveAsync(It.IsAny<ProtocolExecutionContext>(), recordingId, "song", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { new Song { CanonicalRecordingId = recordingId, Title = "Song", Duration = 200 } });
+        var source = await WaveSourceAsync();
+        var acquisition = new Mock<IPromotionAcquisition>();
+        acquisition.Setup(item => item.AcquireAsync(owner, It.IsAny<Guid>(), It.IsAny<PromotionTrack>(), It.IsAny<PromotionProfile>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PromotionAcquisitionResult(source, false, "Verified source."));
+        var lyrics = new Mock<IProtocolLyricsResolver>();
+        lyrics.Setup(item => item.FindAllAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<Song>(), It.IsAny<string>(), It.IsAny<ProtocolLyricsSources>()))
+            .ReturnsAsync(new[]
+            {
+                new ProtocolLyricsCandidate("source", new allstarr.Models.Lyrics.LyricsInfo
+                {
+                    SyncedLyrics = "structured timing",
+                    TimedLines =
+                    [
+                        new("I'm a working bitch", TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500),
+                            [new("I'm ", TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(100)), new("a ", TimeSpan.FromMilliseconds(200), TimeSpan.FromMilliseconds(100)),
+                             new("work", TimeSpan.FromMilliseconds(300), TimeSpan.FromMilliseconds(100)), new("ing ", TimeSpan.FromMilliseconds(400), TimeSpan.FromMilliseconds(100)),
+                             new("bitch", TimeSpan.FromMilliseconds(500), TimeSpan.FromMilliseconds(100))]),
+                        new("Last line", TimeSpan.FromMilliseconds(800), TimeSpan.FromMilliseconds(100),
+                            [new("Last ", TimeSpan.FromMilliseconds(800), TimeSpan.FromMilliseconds(50)), new("line", TimeSpan.FromMilliseconds(850), TimeSpan.FromMilliseconds(50))])
+                    ]
+                })
+            });
+        var batch = BatchService(catalog.Object, acquisition.Object, lyricsResolver: lyrics.Object);
+        var run = await batch.StartAsync(Context, Request() with { Unit = "song", ArtifactId = Guid.Empty });
+        await ExecuteBatchAsync(batch);
+
+        var track = Assert.Single((await batch.GetAsync(Context, run.Id)).Tracks);
+        Assert.Equal("Placed", track.Outcome);
+        Assert.False(File.Exists(Path.ChangeExtension(track.DestinationPath!, ".lrc")));
+        const string lines = "[00:00.10]I'm a working bitch\n[00:00.80]Last line";
+        using (var file = TagLib.File.Create(track.DestinationPath!)) Assert.Equal(lines, file.Tag.Lyrics);
+        var words = TagLibManagedTagFileMutator.ReadWordLyrics(track.DestinationPath!)!;
+        Assert.StartsWith("[00:00.100]<00:00.100>I'm <00:00.200>a <00:00.300>work<00:00.400>ing <00:00.500>bitch", words);
+
+        // A media server hands on only the lines. Allstarr puts the word times back from the file, under whatever path
+        // the server knows the folder by, and only while the file still holds those same lines.
+        var value = System.Text.Json.JsonSerializer.Serialize(new[] { new PromotionRoot(rootId, "Music", Path.Combine(directory, "library", "music"), "/srv/media/music", "music") });
+        var mounted = new Mock<IDurableRuntimeSettings>();
+        mounted.Setup(item => item.GetAsync(PromotionRoots.Key, It.IsAny<CancellationToken>())).ReturnsAsync(
+            new EffectiveRuntimeSetting(PromotionRoots.Key, RuntimeSettingValueType.String, value, value, RuntimeSettingOrigin.Durable, 1, "test", null, null));
+        var reader = new allstarr.Core.Music.LibraryFileLyrics(new PromotionRoots(mounted.Object, factory, new ConfigurationBuilder().Build()));
+        var theirs = "/srv/media/music/" + Path.GetFileName(track.DestinationPath!);
+        allstarr.Models.Lyrics.LyricsInfo FromServer(string text) => new() { SyncedLyrics = text };
+
+        Assert.Equal(words, (await reader.WithWordTimesAsync(FromServer(lines), theirs, default))!.SyncedLyrics);
+        Assert.Equal("[00:00.10]Other words", (await reader.WithWordTimesAsync(FromServer("[00:00.10]Other words"), theirs, default))!.SyncedLyrics);
+        Assert.Equal(lines, (await reader.WithWordTimesAsync(FromServer(lines), "/elsewhere/" + Path.GetFileName(track.DestinationPath!), default))!.SyncedLyrics);
+        Assert.Equal(lines, (await reader.WithWordTimesAsync(FromServer(lines), "/srv/media/music/../" + Path.GetFileName(track.DestinationPath!), default))!.SyncedLyrics);
     }
 
     [Fact]

@@ -29,6 +29,9 @@ internal static partial class LyricsTiming
         return FormattableString.Invariant($"[{hundredths / 6000:00}:{hundredths / 100 % 60:00}.{hundredths % 100:00}]") + text[time.Length..];
     }));
 
+    /// <summary>Whether these lyrics, as written for a sidecar, time their words and not only their lines.</summary>
+    internal static bool HasWordTimes(string sidecar) => WordTimeRegex().IsMatch(sidecar);
+
     [System.Text.RegularExpressions.GeneratedRegex(@"<\d+:\d{2}\.\d{2,3}>")]
     private static partial System.Text.RegularExpressions.Regex WordTimeRegex();
 

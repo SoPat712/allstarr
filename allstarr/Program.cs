@@ -116,6 +116,7 @@ builder.Services.AddSingleton<LegacyMediaImport>();
 builder.Services.AddSingleton<IDurableJobHandler, LegacyMediaImportJobHandler>();
 builder.Services.AddProviderDownloadArtifacts(builder.Configuration);
 builder.Services.AddSingleton<PromotionRoots>();
+builder.Services.AddSingleton<allstarr.Core.Music.LibraryFileLyrics>();
 builder.Services.AddSingleton<PromotionLibraryFolders>();
 builder.Services.AddSingleton<PromotionProfiles>();
 builder.Services.AddSingleton<PromotionNamingPreviewService>();
