@@ -441,7 +441,8 @@ public sealed partial class LibraryPromotionTests
                         FilePath = "/music/song.flac",
                         Title = "Song",
                         Artist = "Artist",
-                        CanonicalRecordingId = recordingId
+                        CanonicalRecordingId = recordingId,
+                        IndexedAt = clock.UtcNow
                     });
                     await db.SaveChangesAsync();
                 }
@@ -469,6 +470,91 @@ public sealed partial class LibraryPromotionTests
             Assert.Equal(DurableJobCompletionKind.Failed, result.Kind);
             Assert.Contains("ten minutes", result.SafeMessage);
         }
+    }
+
+    [Theory]
+    // The new file has reached the media server: it takes over from the copy that was deleted.
+    [InlineData(true)]
+    // It has not yet: nothing is linked to the copy that is gone, and the job waits.
+    [InlineData(false)]
+    public async Task PromotionLibraryLink_ASongAddedAgainTakesOverFromTheCopyThatWasDeleted(bool arrived)
+    {
+        var clock = new LinkClock();
+        var deleted = Guid.NewGuid();
+        var added = Guid.NewGuid();
+        LibraryTrackRecord Copy(Guid id, string item, string path, Guid? recording, DateTimeOffset indexed) => new()
+        {
+            Id = id,
+            OwnerUserId = owner,
+            Protocol = "jellyfin",
+            BackendInstanceId = "backend",
+            BackendLibraryId = "music",
+            BackendItemId = item,
+            FilePath = path,
+            Title = "Song",
+            Artist = "Artist",
+            CanonicalRecordingId = recording,
+            IndexedAt = indexed
+        };
+        await using (var db = factory.CreateDbContext())
+        {
+            db.LibraryTracks.Add(Copy(deleted, "deleted", "/media/music/Artist/Album - EP/01 - Song.flac", recordingId, clock.UtcNow.AddMinutes(-20)));
+            await db.SaveChangesAsync();
+        }
+        var scanner = new Mock<IBackendLibraryCatalogScanner>();
+        scanner.SetupGet(item => item.Protocol).Returns(ProtocolKind.Jellyfin);
+        scanner.Setup(item => item.ScanAsync(It.IsAny<ProtocolExecutionContext>(),
+                It.Is<LibraryCatalogScanRequest>(request => request.BackendLibraryId == "music"), It.IsAny<CancellationToken>()))
+            .Returns(async () =>
+            {
+                if (arrived)
+                {
+                    await using var db = factory.CreateDbContext();
+                    // The media server sees the music folder under its own path, and the new file has no recording yet.
+                    db.LibraryTracks.Add(Copy(added, "added", "/media/music/Artist/Album/01 - Song.flac", null, clock.UtcNow));
+                    await db.SaveChangesAsync();
+                }
+                return new LibraryCatalogScanResult(1, 1, 0, 0, 1);
+            });
+        scanner.Setup(item => item.GoneAsync(It.IsAny<ProtocolExecutionContext>(), "music",
+                It.Is<IReadOnlyCollection<string>>(ids => ids.Single() == "deleted"), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((IReadOnlySet<string>)new HashSet<string> { "deleted" });
+        var identities = new Mock<ITrackIdentityService>();
+        identities.Setup(item => item.ResolveRecordingAsync(It.IsAny<allstarr.Core.Capabilities.ProviderActorContext>(),
+                recordingId.ToString("D"), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CanonicalRecordingIdentity(recordingId, owner, null, null, 1));
+        identities.Setup(item => item.LinkLibraryRecordingsAsync(It.IsAny<allstarr.Core.Capabilities.ProviderActorContext>(),
+                It.IsAny<string>(), recordingId, null, It.IsAny<CancellationToken>())).ReturnsAsync(new LibraryRecordingLinkResult(0, 0, 0));
+        await queue.EnqueueAsync(new DurableJobEnqueueRequest<LibraryRecordingLinkPayload>(LibraryRecordingLinkQueue.JobType, "added-again", new(owner)
+        {
+            RecordingIds = [recordingId],
+            BackendLibraryId = "music",
+            ConfirmBy = clock.UtcNow.AddMinutes(10),
+            Placed = new() { [recordingId] = Path.Combine("Artist", "Album", "01 - Song.flac") }
+        }, owner));
+        var claim = (await queue.ClaimNextAsync("promotion-test", [LibraryRecordingLinkQueue.JobType]))!;
+        var state = new DurableStorageState(database.StorageOptions);
+        state.Set(DurableStorageReadiness.Ready);
+        var index = new LibraryIndexService(factory, state, clock, identities.Object, new TestBackendLibraryAccess(factory, "music"));
+        var handler = new LibraryRecordingLinkJobHandler(identities.Object, factory, clock, scanners: new([scanner.Object]), index: index);
+
+        var result = await handler.ExecuteAsync(new DurableJobExecutionContext(claim, services), default);
+
+        await using var verify = factory.CreateDbContext();
+        var copy = await verify.LibraryTracks.SingleAsync();
+        var audits = await verify.AuditEvents.ToArrayAsync();
+        if (!arrived)
+        {
+            Assert.Equal(DurableJobCompletionKind.Deferred, result.Kind);
+            Assert.Equal(deleted, copy.Id);
+            Assert.DoesNotContain(audits, item => item.Action == "promotion.library-linked");
+            return;
+        }
+        Assert.Equal(DurableJobCompletionKind.Succeeded, result.Kind);
+        Assert.Equal(added, copy.Id);
+        Assert.Equal(recordingId, copy.CanonicalRecordingId);
+        Assert.Contains(audits, item => item.Action == "track.replaced");
+        Assert.Equal(added.ToString("N"), Assert.Single(audits, item => item.Action == "promotion.library-linked").SubjectId);
     }
 
     [Theory]

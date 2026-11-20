@@ -11,6 +11,42 @@ namespace allstarr.Core.Matching;
 
 public sealed partial class LibraryRecordingLinkJobHandler
 {
+    // A song that was deleted from the library and has now been added again: the index still holds the copy that is
+    // gone, and everything that pointed at it. The scan just made did not see that copy; once the media server confirms
+    // it is gone, the file this add placed (or another copy still there) takes over what pointed at it. False while
+    // the new copy has not reached the media server.
+    private async Task<bool> ReplaceGoneCopiesAsync(IQueryable<LibraryTrackRecord> accessible, ProtocolExecutionContext viewer,
+        string libraryId, Guid recordingId, string? placed, DateTimeOffset scanned, string correlationId, CancellationToken token)
+    {
+        var copies = await accessible.AsNoTracking().Where(item => item.Protocol == "jellyfin" &&
+                item.BackendInstanceId == viewer.BackendInstanceId && item.BackendLibraryId == libraryId &&
+                item.CanonicalRecordingId == recordingId)
+            .Select(item => new { item.Id, item.BackendItemId, item.IndexedAt }).ToArrayAsync(token);
+        var unseen = copies.Where(item => item.IndexedAt < scanned).ToArray();
+        if (unseen.Length == 0) return true;
+        var missing = await scanners!.Resolve(ProtocolKind.Jellyfin).GoneAsync(viewer, libraryId,
+            unseen.Select(item => item.BackendItemId).ToArray(), token);
+        var gone = unseen.Where(item => missing.Contains(item.BackendItemId)).ToArray();
+        if (gone.Length == 0) return true;
+        var replacement = Guid.Empty;
+        if (!string.IsNullOrWhiteSpace(placed))
+        {
+            // The media server may mount the music folder elsewhere, so the path is compared from the library's folder down.
+            var forward = "/" + placed.Replace('\\', '/').TrimStart('/');
+            var backward = forward.Replace('/', '\\');
+            replacement = (await accessible.AsNoTracking().Where(item => item.Protocol == "jellyfin" &&
+                    item.BackendInstanceId == viewer.BackendInstanceId && item.BackendLibraryId == libraryId &&
+                    (item.FilePath.EndsWith(forward) || item.FilePath.EndsWith(backward)))
+                .Select(item => new { item.Id, item.IndexedAt }).ToArrayAsync(token))
+                .Where(item => item.IndexedAt >= scanned).Select(item => item.Id).FirstOrDefault();
+        }
+        if (replacement == Guid.Empty)
+            replacement = copies.Where(item => !gone.Contains(item)).OrderBy(item => item.BackendItemId, StringComparer.Ordinal)
+                .Select(item => item.Id).FirstOrDefault();
+        return replacement != Guid.Empty && index is LibraryIndexService library &&
+            await library.ReplaceGoneAsync(replacement, gone.Select(item => item.Id).ToArray(), correlationId, token);
+    }
+
     private async Task<bool> HandoverAsync(Guid recordingId, UserRecord listener, string libraryId,
         DurableJobExecutionContext execution, bool removeKeptCopy, Dictionary<Guid, Dictionary<string, Guid?>> favorites, CancellationToken token)
     {

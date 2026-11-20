@@ -83,6 +83,47 @@ public sealed partial class LibraryIndexService
         }
     }
 
+    /// <summary>
+    /// A library song that was deleted and added again comes back as a new item. Whatever pointed at the copy that is
+    /// gone (matches, choices, playlist entries, plays) now points at the one that replaced it, and the old row is
+    /// forgotten. Nothing is changed when that cannot be done in full.
+    /// </summary>
+    internal async Task<bool> ReplaceGoneAsync(Guid replacementId, IReadOnlyCollection<Guid> goneIds, string correlationId,
+        CancellationToken cancellationToken = default)
+    {
+        EnsureStorageReady();
+        await using var db = await _contextFactory.CreateDbContextAsync(cancellationToken);
+        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+        var replacement = await db.LibraryTracks.SingleOrDefaultAsync(item => item.Id == replacementId, cancellationToken);
+        if (replacement == null) return false;
+        var gone = await db.LibraryTracks.Where(item => goneIds.Contains(item.Id) && item.Id != replacementId)
+            .OrderBy(item => item.Id).ToListAsync(cancellationToken);
+        if (gone.Count == 0) return true;
+        try
+        {
+            if (!await RepointReferencesAsync(db, replacement, gone, cancellationToken))
+            {
+                await transaction.RollbackAsync(cancellationToken);
+                return false;
+            }
+            // Until its own tags say otherwise, the new copy is the recording the old one was.
+            replacement.CanonicalRecordingId ??= gone.Select(item => item.CanonicalRecordingId).FirstOrDefault(item => item != null);
+            foreach (var row in gone)
+            {
+                db.LibraryTracks.Remove(row);
+                db.AuditEvents.Add(ConsolidationAudit(row, replacement, correlationId, "track.replaced"));
+            }
+            await db.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+            return true;
+        }
+        catch (Exception error) when (error is DbUpdateException or System.Data.Common.DbException)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return false;
+        }
+    }
+
     internal async Task<LibraryIndexDuplicateSummary> ConsolidateJellyfinDuplicatesAsync(
         CancellationToken cancellationToken = default)
     {
@@ -386,12 +427,12 @@ public sealed partial class LibraryIndexService
     private AuditEventRecord ConsolidationAudit(
         LibraryTrackRecord loser,
         LibraryTrackRecord survivor,
-        string correlationId) => new()
+        string correlationId, string action = "track.consolidated") => new()
         {
             Id = Guid.CreateVersion7(),
             ActorUserId = survivor.OwnerUserId,
             Category = "library-index",
-            Action = "track.consolidated",
+            Action = action,
             Outcome = "succeeded",
             CorrelationId = correlationId,
             SubjectType = "library-track",

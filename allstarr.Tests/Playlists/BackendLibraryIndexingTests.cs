@@ -29,6 +29,29 @@ public sealed class BackendLibraryIndexingTests
     }
 
     [Theory]
+    // The library answers and one of its songs is not in the answer: that song is gone.
+    [InlineData("{\"Items\":[{\"Id\":\"music\"},{\"Id\":\"11111111-1111-1111-1111-111111111111\"}]}", "deleted")]
+    // An answer without the library itself says nothing about its songs.
+    [InlineData("{\"Items\":[{\"Id\":\"11111111111111111111111111111111\"}]}", null)]
+    [InlineData("{\"Items\":[]}", null)]
+    public async Task JellyfinScanner_NamesOnlyTheSongsTheServerNoLongerHas(string answer, string? gone)
+    {
+        var handler = new RecordingHandler(answer);
+        var scanner = CreateScanner(ProtocolKind.Jellyfin, handler, new RecordingIndex());
+
+        var result = await scanner.GoneAsync(Context(ProtocolKind.Jellyfin), "music", ["11111111111111111111111111111111", "deleted"], default);
+
+        Assert.Equal(gone == null ? [] : new[] { gone }, result.ToArray());
+        var query = Uri.UnescapeDataString(Assert.Single(handler.Requests).Uri.Query);
+        Assert.Contains("UserId=principal", query, StringComparison.Ordinal);
+        Assert.Contains("Ids=11111111111111111111111111111111,deleted,music", query, StringComparison.Ordinal);
+        // A media server that cannot be asked names nothing as gone.
+        Assert.Empty(await CreateScanner(ProtocolKind.Subsonic, handler, new RecordingIndex())
+            .GoneAsync(Context(ProtocolKind.Subsonic), "music", ["deleted"], default));
+        Assert.Single(handler.Requests);
+    }
+
+    [Theory]
     [MemberData(nameof(BothProtocols))]
     public async Task Scanner_NoExplicitTargetIndexesEveryDiscoveredLibrary(ProtocolKind protocol)
     {

@@ -50,7 +50,8 @@ public sealed partial class LibraryPromotionService(IDbContextFactory<AllstarrDb
     IPlaybackMetadataResolver? artwork = null, PromotionProfiles? profiles = null,
     IPromotionCatalog? promotionCatalog = null, IPromotionAcquisition? promotionAcquisition = null,
     IProtocolLyricsResolver? lyrics = null, PromotionReplayGain? replayGain = null, MediaConversionGate? conversions = null,
-    allstarr.Core.ClientEvents.IClientEventPublisher? events = null) : IDurableJobHandler
+    allstarr.Core.ClientEvents.IClientEventPublisher? events = null,
+    BackendLibraryCatalogScannerResolver? scanners = null) : IDurableJobHandler
 {
     public const string JobType = "library.promote";
     private static readonly string[] Steps = ["Copy complete original", "MusicBrainz tags and cover", "Quality screen", "Place in library", "Request library refresh"];

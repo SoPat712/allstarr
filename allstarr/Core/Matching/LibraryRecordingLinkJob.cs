@@ -15,6 +15,8 @@ public sealed record LibraryRecordingLinkPayload(Guid UserId)
     public string? BackendLibraryId { get; init; }
     public bool RemoveKeptCopy { get; init; }
     public DateTimeOffset? ConfirmBy { get; init; }
+    /// <summary>Where each recording's new file was put, as a path inside the library's folder.</summary>
+    public Dictionary<Guid, string>? Placed { get; init; }
 }
 
 public sealed class LibraryRecordingLinkQueue(IDbContextFactory<AllstarrDbContext> factory, DurableJobQueue jobs,
@@ -48,7 +50,7 @@ public sealed partial class LibraryRecordingLinkJobHandler(ITrackIdentityService
     IDbContextFactory<AllstarrDbContext> factory, IPlatformClock clock, RecordingKeptFiles? kept = null,
     IBackendLibraryAccessResolver? libraryAccess = null, BackendLibraryCatalogScannerResolver? scanners = null,
     allstarr.Core.Playlists.IBackendPlaylistTargetResolver? targets = null,
-    allstarr.Core.Enrichment.LibraryPromotionService? promotions = null) : IDurableJobHandler
+    allstarr.Core.Enrichment.LibraryPromotionService? promotions = null, ILibraryIndexService? index = null) : IDurableJobHandler
 {
     public string JobType => LibraryRecordingLinkQueue.JobType;
 
@@ -73,13 +75,16 @@ public sealed partial class LibraryRecordingLinkJobHandler(ITrackIdentityService
                 ? DurableJobCompletion.Failure("library_recording_confirmation_expired",
                     "The library song or its listener handover was not confirmed after ten minutes. Check the music folder, library scan and heart access in Jellyfin, then retry.")
                 : DurableJobCompletion.Defer("library_recording_scan_pending", reason, TimeSpan.FromSeconds(30));
+            ProtocolExecutionContext? viewer = null;
+            DateTimeOffset? scanned = null;
             if (scanners != null)
             {
                 try
                 {
-                    await scanners.Resolve(ProtocolKind.Jellyfin).ScanAsync(
-                        LibraryIndexExecution.Create(listener, null, execution.Claim.CorrelationId, clock, cancellationToken),
-                        new(payload.BackendLibraryId), cancellationToken);
+                    var started = clock.UtcNow;
+                    viewer = LibraryIndexExecution.Create(listener, null, execution.Claim.CorrelationId, clock, cancellationToken);
+                    await scanners.Resolve(ProtocolKind.Jellyfin).ScanAsync(viewer, new(payload.BackendLibraryId), cancellationToken);
+                    scanned = started;
                 }
                 catch (HttpRequestException) { return Pending("Waiting for Jellyfin's refreshed music library to become available."); }
             }
@@ -91,6 +96,16 @@ public sealed partial class LibraryRecordingLinkJobHandler(ITrackIdentityService
             {
                 var recording = await identities.ResolveRecordingAsync(promotionActor, recordingId.ToString("D"), cancellationToken);
                 if (recording == null) return DurableJobCompletion.Failure("library_recording_missing", "A promoted recording is no longer available.");
+                if (scanned is { } at && viewer != null)
+                {
+                    try
+                    {
+                        if (!await ReplaceGoneCopiesAsync(accessible, viewer, payload.BackendLibraryId, recording.Id,
+                                payload.Placed?.GetValueOrDefault(recordingId), at, execution.Claim.CorrelationId, cancellationToken))
+                        { pending = true; continue; }
+                    }
+                    catch (HttpRequestException) { return Pending("Waiting for Jellyfin's refreshed music library to become available."); }
+                }
                 await identities.LinkLibraryRecordingsAsync(promotionActor, execution.Claim.CorrelationId,
                     recording.Id, cancellationToken: cancellationToken);
                 recording = await identities.ResolveRecordingAsync(promotionActor, recordingId.ToString("D"), cancellationToken) ?? recording;

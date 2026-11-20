@@ -225,10 +225,20 @@ public sealed partial class LibraryPromotionService
     {
         var isrc = track.Song.Isrc?.Replace("-", "", StringComparison.Ordinal).Trim().ToUpperInvariant();
         var mbid = track.Song.ProviderIds.GetValueOrDefault("musicbrainz_recordingid");
-        return await LibraryTrackAccess.Query(db, context, await libraryAccess.ResolveAsync(context, token)).AnyAsync(item =>
+        var copies = await LibraryTrackAccess.Query(db, context, await libraryAccess.ResolveAsync(context, token)).Where(item =>
             item.BackendInstanceId == context.BackendInstanceId && item.BackendLibraryId == library &&
             (item.CanonicalRecordingId == track.RecordingId || isrc != null && isrc != "" && item.Isrc != null &&
-                item.Isrc.Replace("-", "").ToUpper() == isrc || mbid != null && item.MusicBrainzRecordingId == mbid), token);
+                item.Isrc.Replace("-", "").ToUpper() == isrc || mbid != null && item.MusicBrainzRecordingId == mbid))
+            .Select(item => item.BackendItemId).Distinct().Take(50).ToArrayAsync(token);
+        if (copies.Length == 0 || scanners == null) return copies.Length > 0;
+        // The index keeps a song after it is deleted from the media server. A copy the server no longer has is not in
+        // the library, or a deleted song could never be added again.
+        try { return (await scanners.Resolve(context.Protocol).GoneAsync(context, library, copies, token)).Count < copies.Length; }
+        catch (Exception error) when (error is HttpRequestException or NotSupportedException ||
+            error is OperationCanceledException && !token.IsCancellationRequested)
+        {
+            return true;
+        }
     }
 
     public async Task<PromotionRunRecord> ReviewAsync(ProtocolExecutionContext context, Guid runId, Guid recordingId,
@@ -520,7 +530,14 @@ public sealed partial class LibraryPromotionService
             var queued = await jobs.EnqueueAsync(new DurableJobEnqueueRequest<BackendLibraryRefreshJobPayload>("library.refresh",
                 batchKey, new(request.BackendLibraryId, access.Context.BackendInstanceId,
                     access.Context.VerifiedBackendPrincipalId, request.CredentialReferenceId)
-                { RecordingIds = handoverRecordings, RemoveKeptCopy = album.Profile.RemoveKeptCopy }, run.OwnerUserId), token);
+                {
+                    RecordingIds = handoverRecordings,
+                    RemoveKeptCopy = album.Profile.RemoveKeptCopy,
+                    Placed = handoverTracks.Where(item => item.Outcome == "Placed" && item.DestinationPath != null)
+                        .Select(item => (item.RecordingId, Path: Path.GetRelativePath(run.RootPath, item.DestinationPath!)))
+                        .Where(item => !Path.IsPathRooted(item.Path) && !item.Path.StartsWith("..", StringComparison.Ordinal))
+                        .GroupBy(item => item.RecordingId).ToDictionary(group => group.Key, group => group.First().Path)
+                }, run.OwnerUserId), token);
             album.RefreshJobId = queued.JobId;
             foreach (var track in handoverTracks) track.RefreshJobId = queued.JobId;
         }

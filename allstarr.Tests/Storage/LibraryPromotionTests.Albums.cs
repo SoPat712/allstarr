@@ -204,8 +204,11 @@ public sealed partial class LibraryPromotionTests
         Assert.Equal(0, reads);
     }
 
-    [Fact]
-    public async Task Album_DedupeSkipsSameIsrcBeforeAcquisition()
+    [Theory]
+    [InlineData(false)]
+    // A copy the media server no longer has is not in the library, so the song can be added again.
+    [InlineData(true)]
+    public async Task Album_DedupeSkipsSameIsrcBeforeAcquisition(bool deleted)
     {
         await using (var db = factory.CreateDbContext())
         {
@@ -226,8 +229,19 @@ public sealed partial class LibraryPromotionTests
         catalog.Setup(item => item.ResolveAsync(It.IsAny<ProtocolExecutionContext>(), recordingId, "album", It.IsAny<CancellationToken>()))
             .ReturnsAsync(new[] { new Song { CanonicalRecordingId = recordingId, Title = "Song", Isrc = "us-rc1-76-07839" } });
         var acquisition = new Mock<IPromotionAcquisition>(MockBehavior.Strict);
-        var batch = BatchService(catalog.Object, acquisition.Object);
+        var scanner = new Mock<IBackendLibraryCatalogScanner>();
+        scanner.SetupGet(item => item.Protocol).Returns(ProtocolKind.Jellyfin);
+        scanner.Setup(item => item.GoneAsync(It.IsAny<ProtocolExecutionContext>(), "music",
+                It.Is<IReadOnlyCollection<string>>(ids => ids.Single() == "existing"), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((IReadOnlySet<string>)new HashSet<string>(deleted ? ["existing"] : []));
+        var batch = BatchService(catalog.Object, acquisition.Object, catalogScanners: new([scanner.Object]));
         var run = await batch.StartAsync(Context, Request() with { ArtifactId = Guid.Empty });
+        if (deleted)
+        {
+            Assert.NotEqual("Skipped", run.Tracks[0].Outcome);
+            Assert.Empty(run.Tracks[0].Steps);
+            return;
+        }
         Assert.Equal("Skipped", run.Tracks[0].Outcome);
         await ExecuteBatchAsync(batch);
         Assert.Equal("Placed", (await batch.GetAsync(Context, run.Id)).Outcome);
@@ -532,7 +546,7 @@ public sealed partial class LibraryPromotionTests
 
     private LibraryPromotionService BatchService(IPromotionCatalog catalog, IPromotionAcquisition acquisition, IManagedMetadataWriter? writer = null,
         IProtocolLyricsResolver? lyricsResolver = null, ITrackIdentityService? identityService = null, PromotionRoots? promotionRoots = null,
-        allstarr.Core.ClientEvents.IClientEventPublisher? clientEvents = null)
+        allstarr.Core.ClientEvents.IClientEventPublisher? clientEvents = null, BackendLibraryCatalogScannerResolver? catalogScanners = null)
     {
         var options = new ProviderDownloadWorkspaceOptions { RootPath = Path.Combine(directory, "workspaces") };
         var resolver = new ProviderDownloadArtifactResolver(new EfProviderDownloadArtifactStore(factory), options);
@@ -540,6 +554,7 @@ public sealed partial class LibraryPromotionTests
             new SystemPlatformClock(), Microsoft.Extensions.Logging.Abstractions.NullLogger<allstarr.Core.Caching.FileMediaApplicationCache>.Instance);
         return new(factory, queue, promotionRoots ?? roots, resolver, options, services.GetRequiredService<IServiceScopeFactory>(),
             writer ?? new TagLibManagedMetadataWriter(new TagLibManagedTagFileMutator(), new PhysicalManagedFileOperations()), new allstarr.Core.Playback.AudioQualityAnalyzer(cache), new TestBackendLibraryAccess(factory, "music"),
-            identities: identityService, promotionCatalog: catalog, promotionAcquisition: acquisition, lyrics: lyricsResolver, events: clientEvents);
+            identities: identityService, promotionCatalog: catalog, promotionAcquisition: acquisition, lyrics: lyricsResolver, events: clientEvents,
+            scanners: catalogScanners);
     }
 }

@@ -21,6 +21,14 @@ public interface IBackendLibraryCatalogScanner
 {
     ProtocolKind Protocol { get; }
     Task<LibraryCatalogScanResult> ScanAsync(ProtocolExecutionContext context, LibraryCatalogScanRequest request, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// The songs among these that the media server no longer has for this listener. A server that cannot say, or that
+    /// does not answer for the library itself, names none: a song is only ever forgotten on the server's own word.
+    /// </summary>
+    Task<IReadOnlySet<string>> GoneAsync(ProtocolExecutionContext context, string backendLibraryId,
+        IReadOnlyCollection<string> backendItemIds, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlySet<string>>(new HashSet<string>());
 }
 
 public sealed class BackendLibraryCatalogScannerResolver(IEnumerable<IBackendLibraryCatalogScanner> scanners)
@@ -134,6 +142,34 @@ public sealed class JellyfinLibraryCatalogScanner : JsonLibraryCatalogScanner, I
         var result = new LibraryCatalogScanResult(seen, indexed, pathless, malformed, pages);
         return result;
     }
+
+    public async Task<IReadOnlySet<string>> GoneAsync(ProtocolExecutionContext context, string backendLibraryId,
+        IReadOnlyCollection<string> backendItemIds, CancellationToken cancellationToken)
+    {
+        var gone = new HashSet<string>(StringComparer.Ordinal);
+        if (backendItemIds.Count == 0 || context.Protocol != ProtocolKind.Jellyfin ||
+            string.IsNullOrWhiteSpace(_settings.ApiKey) || string.IsNullOrWhiteSpace(_settings.Url)) return gone;
+        var viewerId = Uri.EscapeDataString(context.VerifiedBackendPrincipalId);
+        foreach (var batch in backendItemIds.Distinct(StringComparer.Ordinal).Chunk(50))
+        {
+            // The library is asked for along with its songs: an answer without it says nothing about them.
+            var ids = Uri.EscapeDataString(string.Join(',', batch.Append(backendLibraryId)));
+            using var message = new HttpRequestMessage(HttpMethod.Get,
+                new Uri(new Uri(_settings.Url.TrimEnd('/') + "/"), $"Items?UserId={viewerId}&Ids={ids}&Limit={batch.Length + 1}"));
+            message.Headers.TryAddWithoutValidation("Authorization", AuthHeaderHelper.CreateAuthHeader(_settings.ApiKey, "Allstarr", "Server", "allstarr-server", AppVersion.Version));
+            using var response = await _http.SendAsync(message, cancellationToken);
+            response.EnsureSuccessStatusCode();
+            using var document = JsonDocument.Parse(await response.Content.ReadAsByteArrayAsync(cancellationToken));
+            var found = document.RootElement.TryGetProperty("Items", out var data) && data.ValueKind == JsonValueKind.Array
+                ? data.EnumerateArray().Select(item => ItemKey(Text(item, "Id"))).ToHashSet(StringComparer.Ordinal) : [];
+            if (!found.Contains(ItemKey(backendLibraryId))) continue;
+            gone.UnionWith(batch.Where(id => !found.Contains(ItemKey(id))));
+        }
+        return gone;
+    }
+
+    // Jellyfin writes one id with or without dashes.
+    private static string ItemKey(string? id) => Guid.TryParse(id, out var parsed) ? parsed.ToString("N") : id ?? string.Empty;
     private static string? Get(IReadOnlyDictionary<string, string> values, string name) => values.TryGetValue(name, out var value) ? value : null;
 }
 
