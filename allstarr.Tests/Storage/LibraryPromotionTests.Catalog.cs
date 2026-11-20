@@ -289,8 +289,7 @@ public sealed partial class LibraryPromotionTests
         // The releases a recording is on come with the recording itself, not with the ISRC read.
         // MusicBrainz answers "busy" to the first ask, as it often does, and is asked again.
         PromotionCatalog.BusyWait = TimeSpan.FromMilliseconds(1);
-        musicBrainz.SetupSequence(item => item.LookupByMbidAsync(recordingMbid, It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new MusicBrainzLookupException("busy", "MusicBrainz is busy.", true)).ReturnsAsync(new MusicBrainzRecording
+        var onItsReleases = new MusicBrainzRecording
         {
             Id = recordingMbid,
             Title = "Working Bitch",
@@ -302,7 +301,9 @@ public sealed partial class LibraryPromotionTests
                 new() { Id = vinylId, Title = "Hi, It's Me", Status = "Official", Date = "2019-07-12", Country = "GB" },
                 new() { Id = releaseId, Title = "Hi, It's Me", Status = "Official", Date = "2019-07-12", Country = "XW" }
             ]
-        });
+        };
+        musicBrainz.SetupSequence(item => item.LookupByMbidAsync(recordingMbid, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new MusicBrainzLookupException("busy", "MusicBrainz is busy.", true)).ReturnsAsync(onItsReleases);
         MusicBrainzRelease Release(string id, params (string Mbid, string Title)[] tracks) => new()
         {
             Id = id,
