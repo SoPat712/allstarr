@@ -26,7 +26,8 @@ public sealed record PromotionProfile
     public string LyricsMode { get; init; } = "both";
     public bool ReplayGain { get; init; } = true;
     public string DefaultUnit { get; init; } = "album";
-    public bool RemoveKeptCopy { get; init; }
+    // Once the media server has the song it is the library's; Allstarr's own copy would only be the same audio twice.
+    public bool RemoveKeptCopy { get; init; } = true;
 }
 
 public sealed record HouseholdPromotionProfile(PromotionProfile Values, string AddWithoutApproval = "admins-and-trusted-listeners");

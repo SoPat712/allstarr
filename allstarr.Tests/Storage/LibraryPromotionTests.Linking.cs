@@ -30,6 +30,10 @@ public sealed partial class LibraryPromotionTests
         var handover = Assert.Single(preview.ProfileSteps, item => item.Key == "handover");
         Assert.True(handover.Enabled);
         Assert.StartsWith("Playlists, mixes, hearts and plays move to the new file.", handover.Description);
+        // Once the media server has the song, Allstarr's own copy goes, unless the listener chose to keep it.
+        Assert.Contains("Release the kept copy after confirmation.", handover.Description);
+        await new PromotionProfiles(factory).SaveMineAsync(Context, new() { NamingConfirmed = true, NamingScript = "%title%.%_extension%", RemoveKeptCopy = false });
+        handover = Assert.Single((await service.PreviewAsync(Context, Request())).ProfileSteps, item => item.Key == "handover");
         Assert.Contains("Retain the kept copy.", handover.Description);
     }
 
