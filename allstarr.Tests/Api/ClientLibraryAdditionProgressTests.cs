@@ -76,6 +76,14 @@ public sealed class ClientLibraryAdditionProgressTests
         Assert.Null(shown.Step);
         Assert.Equal((7, 7), (shown.StepsDone, shown.StepsTotal));
         Assert.Equal("Added to the library.", shown.Reason);
+
+        // Days later the library still does not show it: it was moved or removed there, and the addition is not waiting.
+        var run = Run("Placed", "Refresh", "song", track);
+        run.CreatedAt = DateTimeOffset.UtcNow.AddDays(-2);
+        var old = ClientLibraryAdditions.From(run);
+        Assert.Equal(("done", "Added to the library."), (old.State, old.Reason));
+        Assert.Null(old.Step);
+        Assert.Null(old.StepsTotal);
     }
 
     [Fact]
@@ -105,6 +113,7 @@ public sealed class ClientLibraryAdditionProgressTests
     private static PromotionRunRecord Run(string outcome, string step, string unit, params PromotionTrack[] tracks) => new()
     {
         Id = Guid.NewGuid(),
+        CreatedAt = DateTimeOffset.UtcNow,
         Outcome = outcome,
         Step = step,
         RequestJson = JsonSerializer.Serialize(new PromoteSongRequest(tracks[0].RecordingId, Guid.Empty, Guid.NewGuid(), "library", "key") { Unit = unit }),

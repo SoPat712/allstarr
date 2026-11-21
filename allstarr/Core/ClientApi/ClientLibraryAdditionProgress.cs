@@ -13,6 +13,9 @@ internal static class ClientLibraryAdditionProgress
 {
     // The order a song goes through them. The scan is the media server's, so it ends when the item shows up there.
     private static readonly string[] Order = ["fetching", "checking", "lyrics", "tagging", "loudness", "placing", "scanning"];
+    // A scan takes seconds to minutes. An item the media server still does not show long after was moved, replaced or
+    // removed there since; the addition itself is over and must not look as if it were still waiting.
+    private static readonly TimeSpan ScanWindow = TimeSpan.FromHours(2);
 
     internal static ClientLibraryAddition Describe(ClientLibraryAddition value, PromotionRunRecord run)
     {
@@ -23,15 +26,16 @@ internal static class ClientLibraryAdditionProgress
         var first = tracks[0].Song;
         var held = tracks.Where(track => track.Outcome == "Needs review").ToArray();
         var added = tracks.Count(track => track.Outcome == "Placed" || track.Outcome == "Skipped" && track.Steps.Any(step => step.Name == "Dedupe"));
+        var scanning = Scanning(value, run);
         var step = value.State switch
         {
             "adding" => Step(run.Step) ?? "fetching",
-            "done" => "scanning",
+            "done" when scanning => "scanning",
             _ => null
         };
         var heldAt = value.State != "needsLook" ? null : Step(held.FirstOrDefault()?.Step ?? run.Step);
         // A cancelled or declined addition is over; how far it got is of no use to a notice.
-        var open = value.State is "adding" or "needsLook" or "done";
+        var open = value.State is "adding" or "needsLook" || scanning;
         return value with
         {
             Title = Text(value.Unit == "album" ? first.Album : first.Title),
@@ -45,13 +49,16 @@ internal static class ClientLibraryAdditionProgress
             Reason = value.State switch
             {
                 "adding" => Doing(step!, several),
-                "done" => "Added; waiting for the library to show it.",
+                "done" when scanning => "Added; waiting for the library to show it.",
                 "needsLook" when several => $"{added} of {tracks.Count} songs were added; {(held.Length == 0 ? "the rest stopped on an error" : held.Length == 1 ? "1 needs a look" : $"{held.Length} need a look")}. An administrator can decide in the dashboard.",
                 "needsLook" => Held(heldAt, held.FirstOrDefault()),
                 _ => value.Reason
             }
         };
     }
+
+    private static bool Scanning(ClientLibraryAddition value, PromotionRunRecord run) =>
+        value.State == "done" && DateTimeOffset.UtcNow - run.CreatedAt < ScanWindow;
 
     // A run shared with another listener comes without its plan.
     private static PromotionAlbumPlan? Plan(PromotionRunRecord run)
@@ -74,7 +81,8 @@ internal static class ClientLibraryAdditionProgress
         ManagedTrackPathValues? track = null;
         try { track = string.IsNullOrEmpty(run.PlanJson) ? null : JsonSerializer.Deserialize<PromotionPlan>(run.PlanJson)?.Track; }
         catch (JsonException) { }
-        var step = value.State == "adding" ? Step(run.Step) : value.State == "done" ? "scanning" : null;
+        var scanning = Scanning(value, run);
+        var step = value.State == "adding" ? Step(run.Step) : scanning ? "scanning" : null;
         var heldAt = value.State == "needsLook" ? Step(run.Step) : null;
         return value with
         {
@@ -85,7 +93,7 @@ internal static class ClientLibraryAdditionProgress
             Reason = value.State switch
             {
                 "adding" when step != null => Doing(step, false),
-                "done" => "Added; waiting for the library to show it.",
+                "done" when scanning => "Added; waiting for the library to show it.",
                 "needsLook" => Held(heldAt, null),
                 _ => value.Reason
             }

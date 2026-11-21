@@ -4293,6 +4293,58 @@
               "null",
               "string"
             ]
+          },
+          "title": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "artist": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "step": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "heldAt": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "stepsDone": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int32"
+          },
+          "stepsTotal": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int32"
+          },
+          "itemsDone": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int32"
+          },
+          "itemsTotal": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int32"
           }
         }
       },
