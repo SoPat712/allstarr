@@ -86,6 +86,49 @@ public sealed class V2ConvertedDownloadsTests : IDisposable
         Assert.NotNull(copies.Find(Key(3)));
     }
 
+    [Fact]
+    public async Task CopiesLeaveOneConversionFreeForListening()
+    {
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var source = new Converter(async _ => { await release.Task; return Audio(40); });
+        // Two conversions may run at once, so copies are made one at a time; with three, two at a time.
+        var copies = Copies(source, conversions: 2);
+        var first = copies.MakeAsync(Key(1), Address, default);
+        var second = copies.MakeAsync(Key(2), Address, default);
+        await Task.Delay(300);
+        Assert.Equal(1, source.Calls);
+        release.SetResult();
+        Assert.Equal(40, (await first).File!.Length);
+        Assert.Equal(40, (await second).File!.Length);
+        Assert.Equal(2, source.Calls);
+
+        var held = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var wider = new Converter(async _ => { await held.Task; return Audio(40); });
+        var three = Copies(wider, conversions: 3);
+        var makes = new[] { 3, 4, 5 }.Select(number => three.MakeAsync(Key(number), Address, default)).ToArray();
+        await Task.Delay(300);
+        Assert.Equal(2, wider.Calls);
+        held.SetResult();
+        await Task.WhenAll(makes);
+    }
+
+    [Fact]
+    public async Task ACopyThatWaitsTooLongForItsTurnIsToldToComeBack()
+    {
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var source = new Converter(async _ => { await release.Task; return Audio(40); });
+        var copies = Copies(source, conversions: 2, turnLimit: TimeSpan.FromMilliseconds(200));
+        var first = copies.MakeAsync(Key(1), Address, default);
+        var late = await copies.MakeAsync(Key(2), Address, default);
+        Assert.Null(late.File);
+        Assert.Equal(503, late.Status);
+        Assert.Equal(TimeSpan.FromSeconds(5), late.RetryAfter);
+        release.SetResult();
+        Assert.NotNull((await first).File);
+        // Its turn comes once the first is done.
+        Assert.NotNull((await copies.MakeAsync(Key(2), Address, default)).File);
+    }
+
     [Theory]
     [InlineData("")]
     [InlineData("../../etc/passwd")]
@@ -99,7 +142,8 @@ public sealed class V2ConvertedDownloadsTests : IDisposable
         Assert.Equal(0, source.Calls);
     }
 
-    private V2ConvertedDownloads Copies(Converter source, long maximumBytes = 1 << 20) => new(directory, maximumBytes, new Clients(source), time);
+    private V2ConvertedDownloads Copies(Converter source, long maximumBytes = 1 << 20, int conversions = 2, TimeSpan? turnLimit = null) =>
+        new(directory, maximumBytes, new Clients(source), time, conversions: () => conversions) { TurnLimit = turnLimit ?? TimeSpan.FromSeconds(20) };
 
     private static string Key(int number) => number.ToString("x64");
 

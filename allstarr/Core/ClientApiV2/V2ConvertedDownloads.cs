@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using allstarr.Core.Playback;
 
 namespace allstarr.Core.ClientApiV2;
 
@@ -24,21 +25,30 @@ public sealed class V2ConvertedDownloads
     private readonly ILogger<V2ConvertedDownloads>? logger;
     private readonly ConcurrentDictionary<string, Lazy<Task<Made>>> making = new(StringComparer.Ordinal);
     private readonly object sweeping = new();
+    // Listening converts too, and a full set of conversions turns a new one away at once. A playlist being downloaded
+    // would keep every conversion busy and nothing could start playing, so copies never take the last one.
+    private readonly Func<int> conversions;
+    private readonly object turns = new();
+    private int makingNow;
+    /// <summary>How long a copy waits for its turn before its download is told to come back.</summary>
+    internal TimeSpan TurnLimit { get; init; } = TimeSpan.FromSeconds(20);
 
     /// <summary>The copy, or the status its source answered with and how long to wait before asking again.</summary>
     public sealed record Made(FileInfo? File, int Status, TimeSpan? RetryAfter);
 
     public V2ConvertedDownloads(IConfiguration configuration, IHttpClientFactory clients, TimeProvider clock,
-        ILogger<V2ConvertedDownloads>? logger = null)
+        ILogger<V2ConvertedDownloads>? logger = null, MediaCapacityLimits? limits = null)
         : this(configuration[DirectoryKey] is { Length: > 0 } configured ? configured : Path.Combine(Path.GetTempPath(), "allstarr-converted-downloads"),
-            Math.Clamp(configuration.GetValue("Downloads:ConvertedMaximumMegabytes", 1024L), 64, 1024 * 1024) * 1024 * 1024, clients, clock, logger)
+            Math.Clamp(configuration.GetValue("Downloads:ConvertedMaximumMegabytes", 1024L), 64, 1024 * 1024) * 1024 * 1024, clients, clock, logger,
+            limits == null ? null : () => limits.Conversions)
     {
     }
 
     internal V2ConvertedDownloads(string directory, long maximumBytes, IHttpClientFactory clients, TimeProvider clock,
-        ILogger<V2ConvertedDownloads>? logger = null)
+        ILogger<V2ConvertedDownloads>? logger = null, Func<int>? conversions = null)
     {
         this.directory = directory; this.maximumBytes = maximumBytes; this.clients = clients; this.clock = clock; this.logger = logger;
+        this.conversions = conversions ?? (() => 2);
     }
 
     /// <summary>The finished copy for a key, marked as read just now, or null when none is held.</summary>
@@ -74,6 +84,7 @@ public sealed class V2ConvertedDownloads
 
     private async Task<Made> MakeOnceAsync(string key, Uri source)
     {
+        if (!await TakeTurnAsync()) return new(null, StatusCodes.Status503ServiceUnavailable, TimeSpan.FromSeconds(5));
         var part = Path.Combine(directory, $"{key}.{Guid.NewGuid():N}{PartExtension}");
         try
         {
@@ -105,8 +116,25 @@ public sealed class V2ConvertedDownloads
         }
         finally
         {
+            lock (turns) makingNow--;
             try { File.Delete(part); }
             catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
+        }
+    }
+
+    // Copies wait for one another rather than being turned away: a download of many songs then runs as fast as its
+    // share of the conversions allows, with no retries. Only a long queue sends a download away to come back.
+    private async Task<bool> TakeTurnAsync()
+    {
+        var waited = System.Diagnostics.Stopwatch.StartNew();
+        while (true)
+        {
+            lock (turns)
+            {
+                if (makingNow < Math.Max(1, conversions() - 1)) { makingNow++; return true; }
+            }
+            if (waited.Elapsed >= TurnLimit) return false;
+            await Task.Delay(50);
         }
     }
 
