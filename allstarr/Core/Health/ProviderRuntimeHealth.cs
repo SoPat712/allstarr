@@ -71,6 +71,9 @@ public sealed class ProviderRuntimeHealth : IProviderOutcomeObserver, ILyricsOut
 {
     public event Action<string, Guid?>? LyricsRecovered;
     private const int MaximumObservations = 4096;
+    // Start times outlive health samples by far: which source a song starts from should hold through a day's
+    // listening, not move with whichever source happened to play in the last few minutes.
+    private static readonly TimeSpan PlaybackStartMemory = TimeSpan.FromHours(12);
     private readonly object _sync = new();
     private readonly Dictionary<ProviderRuntimeStatusKey, ProviderHealthObservation> _observations = [];
     private readonly Dictionary<ProviderRuntimeStatusKey, List<ProviderCheckResult>> _recent = [];
@@ -184,7 +187,7 @@ public sealed class ProviderRuntimeHealth : IProviderOutcomeObserver, ILyricsOut
                     _playbackStarts.Remove(_playbackStarts.MinBy(item => item.Value[^1].At).Key);
                 _playbackStarts[key] = samples = [];
             }
-            samples.RemoveAll(item => item.At.AddSeconds(_options.SampleTtlSeconds) <= _clock.UtcNow);
+            samples.RemoveAll(item => item.At + PlaybackStartMemory <= _clock.UtcNow);
             if (samples.Count >= 15) samples.RemoveAt(0);
             samples.Add(new(_clock.UtcNow, elapsed < TimeSpan.Zero ? TimeSpan.Zero : elapsed, media));
         }
@@ -196,7 +199,7 @@ public sealed class ProviderRuntimeHealth : IProviderOutcomeObserver, ILyricsOut
         {
             var key = new PlaybackSourceKey(context.ProviderId, context.Account?.AccountId, context.Account?.Revision, quality);
             if (!_playbackStarts.TryGetValue(key, out var samples)) return null;
-            samples.RemoveAll(item => item.At.AddSeconds(_options.SampleTtlSeconds) <= _clock.UtcNow);
+            samples.RemoveAll(item => item.At + PlaybackStartMemory <= _clock.UtcNow);
             if (samples.Count == 0) { _playbackStarts.Remove(key); return null; }
             var ordered = samples.OrderBy(item => item.Elapsed).ToArray();
             var median = ordered.Length % 2 == 1 ? ordered[ordered.Length / 2].Elapsed :

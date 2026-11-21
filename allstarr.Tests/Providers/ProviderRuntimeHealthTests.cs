@@ -114,7 +114,10 @@ public sealed class ProviderRuntimeHealthTests
         Assert.Equal(measured, store.GetPlaybackStart(context, ProviderAudioQuality.Lossless));
         Assert.Null(store.GetPlaybackStart(context, ProviderAudioQuality.HighResolution));
         Assert.Null(store.GetPlaybackStart(Context(revision: 5), ProviderAudioQuality.Lossless));
+        // A start time holds through a day's listening, well past the few minutes a health sample counts for.
         _clock.UtcNow += TimeSpan.FromMinutes(6);
+        Assert.Equal(measured, store.GetPlaybackStart(context, ProviderAudioQuality.Lossless));
+        _clock.UtcNow += TimeSpan.FromHours(12);
         Assert.Null(store.GetPlaybackStart(context, ProviderAudioQuality.Lossless));
     }
 
