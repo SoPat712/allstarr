@@ -365,7 +365,9 @@ public sealed class AudioQualityAnalyzer(FileMediaApplicationCache cache, MediaC
             var occupied = 0;
             for (var index = low; index <= high; index++) if (_powers[index] > peak * 0.001) occupied++;
             var broad = high > low && (double)occupied / (high - low + 1) >= 0.3;
-            if (!broad) return ResultOf(format.Rate > 48000 || format.Bits > 16 ? "unknown" : "standard", 0.3, bandwidth);
+            // Most music is not broad: its energy sits low and falls away. Nothing in such a spectrum can be told about
+            // a high sample rate, but a bit depth that passed the padding checks above is what the file says it is.
+            if (!broad) return ResultOf(format.Rate > 48000 ? "unknown" : format.Bits > 16 ? "true-hi-res" : "standard", 0.3, bandwidth);
 
             double Band(double from, double to)
             {

@@ -127,6 +127,20 @@ public sealed class AudioQualityAnalyzerTests : IDisposable
     }
 
     [Theory]
+    [InlineData(48000, 24, "true-hi-res")]
+    [InlineData(44100, 24, "true-hi-res")]
+    [InlineData(48000, 16, "standard")]
+    [InlineData(96000, 24, "unknown")]
+    public async Task OrdinaryMusicIsJudgedByItsBitDepthUnlessItsSampleRateNeedsProof(int rate, int bits, string expected)
+    {
+        // Music carries most of its energy low down, unlike the full-band noise the other checks are fed.
+        var noise = Noise(rate * 2);
+        var samples = new double[noise.Length];
+        for (var i = 1; i < samples.Length; i++) samples[i] = 0.995 * samples[i - 1] + 0.01 * noise[i];
+        Assert.Equal(expected, (await _analyzer.AnalyzeAsync(Wave($"music-{rate}-{bits}.wav", rate, bits, samples))).Verdict);
+    }
+
+    [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public async Task SilenceAndNarrowTonesAreInconclusive(bool tone)
