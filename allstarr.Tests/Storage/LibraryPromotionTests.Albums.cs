@@ -31,7 +31,8 @@ public sealed partial class LibraryPromotionTests
     {
         await using (var db = factory.CreateDbContext())
         {
-            (await db.Set<ProviderDownloadArtifactEntity>().SingleAsync()).QualityCheckJson = null;
+            (await db.Set<ProviderDownloadArtifactEntity>().SingleAsync()).QualityCheckJson =
+                System.Text.Json.JsonSerializer.Serialize(new allstarr.Core.Playback.AudioQualityCheck(96000, 24, 18000, "upsampled", .8));
             await db.SaveChangesAsync();
         }
         var run = await service.StartAsync(Context, Request());
@@ -550,12 +551,10 @@ public sealed partial class LibraryPromotionTests
         var catalog = new Mock<IPromotionCatalog>();
         catalog.Setup(item => item.ResolveAsync(It.IsAny<ProtocolExecutionContext>(), recordingId, "song", It.IsAny<CancellationToken>()))
             .ReturnsAsync(new[] { new Song { CanonicalRecordingId = recordingId, Title = "Song" } });
-        var firstPath = Path.Combine(directory, "workspaces", "source", "song.flac");
-        var firstBytes = await File.ReadAllBytesAsync(firstPath);
-        var first = new VerifiedProviderDownloadArtifact(artifactId, Guid.NewGuid(), firstPath,
-            Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(firstBytes)), firstBytes.Length, owner, Guid.NewGuid(), "deezer", null,
-            ProviderDownloadArtifactState.Verified, null)
-        { Codec = "flac", BitDepth = 16, SampleRate = 44100 };
+        var held = await WaveSourceAsync(44100, 24, padded: true);
+        var firstPath = Path.Combine(directory, "first.wav");
+        File.Copy(held.SourcePath, firstPath);
+        var first = held with { SourcePath = firstPath };
         var second = await WaveSourceAsync();
         var acquisition = new Mock<IPromotionAcquisition>();
         acquisition.Setup(item => item.AcquireAsync(owner, It.IsAny<Guid>(), It.IsAny<PromotionTrack>(), It.IsAny<PromotionProfile>(), It.IsAny<CancellationToken>()))
@@ -612,7 +611,7 @@ public sealed partial class LibraryPromotionTests
         LyricsMode = "off"
     });
 
-    private async Task<VerifiedProviderDownloadArtifact> WaveSourceAsync(int rate = 44100, int bits = 16)
+    private async Task<VerifiedProviderDownloadArtifact> WaveSourceAsync(int rate = 44100, int bits = 16, bool padded = false)
     {
         var path = Path.Combine(directory, "source.wav");
         await using (var stream = File.Create(path))
@@ -626,6 +625,8 @@ public sealed partial class LibraryPromotionTests
             for (var index = 0; index < rate; index++)
             {
                 var sample = (int)((bits == 24 ? 2000000 : 10000) * Math.Sin(2 * Math.PI * 440 * index / rate));
+                // A file that claims 24 bits and holds 16: the finding the quality screen is surest of.
+                if (padded) sample &= ~0xFF;
                 if (bits == 16) wave.Write((short)sample);
                 else { wave.Write((byte)sample); wave.Write((byte)(sample >> 8)); wave.Write((byte)(sample >> 16)); }
             }

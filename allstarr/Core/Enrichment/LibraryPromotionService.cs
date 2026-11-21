@@ -357,7 +357,7 @@ public sealed partial class LibraryPromotionService(IDbContextFactory<AllstarrDb
             }
             var quality = completed["Quality"];
             var verdict = AudioQualityCheckJobHandler.ReadCheck(quality.ResultJson)?.Verdict;
-            if (verdict is not ("standard" or "true-hi-res") && run.ApprovedByUserId == null)
+            if (verdict is not ("standard" or "true-hi-res" or "unknown") && run.ApprovedByUserId == null)
             {
                 run.Outcome = "Needs review";
                 run.Step = "Quality";

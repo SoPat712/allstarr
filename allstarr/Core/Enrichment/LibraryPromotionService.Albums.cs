@@ -382,7 +382,9 @@ public sealed partial class LibraryPromotionService
                     await VerifyAsync(path, track.ContentSha256!, track.Length, token);
                     var quality = album.Profile.FakeLosslessCheck ? await analyzer.AnalyzeAsync(path, token) : null;
                     track.QualityCheck = quality;
-                    var clean = quality == null || quality.Verdict is "standard" or "true-hi-res";
+                    // Only a finding holds a song. A screen that could not tell says nothing against the file, which
+                    // has already met the quality floor.
+                    var clean = quality == null || quality.Verdict is "standard" or "true-hi-res" or "unknown";
                     if (!clean && track.ApprovedByUserId == null)
                     {
                         track.Outcome = "Needs review";

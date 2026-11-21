@@ -216,7 +216,6 @@ public sealed partial class LibraryPromotionTests : IAsyncLifetime
     [InlineData("lossy-transcode-suspected")]
     [InlineData("upsampled")]
     [InlineData("padded-bit-depth")]
-    [InlineData("unknown")]
     public async Task SuspiciousAudio_RequiresRecordedApprovalBeforePlacement(string verdict)
     {
         await using (var db = factory.CreateDbContext())
@@ -240,6 +239,22 @@ public sealed partial class LibraryPromotionTests : IAsyncLifetime
         Assert.Equal(1, mutator.Writes);
         await using var verify = factory.CreateDbContext();
         Assert.Equal(1, await verify.Jobs.CountAsync(item => item.Type == "library.refresh"));
+    }
+
+    [Fact]
+    public async Task AudioTheScreenCouldNotJudge_IsPlacedWithoutApproval()
+    {
+        await using (var db = factory.CreateDbContext())
+        {
+            (await db.Set<ProviderDownloadArtifactEntity>().SingleAsync()).QualityCheckJson =
+                JsonSerializer.Serialize(new AudioQualityCheck(96000, 24, 18000, "unknown", .25));
+            await db.SaveChangesAsync();
+        }
+        var run = await service.StartAsync(Context, Request());
+        await ExecuteAsync();
+        var placed = await service.GetAsync(Context, run.Id);
+        Assert.Equal("Placed", placed.Outcome);
+        Assert.Null(placed.ApprovedByUserId);
     }
 
     [Fact]
@@ -268,7 +283,8 @@ public sealed partial class LibraryPromotionTests : IAsyncLifetime
     {
         await using (var db = factory.CreateDbContext())
         {
-            (await db.Set<ProviderDownloadArtifactEntity>().SingleAsync()).QualityCheckJson = null;
+            (await db.Set<ProviderDownloadArtifactEntity>().SingleAsync()).QualityCheckJson =
+                System.Text.Json.JsonSerializer.Serialize(new allstarr.Core.Playback.AudioQualityCheck(96000, 24, 18000, "upsampled", .8));
             await db.SaveChangesAsync();
         }
         var run = await service.StartAsync(Context, Request());
@@ -286,7 +302,8 @@ public sealed partial class LibraryPromotionTests : IAsyncLifetime
     {
         await using (var db = factory.CreateDbContext())
         {
-            (await db.Set<ProviderDownloadArtifactEntity>().SingleAsync()).QualityCheckJson = null;
+            (await db.Set<ProviderDownloadArtifactEntity>().SingleAsync()).QualityCheckJson =
+                System.Text.Json.JsonSerializer.Serialize(new allstarr.Core.Playback.AudioQualityCheck(96000, 24, 18000, "upsampled", .8));
             db.Users.Add(new()
             {
                 Id = Guid.NewGuid(),

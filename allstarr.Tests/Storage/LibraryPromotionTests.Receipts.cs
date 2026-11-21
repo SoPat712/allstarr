@@ -254,7 +254,7 @@ public sealed partial class LibraryPromotionTests
         catalog.Setup(item => item.ResolveAsync(It.IsAny<ProtocolExecutionContext>(), recordingId, "album", It.IsAny<CancellationToken>()))
             .ReturnsAsync(new[] { new Song { CanonicalRecordingId = recordingId, Title = "Held" },
                 new Song { CanonicalRecordingId = siblingId, Title = "Ready" } });
-        var heldSource = await WaveSourceAsync(96000, 24);
+        var heldSource = await WaveSourceAsync(96000, 24, padded: true);
         var heldPath = Path.Combine(directory, "held.wav");
         File.Copy(heldSource.SourcePath, heldPath);
         heldSource = heldSource with { SourcePath = heldPath };
