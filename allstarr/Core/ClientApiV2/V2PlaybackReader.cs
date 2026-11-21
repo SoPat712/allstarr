@@ -48,14 +48,14 @@ public sealed class V2PlaybackReader(V2TrackReader tracks, ProviderStreamOpener 
         quality = AudioQualityPolicy.Limit(quality, step);
         var routed = parsed.isExternal
             ? await streams.InspectSourceAsync(execution, parsed.provider!, parsed.externalId!, quality) : null;
-        // Some services only know a song's format once they have fetched it. A download is promised a format, a length
-        // and byte ranges, so its song is fetched first and the fetched file is opened to read them; anything else
+        // Some services only know a song's format once they have fetched it. A download is promised a format and byte
+        // ranges, so its song is fetched first and the copy the server then holds is asked what it is; anything else
         // starts at once and is judged when it opens.
         if (routed is { Response.IsSuccessStatusCode: true } && request.Purpose == "download" && Unknown(routed.FileFacts.Media ?? routed.Lease.Media))
         {
             routed.Response.Dispose();
             await preparation.PrepareAsync(execution with { PreparationQuality = quality }, item);
-            routed = await streams.InspectSourceAsync(execution, parsed.provider!, parsed.externalId!, quality, open: true);
+            routed = await streams.InspectSourceAsync(execution, parsed.provider!, parsed.externalId!, quality, held: true);
         }
         using var inspected = parsed.isExternal
             ? routed?.Response
@@ -103,7 +103,7 @@ public sealed class V2PlaybackReader(V2TrackReader tracks, ProviderStreamOpener 
         serving.Remember(execution, playback, expires);
         return new($"{http.Request.Scheme}://{http.Request.Host}{http.Request.PathBase}/allstarr/v2/stream/" + tokens.Protect(ticket, expires), expires, playback, key, Format(source), Format(delivered),
             converted, converted ? held?.Length : inspected.Content.Headers.ContentLength is > 0 and var length ? length : null,
-            copy != null || !converted && (routed?.Lease.SupportsByteRanges == true || inspected.Headers.AcceptRanges.Contains("bytes")) ? "bytes" : "none",
+            copy != null || !converted && (routed?.IsCached == true || routed?.Lease.SupportsByteRanges == true || inspected.Headers.AcceptRanges.Contains("bytes")) ? "bytes" : "none",
             track.TrackGainDb, track.AlbumGainDb, new(provider, (registry.TryGet(provider, out var descriptor) ? descriptor!.DisplayName : null) ?? track.Provider?.Name ?? provider), reason, lowered)
         { Serving = await ServingAsync(http, execution, track, item) };
     }

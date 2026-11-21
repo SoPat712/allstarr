@@ -91,12 +91,13 @@ public sealed class ProviderStreamOpener(
     }
 
     /// <summary>
-    /// What a start would be served from, without starting it. Asking alone does not look inside a song the server
-    /// holds; <paramref name="open"/> opens it, so the file itself says its format and length.
+    /// What a start would be served from, without starting it. A service that fetches a song before it can say what
+    /// the song is answers with what it knows beforehand; <paramref name="held"/> asks first for the copy the server
+    /// holds, whose file says its real format.
     /// </summary>
     internal Task<ProtocolProviderStream?> InspectSourceAsync(ProtocolExecutionContext context, string providerId,
-        string externalId, ProviderAudioQuality quality, bool open = false) => providers.OpenStreamAsync(
-            context with { IsReadOnly = true, AudioDelivery = null }, providerId, externalId, quality, null, !open);
+        string externalId, ProviderAudioQuality quality, bool held = false) => providers.OpenStreamAsync(
+            context with { IsReadOnly = true, AudioDelivery = held ? new() : null }, providerId, externalId, quality, null, true);
 
     public async Task<IActionResult> OpenAsync(
         HttpContext http,
