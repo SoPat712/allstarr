@@ -214,7 +214,7 @@ Open your name in the sidebar, or **More → Listening settings** on a phone. Th
 - **Explicit songs:** **All**, **Hide clean/edited versions** (keeps naturally clean, explicit and unrated songs) or **Clean only** (also hides songs whose rating isn't known). An administrator can lock you to Clean only.
 - **Mark external songs** shows **[A]**; **Mark explicit songs** shows **[E]**. Both are on by default.
 - **Playback start:** **Fast start** prefers the quickest lossless source, **Balanced** (the default) favors quality when songs still start within about three seconds, **Best quality** always prefers the highest quality.
-- **Quality limit** can be lower than the household's limit, not higher.
+- **Quality limit** can be lower than the household's limit, not higher. It applies to everything you play, your own library included.
 - **Your music libraries**, shown when there are several, picks the libraries your mixes and autoplay draw from.
 - **Reset to household defaults** drops your choices.
 
@@ -287,7 +287,7 @@ Settings saves as you change it. Settings marked **Restarts Allstarr** restart i
 
 **Sound quality**
 
-- **Audio quality** is the household ceiling. **What each source sends** shows what each service is asked for and what it actually delivered.
+- **Audio quality** is the household ceiling for what services send. Songs in your own library play and download as they are; a music app's own quality setting is always followed. **What each source sends** shows what each service is asked for and what it actually delivered.
 - **Playback start for everyone** is the default listeners start from.
 - **Prefer your own music when unsure** favors your library among matches that aren't certain. It never raises a match's confidence.
 

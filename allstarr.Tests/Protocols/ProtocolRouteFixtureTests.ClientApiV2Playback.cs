@@ -111,10 +111,12 @@ public sealed partial class ProtocolRouteFixtureTests
     }
 
     [Theory]
-    [InlineData("High", null, "household", 256000)]
-    [InlineData("BestAvailable", "DataSaver", "listener", 96000)]
-    [InlineData("CdLossless", null, "household", null)]
-    public async Task ClientApiV2_PlaybackAppliesQualityCeilings(string household, string? personal, string loweredBy, int? bitrate)
+    [InlineData("ext-deezer-song-known", "High", null, "household", 256000)]
+    [InlineData("ext-deezer-song-known", "BestAvailable", "DataSaver", "listener", 96000)]
+    [InlineData("ext-deezer-song-known", "CdLossless", null, "household", null)]
+    [InlineData("native1", "BestAvailable", "DataSaver", "listener", 96000)]
+    [InlineData("native1", "High", "DataSaver", "listener", 96000)]
+    public async Task ClientApiV2_PlaybackAppliesQualityCeilings(string song, string household, string? personal, string loweredBy, int? bitrate)
     {
         using var factory = V2PlaybackFactory(configure: services =>
         {
@@ -130,7 +132,8 @@ public sealed partial class ProtocolRouteFixtureTests
         });
         using var client = CreateClientApiClient(factory);
         client.DefaultRequestHeaders.Authorization = new("Bearer", "listener-token");
-        var body = await ResolveV2Playback(client, "native1", "lossless");
+        if (song.StartsWith("ext-", StringComparison.Ordinal)) await SeedV2DetailsAsync(factory, "listener", "known", personal: true);
+        var body = await ResolveV2Playback(client, song, "lossless", diagnostics: factory);
         Assert.Equal(loweredBy, body["loweredBy"]!.GetValue<string>());
         if (bitrate != null) Assert.Equal(bitrate, body["delivered"]!["bitrate"]!.GetValue<int>());
         else
@@ -138,6 +141,39 @@ public sealed partial class ProtocolRouteFixtureTests
             Assert.Equal(44100, body["delivered"]!["sampleRate"]!.GetValue<int>());
             Assert.Equal(16, body["delivered"]!["bitDepth"]!.GetValue<int>());
         }
+    }
+
+    [Theory]
+    [InlineData("DataSaver")]
+    [InlineData("High")]
+    [InlineData("CdLossless")]
+    public async Task ClientApiV2_TheHouseholdLimitLeavesTheListenersOwnFilesAsTheyAre(string household)
+    {
+        using var factory = V2PlaybackFactory(configure: services =>
+        {
+            var policies = new Mock<IEffectiveProviderPolicyResolver>();
+            var snapshot = new EffectiveProviderPolicySnapshot(ImmutableDictionary<ProviderCapabilityKind, ImmutableArray<string>>.Empty,
+                ImmutableHashSet<string>.Empty, household, 0);
+            policies.Setup(item => item.ResolveAsync(It.IsAny<CancellationToken>())).ReturnsAsync(snapshot);
+            policies.Setup(item => item.ResolveForUserAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync((Guid user, CancellationToken _) => snapshot with { UserId = user });
+            services.RemoveAll<IEffectiveProviderPolicyResolver>();
+            services.AddSingleton(policies.Object);
+        });
+        using var client = CreateClientApiClient(factory);
+        client.DefaultRequestHeaders.Authorization = new("Bearer", "listener-token");
+
+        // The file as it is: not lowered, not converted, and still seekable by bytes.
+        var original = await ResolveV2Playback(client, "native1", "original");
+        Assert.Null(original["loweredBy"]);
+        Assert.False(original["transcoded"]!.GetValue<bool>());
+        Assert.Equal("bytes", original["seek"]!.GetValue<string>());
+        Assert.Equal(original["source"]!.ToJsonString(), original["delivered"]!.ToJsonString());
+
+        // What the app itself asks for is still obeyed.
+        var low = await ResolveV2Playback(client, "native1", "low");
+        Assert.Null(low["loweredBy"]);
+        Assert.Equal(96000, low["delivered"]!["bitrate"]!.GetValue<int>());
     }
 
     [Theory]

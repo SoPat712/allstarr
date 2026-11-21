@@ -34,12 +34,15 @@ public sealed class V2PlaybackReader(V2TrackReader tracks, ProviderStreamOpener 
     {
         var household = await policies.ResolveAsync(execution.CancellationToken);
         var policy = execution.Policy ?? await policies.ResolveForUserAsync(execution.Principal!.UserId, execution.CancellationToken);
-        var step = AudioQualityPolicy.Lower(household.AudioQuality, policy.Preferences.QualityLimit);
+        var parsed = LocalLibraryService.ParseExternalResource(item);
+        // The household's limit caps what services send. A file in the listener's own library plays as it is, unless the
+        // listener set a lower limit of their own or the app asks for less.
+        var step = parsed.isExternal ? AudioQualityPolicy.Lower(household.AudioQuality, policy.Preferences.QualityLimit)
+            : AudioQualityPolicy.Steps.Contains(policy.Preferences.QualityLimit ?? "") ? policy.Preferences.QualityLimit! : AudioQualityPolicy.DefaultStep;
         var tier = step == "DataSaver" && request.Tier != "low" ? "low"
             : step == "High" && request.Tier is "lossless" or "original" ? "high" : request.Tier;
         var quality = tier is "lossless" or "original" ? ProviderAudioQuality.Any : ProviderAudioQuality.Lossy;
         quality = AudioQualityPolicy.Limit(quality, step);
-        var parsed = LocalLibraryService.ParseExternalResource(item);
         var routed = parsed.isExternal
             ? await streams.InspectSourceAsync(execution, parsed.provider!, parsed.externalId!, quality) : null;
         using var inspected = parsed.isExternal
@@ -63,7 +66,7 @@ public sealed class V2PlaybackReader(V2TrackReader tracks, ProviderStreamOpener 
             execution.VerifiedBackendPrincipalId, item, tier, playback, quality, Freeze(delivery, delivered), source)
         { DeviceId = execution.Client.DeviceId, TrackId = V2AutoplayReader.Identity(track) };
         var lowered = tier != request.Tier || LimitChanged(source, step, request.Tier)
-            ? step != household.AudioQuality ? "listener" : "household" : null;
+            ? !parsed.isExternal || step != household.AudioQuality ? "listener" : "household" : null;
         var reason = routed?.SelectionReason ?? "library";
         if (request.Tier == "lossless" && !Lossless(source.Codec)) reason += "; no lossless source available; using best available";
         if (tier == "lossless" && Lossless(source.Codec) && !Lossless(delivered.Codec)) reason += "; client codecs require lossy audio";
