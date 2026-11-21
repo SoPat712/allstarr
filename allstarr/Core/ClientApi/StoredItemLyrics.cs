@@ -21,14 +21,25 @@ internal static class StoredItemLyrics
         string? chosenSource, string? audioPath, EffectiveProviderPolicySnapshot policy, string lyricsEndpoint,
         ProtocolExecutionContext execution, IReadOnlyList<ProviderAccountRecord> accounts,
         IReadOnlyList<ProviderTrackIdentityRecord> identities, CancellationToken token, Action<RichLyrics>? observe = null, long? recordingDurationMs = null,
-        LyricsInfo? automaticLyrics = null, Action<LyricsInfo>? observeInfo = null)
+        LyricsInfo? automaticLyrics = null, Action<LyricsInfo>? observeInfo = null, LyricsJudgments? judgments = null)
     {
         if (song == null || policy.Preferences.ExplicitFilter == "CleanOnly" && !CleanRecordingPolicy.IsVerifiedClean(song))
             return new(false, null, null);
         var best = new ItemDetailsLyrics(false, null, chosenSource);
         LyricsScore? bestScore = null;
         ItemDetailsLyrics? retainedChoice = null;
-        if (chosenSource == null && LyricsQuality.Evaluate(automaticLyrics, song, recordingDurationMs) is { } retainedScore &&
+        // Observers need the parsed lyrics themselves, so only a plain availability check reuses earlier judgments.
+        var judge = observe == null && observeInfo == null && (judgments ?? LyricsJudgments.Shared) is { Enabled: true } enabled ? enabled : null;
+        if (chosenSource == null && automaticLyrics != null && judge?.Retained(automaticLyrics, song, recordingDurationMs) is { } judgedRetained)
+        {
+            if (judgedRetained is { Score: { } judgedScore, Rich: { } judgedRich } && policy.IsAutomatic(LyricsVersions.ProviderId(judgedRich.SourceId)))
+            {
+                best = new(true, judgedRich.Format, judgedRich.SourceId);
+                retainedChoice = best;
+                bestScore = judgedScore;
+            }
+        }
+        else if (chosenSource == null && LyricsQuality.Evaluate(automaticLyrics, song, recordingDurationMs) is { } retainedScore &&
             RichLyricsMapper.Map(automaticLyrics) is { } retained && policy.IsAutomatic(LyricsVersions.ProviderId(retained.Source.Id)))
         {
             best = new(true, retained.Format, retained.Source.Id);
@@ -40,6 +51,7 @@ internal static class StoredItemLyrics
         bool ConsiderProvider(LyricsInfo? info, string provider)
         {
             if (info == null) return false;
+            if (judge?.Versions(provider, info, song, recordingDurationMs) is { } judged) return Decide(judged, provider);
             info.Source = provider;
             var versions = LyricsVersions.Candidates(provider, info);
             foreach (var version in versions)
@@ -64,6 +76,25 @@ internal static class StoredItemLyrics
                 if (retainedChoice != null && !score.Reasons.Contains("duration_fits") && !score.Reasons.Contains("plain_text")) continue;
                 bestScore = score;
                 best = new(true, RichLyricsMapper.Map(version)!.Format, version.Source);
+            }
+            return false;
+        }
+        // Makes the same choice as ConsiderProvider from a judgment of the same payload.
+        bool Decide(LyricsJudgment judged, string provider)
+        {
+            if (chosenSource != null && LyricsVersions.ProviderId(chosenSource) == provider)
+            {
+                var pinned = judged.Versions.FirstOrDefault(version => version.Source == chosenSource);
+                if ((pinned != null ? pinned.Rich : judged.Rich ?? judged.Versions.FirstOrDefault()?.Rich) is not { } rich) return false;
+                best = new(true, rich.Format, rich.SourceId);
+                return true;
+            }
+            foreach (var version in judged.Versions)
+            {
+                if (version.Score is not { } score || !LyricsQuality.Better(score, bestScore)) continue;
+                if (retainedChoice != null && !score.Reasons.Contains("duration_fits") && !score.Reasons.Contains("plain_text")) continue;
+                bestScore = score;
+                best = new(true, version.Rich!.Format, version.Source);
             }
             return false;
         }

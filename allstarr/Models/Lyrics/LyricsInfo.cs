@@ -23,4 +23,6 @@ public class LyricsInfo
     [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
     public ProviderLyricsAttribution? Attribution { get; set; }
     public IReadOnlyList<ProviderLyricsTimedLine>? TimedLines { get; set; }
+
+    internal LyricsInfo Copy() => (LyricsInfo)MemberwiseClone();
 }

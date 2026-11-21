@@ -7,6 +7,7 @@ internal sealed record LyricsScore(double Score, IReadOnlyList<string> Reasons, 
 
 internal static class LyricsQuality
 {
+    // Stored lyric checks remember this score by payload and song length, so read nothing else from the song.
     internal static LyricsScore? Evaluate(LyricsInfo? lyrics, Song song, long? recordingDurationMs = null)
     {
         var rich = RichLyricsMapper.Map(lyrics);
