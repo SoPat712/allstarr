@@ -49,12 +49,13 @@ public sealed class V2PlaybackReader(V2TrackReader tracks, ProviderStreamOpener 
         var routed = parsed.isExternal
             ? await streams.InspectSourceAsync(execution, parsed.provider!, parsed.externalId!, quality) : null;
         // Some services only know a song's format once they have fetched it. A download is promised a format, a length
-        // and byte ranges, so its song is fetched first; anything else starts at once and is judged when it opens.
+        // and byte ranges, so its song is fetched first and the fetched file is opened to read them; anything else
+        // starts at once and is judged when it opens.
         if (routed is { Response.IsSuccessStatusCode: true } && request.Purpose == "download" && Unknown(routed.FileFacts.Media ?? routed.Lease.Media))
         {
             routed.Response.Dispose();
             await preparation.PrepareAsync(execution with { PreparationQuality = quality }, item);
-            routed = await streams.InspectSourceAsync(execution, parsed.provider!, parsed.externalId!, quality);
+            routed = await streams.InspectSourceAsync(execution, parsed.provider!, parsed.externalId!, quality, open: true);
         }
         using var inspected = parsed.isExternal
             ? routed?.Response
@@ -89,7 +90,7 @@ public sealed class V2PlaybackReader(V2TrackReader tracks, ProviderStreamOpener 
             }));
         var held = copy == null ? null : downloads!.Find(copy);
         var ticket = new V2PlaybackTicket(execution.Principal!.UserId, execution.BackendInstanceId,
-            execution.VerifiedBackendPrincipalId, item, tier, playback, quality, Unknown(source) ? delivery : Freeze(delivery, delivered), source)
+            execution.VerifiedBackendPrincipalId, item, tier, playback, quality, Pinned(parsed.isExternal, tier, source) ? Freeze(delivery, delivered) : delivery, source)
         { DeviceId = execution.Client.DeviceId, TrackId = V2AutoplayReader.Identity(track), Copy = copy, Purpose = request.Purpose };
         var lowered = tier != request.Tier || LimitChanged(source, step, request.Tier)
             ? !parsed.isExternal || step != household.AudioQuality ? "listener" : "household" : null;
@@ -101,7 +102,7 @@ public sealed class V2PlaybackReader(V2TrackReader tracks, ProviderStreamOpener 
             await preparation.PrepareAsync(execution with { PreparationQuality = quality }, item);
         serving.Remember(execution, playback, expires);
         return new($"{http.Request.Scheme}://{http.Request.Host}{http.Request.PathBase}/allstarr/v2/stream/" + tokens.Protect(ticket, expires), expires, playback, key, Format(source), Format(delivered),
-            converted, converted ? held?.Length : inspected.Content.Headers.ContentLength,
+            converted, converted ? held?.Length : inspected.Content.Headers.ContentLength is > 0 and var length ? length : null,
             copy != null || !converted && (routed?.Lease.SupportsByteRanges == true || inspected.Headers.AcceptRanges.Contains("bytes")) ? "bytes" : "none",
             track.TrackGainDb, track.AlbumGainDb, new(provider, (registry.TryGet(provider, out var descriptor) ? descriptor!.DisplayName : null) ?? track.Provider?.Name ?? provider), reason, lowered)
         { Serving = await ServingAsync(http, execution, track, item) };
@@ -287,9 +288,12 @@ public sealed class V2PlaybackReader(V2TrackReader tracks, ProviderStreamOpener 
     private static ProviderMediaFormat Media(V2Format? format) => format?.Codec is not { } codec || format.Container is not { } container
         ? throw new ProviderAudioProfileException("Library audio format is unavailable.")
         : new("application/octet-stream", container, codec, format.Bitrate, format.SampleRate, format.BitDepth, format.Channels);
-    // A format not known yet cannot be promised: the link then carries the tier's own limits, and the source that opens
-    // is held to those, instead of to a codec named "unknown" that no source has.
     private static bool Unknown(ProviderMediaFormat media) => media.Codec == "unknown" || media.Container == "unknown";
+    // A link is pinned to the format resolve promised, so that a source that changed is converted back to it. That
+    // cannot be done for a format not known yet, and must not be done for a service song asked for as it is: what a
+    // service says about a song before sending it is approximate, nothing may be converted, and so any difference
+    // would refuse the song. Such a link carries the tier's own limits and is judged when it opens.
+    private static bool Pinned(bool service, string tier, ProviderMediaFormat source) => !Unknown(source) && !(service && tier == "original");
     private static ProviderAudioDeliveryRequest Freeze(ProviderAudioDeliveryRequest request, ProviderMediaFormat media) => request with
     {
         Formats = [new([media.Container], [media.Codec], ["http"])],

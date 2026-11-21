@@ -365,6 +365,25 @@ public sealed partial class ProtocolRouteFixtureTests
     }
 
     [Fact]
+    public async Task ClientApiV2_AServiceSongAskedForAsItIsPlaysWhenItTurnsOutSlightlyDifferent()
+    {
+        // What a service says about a song before sending it is approximate: here the bitrate differs and the sample
+        // rate was not given at all. Nothing may be converted at this tier, so the song must not be refused for it.
+        var opened = 0;
+        using var factory = V2PlaybackFactory(source: () => V2ServiceAudioOf(Interlocked.Increment(ref opened) == 1
+            ? new("audio/mpeg", "mp3", "mp3", 128000) : new("audio/mpeg", "mp3", "mp3", 131072, 44100, null, 2)));
+        using var client = CreateClientApiClient(factory);
+        client.DefaultRequestHeaders.Authorization = new("Bearer", "listener-token");
+        await SeedV2DetailsAsync(factory, "listener", "known", personal: true);
+        var body = await ResolveV2Playback(client, "ext-deezer-song-known", "original", diagnostics: factory);
+        Assert.Equal("mp3", body["delivered"]!["codec"]!.GetValue<string>());
+        client.DefaultRequestHeaders.Authorization = null;
+        using var response = await client.GetAsync(body["url"]!.GetValue<string>());
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(10, (await response.Content.ReadAsByteArrayAsync()).Length);
+    }
+
+    [Fact]
     public async Task ClientApiV2_ADownloadOfAServiceSongWhoseFormatIsNotKnownYetFetchesItFirst()
     {
         var fetched = false;
@@ -716,9 +735,10 @@ public sealed partial class ProtocolRouteFixtureTests
             new("audio/flac", "flac", "flac", 2000000, 96000, 24, 2), ProviderStreamRetryBehavior.DoNotRetry),
         "deezer", "known", IsCached: cached);
 
-    private static ProtocolProviderStream V2ServiceAudioOfUnknownFormat() => new(V2AudioResponse(),
-        new("fixture", new("https://fixture.invalid/audio"), DateTimeOffset.UtcNow.AddMinutes(1), true, true,
-            new("application/octet-stream", "unknown", "unknown"), ProviderStreamRetryBehavior.DoNotRetry),
+    private static ProtocolProviderStream V2ServiceAudioOfUnknownFormat() => V2ServiceAudioOf(new("application/octet-stream", "unknown", "unknown"));
+
+    private static ProtocolProviderStream V2ServiceAudioOf(ProviderMediaFormat media) => new(V2AudioResponse(),
+        new("fixture", new("https://fixture.invalid/audio"), DateTimeOffset.UtcNow.AddMinutes(1), true, true, media, ProviderStreamRetryBehavior.DoNotRetry),
         "deezer", "known", IsCached: false);
 
     private static HttpResponseMessage V2AudioResponse(HttpRequestMessage? request = null)
