@@ -458,6 +458,48 @@ public sealed partial class ProtocolRouteFixtureTests
     }
 
     [Fact]
+    public async Task ClientApiV2_AServiceSongsCopyIsFoundAgainOnceItsSourceHasMovedIntoTheCache()
+    {
+        var made = 0;
+        string? stored = null;
+        var copy = Enumerable.Range(0, 64).Select(value => (byte)value).ToArray();
+        using var factory = V2PlaybackFactory(source: () => stored == null ? V2ServiceAudio(false) : V2ServiceAudio() with { StoredFilePath = stored },
+            converted: _ =>
+            {
+                Interlocked.Increment(ref made);
+                return new(HttpStatusCode.OK) { Content = new ByteArrayContent(copy) };
+            });
+        using var client = CreateClientApiClient(factory);
+        client.DefaultRequestHeaders.Authorization = new("Bearer", "listener-token");
+        await SeedV2DetailsAsync(factory, "listener", "known", personal: true);
+        var first = await ResolveV2Playback(client, "ext-deezer-song-known", "low", purpose: "download", diagnostics: factory);
+        client.DefaultRequestHeaders.Authorization = null;
+        using var whole = await client.GetAsync(first["url"]!.GetValue<string>());
+        Assert.Equal(copy, await whole.Content.ReadAsByteArrayAsync());
+
+        // Fetching the song moved its source from the service into the server's cache, which is a different source to
+        // stream from. The copy already made is still the one a new link serves.
+        stored = Path.Combine(Path.GetTempPath(), "allstarr-test-cached-" + Guid.NewGuid().ToString("N") + ".flac");
+        await File.WriteAllBytesAsync(stored, new byte[10]);
+        try
+        {
+            client.DefaultRequestHeaders.Authorization = new("Bearer", "listener-token");
+            var second = await ResolveV2Playback(client, "ext-deezer-song-known", "low", purpose: "download", diagnostics: factory);
+            Assert.NotEqual(first["cacheKey"]!.GetValue<string>(), second["cacheKey"]!.GetValue<string>());
+            Assert.Equal(copy.Length, second["contentLength"]!.GetValue<long>());
+            client.DefaultRequestHeaders.Authorization = null;
+            using var resume = new HttpRequestMessage(HttpMethod.Get, second["url"]!.GetValue<string>());
+            resume.Headers.Range = new(60, null);
+            resume.Headers.IfRange = new(whole.Headers.ETag!);
+            using var rest = await client.SendAsync(resume);
+            Assert.Equal(HttpStatusCode.PartialContent, rest.StatusCode);
+            Assert.Equal(copy[60..], await rest.Content.ReadAsByteArrayAsync());
+            Assert.Equal(1, made);
+        }
+        finally { File.Delete(stored); }
+    }
+
+    [Fact]
     public async Task ClientApiV2_AConvertedDownloadSaysWhenToAskAgainWhileTheConverterIsBusy()
     {
         using var factory = V2PlaybackFactory(converted: _ =>

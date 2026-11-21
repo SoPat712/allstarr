@@ -64,7 +64,19 @@ public sealed class V2PlaybackReader(V2TrackReader tracks, ProviderStreamOpener 
         var playback = Guid.NewGuid().ToString("N");
         var expires = clock.GetUtcNow().AddHours(12);
         // A download of a converted tier is made once into a file and served from it, so it has a length and can resume.
-        var copy = converted && request.Purpose == "download" && downloads != null ? key : null;
+        // A service song's copy is named by the song at the service, not by where its source sits: the first download
+        // moves the source into the server's cache, and a link resolved after that must still find the same copy.
+        var copy = !converted || request.Purpose != "download" || downloads == null ? null
+            : routed == null ? key
+            : Hash(JsonSerializer.Serialize(new
+            {
+                track.Id,
+                tier = request.Tier,
+                delivered = Format(delivered),
+                delivered.Channels,
+                provider = routed.ServingProviderId,
+                externalId = routed.ServingExternalId ?? parsed.externalId
+            }));
         var held = copy == null ? null : downloads!.Find(copy);
         var ticket = new V2PlaybackTicket(execution.Principal!.UserId, execution.BackendInstanceId,
             execution.VerifiedBackendPrincipalId, item, tier, playback, quality, Freeze(delivery, delivered), source)
