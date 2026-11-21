@@ -42,6 +42,31 @@ public sealed partial class ProtocolProviderGateway
             ? new PlaybackStartCandidate(index, cached ?? media, measurement?.MedianStart, cached != null, media) : null;
     }
 
+    /// <summary>
+    /// What is known about each source's start and the order a start tries them in: sources in good health first, each
+    /// group in the listener's start preference. A real start and the service a row forecasts both read this, so the
+    /// forecast names the source a tap begins with.
+    /// </summary>
+    private async Task<(List<PlaybackStartCandidate> Facts, int[] Order)> OrderStartAsync(ProtocolExecutionContext protocol,
+        IReadOnlyList<ProviderRouteCandidate<IProviderStreamingCapability>> eligible, ProviderExternalResourceId requestedTrack,
+        ProviderAudioQuality quality, string mode, int sideBySide = 8)
+    {
+        // Each source's checks read stored facts. One after another they cost most of a second before the first request,
+        // so they run side by side, a few at a time.
+        using var checks = new SemaphoreSlim(sideBySide);
+        var gathered = await Task.WhenAll(eligible.Select(async (candidate, index) =>
+        {
+            await checks.WaitAsync(protocol.CancellationToken);
+            try { return await ReadPlaybackStartCandidateAsync(protocol, candidate, requestedTrack, quality, index); }
+            finally { checks.Release(); }
+        }));
+        var facts = gathered.OfType<PlaybackStartCandidate>().ToList();
+        var failing = eligible.Select(candidate => HasFailingPlaybackHealth(protocol, candidate)).ToArray();
+        var order = PlaybackStartPolicy.Order(mode, facts.Where(fact => fact.IsCached || !failing[fact.Index]).ToArray())
+            .Concat(PlaybackStartPolicy.Order(mode, facts.Where(fact => !fact.IsCached && failing[fact.Index]).ToArray())).ToArray();
+        return (facts, order);
+    }
+
     private async Task<ProtocolProviderStream?> OpenWithStartPreferenceAsync(ProtocolExecutionContext protocol,
         ProviderRoutePlan<IProviderStreamingCapability> plan, ProviderExternalResourceId requestedTrack,
         ProviderAudioQuality quality, EffectiveProviderPolicySnapshot policy,
@@ -62,16 +87,7 @@ public sealed partial class ProtocolProviderGateway
                 (candidate.TrackId ?? requestedTrack).Value)).Take(32).ToArray();
         var mode = policy.Preferences.PlaybackStart ?? "Balanced";
         var qualityMode = mode == "FastStart" && (protocol.IsPreparation || protocol.IsOriginalDownload) ? "Balanced" : mode;
-        // Each source's checks read stored facts. One after another they cost most of a second before the first request,
-        // so they run side by side, a few at a time.
-        using var checks = new SemaphoreSlim(8);
-        var gathered = await Task.WhenAll(eligible.Select(async (candidate, index) =>
-        {
-            await checks.WaitAsync(protocol.CancellationToken);
-            try { return await StartFactsAsync(candidate, index); }
-            finally { checks.Release(); }
-        }));
-        var facts = gathered.OfType<PlaybackStartCandidate>().ToList();
+        var (facts, order) = await OrderStartAsync(protocol, eligible, requestedTrack, quality, qualityMode);
         var cooldownFailure = facts.Count == 0
             ? eligible.Select(candidate => outcomes?.GetPlaybackCooldownFailure(candidate.Context, candidate.TrackId ?? requestedTrack, quality))
                 .FirstOrDefault(error => error != null)
@@ -80,11 +96,6 @@ public sealed partial class ProtocolProviderGateway
             return await OpenWithStartPreferenceAsync(protocol, refreshedSources, requestedTrack, quality, policy,
                 startDeadline, transferDeadline, requestedRange, startDeadlineCancellation, streamCancellation,
                 opened, resolveAvailability, attempted, originalFailure: originalFailure ?? cooldownFailure);
-        Task<PlaybackStartCandidate?> StartFactsAsync(ProviderRouteCandidate<IProviderStreamingCapability> candidate, int index) =>
-            ReadPlaybackStartCandidateAsync(protocol, candidate, requestedTrack, quality, index);
-        var failing = eligible.Select(candidate => HasFailingPlaybackHealth(protocol, candidate)).ToArray();
-        var order = PlaybackStartPolicy.Order(qualityMode, facts.Where(fact => fact.IsCached || !failing[fact.Index]).ToArray())
-            .Concat(PlaybackStartPolicy.Order(qualityMode, facts.Where(fact => !fact.IsCached && failing[fact.Index]).ToArray())).ToArray();
         var startReason = mode switch
         {
             "FastStart" => "playback-start-fast",
@@ -166,7 +177,7 @@ public sealed partial class ProtocolProviderGateway
             }
             var added = found?.Candidates.FirstOrDefault(candidate => IsAutomaticProvider(candidate.Provider.Id, policy) &&
                 !attempted.Contains((candidate.Provider.Id, candidate.Context.Account?.AccountId, (candidate.TrackId ?? requestedTrack).Value)));
-            if (added == null || await StartFactsAsync(added, plan.Candidates.Count) is not { } fact) return none;
+            if (added == null || await ReadPlaybackStartCandidateAsync(protocol, added, requestedTrack, quality, plan.Candidates.Count) is not { } fact) return none;
             var patience = PlaybackStartPolicy.HedgeDelay(mode, quality, fact.Media) - PlaybackStartPolicy.HedgeDelay(mode);
             if (patience > TimeSpan.Zero) await Task.Delay(patience, clock, cancellation);
             plan = plan with { Candidates = [.. plan.Candidates, added] };

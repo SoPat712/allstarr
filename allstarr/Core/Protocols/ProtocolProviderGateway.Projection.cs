@@ -20,12 +20,10 @@ public sealed partial class ProtocolProviderGateway
         var plan = await router.PlanAsync<IProviderStreamingCapability>(Request(protocol, protocol.RequireActor(),
             ProviderCapabilityKind.Streaming, "protocol-stream-open", order, track, quality,
             allowFallback: true, allowManagedDownloads: true));
-        var candidates = plan.Candidates.Where(candidate => IsAutomaticProvider(candidate.Provider.Id, policy)).Take(32).ToArray();
-        var facts = new List<PlaybackStartCandidate>();
-        for (var index = 0; index < candidates.Length; index++)
-            if (await ReadPlaybackStartCandidateAsync(protocol, candidates[index], track, quality, index) is { } fact)
-                facts.Add(fact);
-        var selected = PlaybackStartPolicy.Order(policy?.Preferences.PlaybackStart ?? "Balanced", facts).FirstOrDefault(-1);
-        return selected < 0 ? null : candidates[selected].Provider.Id;
+        var candidates = plan.Candidates.Where(candidate => IsAutomaticProvider(candidate.Provider.Id, policy))
+            .DistinctBy(candidate => (candidate.Provider.Id, candidate.Context.Account?.AccountId, (candidate.TrackId ?? track).Value)).Take(32).ToArray();
+        // A list asks this for every row at once, so each row reads its sources a couple at a time.
+        var (_, tried) = await OrderStartAsync(protocol, candidates, track, quality, policy?.Preferences.PlaybackStart ?? "Balanced", sideBySide: 2);
+        return tried.Length == 0 ? null : candidates[tried[0]].Provider.Id;
     }
 }

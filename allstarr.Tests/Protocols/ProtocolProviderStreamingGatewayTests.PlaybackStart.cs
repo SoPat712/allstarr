@@ -218,6 +218,37 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         first.Verify(item => item.GetStreamLeaseAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderStreamLeaseRequest>()), Times.Never);
     }
 
+    [Theory]
+    [InlineData("nothing timed", "deezer")]
+    [InlineData("later source timed", "qobuz")]
+    [InlineData("first source slow", "qobuz")]
+    [InlineData("first source failing", "qobuz")]
+    public async Task ARowsForecastNamesTheSourceATapStartsWith(string state, string expected)
+    {
+        var first = Streaming("deezer", (_, _) => Task.FromResult(AudioResponse()));
+        var second = Streaming("qobuz", (_, _) => Task.FromResult(AudioResponse()));
+        var cd = new ProviderMediaFormat("audio/flac", "flac", "flac", null, 44100, 16, 2);
+        first.As<IProviderAudioFormatSource>().Setup(item => item.PreferredFormat(It.IsAny<ProviderAudioQuality>())).Returns(cd);
+        second.As<IProviderAudioFormatSource>().Setup(item => item.PreferredFormat(It.IsAny<ProviderAudioQuality>())).Returns(cd);
+        var observer = new Mock<IProviderOutcomeObserver>();
+        observer.Setup(item => item.GetPlaybackStart(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderAudioQuality>()))
+            .Returns((ProviderExecutionContext context, ProviderAudioQuality _) => (state, context.ProviderId) switch
+            {
+                ("later source timed", "qobuz") or ("first source slow", "qobuz") => new PlaybackStartObservation(TimeSpan.FromMilliseconds(600), cd),
+                ("first source slow", "deezer") => new PlaybackStartObservation(TimeSpan.FromSeconds(5), cd),
+                _ => null
+            });
+        var statuses = PlaybackStatuses();
+        RestorePlaybackCheck(statuses, "deezer", "streaming", state != "first source failing", DateTimeOffset.UtcNow);
+        RestorePlaybackCheck(statuses, "qobuz", "streaming", true, DateTimeOffset.UtcNow);
+        var (gateway, _) = FailoverGateway(first, second, outcomes: observer.Object, providerStatuses: statuses);
+
+        Assert.Equal(expected, await gateway.GetStreamingProviderAsync(StartPreferenceContext("Balanced"), "deezer", "source-track"));
+        using var response = (await gateway.OpenStreamAsync(StartPreferenceContext("Balanced"),
+            "deezer", "source-track", ProviderAudioQuality.Any, null))!.Response;
+        Assert.Equal(expected, Assert.Single(response.Headers.GetValues("X-Allstarr-Provider")));
+    }
+
     [Fact]
     public async Task PlaybackStartKeepsAFailingSourceAsTheLastResort()
     {
