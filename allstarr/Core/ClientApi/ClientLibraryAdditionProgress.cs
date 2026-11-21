@@ -29,7 +29,7 @@ internal static class ClientLibraryAdditionProgress
         var scanning = Scanning(value, run);
         var step = value.State switch
         {
-            "adding" => Step(run.Step) ?? "fetching",
+            "adding" => Current(tracks, album.Profile.ReplayGain) ?? Step(run.Step) ?? "fetching",
             "done" when scanning => "scanning",
             _ => null
         };
@@ -103,8 +103,21 @@ internal static class ClientLibraryAdditionProgress
     private static int Done(PromotionTrack track, bool loudness, int beforeScan)
     {
         if (track.Outcome is "Placed" or "Skipped") return beforeScan;
-        bool Has(string name) => track.Steps.Any(step => step.Name == name && step.Outcome != "Needs review" && step.Outcome != "Running");
-        return new[] { Has("Acquire"), Has("Ceiling"), Has("Lyrics"), Has("Tags"), loudness && Has("ReplayGain") }.Count(done => done);
+        return new[] { Has(track, "Acquire"), Has(track, "Ceiling"), Has(track, "Lyrics"), Has(track, "Tags"), loudness && Has(track, "ReplayGain") }.Count(done => done);
+    }
+
+    private static bool Has(PromotionTrack track, string name) =>
+        track.Steps.Any(step => step.Name == name && step.Outcome != "Needs review" && step.Outcome != "Running");
+
+    // The stage being worked on. The run records a stage when it ends, and the next one may take a while (a lyrics
+    // search, a copy to a slow disk): a notice that still named the finished stage would read as that stage hanging.
+    private static string? Current(IReadOnlyList<PromotionTrack> tracks, bool loudness)
+    {
+        if (tracks.FirstOrDefault(track => track.Outcome == "Queued") is { } track)
+            return !Has(track, "Acquire") ? "fetching" : !Has(track, "Ceiling") ? "checking" : !Has(track, "Lyrics") ? "lyrics" :
+                !Has(track, "Tags") ? "tagging" : loudness && !Has(track, "ReplayGain") ? "loudness" : "placing";
+        var ready = tracks.Where(track => track.Outcome == "Ready").ToArray();
+        return ready.Length == 0 ? null : loudness && ready.Any(track => !Has(track, "ReplayGain")) ? "loudness" : "placing";
     }
 
     private static string? Step(string? name) => name switch

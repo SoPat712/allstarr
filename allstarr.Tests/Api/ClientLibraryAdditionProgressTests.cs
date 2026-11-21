@@ -29,6 +29,33 @@ public sealed class ClientLibraryAdditionProgressTests
         Assert.Equal(("adding", "fetching", 0), (addition.State, addition.Step, addition.StepsDone));
     }
 
+    [Fact]
+    public void AStageIsNamedWhileItRunsAndNotOnceItHasEnded()
+    {
+        // The run last recorded the quality check, which is over: lyrics are being looked for now.
+        var track = Track("Check", "FLO", ("Acquire", "Complete"), ("Quality", "Complete"), ("Ceiling", "Complete"));
+        var addition = ClientLibraryAdditions.From(Run("Running", "Ceiling", "song", track));
+        Assert.Equal(("lyrics", "Looking for lyrics.", 2), (addition.Step, addition.Reason, addition.StepsDone));
+
+        // Loudness is measured and written; the file is on its way to the library.
+        track = Track("Check", "FLO", ("Acquire", "Complete"), ("Quality", "Complete"), ("Ceiling", "Complete"), ("Lyrics", "Complete"),
+            ("Tags", "Complete"), ("ReplayGain", "Complete"));
+        track.Outcome = "Ready";
+        addition = ClientLibraryAdditions.From(Run("Running", "ReplayGain", "song", track));
+        Assert.Equal(("placing", "Putting the file in the library.", 5), (addition.Step, addition.Reason, addition.StepsDone));
+
+        // Tagged and waiting for its loudness.
+        track = Track("Check", "FLO", ("Acquire", "Complete"), ("Quality", "Complete"), ("Ceiling", "Complete"), ("Lyrics", "None fits"), ("Tags", "Complete"));
+        track.Outcome = "Ready";
+        Assert.Equal("loudness", ClientLibraryAdditions.From(Run("Running", "Tags", "song", track)).Step);
+
+        // The second song of an album is being fetched while the first waits for the rest.
+        var first = Track("One", "Singer", ("Acquire", "Complete"), ("Quality", "Complete"), ("Ceiling", "Complete"), ("Lyrics", "Complete"), ("Tags", "Complete"));
+        first.Outcome = "Ready";
+        var album = ClientLibraryAdditions.From(Run("Running", "Tags", "album", first, Track("Two", "Singer")));
+        Assert.Equal(("fetching", "Fetching the songs."), (album.Step, album.Reason));
+    }
+
     [Theory]
     [InlineData("unknown", "The audio quality check could not confirm this file, so it was not added. An administrator can decide in the dashboard.")]
     [InlineData("upsampled", "This file looks upsampled from a lower sample rate, so it was not added. An administrator can decide in the dashboard.")]
