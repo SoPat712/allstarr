@@ -18,8 +18,10 @@ public sealed class V2PlaybackReader(V2TrackReader tracks, ProviderStreamOpener 
     JellyfinProxyService jellyfin, IEffectiveProviderPolicyResolver policies, IUpcomingTrackPreparation preparation,
     BackendIdentityResolver identities, IdentityOptions identityOptions, ProtocolStreamingResponseAdapter responses,
     IProviderRegistry registry, TimeProvider clock, MediaConversionGate conversions, V2ServingStreams serving, PlaybackReader current,
-    V2ConvertedDownloads? downloads = null)
+    V2ConvertedDownloads? downloads = null, ILogger<V2PlaybackReader>? logger = null)
 {
+    private const string ServedFromCopy = "allstarr.v2.stream.copy";
+
     internal static bool ValidTier(string tier) => tier is "lossless" or "high" or "normal" or "low" or "lowest" or "original";
 
     public async Task<V2Result> ResolveAsync(HttpContext http, ProtocolExecutionContext execution, V2PlaybackRequest request)
@@ -80,7 +82,7 @@ public sealed class V2PlaybackReader(V2TrackReader tracks, ProviderStreamOpener 
         var held = copy == null ? null : downloads!.Find(copy);
         var ticket = new V2PlaybackTicket(execution.Principal!.UserId, execution.BackendInstanceId,
             execution.VerifiedBackendPrincipalId, item, tier, playback, quality, Freeze(delivery, delivered), source)
-        { DeviceId = execution.Client.DeviceId, TrackId = V2AutoplayReader.Identity(track), Copy = copy };
+        { DeviceId = execution.Client.DeviceId, TrackId = V2AutoplayReader.Identity(track), Copy = copy, Purpose = request.Purpose };
         var lowered = tier != request.Tier || LimitChanged(source, step, request.Tier)
             ? !parsed.isExternal || step != household.AudioQuality ? "listener" : "household" : null;
         var reason = routed?.SelectionReason ?? "library";
@@ -134,6 +136,7 @@ public sealed class V2PlaybackReader(V2TrackReader tracks, ProviderStreamOpener 
         PlaybackStartTimings.Current?.Correlate(Guid.Parse(ticket.PlaybackId));
         http.Response.Headers["X-Allstarr-Playback-Request"] = ticket.PlaybackId;
         http.Response.OnStarting(() => { http.Response.Headers["X-Allstarr-Playback-Request"] = ticket.PlaybackId; return Task.CompletedTask; });
+        Note(http, ticket);
         var conversion = ProviderAudioTranscoder.Plan(ticket.Delivery, ticket.Source);
         if (conversion != null && ticket.Copy != null && downloads != null && await OpenCopyAsync(http, ticket, conversion) is { } file) return file;
         if (conversion != null)
@@ -165,6 +168,53 @@ public sealed class V2PlaybackReader(V2TrackReader tracks, ProviderStreamOpener 
     }
 
     /// <summary>
+    /// Notes each stream request once it has ended: what was asked for and how much of it went out. A request the
+    /// listener's app cut off leaves no other trace, and on a poor connection the question is whether the next request
+    /// picked up where this one stopped or started over.
+    /// </summary>
+    private void Note(HttpContext http, V2PlaybackTicket ticket)
+    {
+        if (logger == null) return;
+        var rangeAsked = http.Request.Headers.ContainsKey("Range");
+        var started = clock.GetTimestamp();
+        var body = new CountedBody(http.Response.Body);
+        http.Response.Body = body;
+        http.Response.OnCompleted(() =>
+        {
+            logger.LogInformation(
+                "Stream request ended: {Method} of a {Kind} song at tier {Tier} for {Purpose}, {Delivery}; answered {StatusCode}, sent {SentBytes} of {LengthBytes} bytes, range asked {RangeAsked}, client left {ClientLeft}, {ElapsedMs} ms",
+                http.Request.Method, LocalLibraryService.ParseExternalResource(ticket.Item).isExternal ? "service" : "library", ticket.Tier,
+                ticket.Purpose ?? "play", http.Items.ContainsKey(ServedFromCopy) ? "from a kept copy" : "as it is read",
+                http.Response.StatusCode, body.Sent, http.Response.ContentLength, rangeAsked, http.RequestAborted.IsCancellationRequested,
+                (long)clock.GetElapsedTime(started).TotalMilliseconds);
+            return Task.CompletedTask;
+        });
+    }
+
+    private sealed class CountedBody(Stream inner) : Stream
+    {
+        private long sent;
+        public long Sent => Interlocked.Read(ref sent);
+        public override bool CanRead => false;
+        public override bool CanSeek => false;
+        public override bool CanWrite => inner.CanWrite;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+        public override void Flush() => inner.Flush();
+        public override Task FlushAsync(CancellationToken token) => inner.FlushAsync(token);
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => WriteAsync(buffer.AsMemory(offset, count)).AsTask().GetAwaiter().GetResult();
+        public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken token) => WriteAsync(buffer.AsMemory(offset, count), token).AsTask();
+        public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken token = default)
+        {
+            await inner.WriteAsync(buffer, token);
+            Interlocked.Add(ref sent, buffer.Length);
+        }
+    }
+
+    /// <summary>
     /// A download's converted copy as a file with a length and byte ranges, made first when it is not held yet: the
     /// conversion is read from this server's own stream route, so it is the stream a listener would have been sent.
     /// Null for a HEAD before the copy exists, which is answered as any conversion is.
@@ -187,6 +237,7 @@ public sealed class V2PlaybackReader(V2TrackReader tracks, ProviderStreamOpener 
             }
             copy = made.File;
         }
+        http.Items[ServedFromCopy] = true;
         http.Response.Headers["X-Allstarr-Audio-Codec"] = conversion.Media.Codec;
         http.Response.Headers["X-Allstarr-Audio-Container"] = conversion.Media.Container;
         if (conversion.Media.Bitrate is { } bitrate)

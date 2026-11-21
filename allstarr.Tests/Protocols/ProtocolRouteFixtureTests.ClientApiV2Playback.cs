@@ -351,8 +351,9 @@ public sealed partial class ProtocolRouteFixtureTests
     public async Task ClientApiV2_AConvertedDownloadIsAFileThatCanResume(string tier, int bitrate)
     {
         var asked = new List<string>();
+        var notes = new StreamNotes();
         var copy = Enumerable.Range(0, 64).Select(value => (byte)value).ToArray();
-        using var factory = V2PlaybackFactory(converted: request =>
+        using var factory = V2PlaybackFactory(configure: services => services.AddSingleton<ILogger<V2PlaybackReader>>(notes), converted: request =>
         {
             lock (asked) asked.Add(request.RequestUri!.Host + ":" + request.RequestUri.Port);
             return new(HttpStatusCode.OK) { Content = new ByteArrayContent(copy) };
@@ -397,6 +398,15 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.Equal(copy[60..], await rest.Content.ReadAsByteArrayAsync());
         Assert.Equal(new(60, 63, 64), rest.Content.Headers.ContentRange);
         Assert.Single(asked);
+        // Each request leaves a note of what went out, so a resume can be told from a restart afterwards.
+        var note = await notes.WaitAsync(item => Equals(item["StatusCode"], 206));
+        Assert.Equal(4L, note["SentBytes"]);
+        Assert.Equal(true, note["RangeAsked"]);
+        Assert.Equal("download", note["Purpose"]);
+        Assert.Equal(tier, note["Tier"]);
+        Assert.Equal("library", note["Kind"]);
+        Assert.Equal("from a kept copy", note["Delivery"]);
+        Assert.Equal(false, note["ClientLeft"]);
 
         // A new link for the same song and tier names the same copy and now knows its size.
         client.DefaultRequestHeaders.Authorization = new("Bearer", "listener-token");
@@ -619,6 +629,28 @@ public sealed partial class ProtocolRouteFixtureTests
             services.AddSingleton(gateway.Object);
             configure?.Invoke(services);
         });
+    }
+
+    private sealed class StreamNotes : ILogger<V2PlaybackReader>
+    {
+        private readonly System.Collections.Concurrent.ConcurrentQueue<IReadOnlyDictionary<string, object?>> notes = new();
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel level) => true;
+        public void Log<TState>(LogLevel level, EventId id, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+            if (state is IEnumerable<KeyValuePair<string, object?>> values) notes.Enqueue(values.ToDictionary(pair => pair.Key, pair => pair.Value));
+        }
+
+        // The note is written when the response has gone out, a moment after the client has it.
+        public async Task<IReadOnlyDictionary<string, object?>> WaitAsync(Func<IReadOnlyDictionary<string, object?>, bool> match)
+        {
+            for (var attempt = 0; attempt < 100; attempt++)
+            {
+                if (notes.FirstOrDefault(item => item.ContainsKey("StatusCode") && match(item)) is { } found) return found;
+                await Task.Delay(50);
+            }
+            throw new Xunit.Sdk.XunitException("No stream request left a matching note.");
+        }
     }
 
     private sealed class V2PlaybackErrors : ILogger<ClientApiMiddleware>

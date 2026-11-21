@@ -28,4 +28,6 @@ internal sealed record V2PlaybackTicket(Guid Listener, string Backend, string Pr
     public string? TrackId { get; init; }
     /// <summary>The key of the converted copy a download is served from; null for a stream converted as it is sent.</summary>
     public string? Copy { get; init; }
+    /// <summary>What the link was asked for (play, prefetch, download or cast), for the note a stream request leaves.</summary>
+    public string? Purpose { get; init; }
 }
