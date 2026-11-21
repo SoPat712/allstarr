@@ -277,6 +277,16 @@ public sealed partial class TasteService(IDbContextFactory<AllstarrDbContext> fa
                 document.Occurrences[payload.OccurrenceKey ?? payload.SignalKey] = new(payload.ObservedAt, 0, 0, true);
                 return;
             }
+            // A dated play arrives whole: what was heard teaches as a live play's stop would, without a start to measure from.
+            if (payload.Dated)
+            {
+                var heard = TimeSpan.FromTicks(payload.PositionTicks ?? 0);
+                if (ScopedPlaybackScrobbleDelivery.EligibleForCompletedScrobble(track.DurationMilliseconds, heard.Ticks))
+                    Learn(document, occurrence, song, features[song], 1, payload.ObservedAt, true, history: true);
+                else if (track.DurationMilliseconds is > 0)
+                    Learn(document, occurrence, song, features[song], heard.TotalMilliseconds < track.DurationMilliseconds * .25 ? -1 : -.3, payload.ObservedAt, false, history: true);
+                return;
+            }
             if (payload.Transition == PlaybackTransition.Submission)
             {
                 if (!payload.Paused) Learn(document, occurrence, song, features[song], 1, payload.ObservedAt, true, history: true);

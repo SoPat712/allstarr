@@ -64,7 +64,9 @@ public sealed class V2SessionReader(IDurableRuntimeSettings settings, LibraryPro
                 ["artistIdentity"] = true,
                 ["albumIdentity"] = true,
                 // A service song's measured loudness arrives as trackGainDb, announced by track.updated with changed ["loudness"].
-                ["trackLoudness"] = true
+                ["trackLoudness"] = true,
+                // Plays heard offline are sent once each to /me/plays with their real time.
+                ["datedPlays"] = true
             }, string.IsNullOrEmpty(address) ? null : new(address), new(mark.Id, mark.Name, mark.IconUrl, mark.GlyphUrl),
             new(adding.CanAddDirectly, adding.RequiresApproval, adding.DefaultUnit) { SetupNeeded = adding.SetupNeeded }));
     }

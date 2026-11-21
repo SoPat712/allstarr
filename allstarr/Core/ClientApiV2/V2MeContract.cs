@@ -127,3 +127,20 @@ public sealed record V2LibraryChoice(
 public sealed record V2MusicLibrary(
     [property: JsonPropertyName("id")] string Id,
     [property: JsonPropertyName("name")] string Name);
+
+public sealed record V2DatedPlaysRequest(
+    [property: JsonPropertyName("plays"), Description("1 to 50 plays heard while the app could not report them, each sent once.")] IReadOnlyList<V2DatedPlay> Plays);
+
+public sealed record V2DatedPlay(
+    [property: JsonPropertyName("trackId"), Description("The track in any accepted spelling: a library item, a trk_ id or a service alias.")] string TrackId,
+    [property: JsonPropertyName("startedAt"), Description("When the song started playing; within the last 60 days.")] DateTimeOffset StartedAt,
+    [property: JsonPropertyName("playedSeconds"), Description("Seconds heard, from 0 to 86400.")] double PlayedSeconds,
+    [property: JsonPropertyName("playSessionId"), Description("The id the app gave this play; the same id again from this listener answers duplicate.")] string PlaySessionId,
+    [property: JsonPropertyName("durationSeconds"), Description("The song's length, used when the server does not know it.")] double? DurationSeconds = null);
+
+public sealed record V2DatedPlaysResponse(
+    [property: JsonPropertyName("results"), Description("One result per play, in request order.")] IReadOnlyList<V2DatedPlayResult> Results);
+
+public sealed record V2DatedPlayResult(
+    [property: JsonPropertyName("playSessionId")] string PlaySessionId,
+    [property: JsonPropertyName("state"), Description("counted, tooShort, duplicate or unknownTrack. Every state is final.")] string State);

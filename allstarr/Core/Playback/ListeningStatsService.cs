@@ -295,7 +295,7 @@ public sealed partial class ListeningStatsService(IDbContextFactory<AllstarrDbCo
             : new DateTimeOffset(TimeZoneInfo.ConvertTimeToUtc(local, zone));
     }
 
-    private const long CountedPlayTicks = 30 * TimeSpan.TicksPerSecond;
+    internal const long CountedPlayTicks = 30 * TimeSpan.TicksPerSecond;
 
     internal static IQueryable<ListeningEventRecord> ListenedQuery(AllstarrDbContext db, IntelligenceScope scope) =>
         db.ListeningEvents.AsNoTracking().Where(item => item.OwnerUserId == scope.OwnerUserId &&

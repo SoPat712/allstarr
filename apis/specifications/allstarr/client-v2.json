@@ -1688,6 +1688,97 @@
         }
       }
     },
+    "/allstarr/v2/me/plays": {
+      "post": {
+        "tags": [
+          "Me"
+        ],
+        "description": "Records 1 to 50 plays the app heard while it could not report them, each dated when it was heard (session feature datedPlays). A play counts as a live one would and never changes what is playing now. Results follow the request order and are final: counted, tooShort (under 30 seconds, not kept), duplicate (this listener already sent or reported this playSessionId) or unknownTrack. Cannot be batched.",
+        "operationId": "recordMyDatedPlaysV2",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/V2DatedPlaysRequest"
+              }
+            },
+            "text/json": {
+              "schema": {
+                "$ref": "#/components/schemas/V2DatedPlaysRequest"
+              }
+            },
+            "application/*+json": {
+              "schema": {
+                "$ref": "#/components/schemas/V2DatedPlaysRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V2DatedPlaysResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/allstarr/v2/me/history": {
       "get": {
         "tags": [
@@ -7875,6 +7966,89 @@
         "properties": {
           "url": {
             "type": "string"
+          }
+        }
+      },
+      "V2DatedPlay": {
+        "required": [
+          "trackId",
+          "startedAt",
+          "playedSeconds",
+          "playSessionId"
+        ],
+        "type": "object",
+        "properties": {
+          "trackId": {
+            "type": "string",
+            "description": "The track in any accepted spelling: a library item, a trk_ id or a service alias."
+          },
+          "startedAt": {
+            "type": "string",
+            "description": "When the song started playing; within the last 60 days.",
+            "format": "date-time"
+          },
+          "playedSeconds": {
+            "type": "number",
+            "description": "Seconds heard, from 0 to 86400.",
+            "format": "double"
+          },
+          "playSessionId": {
+            "type": "string",
+            "description": "The id the app gave this play; the same id again from this listener answers duplicate."
+          },
+          "durationSeconds": {
+            "type": [
+              "null",
+              "number"
+            ],
+            "description": "The song\u0027s length, used when the server does not know it.",
+            "format": "double"
+          }
+        }
+      },
+      "V2DatedPlayResult": {
+        "required": [
+          "playSessionId",
+          "state"
+        ],
+        "type": "object",
+        "properties": {
+          "playSessionId": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "description": "counted, tooShort, duplicate or unknownTrack. Every state is final."
+          }
+        }
+      },
+      "V2DatedPlaysRequest": {
+        "required": [
+          "plays"
+        ],
+        "type": "object",
+        "properties": {
+          "plays": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/V2DatedPlay"
+            },
+            "description": "1 to 50 plays heard while the app could not report them, each sent once."
+          }
+        }
+      },
+      "V2DatedPlaysResponse": {
+        "required": [
+          "results"
+        ],
+        "type": "object",
+        "properties": {
+          "results": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/V2DatedPlayResult"
+            },
+            "description": "One result per play, in request order."
           }
         }
       },

@@ -10,8 +10,16 @@ using Microsoft.AspNetCore.Mvc;
 namespace allstarr.Controllers.ClientApiV2;
 
 [Route("allstarr/v2/me")]
-public sealed class MeController(V2MeEndpoints me, RecapArtworkReader artwork, JellyfinProxyService jellyfin) : ClientApiV2ControllerBase
+public sealed class MeController(V2MeEndpoints me, RecapArtworkReader artwork, JellyfinProxyService jellyfin, V2DatedPlays datedPlays) : ClientApiV2ControllerBase
 {
+    [HttpPost("plays")]
+    [EndpointName("recordMyDatedPlaysV2")]
+    [EndpointDescription("Records 1 to 50 plays the app heard while it could not report them, each dated when it was heard (session feature datedPlays). A play counts as a live one would and never changes what is playing now. Results follow the request order and are final: counted, tooShort (under 30 seconds, not kept), duplicate (this listener already sent or reported this playSessionId) or unknownTrack. Cannot be batched.")]
+    [ProducesResponseType<V2DatedPlaysResponse>(200)]
+    [RequestSizeLimit(65536)]
+    public async Task<IActionResult> Plays([FromBody] V2DatedPlaysRequest request) =>
+        Respond(await datedPlays.RecordAsync(HttpContext, Execution, request));
+
     [HttpGet("history")]
     [EndpointName("getMyHistoryV2")]
     [EndpointDescription("Reads this listener's qualified plays, newest first. Current songs use V2Track; unavailable songs retain their recorded facts with a null track. Can be batched.")]

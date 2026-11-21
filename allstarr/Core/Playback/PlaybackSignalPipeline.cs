@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using allstarr.Core.Intelligence;
 using allstarr.Core.Jobs;
 using allstarr.Core.Protocols;
@@ -11,14 +12,19 @@ using Microsoft.EntityFrameworkCore;
 namespace allstarr.Core.Playback;
 
 public enum PlaybackTransition { Start, Progress, Stop, InferredStart, InferredStop, Submission }
+// A dated play is a whole play reported once, after the fact (an app that was offline): a Stop that never had a Start,
+// observed when it ended, with PositionTicks the time heard.
 public sealed record PlaybackSignalRequest(ProtocolExecutionContext ExecutionContext, PlaybackTransition Transition,
     string ItemId, string? DeviceId, string? PlaySessionId, long? PositionTicks, DateTimeOffset ObservedAt,
-    PlaybackTrackSnapshot? SubmittedTrack = null, bool RelayExternally = true, string SourceKind = "protocol", bool Paused = false, bool Failed = false);
+    PlaybackTrackSnapshot? SubmittedTrack = null, bool RelayExternally = true, string SourceKind = "protocol", bool Paused = false, bool Failed = false,
+    bool Dated = false, long? DurationMilliseconds = null);
 public sealed record PlaybackSignalPayload(IntelligenceScope Scope, PlaybackTransition Transition, string ItemId,
     string? DeviceId, string? PlaySessionId, long? PositionTicks, DateTimeOffset ObservedAt, string SignalKey,
     string? OccurrenceKey = null, string? ClientClass = null, string? DeviceClass = null,
     PlaybackTrackSnapshot? SubmittedTrack = null, bool RelayExternally = true, string SourceKind = "protocol",
-    PlaybackStreamSource? StreamSource = null, IReadOnlyList<string>? DestinationTargets = null, long? ReportedPositionTicks = null, bool Paused = false, bool Failed = false);
+    PlaybackStreamSource? StreamSource = null, IReadOnlyList<string>? DestinationTargets = null, long? ReportedPositionTicks = null, bool Paused = false, bool Failed = false,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] bool Dated = false,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] long? DurationMilliseconds = null);
 public interface IPlaybackSignalPipeline { Task<bool> RecordAsync(PlaybackSignalRequest request, CancellationToken cancellationToken = default); }
 public interface IScopedPlaybackScrobbleDelivery
 {
@@ -39,7 +45,7 @@ public sealed class PlaybackSignalPipeline(
     public async Task<bool> RecordAsync(PlaybackSignalRequest request, CancellationToken cancellationToken = default)
     {
         var execution = request.ExecutionContext;
-        var actor = execution.RequireActor(); var owner = actor.EffectiveUserId ?? throw new UnauthorizedAccessException();
+        var (scope, deviceId) = Identify(request); var owner = scope.OwnerUserId;
         if (string.IsNullOrWhiteSpace(request.ItemId) || request.ItemId.Length > 500 || request.ObservedAt == default ||
             request.DeviceId?.Length > 200 || request.PlaySessionId?.Length > 500 || request.PositionTicks is < 0)
             throw new ArgumentException("Playback signal is invalid.");
@@ -47,12 +53,9 @@ public sealed class PlaybackSignalPipeline(
             throw new ArgumentException("Playback signal source is invalid.");
         if (await SyntheticActivityPolicy.IsExcludedAsync(factory, execution, request.ItemId, cancellationToken))
             return false;
-        var scope = new IntelligenceScope(owner, execution.Protocol.ToString().ToLowerInvariant(),
-            execution.BackendInstanceId);
         var bucket = request.Transition == PlaybackTransition.Progress ? (request.PositionTicks ?? 0) / TimeSpan.TicksPerSecond / 10 : 0;
-        var deviceId = request.DeviceId ?? execution.Client.DeviceId ??
-            (execution.Protocol == ProtocolKind.Subsonic ? execution.Client.ClientId : null);
-        var streamSource = playbackActivity?.StreamFor(owner, deviceId, request.ItemId);
+        // A dated play ended before this report, so the device's current stream says nothing about it.
+        var streamSource = request.Dated ? null : playbackActivity?.StreamFor(owner, deviceId, request.ItemId);
         if (streamSource?.Matches(scope.Protocol, scope.BackendInstanceId) != true ||
             streamSource?.OpenedAt > request.ObservedAt)
             streamSource = null;
@@ -63,7 +66,8 @@ public sealed class PlaybackSignalPipeline(
             request.PlaySessionId, normalizedTicks, request.ObservedAt, string.Empty, occurrenceKey,
             execution.Client.ClientId, execution.Client.DeviceName, request.SubmittedTrack,
             request.RelayExternally, request.SourceKind, streamSource, ReportedPositionTicks: request.PositionTicks, Paused: request.Paused, Failed: request.Failed || streamSource?.Interrupted == true ||
-                playbackActivity?.WasInterrupted(execution, deviceId, request.ItemId, request.ObservedAt) == true);
+                !request.Dated && playbackActivity?.WasInterrupted(execution, deviceId, request.ItemId, request.ObservedAt) == true,
+            Dated: request.Dated, DurationMilliseconds: request.DurationMilliseconds);
         // A paused or repeated position can still be a new observation. Only identical
         // observations share a job; listening effects deduplicate by occurrence separately.
         var key = Hash(JsonSerializer.Serialize(payload));
@@ -73,6 +77,22 @@ public sealed class PlaybackSignalPipeline(
             ? await jobs.EnqueueAsync(enqueue, cancellationToken)
             : await scrobbleAcceptance.EnqueueAsync(enqueue, cancellationToken);
         return result.Created;
+    }
+
+    /// <summary>The occurrence a request records into, as the job will key it.</summary>
+    internal static string OccurrenceKey(PlaybackSignalRequest request)
+    {
+        var (scope, deviceId) = Identify(request);
+        return CreateOccurrenceKey(scope, request.ItemId, deviceId, request.PlaySessionId, request.PositionTicks, request.ObservedAt);
+    }
+
+    private static (IntelligenceScope Scope, string? DeviceId) Identify(PlaybackSignalRequest request)
+    {
+        var execution = request.ExecutionContext;
+        var owner = execution.RequireActor().EffectiveUserId ?? throw new UnauthorizedAccessException();
+        return (new(owner, execution.Protocol.ToString().ToLowerInvariant(), execution.BackendInstanceId),
+            request.DeviceId ?? execution.Client.DeviceId ??
+            (execution.Protocol == ProtocolKind.Subsonic ? execution.Client.ClientId : null));
     }
 
     internal static string CreateOccurrenceKey(IntelligenceScope scope, string itemId, string? deviceId,
@@ -150,7 +170,7 @@ public sealed class PlaybackSignalJobHandler(IRecommendationSignalWriter signals
         var payload = execution.Claim.Payload.Deserialize<PlaybackSignalPayload>();
         if (payload == null || execution.Claim.OwnerUserId != payload.Scope.OwnerUserId)
             return DurableJobCompletion.Failure("playback_signal_scope_invalid", "The playback signal scope is invalid.");
-        if (payload.Transition != PlaybackTransition.Submission && recoveredAt is { } restart && payload.ObservedAt < restart)
+        if (payload.Transition != PlaybackTransition.Submission && !payload.Dated && recoveredAt is { } restart && payload.ObservedAt < restart)
             payload = payload with { Failed = true };
         await using var ownerDb = await factory.CreateDbContextAsync(cancellationToken);
         if (!await ownerDb.Users.AsNoTracking().AnyAsync(user => user.Id == payload.Scope.OwnerUserId &&
@@ -164,6 +184,8 @@ public sealed class PlaybackSignalJobHandler(IRecommendationSignalWriter signals
             var retainHistory = await RetainsHistoryAsync(payload.Scope, cancellationToken);
             var track = payload.SubmittedTrack ??
                 (tracks == null || !retainHistory && taste == null ? null : await tracks.ResolveAsync(payload, cancellationToken));
+            if (payload.Dated && track is { DurationMilliseconds: not > 0 } && payload.DurationMilliseconds is > 0)
+                track = track with { DurationMilliseconds = payload.DurationMilliseconds };
             if (taste != null) await taste.ObservePlaybackAsync(payload, track, cancellationToken);
             if (retainHistory)
             {
@@ -304,6 +326,7 @@ public sealed class PlaybackSignalJobHandler(IRecommendationSignalWriter signals
         if (latest && (payload.ReportedPositionTicks ?? payload.PositionTicks) is >= 0)
             record.ResumePositionTicks = record.State == ListeningEventState.Completed ? 0 : payload.ReportedPositionTicks ?? payload.PositionTicks;
         if (track?.DurationMilliseconds is > 0) record.DurationMilliseconds = track.DurationMilliseconds;
+        else if (payload.Dated && payload.DurationMilliseconds is > 0) record.DurationMilliseconds ??= payload.DurationMilliseconds;
         record.ClientClass ??= Trim(payload.ClientClass, 200);
         record.DeviceClass ??= Trim(payload.DeviceClass, 200);
         record.Title ??= Trim(track?.Title, 500);
@@ -346,6 +369,10 @@ public sealed class PlaybackSignalJobHandler(IRecommendationSignalWriter signals
         payload.Transition switch
         {
             PlaybackTransition.Submission => ListeningEventState.Completed,
+            // Short of a full play, a dated play is a skip, as a live stop of a song that had started is.
+            PlaybackTransition.Stop when payload.Dated => ScopedPlaybackScrobbleDelivery.EligibleForCompletedScrobble(
+                track?.DurationMilliseconds is > 0 ? track.DurationMilliseconds : payload.DurationMilliseconds, payload.PositionTicks)
+                ? ListeningEventState.Completed : ListeningEventState.Skipped,
             PlaybackTransition.Progress or PlaybackTransition.Stop or PlaybackTransition.InferredStop
                 when track != null && ScopedPlaybackScrobbleDelivery.EligibleForCompletedScrobble(track.DurationMilliseconds, payload.PositionTicks)
                 => ListeningEventState.Completed,
