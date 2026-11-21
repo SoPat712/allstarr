@@ -487,9 +487,10 @@ class SearchContractTests(unittest.TestCase):
         return self.score_capture(capture, expected)
 
     def score_capture(self, capture, expected):
+        # The limit only catches a scorer that hangs; a busy runner can take most of ten seconds to start it.
         result = subprocess.run(["dotnet", str(self.build / "bin/SearchContract.dll")],
                                 input=capture if isinstance(capture, str) else json.dumps(capture),
-                                text=True, capture_output=True, timeout=10)
+                                text=True, capture_output=True, timeout=60)
         self.assertEqual(1 if expected else 0, result.returncode, result.stderr)
         output = json.loads(result.stdout)
         self.assertEqual(set(expected), set(output["errors"]))
