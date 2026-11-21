@@ -151,6 +151,24 @@ public sealed class PlaybackStartPolicyTests
         ])[0]);
     }
 
+    [Theory]
+    [InlineData("Balanced", 2400, 600, 1)]
+    [InlineData("BestQuality", 2400, 600, 1)]
+    [InlineData("Balanced", 600, 2400, 0)]
+    [InlineData("Balanced", null, 600, 1)]
+    [InlineData("Balanced", 2400, null, 0)]
+    [InlineData("Balanced", null, null, 0)]
+    public void SourcesOfTheSameQualityStartFromTheOneThatHasBeenStartingSoonest(string mode, int? firstStart, int? secondStart, int expected)
+    {
+        static TimeSpan? Start(int? milliseconds) => milliseconds is { } value ? TimeSpan.FromMilliseconds(value) : null;
+        Assert.Equal(expected, PlaybackStartPolicy.Order(mode, [new(0, Cd, Start(firstStart)), new(1, Cd, Start(secondStart))])[0]);
+    }
+
+    [Fact]
+    public void AFasterSourceOfLowerQualityDoesNotDisplaceABetterOneThatStartsInTime() =>
+        Assert.Equal(0, PlaybackStartPolicy.Order("Balanced",
+            [new(0, High, TimeSpan.FromMilliseconds(2400)), new(1, Cd, TimeSpan.FromMilliseconds(600))])[0]);
+
     [Fact]
     public void MissingMeasurementsPreserveSourcePriorityWithoutInventingLosslessFacts()
     {

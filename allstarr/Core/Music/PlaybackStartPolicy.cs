@@ -27,7 +27,11 @@ public static class PlaybackStartPolicy
             ? item with { Media = item.AvailableMedia, IsCached = false } : item).ToArray();
         var quality = candidates.OrderByDescending(item => item.Media, Comparer<ProviderMediaFormat?>.Create(CompareQuality)).ToArray();
         var cached = quality.FirstOrDefault(item => item.IsCached);
-        var best = quality[0];
+        // Among sources of the same top quality, the one that has been starting soonest goes first. The listener's
+        // order decides only between sources that have not been timed: otherwise a slower source that happens to be
+        // listed first is started, raced and beaten on every song.
+        var best = quality.TakeWhile(item => CompareQuality(item.Media, quality[0].Media) == 0)
+            .OrderBy(item => item.IsCached ? TimeSpan.Zero : item.MedianStart ?? TimeSpan.MaxValue).First();
         var starts = mode == "FastStart" ? candidates.ToArray() : candidates.Where(item => (!item.IsCached && (!IsLimitedLossy(item.Media) || IsLimitedLossy(best.Media))) ||
             CompareQuality(item.Media, best.Media) >= 0).ToArray();
         var fastest = (mode == "FastStart" ? [] : starts.Where(item => IsLossless(item.Media)))
