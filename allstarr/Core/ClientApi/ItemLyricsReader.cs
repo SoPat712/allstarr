@@ -22,7 +22,8 @@ public sealed class ItemLyricsReader(
     ITrackIdentityService identities,
     IRecordingLyricsReview review,
     IRecordingLyricsChoices choices,
-    IProviderRegistry? registry = null, IEffectiveProviderPolicyResolver? policies = null, LibraryFileLyrics? fileLyrics = null)
+    IProviderRegistry? registry = null, IEffectiveProviderPolicyResolver? policies = null, LibraryFileLyrics? fileLyrics = null,
+    ChosenLyricsFiles? chosenFiles = null)
 {
     public async Task<Guid?> ResolveRecordingIdAsync(HttpContext http, ProtocolExecutionContext execution, string itemId)
     {
@@ -41,13 +42,15 @@ public sealed class ItemLyricsReader(
     }
 
     // One version comes from the same lookup the version list uses, so every listed version can be read and pinned.
-    private async Task<RichLyrics?> ReadVersionAsync(ProtocolExecutionContext execution, LyricsItem item, string itemId, string sourceId)
+    private async Task<RichLyrics?> ReadVersionAsync(ProtocolExecutionContext execution, LyricsItem item, string itemId, string sourceId) =>
+        await FindVersionAsync(execution, item, itemId, sourceId) is { } candidate ? Usable(Rich(candidate)) : null;
+
+    private async Task<ProtocolLyricsCandidate?> FindVersionAsync(ProtocolExecutionContext execution, LyricsItem item, string itemId, string sourceId)
     {
         var candidates = await lyrics.FindAllAsync(execution with { RequestedItemId = itemId }, item.Song, item.ResourceKey,
             item.Sources with { OnlySourceId = sourceId, ReadOnly = true });
-        var candidate = candidates.FirstOrDefault(candidate => candidate.SourceId == sourceId) ??
+        return candidates.FirstOrDefault(candidate => candidate.SourceId == sourceId) ??
             (sourceId.Contains(':') ? null : candidates.FirstOrDefault(candidate => LyricsVersions.ProviderId(candidate.SourceId) == sourceId));
-        return candidate == null ? null : Usable(Rich(candidate));
     }
 
     public async Task<ClientLyricsSources?> SourcesAsync(HttpContext http, ProtocolExecutionContext execution, string itemId,
@@ -137,9 +140,17 @@ public sealed class ItemLyricsReader(
         var recording = item == null ? null : await RecordingAsync(execution, item);
         if (item == null || recording == null) return null;
         // A pin names a source, not one copy of its text, so it only needs the source to still offer this song.
-        if (await ReadVersionAsync(execution, item, itemId, request.SourceId) == null)
+        var version = await FindVersionAsync(execution, item, itemId, request.SourceId);
+        if (version == null || Usable(Rich(version)) == null)
             throw new LyricsChoiceConflictException("The lyrics source is unavailable.");
         var saved = await choices.SetAsync(execution, recording.Value, request.SourceId, "personal", request.ExpectedRevision.ToExpected());
+        // Where the household allows it, an administrator's choice for a library song also goes into the song's file.
+        if (chosenFiles != null && item.Song.IsLocal && version.Lyrics != null)
+        {
+            var path = (await library.FindByBackendItemAsync(execution, item.Song.Id, execution.CancellationToken))?.FilePath;
+            var durationMs = await RecordingDurationMsAsync(execution, item) ?? (item.Song.Duration is > 0 ? item.Song.Duration * 1000L : null);
+            await chosenFiles.RequestAsync(execution, item.Song.Id, path, recording.Value, request.SourceId, version.Lyrics, durationMs);
+        }
         return new(Chosen(saved, await ReadRichAsync(execution, item)), ClientLyricsRevision.From(saved.Revision));
     }
 

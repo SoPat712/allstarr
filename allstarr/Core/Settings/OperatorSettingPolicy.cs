@@ -8,6 +8,7 @@ internal static class OperatorSettingPolicy
     [
         new("Gateway:PublicListenerUrl", RuntimeSettingValueType.String, "Gateway:PublicListenerUrl", AllowEmpty: true, DefaultValue: "", MaximumLength: 2048),
         new("Lyrics:Translation:Enabled", RuntimeSettingValueType.Boolean, "Lyrics:Translation:Enabled", DefaultValue: "true"),
+        new(allstarr.Core.Music.ChosenLyricsFiles.SettingKey, RuntimeSettingValueType.Boolean, allstarr.Core.Music.ChosenLyricsFiles.SettingKey, DefaultValue: "false"),
         new("Lyrics:Translation:LibreTranslateUrl", RuntimeSettingValueType.String, "Lyrics:Translation:LibreTranslateUrl", AllowEmpty: true, DefaultValue: "", MaximumLength: 2048),
         new("ChallengeSolver:Url", RuntimeSettingValueType.String, "ChallengeSolver:Url", AllowEmpty: true, DefaultValue: "", MaximumLength: 2048),
         new("ChallengeSolver:TimeoutSeconds", RuntimeSettingValueType.Integer, "ChallengeSolver:TimeoutSeconds", 10, 180, DefaultValue: "60"),

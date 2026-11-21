@@ -37,10 +37,10 @@ public sealed class LibraryFileLyrics(PromotionRoots roots)
         return timed.Any(line => line.Cues is { Count: > 0 }) && Texts(lines).SequenceEqual(Texts(words), StringComparer.Ordinal);
     }
 
-    private async Task<string?> ReadAsync(string? backendPath, CancellationToken token)
+    /// <summary>Where Allstarr itself finds a library song's file, or null when no music folder it knows holds it.</summary>
+    public async Task<string?> LocalPathAsync(string? backendPath, CancellationToken token)
     {
         if (string.IsNullOrWhiteSpace(backendPath)) return null;
-        string? local = null;
         foreach (var root in await roots.ReadAsync(token))
         {
             // The media server may see the music folder under another path than Allstarr does.
@@ -49,12 +49,18 @@ public sealed class LibraryFileLyrics(PromotionRoots roots)
                 backendPath[theirs.Length] is not ('/' or '\\')) continue;
             try
             {
-                local = PromotionNaming.ContainedPath(root.Path, backendPath[(theirs.Length + 1)..].Replace('\\', '/'));
+                var local = PromotionNaming.ContainedPath(root.Path, backendPath[(theirs.Length + 1)..].Replace('\\', '/'));
                 PromotionRoots.RejectLinks(local);
+                return local;
             }
-            catch (Exception error) when (error is ArgumentException or UnauthorizedAccessException or IOException) { local = null; }
-            if (local != null) break;
+            catch (Exception error) when (error is ArgumentException or UnauthorizedAccessException or IOException) { }
         }
+        return null;
+    }
+
+    private async Task<string?> ReadAsync(string? backendPath, CancellationToken token)
+    {
+        var local = await LocalPathAsync(backendPath, token);
         if (local == null) return null;
         return await Task.Run(() =>
         {

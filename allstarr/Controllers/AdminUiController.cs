@@ -2134,7 +2134,9 @@ public class AdminUiController : ControllerBase
             Field("LYRICS_TRANSLATION_ENABLED", "Translate lyrics for apps", "toggle", "operatorSettings.Lyrics:Translation:Enabled",
                 helpText: "Translates lyrics on request and shares the result with everyone. Default: on."),
             Field("LYRICS_TRANSLATION_LIBRETRANSLATE_URL", "Optional LibreTranslate URL", "url", "operatorSettings.Lyrics:Translation:LibreTranslateUrl",
-                helpText: "Optional HTTP or HTTPS address. Used when Google and MyMemory cannot translate the lyrics.")
+                helpText: "Optional HTTP or HTTPS address. Used when Google and MyMemory cannot translate the lyrics."),
+            Field("LYRICS_WRITE_CHOSEN_TO_FILE", "Save a chosen lyrics version to the song's file", "toggle", "operatorSettings.Lyrics:WriteChosenToFile",
+                helpText: "When an administrator picks another lyrics version for a library song, Allstarr writes it into the file's lyrics tags and hands it to the media server, so everyone gets it. The earlier lyrics are kept in Allstarr's data folder. Default: off.")
         ]),
         Section("paths", "Library paths",
         [

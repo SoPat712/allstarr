@@ -294,7 +294,7 @@ Settings saves as you change it. Settings marked **Restarts Allstarr** restart i
 **Music sources**
 
 - Tabs **Search**, **Downloads**, **Streaming**, **Playlists** and **Lyrics** each hold a source order. Drag to reorder; **Sort by score** orders sources by their measured score. Your library always plays first when it has the song.
-- **Lyric translation**: **Translate lyrics for apps** and an optional LibreTranslate address.
+- **Lyrics**: **Translate lyrics for apps** and an optional LibreTranslate address. **Save a chosen lyrics version to the song's file** writes an administrator's pick for a library song into the file's lyrics tags, for everyone; it is off by default. See [lyrics sources](operations/lyrics.md#saving-a-chosen-version-to-the-songs-file).
 - **Listeners can connect their own accounts** is on by default. Turning it off stops new listener accounts; existing ones keep working.
 
 **Library**

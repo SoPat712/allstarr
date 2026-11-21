@@ -167,11 +167,13 @@ test("Settings changes save with Undo and restart changes wait for confirmation"
 
 test("Lyrics translation fields save through the existing settings renderer", async ({ page }) => {
   await fixture(page);
-  const values: Record<string, unknown> = { "Lyrics:Translation:Enabled": true, "Lyrics:Translation:LibreTranslateUrl": "" };
+  const values: Record<string, unknown> = { "Lyrics:Translation:Enabled": true, "Lyrics:Translation:LibreTranslateUrl": "", "Lyrics:WriteChosenToFile": false };
   const writes: Record<string, string>[] = [];
   await page.route("**/api/admin/ui/schema", route => route.fulfill({ json: { providers: [], configSections: [{ id: "lyrics", label: "Lyrics", fields: [
     { key: "LYRICS_TRANSLATION_ENABLED", label: "Translate lyrics for apps", type: "toggle", valuePath: "operatorSettings.Lyrics:Translation:Enabled" },
     { key: "LYRICS_TRANSLATION_LIBRETRANSLATE_URL", label: "Optional LibreTranslate URL", type: "url", valuePath: "operatorSettings.Lyrics:Translation:LibreTranslateUrl" },
+    { key: "LYRICS_WRITE_CHOSEN_TO_FILE", label: "Save a chosen lyrics version to the song's file", type: "toggle", valuePath: "operatorSettings.Lyrics:WriteChosenToFile",
+      helpText: "When an administrator picks another lyrics version for a library song, Allstarr writes it into the file's lyrics tags and hands it to the media server, so everyone gets it. The earlier lyrics are kept in Allstarr's data folder. Default: off." },
   ] }] } }));
   await page.route("**/api/admin/config", async route => {
     if (route.request().method() === "POST") {
@@ -179,6 +181,7 @@ test("Lyrics translation fields save through the existing settings renderer", as
       writes.push(updates);
       if (updates.LYRICS_TRANSLATION_ENABLED !== undefined) values["Lyrics:Translation:Enabled"] = updates.LYRICS_TRANSLATION_ENABLED === "true";
       if (updates.LYRICS_TRANSLATION_LIBRETRANSLATE_URL !== undefined) values["Lyrics:Translation:LibreTranslateUrl"] = updates.LYRICS_TRANSLATION_LIBRETRANSLATE_URL;
+      if (updates.LYRICS_WRITE_CHOSEN_TO_FILE !== undefined) values["Lyrics:WriteChosenToFile"] = updates.LYRICS_WRITE_CHOSEN_TO_FILE === "true";
       return route.fulfill({ json: { updatedKeys: Object.keys(updates), requiresRestart: false } });
     }
     return route.fulfill({ json: { operatorSettings: values } });
@@ -192,9 +195,16 @@ test("Lyrics translation fields save through the existing settings renderer", as
   await url.fill("https://translate.invalid/base");
   await url.press("Tab");
   await expect.poll(() => writes).toEqual([{ LYRICS_TRANSLATION_ENABLED: "false" }, { LYRICS_TRANSLATION_LIBRETRANSLATE_URL: "https://translate.invalid/base" }]);
+  // Saving a chosen version into the song's file sits in the same card, off until someone turns it on.
+  const save = page.getByRole("switch", { name: "Save a chosen lyrics version to the song's file", exact: true });
+  await expect(page.getByRole("heading", { name: "Lyrics", exact: true })).toBeVisible();
+  await expect(save).not.toBeChecked();
+  await save.check();
+  await expect.poll(() => writes.at(-1)).toEqual({ LYRICS_WRITE_CHOSEN_TO_FILE: "true" });
   await page.reload();
   await expect(enabled).not.toBeChecked();
   await expect(url).toHaveValue("https://translate.invalid/base");
+  await expect(save).toBeChecked();
 });
 
 test("Settings search results open above the section links", async ({ page }) => {

@@ -90,6 +90,7 @@ public static class LegacyEnvParser
             ["CLIENT_API_ENABLED"] = "ClientApi:Enabled",
             ["LYRICS_TRANSLATION_ENABLED"] = "Lyrics:Translation:Enabled",
             ["LYRICS_TRANSLATION_LIBRETRANSLATE_URL"] = "Lyrics:Translation:LibreTranslateUrl",
+            ["LYRICS_WRITE_CHOSEN_TO_FILE"] = "Lyrics:WriteChosenToFile",
             ["EXPLICIT_FILTER"] = "Library:ExplicitFilter",
             ["DOWNLOAD_MODE"] = "Library:DownloadMode",
             ["STORAGE_MODE"] = "Library:StorageMode",

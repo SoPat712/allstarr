@@ -104,7 +104,7 @@
   const activityHistory = $derived(group("activity-history", "Activity history", pick("EVENT_LOG_RETENTION_DAYS", "EVENT_LOG_MAXIMUM_ROWS")));
   const activityAdvanced = $derived(group("activity-advanced", "Cleanup timing and job history", pick("EVENT_LOG_CLEANUP_INTERVAL_MINUTES", "EVENT_LOG_CLEANUP_BATCH_SIZE", "EVENT_LOG_JOB_HISTORY_RETENTION_DAYS")));
   const accounts = $derived(group("accounts", "Accounts", pick("LISTENERS_CAN_CONNECT_OWN_ACCOUNTS")));
-  const lyricTranslation = $derived(group("lyric-translation", "Lyric translation", sectionFor("lyrics")));
+  const lyricTranslation = $derived(group("lyric-translation", "Lyrics", sectionFor("lyrics")));
   const everyoneHears = $derived(group("everyone-hears", "What everyone hears", pick("EXPLICIT_FILTER")));
   const networkFields = $derived(pick("ADMIN_BIND_ANY_IP", "ADMIN_TRUSTED_SUBNETS"));
   const diagnosticsFields = $derived(pick("DEBUG_LOG_ALL_REQUESTS"));

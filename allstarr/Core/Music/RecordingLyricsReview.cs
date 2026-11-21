@@ -82,13 +82,14 @@ public sealed class RecordingLyricsReview : IRecordingLyricsReview
     private readonly IProtocolLyricsResolver _lyrics;
     private readonly IRecordingLyricsChoices _choices;
     private readonly IEffectiveProviderPolicyResolver? _policies;
+    private readonly ChosenLyricsFiles? _chosenFiles;
 
     public RecordingLyricsReview(
         ITrackIdentityService identities,
         IProtocolProviderGateway providers,
         ILibraryIndexService library,
         IProtocolLyricsResolver lyrics,
-        IRecordingLyricsChoices choices, IEffectiveProviderPolicyResolver? policies = null)
+        IRecordingLyricsChoices choices, IEffectiveProviderPolicyResolver? policies = null, ChosenLyricsFiles? chosenFiles = null)
     {
         _identities = identities;
         _providers = providers;
@@ -96,27 +97,32 @@ public sealed class RecordingLyricsReview : IRecordingLyricsReview
         _lyrics = lyrics;
         _choices = choices;
         _policies = policies;
+        _chosenFiles = chosenFiles;
     }
 
-    public Task<RecordingLyricsReviewResult> GetAsync(
+    public async Task<RecordingLyricsReviewResult> GetAsync(
         ProtocolExecutionContext context,
         Guid recordingId,
         string scope,
         Func<string, CancellationToken, Task<LyricsInfo?>>? readBackend = null) =>
-        ReviewAsync(context, recordingId, scope, readBackend, onlySourceId: null);
+        (await ReviewAsync(context, recordingId, scope, readBackend, onlySourceId: null)).Result;
 
     public async Task<RichLyrics?> ReadCandidateAsync(ProtocolExecutionContext context, Guid recordingId, string sourceId,
         Func<string, CancellationToken, Task<LyricsInfo?>>? readBackend = null)
     {
-        var result = await ReviewAsync(context, recordingId, "personal", readBackend, sourceId, readOnly: true);
-        return SelectSource(result.Sources, sourceId)?.FullLyrics;
+        var reviewed = await ReviewAsync(context, recordingId, "personal", readBackend, sourceId, readOnly: true);
+        return SelectSource(reviewed.Result.Sources, sourceId)?.FullLyrics;
     }
 
     internal static RecordingLyricsReviewSource? SelectSource(IReadOnlyList<RecordingLyricsReviewSource> sources, string sourceId) =>
         sources.FirstOrDefault(source => source.SourceId == sourceId) ??
         (sourceId.Contains(':') ? null : sources.FirstOrDefault(source => LyricsVersions.ProviderId(source.SourceId) == sourceId));
 
-    private async Task<RecordingLyricsReviewResult> ReviewAsync(
+    // The review as it is shown, with the library copy and the versions it was made from.
+    private sealed record Reviewed(RecordingLyricsReviewResult Result, IndexedLibraryTrack? Native,
+        IReadOnlyList<ProtocolLyricsCandidate> Candidates, long? DurationMilliseconds);
+
+    private async Task<Reviewed> ReviewAsync(
         ProtocolExecutionContext context,
         Guid recordingId,
         string scope,
@@ -208,12 +214,12 @@ public sealed class RecordingLyricsReview : IRecordingLyricsReview
             Rank = ranks.TryGetValue(candidate.SourceId, out var rank) ? rank : null,
             Reasons = candidate.Assessment?.Reasons
         }).ToArray();
-        return new RecordingLyricsReviewResult(
+        return new(new RecordingLyricsReviewResult(
             recording.Id,
             ScopeName(reviewScope),
             reviewSong,
             choices,
-            sources);
+            sources), native, assessed, recording.DurationMilliseconds);
     }
 
     public async Task<RecordingLyricsChoiceLayers> ChooseAsync(
@@ -230,7 +236,8 @@ public sealed class RecordingLyricsReview : IRecordingLyricsReview
         ArgumentNullException.ThrowIfNull(expected);
         token.ThrowIfCancellationRequested();
         // Revalidate only the chosen source so an unrelated slow or changing source cannot block the save.
-        var preview = await ReviewAsync(context, recordingId, ScopeName(reviewScope), readBackend, sourceId);
+        var reviewed = await ReviewAsync(context, recordingId, ScopeName(reviewScope), readBackend, sourceId);
+        var preview = reviewed.Result;
         token.ThrowIfCancellationRequested();
         var source = SelectSource(preview.Sources, sourceId);
         if (source == null || !source.Available ||
@@ -240,12 +247,18 @@ public sealed class RecordingLyricsReview : IRecordingLyricsReview
                 "The lyrics preview is stale or unavailable. Reload it before choosing a source.");
         }
 
-        return await _choices.SetAsync(
+        var saved = await _choices.SetAsync(
             context,
             preview.RecordingId,
             sourceId,
             ScopeName(reviewScope),
             expected);
+        // Where the household allows it, an administrator's choice for a library song also goes into the song's file.
+        if (_chosenFiles != null && reviewed.Native is { } native &&
+            reviewed.Candidates.FirstOrDefault(candidate => candidate.SourceId == source.SourceId)?.Lyrics is { } lyrics)
+            await _chosenFiles.RequestAsync(context, native.BackendItemId, native.FilePath, preview.RecordingId, sourceId, lyrics,
+                reviewed.DurationMilliseconds ?? native.DurationMilliseconds);
+        return saved;
     }
 
     public Task<RecordingLyricsChoiceLayers> ClearAsync(

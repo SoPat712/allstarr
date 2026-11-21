@@ -35,6 +35,12 @@ Up to four sources are asked at once. A later source's answer waits up to 1.5 se
 
 With **Clean only** in effect, lyrics come only from your media server or kept files, and only for songs proven clean.
 
+### Saving a chosen version to the song's file
+
+A listener's pick is theirs alone. To make an administrator's pick the lyrics of the song itself, turn on **Save a chosen lyrics version to the song's file** in **Settings → Music sources → Lyrics** (off by default). From then on, when an administrator picks another version for a library song, in an app or under **Wrong lyrics?** in Matches, Allstarr rewrites the lyrics in the song's file a few seconds later: line times in the lyrics tag, word times in `WORDLYRICS`, as for a song Allstarr added. Jellyfin is handed the same lines, so its own apps show them too; other media servers read them at their next scan.
+
+Only the lyrics tags change, and the file keeps its owner and permissions. The file must sit in one of the music folders under **Settings → Library**. The lyrics it held before are kept as a small file in `replaced-lyrics` in Allstarr's data folder. Removing the pick later does not put the old lyrics back.
+
 ### Media server lyrics
 
 Jellyfin and Subsonic song requests check the song with the media server before asking other sources. When the media server's lyrics win, its original response is kept, including language, offsets and extra cues. If a Subsonic lookup fails and no other source answers, the media server's own response is returned.
@@ -76,4 +82,4 @@ The old `spotify-lyrics` container and Compose profile are retired. Old `spotify
 
 ## Lyric translation for apps
 
-**Translate lyrics for apps** in **Settings → Music sources → Lyric translation** is on by default. Apps that use the [client API](../api/README.md) can ask for a translation; the result is shared with everyone who asks for the same lyrics. Allstarr tries Google, then MyMemory, then your own LibreTranslate server when you save its address in **Optional LibreTranslate URL**. The client API itself is off until you turn on **Client API for apps** in Settings → Apps.
+**Translate lyrics for apps** in **Settings → Music sources → Lyrics** is on by default. Apps that use the [client API](../api/README.md) can ask for a translation; the result is shared with everyone who asks for the same lyrics. Allstarr tries Google, then MyMemory, then your own LibreTranslate server when you save its address in **Optional LibreTranslate URL**. The client API itself is off until you turn on **Client API for apps** in Settings → Apps.

@@ -33,5 +33,6 @@ describe("Find a setting", () => {
     expect(settingPage("DEBUG_LOG_ALL_REQUESTS")).toBe("backups");
     expect(settingPage("EXPLICIT_FILTER")).toBe("people");
     expect(settingPage("SPOTIFY_IMPORT_ENABLED")).toBe("library");
+    expect(settingPage("LYRICS_WRITE_CHOSEN_TO_FILE")).toBe("sources");
   });
 });

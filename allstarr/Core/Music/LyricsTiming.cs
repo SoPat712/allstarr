@@ -32,6 +32,8 @@ internal static partial class LyricsTiming
     /// <summary>Whether these lyrics, as written for a sidecar, time their words and not only their lines.</summary>
     internal static bool HasWordTimes(string sidecar) => WordTimeRegex().IsMatch(sidecar);
 
+    internal static bool HasLineTimes(string lyrics) => lyrics.Split('\n').Any(line => LineTimeRegex().IsMatch(line));
+
     [System.Text.RegularExpressions.GeneratedRegex(@"<\d+:\d{2}\.\d{2,3}>")]
     private static partial System.Text.RegularExpressions.Regex WordTimeRegex();
 
