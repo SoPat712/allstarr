@@ -24,7 +24,7 @@ public sealed class V2AlbumEndpoints(V2TrackReader tracks, IProtocolProviderGate
             var result = await similar.ReadAsync(http, execution, decoded.Source!, limit);
             return new(V2Ids.Album(decoded.Source!), result.BasedOn, result.Albums.Select(album => new V2SimilarAlbum(
                 V2Ids.Album(album.Id), album.Title,
-                [new(album.ArtistId is { } artist && V2Ids.IsValidSource(artist, V2IdKind.Artist) ? V2Ids.Artist(artist) : null, album.Artist)],
+                [new(V2Ids.ArtistRef(album.ArtistId), album.Artist)],
                 album.Year, album.IsExternal, SimilarArtwork(album), album.SongCount, album.Source,
                 album.Provider == null ? null : new(album.Provider.Id, album.Provider.Name, album.Provider.IconUrl, album.Provider.GlyphUrl))).ToArray());
         });
@@ -129,9 +129,9 @@ public sealed class V2AlbumEndpoints(V2TrackReader tracks, IProtocolProviderGate
     internal static V2AlbumSummary Summary(string source, Album album)
     {
         var artists = album.Artists.Where(artist => !string.IsNullOrWhiteSpace(artist.Name))
-            .Select(artist => new V2Ref(V2Ids.IsValidSource(artist.Id, V2IdKind.Artist) ? V2Ids.Artist(artist.Id) : null, artist.Name)).ToArray();
+            .Select(artist => new V2Ref(V2Ids.ArtistRef(artist.Id), artist.Name)).ToArray();
         if (artists.Length == 0 && !string.IsNullOrWhiteSpace(album.Artist))
-            artists = [new(album.ArtistId is { } id && V2Ids.IsValidSource(id, V2IdKind.Artist) ? V2Ids.Artist(id) : null, album.Artist)];
+            artists = [new(V2Ids.ArtistRef(album.ArtistId), album.Artist)];
         return new(V2Ids.Album(source), album.Title, artists, album.Year, true,
             V2ArtworkUrls.For(source, JellyfinItemArtwork.AlbumImageTag(source, false)))
         { Explicit = album.IsExplicit };

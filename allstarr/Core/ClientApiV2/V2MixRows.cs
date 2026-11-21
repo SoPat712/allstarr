@@ -159,7 +159,7 @@ public sealed class V2MixRowsReader(MixReader mixes, V2RowIds rowIds, LibraryPro
             var inLibrary = row.LibraryItemId != null;
             var provider = inLibrary ? libraryProvider : item.Provider;
             rows.Add(new(row.Id, row.Aliases, row.LibraryItemId, item.Title,
-                string.IsNullOrWhiteSpace(item.Artist) ? [] : [new(Valid(item.ArtistId, V2IdKind.Artist) ? V2Ids.Artist(item.ArtistId!) : null, item.Artist)],
+                string.IsNullOrWhiteSpace(item.Artist) ? [] : [new(V2Ids.ArtistRef(item.ArtistId), item.Artist)],
                 string.IsNullOrWhiteSpace(item.Album) ? null : new(Valid(item.AlbumId, V2IdKind.Album) ? V2Ids.Album(item.AlbumId!) : null, item.Album),
                 item.DurationMs, Artwork(item.ArtworkUrl), !inLibrary, provider == null ? null : Provider(provider)));
         }

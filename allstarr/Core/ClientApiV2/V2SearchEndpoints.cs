@@ -144,7 +144,7 @@ public sealed class V2SearchEndpoints(V2SearchStream stream, V2TrackReader track
         {
             "track" => track?.Id,
             "album" => V2Ids.IsValidSource(source, V2IdKind.Album) ? V2Ids.Album(source) : null,
-            "artist" => V2Ids.IsValidSource(source, V2IdKind.Artist) ? V2Ids.Artist(source) : null,
+            "artist" => V2Ids.ArtistRef(source),
             _ => V2Ids.IsValidSource(source, V2IdKind.Playlist) ? V2Ids.Playlist(source) : null
         };
         if (id == null) return null;

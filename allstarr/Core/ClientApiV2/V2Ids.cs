@@ -31,6 +31,15 @@ public static class V2Ids
 
     public static string Artist(string source) => "art_" + Encode(source);
 
+    /// <summary>
+    /// The id a row, track or album gives an artist it names, or null when there is nothing to open: no id, a malformed
+    /// one, or a "credit:" placeholder, which stands for a song credit with no artist behind it.
+    /// </summary>
+    public static string? ArtistRef(string? source) =>
+        string.IsNullOrEmpty(source) || !IsValidSource(source, V2IdKind.Artist) ||
+        LocalLibraryService.ParseExternalResource(source).externalId?.StartsWith("credit:", StringComparison.Ordinal) == true
+            ? null : Artist(source);
+
     public static string Playlist(string source) => "pl_" + Encode(source);
 
     public static string Mix(Guid mixId) => "mix_" + mixId.ToString("N");

@@ -268,8 +268,7 @@ public sealed class V2TrackReader(
         artists.Skip(1).Where(artist => !albumArtists.Any(albumArtist => artist.Id != null && albumArtist.Id == artist.Id ||
             string.Equals(albumArtist.Name, artist.Name, StringComparison.OrdinalIgnoreCase))).ToArray();
 
-    private static string? ArtistId(string? source) =>
-        source != null && V2Ids.IsValidSource(source, V2IdKind.Artist) ? V2Ids.Artist(source) : null;
+    private static string? ArtistId(string? source) => V2Ids.ArtistRef(source);
 
     private static double? Finite(double? value) => value is { } number && double.IsFinite(number) ? number : null;
 

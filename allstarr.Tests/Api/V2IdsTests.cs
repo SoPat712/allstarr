@@ -106,4 +106,15 @@ public sealed class V2IdsTests
     [InlineData("bmF0aXZlMQ")]
     [InlineData("")]
     public void ArtworkKeysRejectAnythingTheyDidNotIssue(string key) => Assert.Null(V2ArtworkUrls.Resolve(key, "300"));
+
+    [Theory]
+    [InlineData("ext-apple-download-artist-368183298", true)]
+    [InlineData("0f8d2a1c9b7e4d6f8a2b3c4d5e6f7a8b", true)]
+    [InlineData("ext-apple-download-artist-credit:3eb72d875a646103", false)]
+    [InlineData("ext-apple-musickit-artist-credit:n.QXJ0aXN0", false)]
+    [InlineData("ext-deezer-song-12345", false)]
+    [InlineData("", false)]
+    [InlineData(null, false)]
+    public void ANamedArtistHasAnIdOnlyWhenThereIsAnArtistToOpen(string? source, bool opens) =>
+        Assert.Equal(opens ? V2Ids.Artist(source!) : null, V2Ids.ArtistRef(source));
 }
