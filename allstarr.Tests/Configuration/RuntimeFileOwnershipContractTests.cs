@@ -59,6 +59,7 @@ public sealed class RuntimeFileOwnershipContractTests
             ["Providers/Extensions/ExtensionDownloadPostProcessor.cs"] = "invocation-scoped temporary audio",
             ["Providers/Extensions/ExtensionProgressiveTransfer.Deezer.cs"] = "invocation-scoped temporary audio",
             ["Core/Caching/FileMediaApplicationCache.cs"] = "bounded media cache",
+            ["Core/ClientApiV2/V2ConvertedDownloads.cs"] = "bounded cache of converted download copies",
             ["Core/Playback/ManagedTrackCacheService.cs"] = "managed audio cache",
             ["Core/Playback/ProgressiveAudioFinalizer.cs"] = "managed audio cache",
             ["Core/Providers/ProviderTryMediaStore.cs"] = "private temporary provider previews",
