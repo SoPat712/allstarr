@@ -17,9 +17,10 @@ namespace allstarr.Core.ClientApiV2;
 public sealed class V2PlaybackReader(V2TrackReader tracks, ProviderStreamOpener streams, V2PlaybackTokens tokens,
     JellyfinProxyService jellyfin, IEffectiveProviderPolicyResolver policies, IUpcomingTrackPreparation preparation,
     BackendIdentityResolver identities, IdentityOptions identityOptions, ProtocolStreamingResponseAdapter responses,
-    IProviderRegistry registry, TimeProvider clock, MediaConversionGate conversions, V2ServingStreams serving, PlaybackReader current)
+    IProviderRegistry registry, TimeProvider clock, MediaConversionGate conversions, V2ServingStreams serving, PlaybackReader current,
+    V2ConvertedDownloads? downloads = null)
 {
-    internal static bool ValidTier(string tier) => tier is "lossless" or "high" or "normal" or "low" or "original";
+    internal static bool ValidTier(string tier) => tier is "lossless" or "high" or "normal" or "low" or "lowest" or "original";
 
     public async Task<V2Result> ResolveAsync(HttpContext http, ProtocolExecutionContext execution, V2PlaybackRequest request)
     {
@@ -39,7 +40,7 @@ public sealed class V2PlaybackReader(V2TrackReader tracks, ProviderStreamOpener 
         // listener set a lower limit of their own or the app asks for less.
         var step = parsed.isExternal ? AudioQualityPolicy.Lower(household.AudioQuality, policy.Preferences.QualityLimit)
             : AudioQualityPolicy.Steps.Contains(policy.Preferences.QualityLimit ?? "") ? policy.Preferences.QualityLimit! : AudioQualityPolicy.DefaultStep;
-        var tier = step == "DataSaver" && request.Tier != "low" ? "low"
+        var tier = step == "DataSaver" && request.Tier is not ("low" or "lowest") ? "low"
             : step == "High" && request.Tier is "lossless" or "original" ? "high" : request.Tier;
         var quality = tier is "lossless" or "original" ? ProviderAudioQuality.Any : ProviderAudioQuality.Lossy;
         quality = AudioQualityPolicy.Limit(quality, step);
@@ -62,9 +63,12 @@ public sealed class V2PlaybackReader(V2TrackReader tracks, ProviderStreamOpener 
         var key = Hash(JsonSerializer.Serialize(new { track.Id, tier = request.Tier, delivered = Format(delivered), delivered.Channels, sourceKey }));
         var playback = Guid.NewGuid().ToString("N");
         var expires = clock.GetUtcNow().AddHours(12);
+        // A download of a converted tier is made once into a file and served from it, so it has a length and can resume.
+        var copy = converted && request.Purpose == "download" && downloads != null ? key : null;
+        var held = copy == null ? null : downloads!.Find(copy);
         var ticket = new V2PlaybackTicket(execution.Principal!.UserId, execution.BackendInstanceId,
             execution.VerifiedBackendPrincipalId, item, tier, playback, quality, Freeze(delivery, delivered), source)
-        { DeviceId = execution.Client.DeviceId, TrackId = V2AutoplayReader.Identity(track) };
+        { DeviceId = execution.Client.DeviceId, TrackId = V2AutoplayReader.Identity(track), Copy = copy };
         var lowered = tier != request.Tier || LimitChanged(source, step, request.Tier)
             ? !parsed.isExternal || step != household.AudioQuality ? "listener" : "household" : null;
         var reason = routed?.SelectionReason ?? "library";
@@ -75,8 +79,8 @@ public sealed class V2PlaybackReader(V2TrackReader tracks, ProviderStreamOpener 
             await preparation.PrepareAsync(execution with { PreparationQuality = quality }, item);
         serving.Remember(execution, playback, expires);
         return new($"{http.Request.Scheme}://{http.Request.Host}{http.Request.PathBase}/allstarr/v2/stream/" + tokens.Protect(ticket, expires), expires, playback, key, Format(source), Format(delivered),
-            converted, converted ? null : inspected.Content.Headers.ContentLength,
-            !converted && (routed?.Lease.SupportsByteRanges == true || inspected.Headers.AcceptRanges.Contains("bytes")) ? "bytes" : "none",
+            converted, converted ? held?.Length : inspected.Content.Headers.ContentLength,
+            copy != null || !converted && (routed?.Lease.SupportsByteRanges == true || inspected.Headers.AcceptRanges.Contains("bytes")) ? "bytes" : "none",
             track.TrackGainDb, track.AlbumGainDb, new(provider, (registry.TryGet(provider, out var descriptor) ? descriptor!.DisplayName : null) ?? track.Provider?.Name ?? provider), reason, lowered)
         { Serving = await ServingAsync(http, execution, track, item) };
     }
@@ -119,6 +123,7 @@ public sealed class V2PlaybackReader(V2TrackReader tracks, ProviderStreamOpener 
         http.Response.Headers["X-Allstarr-Playback-Request"] = ticket.PlaybackId;
         http.Response.OnStarting(() => { http.Response.Headers["X-Allstarr-Playback-Request"] = ticket.PlaybackId; return Task.CompletedTask; });
         var conversion = ProviderAudioTranscoder.Plan(ticket.Delivery, ticket.Source);
+        if (conversion != null && ticket.Copy != null && downloads != null && await OpenCopyAsync(http, ticket, conversion) is { } file) return file;
         if (conversion != null)
         {
             http.Request.Headers.Remove("Range");
@@ -147,6 +152,41 @@ public sealed class V2PlaybackReader(V2TrackReader tracks, ProviderStreamOpener 
         catch { response.Dispose(); throw; }
     }
 
+    /// <summary>
+    /// A download's converted copy as a file with a length and byte ranges, made first when it is not held yet: the
+    /// conversion is read from this server's own stream route, so it is the stream a listener would have been sent.
+    /// Null for a HEAD before the copy exists, which is answered as any conversion is.
+    /// </summary>
+    private async Task<IActionResult?> OpenCopyAsync(HttpContext http, V2PlaybackTicket ticket, ProviderAudioConversion conversion)
+    {
+        var copy = downloads!.Find(ticket.Copy!);
+        if (copy == null)
+        {
+            if (HttpMethods.IsHead(http.Request.Method)) return null;
+            var inner = tokens.Protect(ticket with { Copy = null }, clock.GetUtcNow().AddMinutes(10));
+            var made = await downloads.MakeAsync(ticket.Copy!, new($"http://127.0.0.1:{http.Connection.LocalPort}{http.Request.PathBase}/allstarr/v2/stream/{inner}"),
+                http.RequestAborted);
+            if (made.File == null)
+            {
+                // Both conversion slots taken, or the source would not open: the app asks again rather than failing the song.
+                if (made.RetryAfter is { } wait)
+                    http.Response.Headers.RetryAfter = Math.Max(1, (int)Math.Ceiling(wait.TotalSeconds)).ToString(System.Globalization.CultureInfo.InvariantCulture);
+                return new StatusCodeResult(made.Status >= 400 ? made.Status : StatusCodes.Status503ServiceUnavailable);
+            }
+            copy = made.File;
+        }
+        http.Response.Headers["X-Allstarr-Audio-Codec"] = conversion.Media.Codec;
+        http.Response.Headers["X-Allstarr-Audio-Container"] = conversion.Media.Container;
+        if (conversion.Media.Bitrate is { } bitrate)
+            http.Response.Headers["X-Allstarr-Audio-Bitrate"] = bitrate.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        return new PhysicalFileResult(copy.FullName, conversion.Media.MimeType)
+        {
+            EnableRangeProcessing = true,
+            LastModified = copy.LastWriteTimeUtc,
+            EntityTag = Microsoft.Net.Http.Headers.EntityTagHeaderValue.Parse(V2ConvertedDownloads.EntityTag(ticket.Copy!, copy))
+        };
+    }
+
     internal static ProviderAudioDeliveryRequest Delivery(string tier, V2PlaybackClient? client, ProviderMediaFormat source, string step)
     {
         var codec = client != null && !client.Codecs.Contains("aac", StringComparer.OrdinalIgnoreCase) ? "mp3" : "aac";
@@ -160,7 +200,7 @@ public sealed class V2PlaybackReader(V2TrackReader tracks, ProviderStreamOpener 
             Formats = keep ? null : [new([], target == "lossless" ? lossless : [codec], ["http"])],
             PreferredCodec = target == "lossless" ? "flac" : codec,
             EnableTranscoding = tier != "original",
-            MaxBitrate = target switch { "high" => 256000, "normal" => 160000, "low" => 96000, _ => null },
+            MaxBitrate = target switch { "high" => 256000, "normal" => 160000, "low" => 96000, "lowest" => 64000, _ => null },
             MaxSampleRate = tier == "original" ? null : Minimum(client?.MaxSampleRate, step switch { "CdLossless" => 44100, "HiResLossless" => 96000, _ => null }),
             MaxBitDepth = tier == "original" ? null : Minimum(client?.MaxBitDepth, step == "CdLossless" ? 16 : null),
             MaxChannels = tier == "original" ? null : client?.Channels

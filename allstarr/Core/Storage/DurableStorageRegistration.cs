@@ -23,6 +23,7 @@ public static class DurableStorageRegistration
             ["Extensions:Directory"] = "extensions",
             ["Cache:MediaDirectory"] = Path.Combine("cache", "media"),
             ["Downloads:Workspace:RootPath"] = Path.Combine("cache", "download-workspaces"),
+            [allstarr.Core.ClientApiV2.V2ConvertedDownloads.DirectoryKey] = Path.Combine("cache", "converted-downloads"),
             ["Intelligence:HistoryImport:RootPath"] = Path.Combine("cache", "listening-history-imports")
         })
         {

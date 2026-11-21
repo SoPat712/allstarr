@@ -519,6 +519,9 @@ builder.Services.AddHostedService(services => services.GetRequiredService<V2Even
 builder.Services.AddScoped<V2AutoplayReader>();
 builder.Services.AddScoped<V2PlaybackReader>();
 builder.Services.AddSingleton<V2PlaybackTokens>();
+builder.Services.AddSingleton<V2ConvertedDownloads>();
+// A converted download is read from this server's own stream route into a file; the read lasts as long as a conversion.
+builder.Services.AddHttpClient(V2ConvertedDownloads.HttpClientName, client => client.Timeout = Timeout.InfiniteTimeSpan).RemoveAllLoggers();
 builder.Services.AddScoped<V2TrackViewReader>();
 builder.Services.AddScoped<V2TrackEndpoints>();
 builder.Services.AddScoped<V2TrackResources>();

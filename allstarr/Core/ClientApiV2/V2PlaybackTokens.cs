@@ -26,4 +26,6 @@ internal sealed record V2PlaybackTicket(Guid Listener, string Backend, string Pr
 {
     public string? DeviceId { get; init; }
     public string? TrackId { get; init; }
+    /// <summary>The key of the converted copy a download is served from; null for a stream converted as it is sent.</summary>
+    public string? Copy { get; init; }
 }

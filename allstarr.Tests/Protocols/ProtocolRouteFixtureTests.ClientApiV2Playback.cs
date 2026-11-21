@@ -346,6 +346,105 @@ public sealed partial class ProtocolRouteFixtureTests
     }
 
     [Theory]
+    [InlineData("low", 96000)]
+    [InlineData("lowest", 64000)]
+    public async Task ClientApiV2_AConvertedDownloadIsAFileThatCanResume(string tier, int bitrate)
+    {
+        var asked = new List<string>();
+        var copy = Enumerable.Range(0, 64).Select(value => (byte)value).ToArray();
+        using var factory = V2PlaybackFactory(converted: request =>
+        {
+            lock (asked) asked.Add(request.RequestUri!.Host + ":" + request.RequestUri.Port);
+            return new(HttpStatusCode.OK) { Content = new ByteArrayContent(copy) };
+        });
+        using var client = CreateClientApiClient(factory);
+        client.DefaultRequestHeaders.Authorization = new("Bearer", "listener-token");
+
+        // Playing the same tier stays a live conversion; only a download is promised a file.
+        Assert.Equal("none", (await ResolveV2Playback(client, "native1", tier))["seek"]!.GetValue<string>());
+        var body = await ResolveV2Playback(client, "native1", tier, purpose: "download");
+        Assert.True(body["transcoded"]!.GetValue<bool>());
+        Assert.Equal(bitrate, body["delivered"]!["bitrate"]!.GetValue<int>());
+        Assert.Equal("bytes", body["seek"]!.GetValue<string>());
+        Assert.Null(body["contentLength"]);
+        var url = body["url"]!.GetValue<string>();
+        client.DefaultRequestHeaders.Authorization = null;
+
+        // Before the copy exists a HEAD is answered as any conversion is, and makes nothing.
+        using (var head = await client.SendAsync(new(HttpMethod.Head, url)))
+        {
+            Assert.Equal(HttpStatusCode.OK, head.StatusCode);
+            Assert.Null(head.Content.Headers.ContentLength);
+        }
+        Assert.Empty(asked);
+
+        using var whole = await client.GetAsync(url);
+        Assert.Equal(HttpStatusCode.OK, whole.StatusCode);
+        Assert.Equal(copy, await whole.Content.ReadAsByteArrayAsync());
+        Assert.Equal(copy.Length, whole.Content.Headers.ContentLength);
+        Assert.Equal("audio/aac", whole.Content.Headers.ContentType?.MediaType);
+        Assert.Contains("bytes", whole.Headers.AcceptRanges);
+        var tag = whole.Headers.ETag;
+        Assert.NotNull(tag);
+        Assert.Equal(["127.0.0.1:8080"], asked);
+
+        // A dropped download picks up where it stopped, from the copy, without converting again.
+        using var resume = new HttpRequestMessage(HttpMethod.Get, url);
+        resume.Headers.Range = new(60, null);
+        resume.Headers.IfRange = new(tag!);
+        using var rest = await client.SendAsync(resume);
+        Assert.Equal(HttpStatusCode.PartialContent, rest.StatusCode);
+        Assert.Equal(copy[60..], await rest.Content.ReadAsByteArrayAsync());
+        Assert.Equal(new(60, 63, 64), rest.Content.Headers.ContentRange);
+        Assert.Single(asked);
+
+        // A new link for the same song and tier names the same copy and now knows its size.
+        client.DefaultRequestHeaders.Authorization = new("Bearer", "listener-token");
+        var again = await ResolveV2Playback(client, "native1", tier, purpose: "download");
+        Assert.Equal(body["cacheKey"]!.GetValue<string>(), again["cacheKey"]!.GetValue<string>());
+        Assert.Equal(copy.Length, again["contentLength"]!.GetValue<long>());
+        client.DefaultRequestHeaders.Authorization = null;
+        using var second = await client.GetAsync(again["url"]!.GetValue<string>());
+        Assert.Equal(tag, second.Headers.ETag);
+        Assert.Single(asked);
+    }
+
+    [Fact]
+    public async Task ClientApiV2_AConvertedDownloadSaysWhenToAskAgainWhileTheConverterIsBusy()
+    {
+        using var factory = V2PlaybackFactory(converted: _ =>
+        {
+            var busy = new HttpResponseMessage(HttpStatusCode.ServiceUnavailable);
+            busy.Headers.RetryAfter = new(TimeSpan.FromSeconds(7));
+            return busy;
+        });
+        using var client = CreateClientApiClient(factory);
+        client.DefaultRequestHeaders.Authorization = new("Bearer", "listener-token");
+        var body = await ResolveV2Playback(client, "native1", "low", purpose: "download");
+        client.DefaultRequestHeaders.Authorization = null;
+        using var response = await client.GetAsync(body["url"]!.GetValue<string>());
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        Assert.Equal(TimeSpan.FromSeconds(7), response.Headers.RetryAfter?.Delta);
+    }
+
+    [Fact]
+    public async Task ClientApiV2_ADownloadOfTheFileItselfNeedsNoCopy()
+    {
+        using var factory = V2PlaybackFactory();
+        using var client = CreateClientApiClient(factory);
+        client.DefaultRequestHeaders.Authorization = new("Bearer", "listener-token");
+        var body = await ResolveV2Playback(client, "native1", "original", purpose: "download");
+        Assert.False(body["transcoded"]!.GetValue<bool>());
+        Assert.Equal("bytes", body["seek"]!.GetValue<string>());
+        client.DefaultRequestHeaders.Authorization = null;
+        using var request = new HttpRequestMessage(HttpMethod.Get, body["url"]!.GetValue<string>());
+        request.Headers.Range = new(2, 5);
+        using var response = await client.SendAsync(request);
+        Assert.Equal(HttpStatusCode.PartialContent, response.StatusCode);
+        Assert.Equal(new byte[] { 2, 3, 4, 5 }, await response.Content.ReadAsByteArrayAsync());
+    }
+
+    [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public async Task ClientApiV2_PlaybackLiveTranscodeHeadIgnoresRanges(bool external)
@@ -391,7 +490,8 @@ public sealed partial class ProtocolRouteFixtureTests
     }
 
     private static ProtocolFactory V2PlaybackFactory(bool lossy = false, Action<IServiceCollection>? configure = null,
-        Func<HttpRequestMessage?, HttpResponseMessage>? audio = null, Func<ProtocolProviderStream>? source = null)
+        Func<HttpRequestMessage?, HttpResponseMessage>? audio = null, Func<ProtocolProviderStream>? source = null,
+        Func<HttpRequestMessage, HttpResponseMessage>? converted = null)
     {
         var gateway = new Mock<IProtocolProviderGateway>();
         gateway.Setup(item => item.GetPlayableProviderOrderAsync(It.IsAny<ProviderActorContext>(), It.IsAny<CancellationToken>())).ReturnsAsync(["deezer"]);
@@ -407,6 +507,9 @@ public sealed partial class ProtocolRouteFixtureTests
             if (request.RequestUri.AbsolutePath == "/UserViews") return Json(200, """{"Items":[]}""");
             if (request.RequestUri.AbsolutePath == "/Users/listener/Items")
                 return Json(200, lossy ? V2LibrarySong.Replace("flac", "aac").Replace("2000000", "128000") : V2LibrarySong);
+            // A download's converted copy is read from the server's own stream route; the fixture stands in for that route.
+            if (request.RequestUri.AbsolutePath.StartsWith("/allstarr/v2/stream/", StringComparison.Ordinal))
+                return (converted ?? throw new InvalidOperationException("No converted copy was expected to be made."))(request);
             Assert.Equal("/Audio/native1/stream", request.RequestUri.AbsolutePath);
             Assert.DoesNotContain("listener-token", request.Headers.Authorization?.ToString() ?? "");
             return audio?.Invoke(request) ?? V2AudioResponse(request);

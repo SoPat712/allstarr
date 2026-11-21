@@ -8,7 +8,7 @@ public sealed record V2PlaybackRequest
     [Required, StringLength(1024), JsonPropertyName("trackId")]
     public required string TrackId { get; init; }
 
-    [Required, RegularExpression("lossless|high|normal|low|original"), JsonPropertyName("tier")]
+    [Required, RegularExpression("lossless|high|normal|lowest|low|original"), JsonPropertyName("tier")]
     public required string Tier { get; init; }
 
     [JsonPropertyName("client")]

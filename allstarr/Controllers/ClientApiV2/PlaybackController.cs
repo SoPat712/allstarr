@@ -24,6 +24,7 @@ public sealed class PlaybackController(V2PlaybackReader playback, V2PlaybackStat
         "or the provider track and source format. Same inputs produce the same key. " +
         "Only stored files and original/pass-through provider bytes can report seek=bytes and contentLength. " +
         "Live transcodes report seek=none and contentLength=null; Range requests return 200 with the full stream. " +
+        "With purpose=download a converted tier is made once into a file and served from that file: seek=bytes, and contentLength once the copy exists. " +
         "Clients may resume only streams reporting seek=bytes. Prefetch may move the source into cache without invalidating the URL.")]
     [ProducesResponseType<V2PlaybackResponse>(200)]
     [RequestSizeLimit(8192)]
@@ -42,10 +43,13 @@ public sealed class StreamController(V2PlaybackReader playback) : ControllerBase
     [EndpointDescription("Reads the track, delivered format and tier authorized by the signed URL without an authorization header. " +
         "The source may move between a provider and cache after prefetch. Stored files and pass-through provider streams support " +
         "byte ranges when advertised by resolve; live transcodes ignore Range and return 200 with the full stream. " +
+        "A download's converted copy is a file with Content-Length, an ETag and byte ranges; the first request waits while it is made, " +
+        "and answers 503 with Retry-After while every conversion slot is busy. " +
         "Bad, expired and foreign tokens return 404.")]
     [ProducesResponseType(200)]
     [ProducesResponseType(206)]
     [ProducesResponseType(404)]
+    [ProducesResponseType(503)]
     public Task<IActionResult> Get(string token) => playback.OpenAsync(HttpContext, token);
 
     [HttpHead("{token}")]
