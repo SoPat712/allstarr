@@ -27,6 +27,8 @@ public sealed class PromotionTrack
     public Guid? ManagedFileId { get; set; }
     public Guid? RefreshJobId { get; set; }
     public string? DestinationPath { get; set; }
+    /// <summary>The media server's id of the copy the library already held, when this song was skipped for it.</summary>
+    public string? LibraryCopyItemId { get; set; }
     public Guid? ApprovedByUserId { get; set; }
     public string? ApprovalReason { get; set; }
     public List<PromotionTrackStep> Steps { get; set; } = [];

@@ -562,6 +562,81 @@ public sealed partial class LibraryPromotionTests
     }
 
     [Theory]
+    // The library paired the new file with another identity of the same song: the two become one and the add is confirmed.
+    [InlineData(false, true)]
+    // MusicBrainz knows the two apart: nothing is merged and the job waits.
+    [InlineData(true, true)]
+    // Nothing was placed, because the add found the library to hold the song already: that copy is the song too.
+    [InlineData(false, false)]
+    public async Task PromotionLibraryLink_AFilePairedWithAnotherIdentityOfTheSongIsStillTheSongThatWasAdded(bool apart, bool placed)
+    {
+        var clock = new LinkClock();
+        var added = Guid.NewGuid();
+        var other = Guid.NewGuid();
+        var scanner = new Mock<IBackendLibraryCatalogScanner>();
+        scanner.SetupGet(item => item.Protocol).Returns(ProtocolKind.Jellyfin);
+        scanner.Setup(item => item.ScanAsync(It.IsAny<ProtocolExecutionContext>(),
+                It.Is<LibraryCatalogScanRequest>(request => request.BackendLibraryId == "music"), It.IsAny<CancellationToken>()))
+            .Returns(async () =>
+            {
+                await using var db = factory.CreateDbContext();
+                db.CanonicalRecordings.Add(new() { Id = other, CreatedByUserId = owner, PublicId = "same-song", Title = "Song" });
+                db.LibraryTracks.Add(new()
+                {
+                    Id = added,
+                    OwnerUserId = owner,
+                    Protocol = "jellyfin",
+                    BackendInstanceId = "backend",
+                    BackendLibraryId = "music",
+                    BackendItemId = "added",
+                    FilePath = "/media/music/Artist/Album/01 - Song.flac",
+                    Title = "Song",
+                    Artist = "Artist",
+                    CanonicalRecordingId = other,
+                    IndexedAt = clock.UtcNow
+                });
+                await db.SaveChangesAsync();
+                return new LibraryCatalogScanResult(1, 1, 0, 0, 1);
+            });
+        var identities = new Mock<ITrackIdentityService>();
+        identities.Setup(item => item.ResolveRecordingAsync(It.IsAny<allstarr.Core.Capabilities.ProviderActorContext>(),
+                recordingId.ToString("D"), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CanonicalRecordingIdentity(recordingId, owner, null, null, 1));
+        // Nothing the library knows about the song ties it to the file: its own pairing finds no match.
+        identities.Setup(item => item.LinkLibraryRecordingsAsync(It.IsAny<allstarr.Core.Capabilities.ProviderActorContext>(),
+                It.IsAny<string>(), recordingId, null, It.IsAny<CancellationToken>())).ReturnsAsync(new LibraryRecordingLinkResult(0, 0, 0));
+        var merge = identities.Setup(item => item.MergeRecordingsAsync(It.IsAny<allstarr.Core.Capabilities.ProviderActorContext>(),
+            recordingId, other, It.IsAny<string>(), It.IsAny<CancellationToken>()));
+        if (apart) merge.ThrowsAsync(new RecordingMergeConflictException("Recordings with conflicting MusicBrainz identities cannot be merged."));
+        else merge.ReturnsAsync(new CanonicalRecordingIdentity(other, owner, null, null, 2));
+        await queue.EnqueueAsync(new DurableJobEnqueueRequest<LibraryRecordingLinkPayload>(LibraryRecordingLinkQueue.JobType, "paired-elsewhere", new(owner)
+        {
+            RecordingIds = [recordingId],
+            BackendLibraryId = "music",
+            ConfirmBy = clock.UtcNow.AddMinutes(10),
+            Placed = placed ? new() { [recordingId] = Path.Combine("Artist", "Album", "01 - Song.flac") } : null,
+            Known = placed ? null : new() { [recordingId] = "added" }
+        }, owner));
+        var claim = (await queue.ClaimNextAsync("promotion-test", [LibraryRecordingLinkQueue.JobType]))!;
+        var handler = new LibraryRecordingLinkJobHandler(identities.Object, factory, clock, scanners: new([scanner.Object]));
+
+        var result = await handler.ExecuteAsync(new DurableJobExecutionContext(claim, services), default);
+
+        await using var verify = factory.CreateDbContext();
+        var audits = await verify.AuditEvents.Where(item => item.Action == "promotion.library-linked").ToArrayAsync();
+        if (apart)
+        {
+            Assert.Equal(DurableJobCompletionKind.Deferred, result.Kind);
+            Assert.Empty(audits);
+            return;
+        }
+        Assert.Equal(DurableJobCompletionKind.Succeeded, result.Kind);
+        Assert.Equal(added.ToString("N"), Assert.Single(audits).SubjectId);
+        // The add is still found by the song that was asked for.
+        Assert.Contains(recordingId.ToString("D"), audits[0].DetailsJson);
+    }
+
+    [Theory]
     [InlineData(44100)]
     [InlineData(48000)]
     public async Task PromotionLossySource_WithUnknownBitDepthIsNeverConvertedToFlac(int rate)

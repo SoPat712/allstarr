@@ -223,6 +223,14 @@ public sealed partial class LibraryPromotionService
     private async Task<bool> AlreadyInLibraryAsync(AllstarrDbContext db, ProtocolExecutionContext context, string library,
         PromotionTrack track, CancellationToken token)
     {
+        track.LibraryCopyItemId = await LibraryCopyAsync(db, context, library, track, token);
+        return track.LibraryCopyItemId != null;
+    }
+
+    // The media server's id of a copy of this song the library already holds, by recording, ISRC or MusicBrainz id.
+    private async Task<string?> LibraryCopyAsync(AllstarrDbContext db, ProtocolExecutionContext context, string library,
+        PromotionTrack track, CancellationToken token)
+    {
         var isrc = track.Song.Isrc?.Replace("-", "", StringComparison.Ordinal).Trim().ToUpperInvariant();
         var mbid = track.Song.ProviderIds.GetValueOrDefault("musicbrainz_recordingid");
         var copies = await LibraryTrackAccess.Query(db, context, await libraryAccess.ResolveAsync(context, token)).Where(item =>
@@ -230,14 +238,18 @@ public sealed partial class LibraryPromotionService
             (item.CanonicalRecordingId == track.RecordingId || isrc != null && isrc != "" && item.Isrc != null &&
                 item.Isrc.Replace("-", "").ToUpper() == isrc || mbid != null && item.MusicBrainzRecordingId == mbid))
             .Select(item => item.BackendItemId).Distinct().OrderBy(item => item).Take(50).ToArrayAsync(token);
-        if (copies.Length == 0 || scanners == null) return copies.Length > 0;
+        if (copies.Length == 0 || scanners == null) return copies.FirstOrDefault();
         // The index keeps a song after it is deleted from the media server. A copy the server no longer has is not in
         // the library, or a deleted song could never be added again.
-        try { return (await scanners.Resolve(context.Protocol).GoneAsync(context, library, copies, token)).Count < copies.Length; }
+        try
+        {
+            var gone = await scanners.Resolve(context.Protocol).GoneAsync(context, library, copies, token);
+            return copies.FirstOrDefault(copy => !gone.Contains(copy));
+        }
         catch (Exception error) when (error is HttpRequestException or NotSupportedException ||
             error is OperationCanceledException && !token.IsCancellationRequested)
         {
-            return true;
+            return copies[0];
         }
     }
 
@@ -549,7 +561,9 @@ public sealed partial class LibraryPromotionService
                     Placed = handoverTracks.Where(item => item.Outcome == "Placed" && item.DestinationPath != null)
                         .Select(item => (item.RecordingId, Path: Path.GetRelativePath(run.RootPath, item.DestinationPath!)))
                         .Where(item => !Path.IsPathRooted(item.Path) && !item.Path.StartsWith("..", StringComparison.Ordinal))
-                        .GroupBy(item => item.RecordingId).ToDictionary(group => group.Key, group => group.First().Path)
+                        .GroupBy(item => item.RecordingId).ToDictionary(group => group.Key, group => group.First().Path),
+                    Known = handoverTracks.Where(item => item.Outcome != "Placed" && item.LibraryCopyItemId != null)
+                        .GroupBy(item => item.RecordingId).ToDictionary(group => group.Key, group => group.First().LibraryCopyItemId!)
                 }, run.OwnerUserId), token);
             album.RefreshJobId = queued.JobId;
             foreach (var track in handoverTracks) track.RefreshJobId = queued.JobId;

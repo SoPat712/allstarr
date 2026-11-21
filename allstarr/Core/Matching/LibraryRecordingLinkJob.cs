@@ -17,6 +17,8 @@ public sealed record LibraryRecordingLinkPayload(Guid UserId)
     public DateTimeOffset? ConfirmBy { get; init; }
     /// <summary>Where each recording's new file was put, as a path inside the library's folder.</summary>
     public Dictionary<Guid, string>? Placed { get; init; }
+    /// <summary>The library item each recording was found to be already, by the media server's id.</summary>
+    public Dictionary<Guid, string>? Known { get; init; }
 }
 
 public sealed class LibraryRecordingLinkQueue(IDbContextFactory<AllstarrDbContext> factory, DurableJobQueue jobs,
@@ -109,6 +111,9 @@ public sealed partial class LibraryRecordingLinkJobHandler(ITrackIdentityService
                 await identities.LinkLibraryRecordingsAsync(promotionActor, execution.Claim.CorrelationId,
                     recording.Id, cancellationToken: cancellationToken);
                 recording = await identities.ResolveRecordingAsync(promotionActor, recordingId.ToString("D"), cancellationToken) ?? recording;
+                if (scanned is { } seen && (payload.Placed?.GetValueOrDefault(recordingId) is not null || payload.Known?.GetValueOrDefault(recordingId) is not null))
+                    recording = await ClaimLibraryFileAsync(accessible, viewer!, payload.BackendLibraryId, payload.Placed?.GetValueOrDefault(recordingId),
+                        payload.Known?.GetValueOrDefault(recordingId), seen, recording, promotionActor, execution.Claim.CorrelationId, cancellationToken);
                 var linked = await accessible.AsNoTracking().Where(item =>
                     item.BackendInstanceId == listener.BackendInstanceId && item.BackendLibraryId == payload.BackendLibraryId &&
                     item.CanonicalRecordingId == recording.Id).OrderBy(item => item.BackendItemId).Select(item => item.Id).FirstOrDefaultAsync(cancellationToken);

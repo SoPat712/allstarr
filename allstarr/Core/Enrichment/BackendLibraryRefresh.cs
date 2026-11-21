@@ -112,6 +112,8 @@ public sealed record BackendLibraryRefreshJobPayload(string BackendLibraryId, st
     public bool RemoveKeptCopy { get; init; }
     /// <summary>Where each recording's new file was put, as a path inside the library's folder.</summary>
     public Dictionary<Guid, string>? Placed { get; init; }
+    /// <summary>The library item each recording was found to be already, by the media server's id.</summary>
+    public Dictionary<Guid, string>? Known { get; init; }
 }
 
 public sealed class BackendLibraryRefreshOrchestrator(DurableJobQueue queue)
@@ -171,6 +173,7 @@ public sealed class BackendLibraryRefreshJobHandler(IDbContextFactory<AllstarrDb
                         RecordingIds = recordings,
                         RemoveKeptCopy = payload.RemoveKeptCopy,
                         Placed = payload.Placed,
+                        Known = payload.Known,
                         BackendLibraryId = payload.BackendLibraryId,
                         ConfirmBy = clock.UtcNow.AddMinutes(10)
                     }, user.Id, Priority: 100, MaxAttempts: 3, MaxDeferrals: 24), cancellationToken);

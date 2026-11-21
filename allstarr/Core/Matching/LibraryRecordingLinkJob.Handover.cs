@@ -31,9 +31,7 @@ public sealed partial class LibraryRecordingLinkJobHandler
         var replacement = Guid.Empty;
         if (!string.IsNullOrWhiteSpace(placed))
         {
-            // The media server may mount the music folder elsewhere, so the path is compared from the library's folder down.
-            var forward = "/" + placed.Replace('\\', '/').TrimStart('/');
-            var backward = forward.Replace('/', '\\');
+            var (forward, backward) = PlacedSuffixes(placed);
             replacement = (await accessible.AsNoTracking().Where(item => item.Protocol == "jellyfin" &&
                     item.BackendInstanceId == viewer.BackendInstanceId && item.BackendLibraryId == libraryId &&
                     (item.FilePath.EndsWith(forward) || item.FilePath.EndsWith(backward)))
@@ -45,6 +43,38 @@ public sealed partial class LibraryRecordingLinkJobHandler
                 .Select(item => item.Id).FirstOrDefault();
         return replacement != Guid.Empty && index is LibraryIndexService library &&
             await library.ReplaceGoneAsync(replacement, gone.Select(item => item.Id).ToArray(), correlationId, token);
+    }
+
+    // The media server may mount the music folder elsewhere, so the path is compared from the library's folder down.
+    private static (string Forward, string Backward) PlacedSuffixes(string placed)
+    {
+        var forward = "/" + placed.Replace('\\', '/').TrimStart('/');
+        return (forward, forward.Replace('/', '\\'));
+    }
+
+    // The file this add placed is the song that was added, and so is the copy the add found the library to hold already.
+    // The library's own pairing goes by tags and names, and may have put the file under another identity of the same
+    // song, one that came from a different playlist or service and was never known to be the same. The file settles
+    // it: the two are one song.
+    private async Task<CanonicalRecordingIdentity> ClaimLibraryFileAsync(IQueryable<LibraryTrackRecord> accessible,
+        ProtocolExecutionContext viewer, string libraryId, string? placed, string? known, DateTimeOffset scanned,
+        CanonicalRecordingIdentity recording, ProviderActorContext actor, string correlationId, CancellationToken token)
+    {
+        var files = accessible.AsNoTracking().Where(item => item.Protocol == "jellyfin" &&
+            item.BackendInstanceId == viewer.BackendInstanceId && item.BackendLibraryId == libraryId && item.CanonicalRecordingId != null);
+        if (placed != null)
+        {
+            var (forward, backward) = PlacedSuffixes(placed);
+            files = files.Where(item => item.FilePath.EndsWith(forward) || item.FilePath.EndsWith(backward));
+        }
+        else files = files.Where(item => item.BackendItemId == known);
+        // A placed file counts once the scan just made has seen it; before that the path may still name a copy that is gone.
+        var paired = (await files.Select(item => new { item.CanonicalRecordingId, item.IndexedAt }).ToArrayAsync(token))
+            .Where(item => placed == null || item.IndexedAt >= scanned).Select(item => item.CanonicalRecordingId!.Value).FirstOrDefault();
+        if (paired == Guid.Empty || paired == recording.Id) return recording;
+        try { return await identities.MergeRecordingsAsync(actor, recording.Id, paired, correlationId, token); }
+        // Two songs that MusicBrainz knows apart stay apart, and the add waits for someone to look.
+        catch (Exception error) when (error is RecordingMergeConflictException or KeyNotFoundException) { return recording; }
     }
 
     private async Task<bool> HandoverAsync(Guid recordingId, UserRecord listener, string libraryId,
