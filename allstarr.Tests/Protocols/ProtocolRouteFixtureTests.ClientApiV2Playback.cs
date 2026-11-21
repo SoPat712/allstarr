@@ -409,6 +409,54 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.Single(asked);
     }
 
+    [MediaToolsFact]
+    public async Task ClientApiV2_AConvertedDownloadIsRealAudioReadFromTheServersOwnStreamRoute()
+    {
+        var directory = Directory.CreateTempSubdirectory("allstarr-download-audio-").FullName;
+        try
+        {
+            var source = Path.Combine(directory, "source.flac");
+            await ExtensionDownloadDecryptionTests.RunAsync("ffmpeg", ["-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=4",
+                "-threads", "1", "-ar", "96000", "-ac", "2", "-sample_fmt", "s32", "-c:a", "flac", source]);
+            var flac = await File.ReadAllBytesAsync(source);
+            // The copy is read from this same app's stream route, as the live server reads it from its own port.
+            ProtocolFactory? app = null;
+            using var factory = V2PlaybackFactory(
+                audio: _ =>
+                {
+                    var file = new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(flac) };
+                    file.Content.Headers.ContentType = new("audio/flac");
+                    return file;
+                },
+                converted: request => CreateClientApiClient(app!).GetAsync(request.RequestUri!.PathAndQuery, HttpCompletionOption.ResponseHeadersRead)
+                    .GetAwaiter().GetResult());
+            app = factory;
+            using var client = CreateClientApiClient(factory);
+            client.DefaultRequestHeaders.Authorization = new("Bearer", "listener-token");
+            var body = await ResolveV2Playback(client, "native1", "low", purpose: "download", diagnostics: factory);
+            client.DefaultRequestHeaders.Authorization = null;
+            var url = body["url"]!.GetValue<string>();
+
+            using var whole = await client.GetAsync(url);
+            var audio = await whole.Content.ReadAsByteArrayAsync();
+            Assert.True(whole.StatusCode == HttpStatusCode.OK, System.Text.Encoding.UTF8.GetString(audio.AsSpan(0, Math.Min(audio.Length, 300))));
+            Assert.Equal(audio.Length, whole.Content.Headers.ContentLength);
+            Assert.Equal("audio/aac", whole.Content.Headers.ContentType?.MediaType);
+            // AAC as sent to a player: every frame opens with twelve set bits. Four seconds at 96 kbps is about 48 KB.
+            Assert.InRange(audio.Length, 4_000, 200_000);
+            Assert.Equal(0xFF, audio[0]);
+            Assert.Equal(0xF0, audio[1] & 0xF6);
+
+            using var resume = new HttpRequestMessage(HttpMethod.Get, url);
+            resume.Headers.Range = new(audio.Length / 2, null);
+            resume.Headers.IfRange = new(whole.Headers.ETag!);
+            using var rest = await client.SendAsync(resume);
+            Assert.Equal(HttpStatusCode.PartialContent, rest.StatusCode);
+            Assert.Equal(audio[(audio.Length / 2)..], await rest.Content.ReadAsByteArrayAsync());
+        }
+        finally { Directory.Delete(directory, true); }
+    }
+
     [Fact]
     public async Task ClientApiV2_AConvertedDownloadSaysWhenToAskAgainWhileTheConverterIsBusy()
     {
