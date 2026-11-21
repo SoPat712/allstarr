@@ -700,6 +700,7 @@ builder.Services.AddSingleton<IProviderCheckRunner, ProviderAccountCheckRunner>(
 builder.Services.AddSingleton<ProviderCheckRequests>();
 builder.Services.AddSingleton<IProviderCheckRequests>(services => services.GetRequiredService<ProviderCheckRequests>());
 builder.Services.AddHostedService<ProviderCheckService>();
+builder.Services.AddHostedService<allstarr.Core.Health.PlaybackStartMemoryRestore>();
 builder.Services.AddSingleton<IPlaybackMetadataResolver, ExternalPlaybackMetadataResolver>();
 builder.Services.AddSingleton<IProtocolProviderGateway, ProtocolProviderGateway>();
 builder.Services.AddSingleton<allstarr.Core.Music.MusicSearchService>();

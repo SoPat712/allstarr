@@ -434,6 +434,9 @@ public sealed class ProviderCtsDiagnosticRunner(
                     DateTimeOffset.UtcNow,
                     sampleRequest.Headers.Range?.ToString());
                 success.SelectedTrackId = trackId;
+                // The recorded result keeps the start the memory learned, so a restart can learn it back.
+                success.PlaybackStart = new(execution.ProviderId, execution.Account?.AccountId, execution.Account?.Revision,
+                    quality, success.MeasuredAt, firstByteMilliseconds.Value, facts?.Media ?? lease.Media);
                 success.DownloadVerified = streaming is IProviderDownloadStreamingCapability;
                 if (automatic) _diagnosticSamples.Remember($"{providerId}:{providerAccountId}:cts",
                     new("Last working recording", "Source", null, 200, trackId));
@@ -620,6 +623,7 @@ public sealed class ProviderCtsDiagnosticResult
         StreamByteRanges.MatchesContentRange(range, ContentLength, requested)
             ? "byte-range" : RequestedRange == null && LeaseSupportsSeeking ? "provider-seek" : "sequential";
     public ProviderMediaFormat? Media { get; init; }
+    public PlaybackSourceStart? PlaybackStart { get; internal set; }
     public string? QualityDowngradeReason { get; init; }
     public string ProbeMode { get; init; } = "cold-connect";
     public int Bars { get; init; }

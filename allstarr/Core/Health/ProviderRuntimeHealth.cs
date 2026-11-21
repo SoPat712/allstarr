@@ -73,7 +73,8 @@ public sealed class ProviderRuntimeHealth : IProviderOutcomeObserver, ILyricsOut
     private const int MaximumObservations = 4096;
     // Start times outlive health samples by far: which source a song starts from should hold through a day's
     // listening, not move with whichever source happened to play in the last few minutes.
-    private static readonly TimeSpan PlaybackStartMemory = TimeSpan.FromHours(12);
+    internal static readonly TimeSpan PlaybackStartMemory = TimeSpan.FromHours(12);
+    internal const int PlaybackStartSamples = 15;
     private readonly object _sync = new();
     private readonly Dictionary<ProviderRuntimeStatusKey, ProviderHealthObservation> _observations = [];
     private readonly Dictionary<ProviderRuntimeStatusKey, List<ProviderCheckResult>> _recent = [];
@@ -83,6 +84,7 @@ public sealed class ProviderRuntimeHealth : IProviderOutcomeObserver, ILyricsOut
     private readonly Dictionary<string, SidecarStatus> _sidecars = new(StringComparer.OrdinalIgnoreCase);
     private readonly ProviderHealthOptions _options;
     private readonly IPlatformClock _clock;
+    private readonly DateTimeOffset _createdAt;
 
     private AppleDownloadEndpointSnapshot? _appleDownloadSnapshot;
     private DateTimeOffset? _appleDownloadObservedAt;
@@ -107,6 +109,7 @@ public sealed class ProviderRuntimeHealth : IProviderOutcomeObserver, ILyricsOut
         _options = options ?? new ProviderHealthOptions();
         _options.Validate();
         _clock = clock ?? new SystemPlatformClock();
+        _createdAt = _clock.UtcNow;
         foreach (var target in sidecars?.Targets ?? [])
         {
             var absent = string.IsNullOrWhiteSpace(target.BaseUrl);
@@ -178,19 +181,48 @@ public sealed class ProviderRuntimeHealth : IProviderOutcomeObserver, ILyricsOut
     public void ObservePlaybackStart(ProviderExecutionContext context, ProviderAudioQuality quality, TimeSpan elapsed,
         ProviderMediaFormat? media)
     {
+        var at = _clock.UtcNow;
+        if (elapsed < TimeSpan.Zero) elapsed = TimeSpan.Zero;
         lock (_sync)
         {
-            var key = new PlaybackSourceKey(context.ProviderId, context.Account?.AccountId, context.Account?.Revision, quality);
-            if (!_playbackStarts.TryGetValue(key, out var samples))
-            {
-                if (_playbackStarts.Count >= MaximumObservations)
-                    _playbackStarts.Remove(_playbackStarts.MinBy(item => item.Value[^1].At).Key);
-                _playbackStarts[key] = samples = [];
-            }
-            samples.RemoveAll(item => item.At + PlaybackStartMemory <= _clock.UtcNow);
-            if (samples.Count >= 15) samples.RemoveAt(0);
-            samples.Add(new(_clock.UtcNow, elapsed < TimeSpan.Zero ? TimeSpan.Zero : elapsed, media));
+            var samples = PlaybackStarts(new(context.ProviderId, context.Account?.AccountId, context.Account?.Revision, quality));
+            samples.RemoveAll(item => item.At + PlaybackStartMemory <= at);
+            if (samples.Count >= PlaybackStartSamples) samples.RemoveAt(0);
+            samples.Add(new(at, elapsed, media));
         }
+        // The request's start record carries the sample, so a restart can learn it back from storage.
+        PlaybackStartTimings.Current?.SourceStarted(new(context.ProviderId, context.Account?.AccountId,
+            context.Account?.Revision, quality, at, elapsed.TotalMilliseconds, media));
+    }
+
+    /// <summary>Learns starts recorded before this process began, each keeping its own age.</summary>
+    internal int RestorePlaybackStarts(IEnumerable<PlaybackSourceStart> starts)
+    {
+        var restored = 0;
+        lock (_sync)
+        {
+            var now = _clock.UtcNow;
+            foreach (var start in starts)
+            {
+                // Anything from after this process began is already in memory; anything older than the memory is gone.
+                if (start.At >= _createdAt || start.At + PlaybackStartMemory <= now || string.IsNullOrWhiteSpace(start.Provider) ||
+                    !Enum.IsDefined(start.Quality) || !double.IsFinite(start.ElapsedMs) || start.ElapsedMs is < 0 or > 3_600_000) continue;
+                var samples = PlaybackStarts(new(start.Provider, start.Account, start.Revision, start.Quality));
+                var index = samples.FindLastIndex(item => item.At <= start.At) + 1;
+                samples.Insert(index, new(start.At, TimeSpan.FromMilliseconds(start.ElapsedMs), start.Media));
+                if (samples.Count > PlaybackStartSamples) samples.RemoveAt(0);
+                restored++;
+            }
+        }
+        return restored;
+    }
+
+    private List<PlaybackStartSample> PlaybackStarts(PlaybackSourceKey key)
+    {
+        if (_playbackStarts.TryGetValue(key, out var samples)) return samples;
+        if (_playbackStarts.Count >= MaximumObservations)
+            _playbackStarts.Remove(_playbackStarts.MinBy(item => item.Value[^1].At).Key);
+        return _playbackStarts[key] = [];
     }
 
     public PlaybackStartObservation? GetPlaybackStart(ProviderExecutionContext context, ProviderAudioQuality quality)

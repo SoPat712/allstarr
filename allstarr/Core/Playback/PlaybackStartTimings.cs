@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using allstarr.Core.Capabilities;
 using allstarr.Core.Storage;
 using allstarr.Core.Protocols;
 using allstarr.Core.Music;
@@ -16,7 +17,15 @@ public sealed record PlaybackStartPhaseTiming(PlaybackStartPhase Phase, string? 
 public sealed record PlaybackStartSample(Guid Id, DateTimeOffset StartedAt, string Outcome, string? Provider,
     string? Title, string? Artist, string? AccountScope, bool Cached, double ElapsedMs,
     double? HeadersMs, double? FirstByteMs, IReadOnlyList<PlaybackStartPhaseTiming> Phases, int OmittedPhases, PlayTraceData? Trace = null,
-    string? DeviceId = null);
+    string? DeviceId = null, IReadOnlyList<PlaybackSourceStart>? Starts = null);
+
+/// <summary>One start a service made, as the start-time memory learned it, kept so a restart can learn it again.</summary>
+public sealed record PlaybackSourceStart(string Provider, Guid? Account, long? Revision,
+    [property: JsonConverter(typeof(JsonStringEnumConverter<ProviderAudioQuality>))] ProviderAudioQuality Quality,
+    DateTimeOffset At, double ElapsedMs, ProviderMediaFormat? Media)
+{
+    public const int MaximumPerRequest = 8;
+}
 
 public sealed class PlaybackStartTimings(TimeProvider clock) : IDisposable
 {
@@ -33,6 +42,7 @@ public sealed class PlaybackStartTimings(TimeProvider clock) : IDisposable
     private bool cached;
     private string? deviceId;
     private PlayTraceData? play;
+    private List<PlaybackSourceStart>? starts;
     private Func<TrackMediaFacts?>? received;
     private double? headers, firstByte;
     public const int MaximumPhases = 96;
@@ -184,6 +194,11 @@ public sealed class PlaybackStartTimings(TimeProvider clock) : IDisposable
             play = play with { Delivery = delivery };
         }
     }
+    internal void SourceStarted(PlaybackSourceStart start)
+    {
+        if (!Enabled) return;
+        lock (sync) { if (!closed && (starts ??= []).Count < PlaybackSourceStart.MaximumPerRequest) starts.Add(start); }
+    }
     public void Headers() { lock (sync) { if (!closed) headers ??= Elapsed; } }
     public bool FirstByte()
     {
@@ -211,7 +226,7 @@ public sealed class PlaybackStartTimings(TimeProvider clock) : IDisposable
             if (complete) { closed = true; received = null; }
             var trace = play == null ? null : play with { Request = PlayTraceText.CatalogLabels(play.Request, title, artist) };
             return new(id, startedAt, outcome, provider ?? phases.LastOrDefault(phase => phase.Provider != null)?.Provider, title, artist, accountScope, cached,
-                Elapsed, headers, firstByte, phases.OrderBy(item => item.StartedMs).ToArray(), omitted, trace, deviceId);
+                Elapsed, headers, firstByte, phases.OrderBy(item => item.StartedMs).ToArray(), omitted, trace, deviceId, starts?.ToArray());
         }
     }
     public void Dispose() => Ambient.Value = previous;
