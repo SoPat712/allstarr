@@ -63,7 +63,12 @@ public sealed partial class StatsArtTests
         warmer.Queue(user, Recap() with { TopAlbums = [], TopArtists = [] });
         var queued = (System.Collections.IEnumerable)typeof(RecapArtworkWarmUp).GetField("queued", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(warmer)!;
         Assert.Empty(queued.Cast<object>());
+        // The services are not asked again every few minutes for a cover none of them had.
         time.Advance(TimeSpan.FromMinutes(11));
+        Assert.True(reader.IsNegative(identity));
+        warmer.Queue(user, Recap() with { TopAlbums = [], TopArtists = [] });
+        Assert.Empty(queued.Cast<object>());
+        time.Advance(TimeSpan.FromHours(12));
         Assert.False(reader.IsNegative(identity));
         warmer.Queue(user, Recap() with { TopAlbums = [], TopArtists = [] });
         Assert.Single(queued.Cast<object>());

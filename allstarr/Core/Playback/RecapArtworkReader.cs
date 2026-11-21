@@ -20,6 +20,9 @@ public sealed class RecapArtworkReader(IProtocolProviderGateway gateway, IMediaA
     private readonly MemoryCache cache = new(new MemoryCacheOptions { SizeLimit = 256 });
     private readonly SemaphoreSlim creditsGate = new(1, 1);
     private static readonly TimeSpan KeptFor = TimeSpan.FromMinutes(10);
+    // A song or album cover is looked for by asking the services. One that none of them has is not asked for again for
+    // half a day: asking every ten minutes found nothing new and kept the slower services in cool-down.
+    private static readonly TimeSpan MissingCoverFor = TimeSpan.FromHours(12);
 
     internal bool IsNegative(MediaAssetIdentity identity) => cache.TryGetValue(identity, out DateTimeOffset until) &&
         until > (time ?? TimeProvider.System).GetUtcNow();
@@ -80,8 +83,11 @@ public sealed class RecapArtworkReader(IProtocolProviderGateway gateway, IMediaA
         // Some sources hold a blank picture for an artist; use the placeholder instead.
         if (asset is { Bytes.Length: >= MinimumBytes }) return asset;
         if (empty || asset != null)
-            cache.Set(identity, (time ?? TimeProvider.System).GetUtcNow() + KeptFor,
-                new MemoryCacheEntryOptions { Size = 1, AbsoluteExpirationRelativeToNow = KeptFor });
+        {
+            var missingFor = title == null && album == null ? KeptFor : MissingCoverFor;
+            cache.Set(identity, (time ?? TimeProvider.System).GetUtcNow() + missingFor,
+                new MemoryCacheEntryOptions { Size = 1, AbsoluteExpirationRelativeToNow = missingFor });
+        }
         return null;
     }
 
