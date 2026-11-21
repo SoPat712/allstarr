@@ -125,8 +125,8 @@ internal static partial class LyricsTiming
     internal static string? SidecarContent(LyricsInfo lyrics, long? measuredDurationMs = null)
     {
         var timed = ReadLines(lyrics);
-        if (timed == null) return lyrics.SyncedLyrics ?? lyrics.PlainLyrics;
-        var lines = VocalLines(timed);
+        if (timed == null) return LyricsCleanup.WithoutCredits(lyrics.SyncedLyrics ?? lyrics.PlainLyrics, lyrics.TrackName);
+        var lines = LyricsCleanup.WithoutCredits(VocalLines(timed), line => line.Text, lyrics.TrackName)!;
         var following = FollowingStarts(lines);
         var rendered = new List<string>();
         for (var index = 0; index < lines.Count; index++)
