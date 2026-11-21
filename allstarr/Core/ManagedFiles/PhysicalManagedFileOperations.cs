@@ -155,9 +155,12 @@ public sealed class PhysicalManagedFileOperations : IManagedFileOperations
     public async Task CopyAsync(string sourcePath, string destinationPath, CancellationToken cancellationToken)
     {
         await using var source = new FileStream(sourcePath, FileMode.Open, FileAccess.Read, FileShare.Read, 128 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
-        await using var destination = new FileStream(destinationPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 128 * 1024, FileOptions.Asynchronous | FileOptions.WriteThrough);
+        await using var destination = new FileStream(destinationPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 128 * 1024, FileOptions.Asynchronous);
         await source.CopyToAsync(destination, cancellationToken);
         await destination.FlushAsync(cancellationToken);
+        // The copy waits for the disk once, at the end. Waiting after every block made one song take minutes to reach a
+        // spinning library disk.
+        destination.Flush(flushToDisk: true);
     }
 
     public void MoveNoReplace(string sourcePath, string destinationPath) => File.Move(sourcePath, destinationPath, overwrite: false);
