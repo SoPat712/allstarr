@@ -346,6 +346,55 @@ public sealed partial class ProtocolRouteFixtureTests
     }
 
     [Theory]
+    [InlineData("original")]
+    [InlineData("lossless")]
+    public async Task ClientApiV2_AServiceSongWhoseFormatIsNotKnownYetStillPlays(string tier)
+    {
+        // Some services only learn a song's format by fetching it: resolve sees none, the open sees the real one.
+        var opened = 0;
+        using var factory = V2PlaybackFactory(source: () => Interlocked.Increment(ref opened) == 1 ? V2ServiceAudioOfUnknownFormat() : V2ServiceAudio());
+        using var client = CreateClientApiClient(factory);
+        client.DefaultRequestHeaders.Authorization = new("Bearer", "listener-token");
+        await SeedV2DetailsAsync(factory, "listener", "known", personal: true);
+        var body = await ResolveV2Playback(client, "ext-deezer-song-known", tier, diagnostics: factory);
+        Assert.Equal("unknown", body["delivered"]!["codec"]!.GetValue<string>());
+        client.DefaultRequestHeaders.Authorization = null;
+        using var response = await client.GetAsync(body["url"]!.GetValue<string>());
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(10, (await response.Content.ReadAsByteArrayAsync()).Length);
+    }
+
+    [Fact]
+    public async Task ClientApiV2_ADownloadOfAServiceSongWhoseFormatIsNotKnownYetFetchesItFirst()
+    {
+        var fetched = false;
+        var preparation = new Mock<IUpcomingTrackPreparation>();
+        preparation.Setup(item => item.PrepareAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>()))
+            .Returns(() => { fetched = true; return Task.CompletedTask; });
+        using var factory = V2PlaybackFactory(configure: services =>
+        {
+            services.RemoveAll<IUpcomingTrackPreparation>();
+            services.AddSingleton(preparation.Object);
+        }, source: () => fetched ? V2ServiceAudio() : V2ServiceAudioOfUnknownFormat());
+        using var client = CreateClientApiClient(factory);
+        client.DefaultRequestHeaders.Authorization = new("Bearer", "listener-token");
+        await SeedV2DetailsAsync(factory, "listener", "known", personal: true);
+        // Playing does not wait for a fetch; a download does, so that what it is promised is true.
+        await ResolveV2Playback(client, "ext-deezer-song-known", "original", diagnostics: factory);
+        Assert.False(fetched);
+        var body = await ResolveV2Playback(client, "ext-deezer-song-known", "original", purpose: "download", diagnostics: factory);
+        preparation.Verify(item => item.PrepareAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>()), Times.Once);
+        Assert.Equal("flac", body["delivered"]!["codec"]!.GetValue<string>());
+        Assert.Equal("bytes", body["seek"]!.GetValue<string>());
+        Assert.Equal(10, body["contentLength"]!.GetValue<long>());
+        client.DefaultRequestHeaders.Authorization = null;
+        using var request = new HttpRequestMessage(HttpMethod.Get, body["url"]!.GetValue<string>());
+        request.Headers.Range = new(2, 5);
+        using var response = await client.SendAsync(request);
+        Assert.Equal(HttpStatusCode.PartialContent, response.StatusCode);
+    }
+
+    [Theory]
     [InlineData("low", 96000)]
     [InlineData("lowest", 64000)]
     public async Task ClientApiV2_AConvertedDownloadIsAFileThatCanResume(string tier, int bitrate)
@@ -666,6 +715,11 @@ public sealed partial class ProtocolRouteFixtureTests
         new("fixture", new("https://fixture.invalid/audio"), DateTimeOffset.UtcNow.AddMinutes(1), true, true,
             new("audio/flac", "flac", "flac", 2000000, 96000, 24, 2), ProviderStreamRetryBehavior.DoNotRetry),
         "deezer", "known", IsCached: cached);
+
+    private static ProtocolProviderStream V2ServiceAudioOfUnknownFormat() => new(V2AudioResponse(),
+        new("fixture", new("https://fixture.invalid/audio"), DateTimeOffset.UtcNow.AddMinutes(1), true, true,
+            new("application/octet-stream", "unknown", "unknown"), ProviderStreamRetryBehavior.DoNotRetry),
+        "deezer", "known", IsCached: false);
 
     private static HttpResponseMessage V2AudioResponse(HttpRequestMessage? request = null)
     {

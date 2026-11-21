@@ -48,6 +48,14 @@ public sealed class V2PlaybackReader(V2TrackReader tracks, ProviderStreamOpener 
         quality = AudioQualityPolicy.Limit(quality, step);
         var routed = parsed.isExternal
             ? await streams.InspectSourceAsync(execution, parsed.provider!, parsed.externalId!, quality) : null;
+        // Some services only know a song's format once they have fetched it. A download is promised a format, a length
+        // and byte ranges, so its song is fetched first; anything else starts at once and is judged when it opens.
+        if (routed is { Response.IsSuccessStatusCode: true } && request.Purpose == "download" && Unknown(routed.FileFacts.Media ?? routed.Lease.Media))
+        {
+            routed.Response.Dispose();
+            await preparation.PrepareAsync(execution with { PreparationQuality = quality }, item);
+            routed = await streams.InspectSourceAsync(execution, parsed.provider!, parsed.externalId!, quality);
+        }
         using var inspected = parsed.isExternal
             ? routed?.Response
             : await jellyfin.OpenAudioSourceAsync(item, true, null, execution.CancellationToken);
@@ -81,7 +89,7 @@ public sealed class V2PlaybackReader(V2TrackReader tracks, ProviderStreamOpener 
             }));
         var held = copy == null ? null : downloads!.Find(copy);
         var ticket = new V2PlaybackTicket(execution.Principal!.UserId, execution.BackendInstanceId,
-            execution.VerifiedBackendPrincipalId, item, tier, playback, quality, Freeze(delivery, delivered), source)
+            execution.VerifiedBackendPrincipalId, item, tier, playback, quality, Unknown(source) ? delivery : Freeze(delivery, delivered), source)
         { DeviceId = execution.Client.DeviceId, TrackId = V2AutoplayReader.Identity(track), Copy = copy, Purpose = request.Purpose };
         var lowered = tier != request.Tier || LimitChanged(source, step, request.Tier)
             ? !parsed.isExternal || step != household.AudioQuality ? "listener" : "household" : null;
@@ -279,6 +287,9 @@ public sealed class V2PlaybackReader(V2TrackReader tracks, ProviderStreamOpener 
     private static ProviderMediaFormat Media(V2Format? format) => format?.Codec is not { } codec || format.Container is not { } container
         ? throw new ProviderAudioProfileException("Library audio format is unavailable.")
         : new("application/octet-stream", container, codec, format.Bitrate, format.SampleRate, format.BitDepth, format.Channels);
+    // A format not known yet cannot be promised: the link then carries the tier's own limits, and the source that opens
+    // is held to those, instead of to a codec named "unknown" that no source has.
+    private static bool Unknown(ProviderMediaFormat media) => media.Codec == "unknown" || media.Container == "unknown";
     private static ProviderAudioDeliveryRequest Freeze(ProviderAudioDeliveryRequest request, ProviderMediaFormat media) => request with
     {
         Formats = [new([media.Container], [media.Codec], ["http"])],
