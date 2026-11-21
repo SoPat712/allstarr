@@ -124,7 +124,17 @@ public sealed class V2LibraryEndpoints(MixReader mixes, ReleaseReader releases, 
             ? V2Ids.Album(requested) : TrackId(requested);
         return new(addition.Id, itemId, addition.Unit, addition.State, addition.Reason, addition.LibraryItemId, requestedItemId,
             new[] { addition.RequestedItemId, addition.ItemId }.OfType<string>().Where(id => id != itemId && id != requestedItemId)
-                .Distinct(StringComparer.Ordinal).ToArray());
+                .Distinct(StringComparer.Ordinal).ToArray())
+        {
+            Title = addition.Title,
+            Artist = addition.Artist,
+            Step = addition.Step,
+            HeldAt = addition.HeldAt,
+            StepsDone = addition.StepsDone,
+            StepsTotal = addition.StepsTotal,
+            ItemsDone = addition.ItemsDone,
+            ItemsTotal = addition.ItemsTotal
+        };
     }
 
     private static async Task<V2Result> ExecuteAsync(Func<Task<V2Result>> action)

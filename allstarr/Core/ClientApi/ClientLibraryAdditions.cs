@@ -19,6 +19,25 @@ public sealed record ClientLibraryAddition(Guid Id, string ItemId, string Unit, 
     public string? LibraryItemId { get; init; }
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? RequestedItemId { get; init; }
+    /// <summary>What is being added, for an app that did not ask for it itself: the song's or the album's name.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Title { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Artist { get; init; }
+    /// <summary>What is happening now: fetching, checking, lyrics, tagging, loudness, placing or scanning.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Step { get; init; }
+    /// <summary>The step an addition that needs a look stopped at, in the same names.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? HeldAt { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? StepsDone { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? StepsTotal { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? ItemsDone { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? ItemsTotal { get; init; }
 }
 public sealed record ClientLibraryAdditionCapabilities(bool CanAddDirectly, bool RequiresApproval, string DefaultUnit)
 {
@@ -181,7 +200,7 @@ public sealed class ClientLibraryAdditions(IDbContextFactory<AllstarrDbContext> 
                 .Select(match => tracks.FirstOrDefault(track => track.Id == match.TrackId && track.BackendLibraryId == item.Library))
                 .FirstOrDefault(track => track != null)?.BackendItemId ?? tracks.FirstOrDefault(track => track.BackendLibraryId == item.Library &&
                 item.Value.ItemId == $"ext-allstarr-song-{track.CanonicalRecordingId:D}")?.BackendItemId
-        }).ToArray();
+        }).Select(item => item.LibraryItemId == null ? item : ClientLibraryAdditionProgress.Shown(item)).ToArray();
     }
 
     public async Task<ClientLibraryAddition> CancelAsync(ProtocolExecutionContext context, Guid id, CancellationToken token = default)
@@ -205,9 +224,9 @@ public sealed class ClientLibraryAdditions(IDbContextFactory<AllstarrDbContext> 
     internal static ClientLibraryAddition From(PromotionRunRecord run)
     {
         var request = JsonSerializer.Deserialize<PromoteSongRequest>(run.RequestJson)!;
-        return new(run.Id, $"ext-allstarr-song-{request.RecordingId:D}",
+        return ClientLibraryAdditionProgress.Describe(new(run.Id, $"ext-allstarr-song-{request.RecordingId:D}",
             request.Unit ?? LibraryPromotionService.ReadAlbum(run)?.Profile.DefaultUnit ?? "song", RunState(run), Reason(RunState(run)))
-        { RequestedItemId = request.RequestedItemId };
+        { RequestedItemId = request.RequestedItemId }, run);
     }
 
     internal static ClientLibraryAddition From(PromotionRequestRecord request, PromotionRunRecord? run = null)
@@ -221,9 +240,14 @@ public sealed class ClientLibraryAdditions(IDbContextFactory<AllstarrDbContext> 
             "failed" => run?.Outcome == "Cancelled" ? "cancelled" : "needsLook",
             _ => run == null ? "adding" : RunState(run)
         };
-        return new(request.Id, $"ext-allstarr-song-{request.RecordingId:D}", request.Unit, state,
+        var value = new ClientLibraryAddition(request.Id, $"ext-allstarr-song-{request.RecordingId:D}", request.Unit, state,
             request.State == "declined" && request.DeclineNote is { Length: > 0 } note ? note : Reason(state))
-        { RequestedItemId = JsonSerializer.Deserialize<PromoteSongRequest>(request.RequestJson)!.RequestedItemId };
+        {
+            RequestedItemId = JsonSerializer.Deserialize<PromoteSongRequest>(request.RequestJson)!.RequestedItemId,
+            Title = string.IsNullOrWhiteSpace(request.Title) ? null : request.Title,
+            Artist = string.IsNullOrWhiteSpace(request.Artist) ? null : request.Artist
+        };
+        return run == null ? value : ClientLibraryAdditionProgress.Describe(value, run);
     }
 
     private static string RunState(PromotionRunRecord run) => run.Outcome switch

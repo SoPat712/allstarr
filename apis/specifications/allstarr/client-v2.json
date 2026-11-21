@@ -8365,6 +8365,63 @@
               "type": "string"
             },
             "description": "The older ids of the requested item and the added track, as the media-server routes and v1 spell them, so an app holding those can find its addition."
+          },
+          "title": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "description": "The song\u0027s name, or the album\u0027s when unit is \u0060album\u0060, so an app that did not start the addition can name it."
+          },
+          "artist": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "step": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "description": "What is happening now: \u0060fetching\u0060, \u0060checking\u0060, \u0060lyrics\u0060, \u0060tagging\u0060, \u0060loudness\u0060, \u0060placing\u0060 or \u0060scanning\u0060. \u0060scanning\u0060 goes with state \u0060done\u0060 until the media server shows the item and \u0060libraryItemId\u0060 appears."
+          },
+          "heldAt": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "description": "With state \u0060needsLook\u0060: the step the addition stopped at, in the names of \u0060step\u0060. Absent when it stopped on an error."
+          },
+          "stepsDone": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "description": "Steps finished out of \u0060stepsTotal\u0060, for a progress bar. An album counts every song\u0027s steps.",
+            "format": "int32"
+          },
+          "stepsTotal": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int32"
+          },
+          "itemsDone": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "description": "For an addition of several songs: how many are in the library, out of \u0060itemsTotal\u0060.",
+            "format": "int32"
+          },
+          "itemsTotal": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int32"
           }
         }
       },
