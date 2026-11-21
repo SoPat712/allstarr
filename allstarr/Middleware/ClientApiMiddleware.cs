@@ -32,6 +32,8 @@ public sealed class ClientApiMiddleware(RequestDelegate next, BackendSelectionAu
             if (context.Response.StatusCode >= 400 && !context.Response.HasStarted)
                 await ClientApiError.WriteAsync(context, context.Response.StatusCode);
         }
+        // A client that left before its answer is noted by the request log as having given up; nothing failed here.
+        catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested && !context.Response.HasStarted) { }
         catch (Exception exception) when (!context.Response.HasStarted)
         {
             logger.LogError(exception, "Client request failed");

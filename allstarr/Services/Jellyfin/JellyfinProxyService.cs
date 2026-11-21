@@ -1096,6 +1096,8 @@ public class JellyfinProxyService : IDisposable
 
     private void LogUpstreamFailure(HttpMethod method, HttpStatusCode statusCode, string url)
     {
+        // "Not modified" answers a conditional read; the caller relays it.
+        if (statusCode == HttpStatusCode.NotModified) return;
         url = MaskSensitiveUrl(url);
         if (statusCode == HttpStatusCode.Unauthorized)
         {
