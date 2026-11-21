@@ -52,6 +52,7 @@ public sealed class V2SessionReader(IDurableRuntimeSettings settings, LibraryPro
                 ["playbackRequestStatus"] = true,
                 // A download of a converted tier comes as a file with a length and byte ranges, and there is a `lowest` tier.
                 ["resumableDownloads"] = true,
+                ["librarySize"] = true,
                 ["tracksFacts"] = true,
                 ["mixRows"] = true,
                 ["historyRows"] = true,

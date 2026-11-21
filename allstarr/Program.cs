@@ -520,6 +520,7 @@ builder.Services.AddScoped<V2AutoplayReader>();
 builder.Services.AddScoped<V2PlaybackReader>();
 builder.Services.AddSingleton<V2PlaybackTokens>();
 builder.Services.AddSingleton<V2ConvertedDownloads>();
+builder.Services.AddSingleton<V2LibrarySizeReader>();
 // A converted download is read from this server's own stream route into a file; the read lasts as long as a conversion.
 builder.Services.AddHttpClient(V2ConvertedDownloads.HttpClientName, client => client.Timeout = Timeout.InfiniteTimeSpan).RemoveAllLoggers();
 builder.Services.AddScoped<V2TrackViewReader>();

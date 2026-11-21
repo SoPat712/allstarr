@@ -512,6 +512,66 @@ public sealed partial class ProtocolRouteFixtureTests
     }
 
     [Fact]
+    public async Task ClientApiV2_LibrarySizeAddsUpTheListenersOwnMusicLibraries()
+    {
+        var asked = new System.Collections.Concurrent.ConcurrentQueue<string>();
+        using var factory = ClientApiFactory(request =>
+        {
+            switch (request.RequestUri!.AbsolutePath)
+            {
+                case "/Users/Me": return Json(200, """{"Id":"listener"}""");
+                case "/UserViews": return Json(200, """{"Items":[{"Id":"mine","Name":"My music","CollectionType":"music"},{"Id":"kids","Name":"Kids","CollectionType":"music"}]}""");
+            }
+            var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(request.RequestUri.Query);
+            if (request.RequestUri.AbsolutePath != "/Users/listener/Items" || query["IncludeItemTypes"] != "Audio") return Json(200, """{"Items":[]}""");
+            var library = query["ParentId"].ToString();
+            var start = int.Parse(query["StartIndex"].ToString(), System.Globalization.CultureInfo.InvariantCulture);
+            asked.Enqueue($"{library}@{start}");
+            // "mine" holds 501 three-minute songs, one more than a page; "kids" holds two, and the media server gives no size for one.
+            var count = library == "mine" ? start == 0 ? 500 : 1 : 2;
+            var items = new JsonArray(Enumerable.Range(0, count).Select(index => (JsonNode)new JsonObject
+            {
+                ["Id"] = $"{library}-{start + index}",
+                ["RunTimeTicks"] = library == "kids" && index == 1 ? 600_000_000L : 1_800_000_000L,
+                ["MediaSources"] = new JsonArray(library == "kids" && index == 1 ? new JsonObject() : new JsonObject { ["Size"] = 1000L })
+            }).ToArray());
+            return Json(200, new JsonObject { ["Items"] = items }.ToJsonString());
+        });
+        using var client = CreateClientApiClient(factory);
+        client.DefaultRequestHeaders.Authorization = new("Bearer", "listener-token");
+        async Task<JsonNode> SizeAsync()
+        {
+            using var response = await client.GetAsync("/allstarr/v2/library/size");
+            var text = await response.Content.ReadAsStringAsync();
+            Assert.True(response.StatusCode == HttpStatusCode.OK, text);
+            return JsonNode.Parse(text)!;
+        }
+
+        var everything = await SizeAsync();
+        Assert.Equal(503, everything["tracks"]!.GetValue<int>());
+        Assert.Equal(502 * 180_000L + 60_000L, everything["durationMs"]!.GetValue<long>());
+        Assert.Equal(502_000L, everything["bytes"]!.GetValue<long>());
+        Assert.Equal(502, everything["sizedTracks"]!.GetValue<int>());
+        Assert.Equal(["kids@0", "mine@0", "mine@500"], asked.Order(StringComparer.Ordinal).ToArray());
+
+        // Asked again soon after, the media server is not read again.
+        Assert.Equal(503, (await SizeAsync())["tracks"]!.GetValue<int>());
+        Assert.Equal(3, asked.Count);
+
+        // Only the libraries the listener listens from count.
+        using (var chosen = await client.PatchAsJsonAsync("/allstarr/v2/me/preferences", new { libraries = new { selected = new[] { "mine" } } }))
+            chosen.EnsureSuccessStatusCode();
+        var mine = await SizeAsync();
+        Assert.Equal(501, mine["tracks"]!.GetValue<int>());
+        Assert.Equal(501_000L, mine["bytes"]!.GetValue<long>());
+
+        using var batch = await client.PostAsJsonAsync("/allstarr/v2/batch", new { requests = new[] { new { id = "size", path = "/allstarr/v2/library/size" } } });
+        var batched = JsonNode.Parse(await batch.Content.ReadAsStringAsync())!["responses"]!["size"]!;
+        Assert.Equal(200, batched["status"]!.GetValue<int>());
+        Assert.Equal(501, batched["body"]!["tracks"]!.GetValue<int>());
+    }
+
+    [Fact]
     public async Task ClientApiV2_PreferencesChooseTheListenersOwnMusicLibraries()
     {
         var log = new LibraryLog();

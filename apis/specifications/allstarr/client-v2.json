@@ -1588,6 +1588,106 @@
         }
       }
     },
+    "/allstarr/v2/library/size": {
+      "get": {
+        "tags": [
+          "Library"
+        ],
+        "description": "Reads how much music the listener\u0027s own music libraries hold: the number of songs, their total length and the size of the files as they are. The size at a converted quality is the length times that quality\u0027s bitrate. The first read takes a few seconds; the answer is kept for half an hour. Also available in batch.",
+        "operationId": "getV2LibrarySize",
+        "parameters": [
+          {
+            "name": "If-None-Match",
+            "in": "header",
+            "description": "The stored ETag; a matching representation returns 304 without a body.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "headers": {
+              "ETag": {
+                "description": "Representation validator, also returned by the batch entry.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V2LibrarySize"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Not Modified",
+            "headers": {
+              "ETag": {
+                "description": "Representation validator, also returned by the batch entry.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/allstarr/v2/me/history": {
       "get": {
         "tags": [
@@ -8466,6 +8566,35 @@
           }
         }
       },
+      "V2LibrarySize": {
+        "required": [
+          "tracks",
+          "durationMs",
+          "bytes",
+          "sizedTracks"
+        ],
+        "type": "object",
+        "properties": {
+          "tracks": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "durationMs": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "bytes": {
+            "type": "integer",
+            "description": "The files as they are, in bytes, for the tracks whose size the media server gives.",
+            "format": "int64"
+          },
+          "sizedTracks": {
+            "type": "integer",
+            "description": "How many of the tracks \u0060bytes\u0060 covers.",
+            "format": "int32"
+          }
+        }
+      },
       "V2Listener": {
         "required": [
           "id",
@@ -11047,6 +11176,9 @@
     },
     {
       "name": "LibraryAdditions"
+    },
+    {
+      "name": "Library"
     },
     {
       "name": "Me"
