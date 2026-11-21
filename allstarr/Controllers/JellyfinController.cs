@@ -555,7 +555,8 @@ public partial class JellyfinController : ControllerBase
         // API asks that way; on this route an app says so with standin=0.
         var native = HttpContext.Items.ContainsKey(allstarr.Core.ClientApiV2.V2ArtworkUrls.RequestMark) || Request.Query["standin"] == "0";
         if (native) imageKey += ":native";
-        return await CachedImageAsync(imageKey!, provider!, maxWidth ?? maxHeight, requestedFormat, ReadAsync, artist: type == "artist" || native);
+        return await CachedImageAsync(imageKey!, provider!, maxWidth ?? maxHeight, requestedFormat, ReadAsync, artist: type == "artist" || native,
+            tryAgain: native);
 
         async Task<ResolvedMediaAsset?> ReadAsync(CancellationToken token)
         {
@@ -873,7 +874,7 @@ public partial class JellyfinController : ControllerBase
     private sealed record CachedArtwork(MediaAssetSource? Image, bool Retry = false);
 
     private async Task<IActionResult> CachedImageAsync(string key, string provider, int? size, string? requestedFormat,
-        Func<CancellationToken, Task<ResolvedMediaAsset?>> read, bool artist = false)
+        Func<CancellationToken, Task<ResolvedMediaAsset?>> read, bool artist = false, bool tryAgain = false)
     {
         var entry = await _cache.GetAsync<CachedArtwork>(key);
         entry ??= await _imageRequests.RunAsync(key, async () =>
@@ -895,7 +896,7 @@ public partial class JellyfinController : ControllerBase
             if (result.Image != null) await _cache.SetAsync(key, result, result.Retry ? TimeSpan.FromSeconds(60) : null);
             return result;
         }, CancellationToken.None);
-        if (entry.Image == null) return MissingExternalImage();
+        if (entry.Image == null) return entry.Retry && tryAgain ? ImageNotReady() : MissingExternalImage();
         if (!entry.Retry) return CreateConditionalImageResponse(entry.Image.Bytes, entry.Image.ContentType);
         Response.Headers.CacheControl = "private, max-age=60";
         return File(entry.Image.Bytes, entry.Image.ContentType);
@@ -988,6 +989,15 @@ public partial class JellyfinController : ControllerBase
     {
         Response.Headers.CacheControl = "no-store";
         return new ContentResult { StatusCode = StatusCodes.Status404NotFound };
+    }
+
+    // The lookup ran out of time, which says nothing about whether a picture exists: an app that asked for no stand-in
+    // is told to ask again instead of being told there is none.
+    private IActionResult ImageNotReady()
+    {
+        Response.Headers.CacheControl = "no-store";
+        Response.Headers.RetryAfter = "5";
+        return new ContentResult { StatusCode = StatusCodes.Status503ServiceUnavailable };
     }
 
     private IActionResult CreateConditionalImageResponse(byte[] imageBytes, string contentType)
