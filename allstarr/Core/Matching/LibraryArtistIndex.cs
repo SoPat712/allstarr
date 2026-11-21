@@ -53,16 +53,20 @@ public sealed partial class LibraryArtistIndex(IDbContextFactory<AllstarrDbConte
         if (!ValidName(name)) return new([], [], []);
         var access = await libraryAccess.ResolveUserAsync(owner, token);
         if (access.Context == null || !access.Access.Succeeded) return new([], [], []);
-        using (RequestTiming.Current?.Stage("lock")) await Gate.WaitAsync(token);
-        try
+        await using var db = await factory.CreateDbContextAsync(token);
+        // Links whose songs have not changed are read as saved, side by side. Only working them out again takes its
+        // turn, because that saves the next version.
+        var computed = await ComputedAsync(db, owner, access, name, token, null, savedOnly: true);
+        if (computed == null)
         {
-            await using var db = await factory.CreateDbContextAsync(token);
-            var songs = (await ComputedAsync(db, owner, access, name, token)).Where(link => Usable(link.ArtistId)).ToArray();
-            var albums = (await AlbumLinksAsync(db, owner, access.Context, [name], token)).GetValueOrDefault(name) ?? [];
-            var fixes = (await FixesAsync(db, owner, access.Context, [name], token)).GetValueOrDefault(name) ?? [];
-            return new(songs, albums, fixes);
+            using (RequestTiming.Current?.Stage("lock")) await Gate.WaitAsync(token);
+            try { computed = await ComputedAsync(db, owner, access, name, token); }
+            finally { Gate.Release(); }
         }
-        finally { Gate.Release(); }
+        var songs = computed.Where(link => Usable(link.ArtistId)).ToArray();
+        var albums = (await AlbumLinksAsync(db, owner, access.Context, [name], token)).GetValueOrDefault(name) ?? [];
+        var fixes = (await FixesAsync(db, owner, access.Context, [name], token)).GetValueOrDefault(name) ?? [];
+        return new(songs, albums, fixes);
     }
 
     // A shared album ties a service artist as matched songs do; one a song already ties is listed once.
@@ -166,7 +170,12 @@ public sealed partial class LibraryArtistIndex(IDbContextFactory<AllstarrDbConte
     }));
 
     private async Task<IReadOnlyList<LibraryArtistLink>> ComputedAsync(AllstarrDbContext db, Guid owner, BackendLibraryAccessContext access,
-        string name, CancellationToken token, List<LibraryArtistEvidence>? evidence = null)
+        string name, CancellationToken token, List<LibraryArtistEvidence>? evidence = null) =>
+        (await ComputedAsync(db, owner, access, name, token, evidence, savedOnly: false))!;
+
+    /// <summary>With <paramref name="savedOnly"/>, the saved links while the songs behind them are unchanged, and null once they are not.</summary>
+    private async Task<IReadOnlyList<LibraryArtistLink>?> ComputedAsync(AllstarrDbContext db, Guid owner, BackendLibraryAccessContext access,
+        string name, CancellationToken token, List<LibraryArtistEvidence>? evidence, bool savedOnly)
     {
         var tracks = await TracksAsync(db, access, name, token);
         var recordings = tracks.Select(item => item.CanonicalRecordingId).OfType<Guid>().Distinct().ToArray();
@@ -227,6 +236,7 @@ public sealed partial class LibraryArtistIndex(IDbContextFactory<AllstarrDbConte
         var previous = await LatestAsync(db, owner, IndexKind, key, token);
         if (previous?.ProviderRevision == fingerprint && evidence == null)
             return JsonSerializer.Deserialize<LibraryArtistLink[]>(previous.PayloadJson) ?? [];
+        if (savedOnly) return null;
         var ids = current.Select(item => item.Id).ToArray();
         var metadata = await snapshots.Where(item => ids.Contains(item.Id)).ToArrayAsync(token);
         var votes = new List<(string Provider, Guid Recording, string[] Artists, bool Named, string Name)>();
