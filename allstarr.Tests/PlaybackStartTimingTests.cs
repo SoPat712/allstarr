@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using allstarr.Core.Playback;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Identity;
@@ -114,6 +115,7 @@ public sealed class PlaybackStartTimingTests
             trace.Headers();
             clock.Advance(TimeSpan.FromMilliseconds(123));
             await http.Response.Body.WriteAsync(Encoding.UTF8.GetBytes("audio"));
+            await trace.PendingRecords;
             var started = Assert.Single(await Store(factory, clock).ReadAsync(10, default));
             Assert.Equal("started", started.Outcome);
             Assert.Equal(123, started.FirstByteMs);
@@ -207,6 +209,262 @@ public sealed class PlaybackStartTimingTests
         Assert.False(timing.Enabled);
         Assert.Empty(await store.ReadAsync(100, default));
         gateway.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public void NamedPhasesCoverTheStretchesBetweenMeasuredSteps()
+    {
+        var clock = new ManualTimeProvider();
+        using var trace = new PlaybackStartTimings(clock);
+        trace.Enter(); trace.Enable();
+        clock.Advance(TimeSpan.FromMilliseconds(40));
+        trace.FromStart(PlaybackStartPhase.Request);
+        using (trace.Selecting())
+        {
+            clock.Advance(TimeSpan.FromMilliseconds(15));
+            trace.Selected();
+            clock.Advance(TimeSpan.FromMilliseconds(5));
+        }
+        clock.Advance(TimeSpan.FromMilliseconds(10));
+        trace.Sending();
+        clock.Advance(TimeSpan.FromMilliseconds(20));
+        Assert.True(trace.FirstByte());
+        var sample = trace.Snapshot("completed", complete: true);
+        Assert.Equal(new PlaybackStartPhaseTiming(PlaybackStartPhase.Request, null, 0, 40), sample.Phases[0]);
+        Assert.Equal(new PlaybackStartPhaseTiming(PlaybackStartPhase.Selection, null, 40, 15), sample.Phases[1]);
+        Assert.Equal(new PlaybackStartPhaseTiming(PlaybackStartPhase.Send, null, 70, 20), sample.Phases[2]);
+        Assert.Equal(3, sample.Phases.Count);
+        Assert.Equal(90, sample.FirstByteMs);
+    }
+
+    [Fact]
+    public async Task ARefusedStartRecordsItsStatusAndTheCodeItsAnswerCarried()
+    {
+        await using var database = await SqliteTestDatabase.CreateAsync();
+        var factory = new ProviderCheckServiceTests.Factory(database.Options);
+        var clock = new ManualTimeProvider();
+        var store = Store(factory, clock);
+        var context = new DefaultHttpContext();
+        context.Response.Body = new MemoryStream();
+        await new PlaybackStartTimingMiddleware(async http =>
+        {
+            var trace = PlaybackStartTimings.Current!;
+            trace.Enable();
+            trace.Refuse("rate-limited");
+            http.Response.StatusCode = 503;
+            await http.Response.WriteAsync("""{"error":"Allstarr is at capacity.","code":"local-capacity-unavailable"}""");
+        }, store, clock).InvokeAsync(context);
+        var saved = Assert.Single(await store.ReadAsync(10, default));
+        Assert.Equal("failed", saved.Outcome);
+        Assert.Equal(503, saved.Status);
+        Assert.Equal("local-capacity-unavailable", saved.Code);
+    }
+
+    [Fact]
+    public async Task ARefusedOpenWithoutACodeInItsAnswerRecordsWhyItWasRefused()
+    {
+        await using var database = await SqliteTestDatabase.CreateAsync();
+        var factory = new ProviderCheckServiceTests.Factory(database.Options);
+        var clock = new ManualTimeProvider();
+        var store = Store(factory, clock);
+        var (execution, gateway) = await OpeningAsync(factory, clock);
+        gateway.Setup(item => item.OpenStreamAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "fixture", ProviderAudioQuality.Any, null, false))
+            .ThrowsAsync(new LocalCapacityException());
+        var opener = new ProviderStreamOpener(gateway.Object, new(), timings: store);
+        var context = new DefaultHttpContext();
+        context.Request.Method = "GET";
+        context.Response.Body = new MemoryStream();
+        await new PlaybackStartTimingMiddleware(async http =>
+        {
+            try { await opener.OpenAsync(http, execution, "deezer", "fixture", ProviderAudioQuality.Any); }
+            catch (LocalCapacityException)
+            {
+                http.Response.StatusCode = 503;
+                await http.Response.WriteAsync("""{"error":"Allstarr is at capacity."}""");
+            }
+        }, store, clock).InvokeAsync(context);
+        var saved = Assert.Single(await store.ReadAsync(10, default));
+        Assert.Equal("failed", saved.Outcome);
+        Assert.Equal(503, saved.Status);
+        Assert.Equal(LocalCapacityException.Code, saved.Code);
+    }
+
+    [Fact]
+    public async Task ACompletedStartRecordsItsStatusAndNoCode()
+    {
+        await using var database = await SqliteTestDatabase.CreateAsync();
+        var factory = new ProviderCheckServiceTests.Factory(database.Options);
+        var clock = new ManualTimeProvider();
+        var store = Store(factory, clock);
+        var context = new DefaultHttpContext();
+        context.Response.Body = new MemoryStream();
+        await new PlaybackStartTimingMiddleware(async http =>
+        {
+            var trace = PlaybackStartTimings.Current!;
+            trace.Enable();
+            trace.Refuse("rate-limited");
+            http.Response.StatusCode = 206;
+            await http.Response.Body.WriteAsync(Encoding.UTF8.GetBytes("audio"));
+        }, store, clock).InvokeAsync(context);
+        var saved = Assert.Single(await store.ReadAsync(10, default));
+        Assert.Equal("completed", saved.Outcome);
+        Assert.Equal(206, saved.Status);
+        Assert.Null(saved.Code);
+    }
+
+    [Fact]
+    public async Task RecordsWrittenBeforeStatusesWereKeptStillRead()
+    {
+        await using var database = await SqliteTestDatabase.CreateAsync();
+        var factory = new ProviderCheckServiceTests.Factory(database.Options);
+        var clock = new ManualTimeProvider(DateTimeOffset.Parse("2026-10-28T00:00:00Z"));
+        var sample = Sample(clock.GetUtcNow());
+        var legacy = JsonNode.Parse(JsonSerializer.Serialize(sample))!.AsObject();
+        legacy.Remove(nameof(PlaybackStartSample.Status));
+        legacy.Remove(nameof(PlaybackStartSample.Code));
+        var row = Row(sample);
+        row.DetailsJson = legacy.ToJsonString();
+        await using (var db = factory.CreateDbContext())
+        {
+            db.AuditEvents.Add(row);
+            await db.SaveChangesAsync();
+        }
+        var saved = Assert.Single(await Store(factory, clock).ReadAsync(10, default));
+        Assert.Equal(sample.Id, saved.Id);
+        Assert.Null(saved.Status);
+        Assert.Null(saved.Code);
+    }
+
+    [Fact]
+    public async Task AnEarlierRecordLandingLateNeverReplacesTheFinalRecordOfTheSameStart()
+    {
+        await using var database = await SqliteTestDatabase.CreateAsync();
+        var factory = new ProviderCheckServiceTests.Factory(database.Options);
+        var clock = new ManualTimeProvider(DateTimeOffset.Parse("2026-10-28T00:00:00Z"));
+        var store = Store(factory, clock);
+        using var timing = new PlaybackStartTimings(clock);
+        timing.Enable();
+        var opening = timing.Snapshot(PlaybackStartTimingStore.OpeningOutcome);
+        clock.Advance(TimeSpan.FromMilliseconds(50));
+        Assert.True(timing.FirstByte());
+        var started = timing.Snapshot(PlaybackStartTimingStore.StartedOutcome);
+        timing.Answer(200, null);
+        await store.RecordAsync(timing.Snapshot("completed", complete: true));
+        await store.RecordAsync(started);
+        await store.RecordAsync(opening);
+        var saved = Assert.Single(await store.ReadAsync(10, default));
+        Assert.Equal("completed", saved.Outcome);
+        Assert.Equal(200, saved.Status);
+
+        // A signed playback link opened again is a new start under the same id, and its records replace the old one.
+        clock.Advance(TimeSpan.FromSeconds(5));
+        using var again = new PlaybackStartTimings(clock);
+        again.Correlate(timing.Id);
+        again.Enable();
+        await store.RecordAsync(again.Snapshot(PlaybackStartTimingStore.OpeningOutcome));
+        Assert.Equal(PlaybackStartTimingStore.OpeningOutcome, Assert.Single(await store.ReadAsync(10, default)).Outcome);
+    }
+
+    [Fact]
+    public async Task OnlyTheFinalRecordPrunesOldRows()
+    {
+        await using var database = await SqliteTestDatabase.CreateAsync();
+        var factory = new ProviderCheckServiceTests.Factory(database.Options);
+        var clock = new ManualTimeProvider(DateTimeOffset.Parse("2026-10-28T00:00:00Z"));
+        var old = Sample(clock.GetUtcNow().AddDays(-8));
+        await using (var db = factory.CreateDbContext())
+        {
+            db.AuditEvents.Add(Row(old));
+            await db.SaveChangesAsync();
+        }
+        var store = Store(factory, clock);
+        using var timing = new PlaybackStartTimings(clock);
+        timing.Enable();
+        await store.RecordAsync(timing.Snapshot(PlaybackStartTimingStore.OpeningOutcome));
+        await store.RecordAsync(timing.Snapshot(PlaybackStartTimingStore.StartedOutcome));
+        await using (var db = factory.CreateDbContext()) Assert.True(await db.AuditEvents.AnyAsync(row => row.Id == old.Id));
+        await store.RecordAsync(timing.Snapshot("completed", complete: true));
+        await using (var db = factory.CreateDbContext()) Assert.False(await db.AuditEvents.AnyAsync(row => row.Id == old.Id));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ASlowOrFailingOpeningRecordNeitherHoldsUpNorFailsTheOpen(bool failing)
+    {
+        await using var database = await SqliteTestDatabase.CreateAsync();
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var factory = new FirstWriteFactory(new ProviderCheckServiceTests.Factory(database.Options), gate.Task, failing);
+        var clock = new ManualTimeProvider();
+        var store = Store(factory, clock);
+        var (execution, gateway) = await OpeningAsync(factory, clock);
+        var reachedWhileWriting = false;
+        using var upstream = new HttpResponseMessage(System.Net.HttpStatusCode.OK) { Content = new ByteArrayContent([1, 2, 3]) };
+        var media = new ProviderMediaFormat("audio/flac", "flac", "flac", 900000, 44100, 16, 2);
+        var routed = new ProtocolProviderStream(upstream, new("fixture", new("https://media.example.test/audio"),
+            clock.GetUtcNow().AddHours(1), true, true, media, ProviderStreamRetryBehavior.DoNotRetry), "deezer", "fixture", IsCached: true)
+        { FileFacts = new() { Measured = new(media, DurationSeconds: 220) } };
+        gateway.Setup(item => item.OpenStreamAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "fixture", ProviderAudioQuality.Any, null, false))
+            .Callback(() => reachedWhileWriting = failing || SpinWait.SpinUntil(() => factory.Waiting, 1000)).ReturnsAsync(routed);
+        var opener = new ProviderStreamOpener(gateway.Object, new(), timings: store);
+        var context = new DefaultHttpContext();
+        context.Request.Method = "GET";
+        context.Response.Body = new MemoryStream();
+        var body = context.Response.Body;
+        await new PlaybackStartTimingMiddleware(async http =>
+        {
+            var result = Assert.IsType<Microsoft.AspNetCore.Mvc.FileStreamResult>(
+                await opener.OpenAsync(http, execution, "deezer", "fixture", ProviderAudioQuality.Any));
+            await result.FileStream.CopyToAsync(http.Response.Body);
+            await result.FileStream.DisposeAsync();
+            gate.SetResult();
+        }, store, clock).InvokeAsync(context);
+        Assert.True(reachedWhileWriting);
+        var saved = Assert.Single(await store.ReadAsync(10, default));
+        Assert.Equal("completed", saved.Outcome);
+        Assert.Equal(200, saved.Status);
+        Assert.Equal(new byte[] { 1, 2, 3 }, ((MemoryStream)body).ToArray());
+    }
+
+    private static async Task<(ProtocolExecutionContext Execution, Mock<IProtocolProviderGateway> Gateway)> OpeningAsync(
+        IDbContextFactory<AllstarrDbContext> factory, TimeProvider clock)
+    {
+        var principal = new AllstarrPrincipal(Guid.NewGuid(), "jellyfin", "primary", "listener", "Listener", false);
+        // Each record names its listener, so the listener must exist.
+        await using (var db = factory.CreateDbContext())
+        {
+            db.Users.Add(new()
+            {
+                Id = principal.UserId,
+                Enabled = true,
+                DisplayName = "Listener",
+                BackendType = "jellyfin",
+                BackendInstanceId = "primary",
+                BackendPrincipalId = "listener"
+            });
+            await db.SaveChangesAsync();
+        }
+        return (new ProtocolExecutionContext(ProtocolKind.Jellyfin, "primary", "listener", principal, "fixture", clock.GetUtcNow().AddMinutes(1), default),
+            new Mock<IProtocolProviderGateway>(MockBehavior.Strict));
+    }
+
+    /// <summary>Holds up or fails only the first write, which is the opening record.</summary>
+    private sealed class FirstWriteFactory(IDbContextFactory<AllstarrDbContext> inner, Task gate, bool failing) : IDbContextFactory<AllstarrDbContext>
+    {
+        private int calls;
+        public volatile bool Waiting;
+        public AllstarrDbContext CreateDbContext() => inner.CreateDbContext();
+        public async Task<AllstarrDbContext> CreateDbContextAsync(CancellationToken cancellationToken = default)
+        {
+            if (Interlocked.Increment(ref calls) == 1)
+            {
+                if (failing) throw new InvalidOperationException("store unavailable");
+                Waiting = true;
+                try { await gate.WaitAsync(cancellationToken); }
+                finally { Waiting = false; }
+            }
+            return inner.CreateDbContext();
+        }
     }
 
     private static PlaybackStartTimingStore Store(IDbContextFactory<AllstarrDbContext> factory, TimeProvider clock) =>

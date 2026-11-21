@@ -18,8 +18,10 @@ describe("play history wording", () => {
     expect(playStart(null)).toBe("Start time not recorded");
   });
   it("names every start step without exposing phase keys", () => {
-    const phases = ["Route", "Account", "Lease", "Source", "Verify", "Retry", "Segments", "Process", "Headers", "FirstByte", "Preparation", "Kept", "Match"];
-    expect(phases.map(playPhase)).toEqual(["Choosing where to play", "Choosing an account", "Waiting for a turn", "Opening the source", "Checking the audio", "Trying again", "Loading audio pieces", "Preparing the audio", "Ready to send audio", "Sending the first audio", "Getting the song ready", "Checking saved copies", "Finding the song at each source"]);
+    const phases = ["Route", "Account", "Lease", "Source", "Verify", "Retry", "Segments", "Process", "Headers", "FirstByte", "Preparation", "Kept", "Match",
+      "Request", "Opening", "Selection", "Acceptance", "Resolution", "Delivery", "Send"];
+    expect(phases.map(playPhase)).toEqual(["Choosing where to play", "Choosing an account", "Waiting for a turn", "Opening the source", "Checking the audio", "Trying again", "Loading audio pieces", "Preparing the audio", "Ready to send audio", "Sending the first audio", "Getting the song ready", "Checking saved copies", "Finding the song at each source",
+      "Receiving the request", "Looking up the song", "Choosing a source", "Checking the chosen source", "Noting what was chosen", "Preparing the response", "Waiting for the first audio"]);
     expect(playPhase("future_step")).toBe("Preparing playback");
   });
   it("uses familiar source and outcome names", () => {

@@ -1457,6 +1457,7 @@ public sealed partial class ProtocolProviderGateway(
             allowManagedDownloads: true);
         var plan = await router.PlanAsync<IProviderStreamingCapability>(streamRequest);
         routeTiming?.Dispose();
+        using var selectionTiming = PlaybackStartTimings.Current?.Selecting();
         if (pinnedDownload != null)
         {
             plan = plan with
@@ -1924,6 +1925,7 @@ public sealed partial class ProtocolProviderGateway(
         async Task<ProtocolProviderStream> OpenedAsync(ProtocolProviderStream stream,
             ProviderExecutionContext? execution, ProviderExternalResourceId? servingTrack)
         {
+            using var acceptanceTiming = PlaybackStartTimings.Current?.Measure(PlaybackStartPhase.Acceptance, stream.ServingProviderId);
             var selectedTrack = servingTrack ?? new ProviderExternalResourceId(stream.ServingProviderId,
                 ProviderResourceKind.Track, stream.ServingExternalId ?? trackId.Value);
             if (!await AllowsCleanPlaybackAsync(protocol, selectedTrack, execution))
@@ -2173,6 +2175,7 @@ public sealed partial class ProtocolProviderGateway(
     {
         ProviderStreamLease? lease = null;
         ProviderError error = new(ProviderErrorKind.TransientFailure);
+        PlaybackStartTimings.Current?.Selected();
         for (var attempt = 0; attempt < 2; attempt++)
         {
             using var retryTiming = attempt > 0 ? PlaybackStartTimings.Current?.Measure(PlaybackStartPhase.Retry, timingProvider) : null;
@@ -2535,6 +2538,7 @@ public sealed partial class ProtocolProviderGateway(
 
     private void ThrowRejectedRoute(ProviderRouteCandidateDecision rejection, bool quiet = false)
     {
+        PlaybackStartTimings.Current?.Refuse(rejection.ReasonCode);
         if (rejection.ProviderId == "apple-musickit" &&
             rejection.ReasonCode is "account-personal-to-another-listener" or "account-scope-denied")
             throw new ProtocolProviderAccountAccessException();
@@ -2555,7 +2559,13 @@ public sealed partial class ProtocolProviderGateway(
         throw new UnauthorizedAccessException("The provider route is not available to this user.");
     }
 
-    private static void ThrowRouteFailure(ProviderError error) => throw error switch
+    private static void ThrowRouteFailure(ProviderError error)
+    {
+        PlaybackStartTimings.Current?.Refuse(error.Code);
+        throw RouteFailure(error);
+    }
+
+    private static Exception RouteFailure(ProviderError error) => error switch
     {
         { Code: LocalCapacityException.Code } => new LocalCapacityException(),
         { Code: "stream-range-unavailable" } => new HttpRequestException(error.SafeMessage, null,

@@ -1,3 +1,4 @@
+using System.Text.Json;
 using allstarr.Core.Playback;
 
 namespace allstarr.Middleware;
@@ -9,26 +10,39 @@ public sealed class PlaybackStartTimingMiddleware(RequestDelegate next, Playback
         using var timing = new PlaybackStartTimings(clock);
         timing.Enter();
         var original = context.Response.Body;
-        context.Response.Body = new TimingBody(original, timing, store);
+        var body = new TimingBody(original, timing, store, context.Response);
+        context.Response.Body = body;
         context.Response.OnStarting(() => { if (timing.Enabled) timing.Headers(); return Task.CompletedTask; });
         var outcome = "completed";
+        var escaped = false;
         try
         {
             await next(context);
             if (context.RequestAborted.IsCancellationRequested || context.Response.StatusCode == 499) outcome = "cancelled";
             else if (context.Response.StatusCode >= 400) outcome = "failed";
         }
-        catch (OperationCanceledException) { outcome = "cancelled"; throw; }
-        catch { outcome = "failed"; throw; }
+        catch (OperationCanceledException) { outcome = "cancelled"; escaped = true; throw; }
+        catch { outcome = "failed"; escaped = true; throw; }
         finally
         {
             context.Response.Body = original;
-            if (timing.Enabled) await store.RecordAsync(timing.Snapshot(outcome, complete: true));
+            if (timing.Enabled)
+            {
+                // An error that escapes is answered further out, so its status is known only once headers went out.
+                timing.Answer(!escaped || context.Response.HasStarted ? context.Response.StatusCode : null, body.ErrorCode());
+                var final = timing.Snapshot(outcome, complete: true);
+                try { await timing.PendingRecords.WaitAsync(TimeSpan.FromSeconds(3)); }
+                catch (Exception error) when (error is not OutOfMemoryException) { }
+                await store.RecordAsync(final);
+            }
         }
     }
 
-    private sealed class TimingBody(Stream source, PlaybackStartTimings timing, PlaybackStartTimingStore store) : Stream
+    private sealed class TimingBody(Stream source, PlaybackStartTimings timing, PlaybackStartTimingStore store, HttpResponse response) : Stream
     {
+        private const int ErrorBodyLimit = 4096;
+        private byte[]? errorBody;
+        private int errorLength;
         public override bool CanRead => false;
         public override bool CanSeek => false;
         public override bool CanWrite => source.CanWrite;
@@ -44,8 +58,31 @@ public sealed class PlaybackStartTimingMiddleware(RequestDelegate next, Playback
         public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken token = default)
         {
             await source.WriteAsync(buffer, token);
+            if (!buffer.IsEmpty && timing.Enabled && response.StatusCode >= 400 && errorLength < ErrorBodyLimit)
+            {
+                errorBody ??= new byte[ErrorBodyLimit];
+                var take = Math.Min(buffer.Length, ErrorBodyLimit - errorLength);
+                buffer.Span[..take].CopyTo(errorBody.AsSpan(errorLength));
+                errorLength += take;
+            }
+            // The rest of the audio must not wait for this record either.
             if (!buffer.IsEmpty && timing.Enabled && timing.FirstByte())
-                await store.RecordAsync(timing.Snapshot("started"));
+                timing.Recording(store.RecordInBackground(timing.Snapshot(PlaybackStartTimingStore.StartedOutcome)));
+        }
+
+        /// <summary>The top-level <c>code</c> of a JSON error body, the code the client was given.</summary>
+        public string? ErrorCode()
+        {
+            if (errorBody == null) return null;
+            var reader = new Utf8JsonReader(errorBody.AsSpan(0, errorLength), isFinalBlock: false, state: default);
+            try
+            {
+                while (reader.Read())
+                    if (reader.TokenType == JsonTokenType.PropertyName && reader.CurrentDepth == 1 && reader.ValueTextEquals("code"))
+                        return reader.Read() && reader.TokenType == JsonTokenType.String ? reader.GetString() : null;
+            }
+            catch (JsonException) { }
+            return null;
         }
     }
 }

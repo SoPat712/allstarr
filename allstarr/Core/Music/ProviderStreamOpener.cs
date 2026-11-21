@@ -122,10 +122,16 @@ public sealed class ProviderStreamOpener(
         try
         {
             var timing = PlaybackStartTimings.Current;
-            if (timing != null && timings != null && !HttpMethods.IsHead(http.Request.Method))
+            var timed = timing != null && timings != null && !HttpMethods.IsHead(http.Request.Method);
+            if (timed)
             {
-                timing.Enable();
-                timing.BeginPlay(context, context.RequestedItemId ?? $"ext-{providerId}-song-{externalId}");
+                timing!.Enable();
+                timing.FromStart(PlaybackStartPhase.Request);
+            }
+            using var openingTiming = timed ? timing!.Measure(PlaybackStartPhase.Opening) : null;
+            if (timed)
+            {
+                timing!.BeginPlay(context, context.RequestedItemId ?? $"ext-{providerId}-song-{externalId}");
                 if (traces != null && !context.IsReadOnly && !context.IsPreparation)
                 {
                     try
@@ -139,7 +145,8 @@ public sealed class ProviderStreamOpener(
                     { logger?.LogDebug("Playback trace context is unavailable ({ErrorType})", error.GetType().Name); }
                 }
                 http.Response.Headers["X-Allstarr-Playback-Request"] = timing.Id.ToString("N");
-                await timings.RecordAsync(timing.Snapshot("opening"));
+                // Choosing a source must not wait for this record; the final record waits for it instead.
+                timing.Recording(timings!.RecordInBackground(timing.Snapshot(PlaybackStartTimingStore.OpeningOutcome)));
             }
             if (context.IsOriginalDownload)
             {
@@ -154,6 +161,7 @@ public sealed class ProviderStreamOpener(
             if (delivery != null) context = context with { AudioDelivery = delivery };
             var timeSeek = delivery?.StartTimeTicks > 0;
             var headOnly = HttpMethods.IsHead(http.Request.Method);
+            openingTiming?.Dispose();
             var routed = await providers.OpenStreamAsync(
                 context,
                 providerId,
@@ -161,6 +169,7 @@ public sealed class ProviderStreamOpener(
                 quality,
                 !timeSeek && http.Request.Headers.Range.ToString() is { Length: > 0 } range ? range : null,
                 headOnly && !timeSeek);
+            timing?.Recovered();
             if (routed == null)
             {
                 Interrupted();
@@ -184,6 +193,7 @@ public sealed class ProviderStreamOpener(
 
             if (traces != null && timing?.Enabled == true)
             {
+                using var resolutionTiming = timing.Measure(PlaybackStartPhase.Resolution);
                 try
                 {
                     await traces.CaptureAsync(timing, context, providerId, externalId, resolutionOnly: true);
@@ -194,6 +204,7 @@ public sealed class ProviderStreamOpener(
                 catch (Exception error) when (error is not OutOfMemoryException)
                 { logger?.LogDebug("Playback resolution is unavailable ({ErrorType})", error.GetType().Name); }
             }
+            using var deliveryTiming = timing?.Measure(PlaybackStartPhase.Delivery);
             var sourceMedia = routed.FileFacts.Media ?? routed.Lease.Media;
             var conversion = delivery == null ? null : ProviderAudioTranscoder.Plan(delivery, sourceMedia);
             if (conversion != null && routed.Response.StatusCode == HttpStatusCode.PartialContent && !headOnly)
@@ -267,6 +278,8 @@ public sealed class ProviderStreamOpener(
                     enableRangeProcessing: conversion == null && (timeSeek || routed.IsCached || cacheRung != null), providerStream: true, responseLease: capacity,
                     interrupted: () => Interrupted(routed));
                 capacity = null;
+                deliveryTiming?.Dispose();
+                timing?.Sending();
                 if (!headOnly) serving?.Invoke(conversion?.Media ?? sourceMedia, routed.ServingProviderId);
                 return result;
             }
@@ -278,6 +291,7 @@ public sealed class ProviderStreamOpener(
         }
         catch (Exception error) when (error is ProviderAudioProfileException or ProviderAudioOffsetException)
         {
+            if (error is ProviderAudioProfileException) PlaybackStartTimings.Current?.Refuse(ProviderError.AudioProfileUnavailable().Code);
             var reason = ProblemReportText.Clean(error.Message);
             Activity.Current?.SetTag("audio.rejection_reason", reason);
             activity?.StreamRejected(context, context.RequestedItemId ?? $"ext-{providerId}-song-{externalId}", reason);
@@ -290,12 +304,14 @@ public sealed class ProviderStreamOpener(
         }
         catch (LocalCapacityException)
         {
+            PlaybackStartTimings.Current?.Refuse(LocalCapacityException.Code);
             Interrupted();
             LocalCapacityException.MarkResponse(http.Response);
             throw;
         }
-        catch
+        catch (Exception error)
         {
+            if (LocalCapacityException.IsLocal(error)) PlaybackStartTimings.Current?.Refuse(LocalCapacityException.Code);
             Interrupted();
             throw;
         }

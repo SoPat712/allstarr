@@ -336,6 +336,48 @@ public sealed class PlayTracesTests
     }
 
     [Fact]
+    public async Task AnOpenedStartAccountsForEveryStretchBeforeItsFirstByte()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        var media = new ProviderMediaFormat("audio/flac", "flac", "flac", 900000, 44100, 16, 2);
+        using var upstream = new HttpResponseMessage(System.Net.HttpStatusCode.OK) { Content = new ByteArrayContent([1, 2, 3]) };
+        var routed = new ProtocolProviderStream(upstream, new("fixture", new("https://media.example.test/audio"),
+            fixture.Clock.GetUtcNow().AddHours(1), true, true, media, ProviderStreamRetryBehavior.DoNotRetry), "deezer", "123", IsCached: true)
+        { FileFacts = new() { Measured = new(media, DurationSeconds: 220) } };
+        gateway.Setup(item => item.OpenStreamAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "123", ProviderAudioQuality.Any, null, false))
+            .Callback(() => { using (PlaybackStartTimings.Current!.Measure(PlaybackStartPhase.Route)) fixture.Clock.Advance(TimeSpan.FromMilliseconds(100)); })
+            .ReturnsAsync(routed);
+        var opener = new ProviderStreamOpener(gateway.Object, new(), timings: fixture.Store, traces: fixture.Service());
+        var http = new DefaultHttpContext(); http.Request.Method = "GET"; http.Response.Body = new MemoryStream();
+        await new PlaybackStartTimingMiddleware(async context =>
+        {
+            fixture.Clock.Advance(TimeSpan.FromMilliseconds(40));
+            var result = Assert.IsType<FileStreamResult>(await opener.OpenAsync(context, fixture.Context(fixture.Listener), "deezer", "123", ProviderAudioQuality.Any));
+            fixture.Clock.Advance(TimeSpan.FromMilliseconds(25));
+            await result.FileStream.CopyToAsync(context.Response.Body);
+            await result.FileStream.DisposeAsync();
+        }, fixture.Store, fixture.Clock).InvokeAsync(http);
+        var sample = Assert.Single(await fixture.Store.ReadAsync(10, default));
+        Assert.Equal(165, sample.FirstByteMs);
+        PlaybackStartPhaseTiming Phase(PlaybackStartPhase phase) => Assert.Single(sample.Phases, item => item.Phase == phase);
+        Assert.Equal(new PlaybackStartPhaseTiming(PlaybackStartPhase.Request, null, 0, 40), Phase(PlaybackStartPhase.Request));
+        Assert.Equal(40, Phase(PlaybackStartPhase.Opening).StartedMs);
+        Assert.Equal(140, Phase(PlaybackStartPhase.Resolution).StartedMs);
+        Assert.Equal(140, Phase(PlaybackStartPhase.Delivery).StartedMs);
+        Assert.Equal(new PlaybackStartPhaseTiming(PlaybackStartPhase.Send, null, 140, 25), Phase(PlaybackStartPhase.Send));
+        // Laid end to end, the phases leave no stretch before the first byte unaccounted for.
+        var reached = 0d;
+        foreach (var phase in sample.Phases.OrderBy(item => item.StartedMs))
+        {
+            Assert.True(phase.StartedMs <= reached, $"{phase.Phase} starts after a gap at {reached} ms");
+            reached = Math.Max(reached, phase.StartedMs + phase.ElapsedMs);
+        }
+        Assert.Equal(sample.FirstByteMs, reached);
+        Assert.Equal(200, sample.Status);
+    }
+
+    [Fact]
     public async Task WrongSongReportUsesFrozenPlayAndExistingIdempotence()
     {
         await using var fixture = await Fixture.CreateAsync();

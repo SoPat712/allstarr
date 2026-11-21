@@ -11,13 +11,20 @@ using Microsoft.EntityFrameworkCore;
 namespace allstarr.Core.Playback;
 
 [JsonConverter(typeof(JsonStringEnumConverter<PlaybackStartPhase>))]
-public enum PlaybackStartPhase { Route, Account, Lease, Source, Verify, Retry, Segments, Process, Headers, FirstByte, Preparation, Kept, Match }
+public enum PlaybackStartPhase
+{
+    Route, Account, Lease, Source, Verify, Retry, Segments, Process, Headers, FirstByte, Preparation, Kept, Match,
+    // Request: before the stream opener takes the request. Opening: the opener's own work before routing.
+    // Selection: after the route is planned until a source is tried. Acceptance: taking on the source that answered.
+    // Resolution: recording what was chosen. Delivery: conversion, caching and the response. Send: until the first byte.
+    Request, Opening, Selection, Acceptance, Resolution, Delivery, Send
+}
 
 public sealed record PlaybackStartPhaseTiming(PlaybackStartPhase Phase, string? Provider, double StartedMs, double ElapsedMs);
 public sealed record PlaybackStartSample(Guid Id, DateTimeOffset StartedAt, string Outcome, string? Provider,
     string? Title, string? Artist, string? AccountScope, bool Cached, double ElapsedMs,
     double? HeadersMs, double? FirstByteMs, IReadOnlyList<PlaybackStartPhaseTiming> Phases, int OmittedPhases, PlayTraceData? Trace = null,
-    string? DeviceId = null, IReadOnlyList<PlaybackSourceStart>? Starts = null);
+    string? DeviceId = null, IReadOnlyList<PlaybackSourceStart>? Starts = null, int? Status = null, string? Code = null);
 
 /// <summary>One start a service made, as the start-time memory learned it, kept so a restart can learn it again.</summary>
 public sealed record PlaybackSourceStart(string Provider, Guid? Account, long? Revision,
@@ -44,7 +51,12 @@ public sealed class PlaybackStartTimings(TimeProvider clock) : IDisposable
     private PlayTraceData? play;
     private List<PlaybackSourceStart>? starts;
     private Func<TrackMediaFacts?>? received;
-    private double? headers, firstByte;
+    private double? headers, firstByte, sending;
+    private IDisposable? selecting;
+    private Task pendingRecords = Task.CompletedTask;
+    private int? status;
+    private string? refusal, answerCode;
+    private bool answered;
     public const int MaximumPhases = 96;
     public static PlaybackStartTimings? Current => Ambient.Value;
     public bool Enabled { get; private set; }
@@ -55,6 +67,48 @@ public sealed class PlaybackStartTimings(TimeProvider clock) : IDisposable
     public void Enter() => Ambient.Value = this;
     public void Enable() => Enabled = true;
     public IDisposable? Measure(PlaybackStartPhase phase, string? source = null) => Enabled ? new Measurement(this, phase, source, Elapsed) : null;
+    /// <summary>Records a phase that began when the request did.</summary>
+    public void FromStart(PlaybackStartPhase phase) { if (Enabled) Finish(phase, null, 0); }
+    /// <summary>Opens the selection phase; it ends when a source is first tried, or when the returned scope ends.</summary>
+    public IDisposable? Selecting()
+    {
+        var measure = Measure(PlaybackStartPhase.Selection);
+        if (measure == null) return null;
+        IDisposable? earlier;
+        lock (sync) { earlier = selecting; selecting = measure; }
+        earlier?.Dispose();
+        return measure;
+    }
+    public void Selected()
+    {
+        IDisposable? measure;
+        lock (sync) { measure = selecting; selecting = null; }
+        measure?.Dispose();
+    }
+    /// <summary>The response is ready; the time until its first byte is the send phase.</summary>
+    public void Sending() { lock (sync) { if (Enabled && !closed && !firstByte.HasValue) sending = Elapsed; } }
+    /// <summary>Notes why a start was refused; the last refusal before the answer is the one kept.</summary>
+    public void Refuse(string? code)
+    {
+        if (PlayTraceText.Reference(code) is not { Length: <= 100 } safe) return;
+        lock (sync) { if (!closed) refusal = safe; }
+    }
+    /// <summary>A source opened after all, so refusals noted on the way were not the answer.</summary>
+    internal void Recovered() { lock (sync) refusal = null; }
+    /// <summary>The status the client was answered with, when known, and the code its error body carried.</summary>
+    public void Answer(int? statusCode, string? code)
+    {
+        lock (sync)
+        {
+            if (closed) return;
+            answered = true;
+            status = statusCode;
+            answerCode = PlayTraceText.Reference(code) is { Length: <= 100 } safe ? safe : null;
+        }
+    }
+    /// <summary>Records written in the background for this start; the final record waits for them so it stays last.</summary>
+    internal Task PendingRecords { get { lock (sync) return pendingRecords; } }
+    internal void Recording(Task write) { lock (sync) pendingRecords = Task.WhenAll(pendingRecords, write); }
     public void Select(string source, bool fromCache, string? scope)
     {
         lock (sync)
@@ -206,6 +260,11 @@ public sealed class PlaybackStartTimings(TimeProvider clock) : IDisposable
         {
             if (closed || firstByte.HasValue) return false;
             firstByte = Elapsed;
+            if (sending is { } from)
+            {
+                if (phases.Count < MaximumPhases) phases.Add(new(PlaybackStartPhase.Send, null, from, Math.Max(0, firstByte.Value - from)));
+                else omitted++;
+            }
             return true;
         }
     }
@@ -225,8 +284,11 @@ public sealed class PlaybackStartTimings(TimeProvider clock) : IDisposable
             if (!closed && received?.Invoke() is { } facts && play != null) play = play with { Received = PlayTraceText.Facts(facts) };
             if (complete) { closed = true; received = null; }
             var trace = play == null ? null : play with { Request = PlayTraceText.CatalogLabels(play.Request, title, artist) };
+            // A refusal noted on the way is only the answer when the answer was not a success.
+            var code = !answered ? null : answerCode ?? (status is null or >= 400 ? refusal : null);
             return new(id, startedAt, outcome, provider ?? phases.LastOrDefault(phase => phase.Provider != null)?.Provider, title, artist, accountScope, cached,
-                Elapsed, headers, firstByte, phases.OrderBy(item => item.StartedMs).ToArray(), omitted, trace, deviceId, starts?.ToArray());
+                Elapsed, headers, firstByte, phases.OrderBy(item => item.StartedMs).ToArray(), omitted, trace, deviceId, starts?.ToArray(),
+                answered ? status : null, code);
         }
     }
     public void Dispose() => Ambient.Value = previous;
@@ -243,6 +305,9 @@ public sealed class PlaybackStartTimingStore(IDbContextFactory<AllstarrDbContext
     public const string Category = "playback-start";
     public const int MaximumSamples = 500;
     public static readonly TimeSpan Retention = TimeSpan.FromDays(7);
+    public const string OpeningOutcome = "opening";
+    public const string StartedOutcome = "started";
+    private static int Stage(string? outcome) => outcome switch { OpeningOutcome => 0, StartedOutcome => 1, _ => 2 };
     private readonly SemaphoreSlim writing = new(1, 1);
 
     internal static IQueryable<AuditEventRecord> RecentEvents(AllstarrDbContext db, DateTimeOffset now)
@@ -252,8 +317,12 @@ public sealed class PlaybackStartTimingStore(IDbContextFactory<AllstarrDbContext
             item.SubjectType == Category && item.SubjectId == "recent" && item.CreatedAt >= cutoff);
     }
 
+    /// <summary>Writes a record away from the request, so the listener never waits for it; failures are only logged.</summary>
+    public Task RecordInBackground(PlaybackStartSample sample) => Task.Run(() => RecordAsync(sample));
+
     public async Task RecordAsync(PlaybackStartSample sample)
     {
+        var interim = Stage(sample.Outcome) < 2;
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
         var entered = false;
         try
@@ -279,10 +348,17 @@ public sealed class PlaybackStartTimingStore(IDbContextFactory<AllstarrDbContext
                 db.AuditEvents.Add(row);
             }
             else if (row.Category != Category) return;
+            // Records before the final one are written in the background, so one can land after a later record of the same start.
+            else if (interim && Stage(row.Outcome) > Stage(sample.Outcome) && SameStart(row.DetailsJson, sample.StartedAt)) return;
             row.ActorUserId = sample.Trace?.OwnerUserId;
             row.Outcome = sample.Outcome;
             row.DetailsJson = JsonSerializer.Serialize(sample);
             await db.SaveChangesAsync(timeout.Token);
+            if (interim)
+            {
+                await transaction.CommitAsync(timeout.Token);
+                return;
+            }
             var cutoff = clock.GetUtcNow() - Retention;
             await db.AuditEvents.Where(item => item.SubjectType == Category && item.SubjectId == "recent" && item.CreatedAt < cutoff)
                 .ExecuteDeleteAsync(timeout.Token);
@@ -295,6 +371,19 @@ public sealed class PlaybackStartTimingStore(IDbContextFactory<AllstarrDbContext
         catch (Exception error) when (error is not OutOfMemoryException)
         { logger.LogDebug("Playback start timing could not be retained ({ErrorType})", error.GetType().Name); }
         finally { if (entered) writing.Release(); }
+    }
+
+    private static bool SameStart(string? details, DateTimeOffset startedAt)
+    {
+        if (string.IsNullOrEmpty(details)) return false;
+        try
+        {
+            using var document = JsonDocument.Parse(details);
+            return document.RootElement.ValueKind == JsonValueKind.Object &&
+                document.RootElement.TryGetProperty(nameof(PlaybackStartSample.StartedAt), out var value) &&
+                value.TryGetDateTimeOffset(out var stored) && stored == startedAt;
+        }
+        catch (JsonException) { return false; }
     }
 
     public async Task<IReadOnlyList<PlaybackStartSample>> ReadAsync(int limit, CancellationToken token)
