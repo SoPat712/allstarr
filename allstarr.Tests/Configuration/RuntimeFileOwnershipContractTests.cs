@@ -43,6 +43,7 @@ public sealed class RuntimeFileOwnershipContractTests
             ["Core/ManagedFiles/FilePlacementService.Recovery.cs"] = "owned data-folder identity marker",
             ["Core/ManagedFiles/RecordingKeptFiles.CacheMove.cs"] = "managed audio and lyrics sidecars",
             ["Core/ManagedFiles/PhysicalManagedFileOperations.cs"] = "managed audio and artwork",
+            ["Core/Music/ChosenLyricsFiles.cs"] = "a library song's lyrics tags when an administrator chose a version, previous lyrics kept in the data folder",
             ["Core/Music/LyricsRefreshSidecars.cs"] = "lyrics sidecars beside kept and library files, previous version kept",
             ["Core/Music/ProviderAudioTimeSeek.cs"] = "request-scoped temporary audio",
             ["Core/Music/ProviderAudioTranscoder.cs"] = "request-scoped temporary conversion input",
@@ -114,7 +115,8 @@ public sealed class RuntimeFileOwnershipContractTests
             "Core/Storage/DurableBackupService.Restore.cs",
             "Core/Secrets/FileSecretKeyRingProvider.cs",
             "Providers/Extensions/ExtensionManager.cs",
-            "Core/Caching/FileMediaApplicationCache.cs"
+            "Core/Caching/FileMediaApplicationCache.cs",
+            "Core/Music/ChosenLyricsFiles.cs"
         };
 
         Assert.Empty(jsonWriters.Except(allowed, StringComparer.Ordinal));
