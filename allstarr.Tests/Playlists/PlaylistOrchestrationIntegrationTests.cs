@@ -231,6 +231,31 @@ public sealed partial class PlaylistOrchestrationIntegrationTests(ITestOutputHel
         Assert.Equal(0, _source.ArtworkCalls);
     }
 
+    [Fact]
+    public async Task APlaylistTheListenerAlreadyHadKeepsItsNameAndDescription()
+    {
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var link = await db.PlaylistLinks.SingleAsync();
+            link.TargetPlaylistId = "manual-target";
+            link.DestinationMode = PlaylistDestinationMode.Existing;
+            // What the import dialog stored for every link, whichever playlist it pointed at.
+            link.SyncName = true;
+            link.SyncDescription = true;
+            link.SyncArtwork = false;
+            await db.SaveChangesAsync();
+        }
+        _target.SeedMetadata("manual-target", "Liked Songs", "My own description", ["local-1"]);
+        _source.Snapshot = Snapshot("metadata-source", Entry(0, "one", "source-1", "One")) with
+        {
+            Name = "Favorite Songs",
+            Description = "Source description"
+        };
+        await _service.RunAsync(Context(), new(_link, 1091));
+        Assert.Equal("Liked Songs", _target.LastWrite!.Metadata.Name);
+        Assert.Equal("My own description", _target.LastWrite.Metadata.Description);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

@@ -212,9 +212,10 @@ public sealed class PlaylistPersistenceService : IPlaylistPersistenceService
             TrackRetention = input.TrackRetention,
             MirrorStaleEntries = input.MirrorStaleEntries,
             PreserveManualEntries = input.PreserveManualEntries,
-            SyncName = input.SyncName,
-            SyncDescription = input.SyncDescription,
-            SyncArtwork = input.SyncArtwork,
+            // A link into a playlist the listener already had leaves its name, description and cover alone.
+            SyncName = input.SyncName && input.TargetPlaylistId == null,
+            SyncDescription = input.SyncDescription && input.TargetPlaylistId == null,
+            SyncArtwork = input.SyncArtwork && input.TargetPlaylistId == null,
             RuleVersion = input.RuleVersion.Trim(),
             PolicyVersion = input.PolicyVersion.Trim(),
             CreatedAt = _clock.UtcNow,
@@ -563,7 +564,7 @@ public sealed class PlaylistPersistenceService : IPlaylistPersistenceService
             decisions,
             new PlaylistPlanningTarget(link.TargetProtocol, link.TargetBackendInstanceId, link.TargetPlaylistId),
             new PlaylistPlanningRules(link.RuleVersion, 1, link.PreserveManualEntries, link.MirrorStaleEntries,
-                syncName: link.SyncName, syncDescription: link.SyncDescription, syncArtwork: link.SyncArtwork));
+                syncName: PlaylistDestinationChange.TakesName(link), syncDescription: PlaylistDestinationChange.TakesDescription(link), syncArtwork: link.SyncArtwork));
         var decisionsByEntry = decisions.ToDictionary(item => item.SourceEntryId);
         var result = plan.Entries.Select(item =>
         {

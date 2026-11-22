@@ -63,8 +63,8 @@ public sealed partial class PlaylistOrchestrationService
         try
         {
             var created = await target.WriteAsync(context, new(BackendPlaylistWriteMode.Reconcile,
-                new(link.SyncName ? projection.Name : old.Value.Name,
-                    link.SyncDescription ? projection.Description : old.Value.Description, artwork?.Bytes, artwork?.ContentType),
+                new(PlaylistDestinationChange.TakesName(link) ? projection.Name : old.Value.Name,
+                    PlaylistDestinationChange.TakesDescription(link) ? projection.Description : old.Value.Description, artwork?.Bytes, artwork?.ContentType),
                 ids, $"rebuild:{link.Id:N}:{link.Revision}"), cancellationToken);
             stagedId = created.Value?.Snapshot.BackendPlaylistId ?? created.RecoveryPlaylistId;
             if (!created.IsSuccess || created.Value == null)

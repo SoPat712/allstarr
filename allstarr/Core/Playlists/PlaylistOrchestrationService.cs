@@ -374,7 +374,7 @@ public sealed partial class PlaylistOrchestrationService : IPlaylistOrchestratio
             .Select(item => item.TargetEntryId).ToListAsync(cancellationToken);
         var rules = new PlaylistPlanningRules(
             link.RuleVersion, request.Generation, link.PreserveManualEntries, link.MirrorStaleEntries,
-            owned, link.SyncName, link.SyncDescription, link.SyncArtwork);
+            owned, PlaylistDestinationChange.TakesName(link), PlaylistDestinationChange.TakesDescription(link), link.SyncArtwork);
         var planningTarget = new PlaylistPlanningTarget(
             link.TargetProtocol, link.TargetBackendInstanceId, link.TargetPlaylistId);
         var latestPublishedSnapshotId = await initial.PlaylistSourceSnapshots.AsNoTracking()
@@ -447,7 +447,7 @@ public sealed partial class PlaylistOrchestrationService : IPlaylistOrchestratio
             var write = await target.WriteAsync(targetContext, new BackendPlaylistWriteRequest(
                 plan.Mode == PlaylistPlanMode.Recreate ? BackendPlaylistWriteMode.Recreate : BackendPlaylistWriteMode.Reconcile,
                 new BackendPlaylistMetadata(plan.Metadata.Name ?? before?.Name ?? snapshot.Name,
-                    link.SyncDescription ? plan.Metadata.Description : before?.Description,
+                    PlaylistDestinationChange.TakesDescription(link) ? plan.Metadata.Description : before?.Description,
                     resolvedArtwork?.Bytes, resolvedArtwork?.ContentType),
                 link.ImportMode == PlaylistImportMode.OneTime && before != null
                     ? before.Members.Select(item => item.BackendItemId).Concat(plan.OrderedBackendItemIds)
