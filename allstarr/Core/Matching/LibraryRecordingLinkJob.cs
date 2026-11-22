@@ -91,8 +91,10 @@ public sealed partial class LibraryRecordingLinkJobHandler(ITrackIdentityService
                 }
                 catch (HttpRequestException) { return Pending("Waiting for Jellyfin's refreshed music library to become available."); }
             }
-            var accessible = libraryAccess == null ? db.LibraryTracks.Where(item => item.OwnerUserId == user) :
-                LibraryTrackAccess.Query(db, await libraryAccess.ResolveUserAsync(user, cancellationToken));
+            var readable = libraryAccess == null ? null : await libraryAccess.ResolveUserAsync(user, cancellationToken);
+            var accessible = readable == null ? db.LibraryTracks.Where(item => item.OwnerUserId == user) : LibraryTrackAccess.Query(db, readable);
+            // The copies the media server no longer has are what an add hands over to the copy it placed.
+            var known = readable == null ? accessible : LibraryTrackAccess.Query(db, readable, includeGone: true);
             var pending = false;
             var favorites = new Dictionary<Guid, Dictionary<string, Guid?>>();
             foreach (var recordingId in recordings.Distinct())
@@ -103,7 +105,7 @@ public sealed partial class LibraryRecordingLinkJobHandler(ITrackIdentityService
                 {
                     try
                     {
-                        if (!await ReplaceGoneCopiesAsync(accessible, viewer, payload.BackendLibraryId, recording.Id,
+                        if (!await ReplaceGoneCopiesAsync(known, viewer, payload.BackendLibraryId, recording.Id,
                                 payload.Placed?.GetValueOrDefault(recordingId), at, execution.Claim.CorrelationId, cancellationToken))
                         { pending = true; continue; }
                     }

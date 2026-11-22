@@ -163,9 +163,7 @@ public sealed partial class AllstarrDbContext
                     ProviderFavoriteLinkMemberRecord or LinkedProviderFavoriteStateRecord:
                     changed.Add((null, "saved"));
                     break;
-                case LibraryTrackRecord when entry.State == EntityState.Modified && !entry.Properties.Any(property => property.IsModified &&
-                    property.Metadata.Name is not (nameof(LibraryTrackRecord.IndexedAt) or nameof(LibraryTrackRecord.UpdatedAt) or
-                        nameof(LibraryTrackRecord.DurationRetrievedAt) or nameof(LibraryTrackRecord.Revision))):
+                case LibraryTrackRecord when entry.State == EntityState.Modified && OnlyIndexedAgain(entry):
                     break;
                 case SharedTagProfileRecord or LibraryTrackRecord or ProviderTrackIdentityRecord or CanonicalRecordingRecord or TrackMatchRecord:
                     changed.Add((null, "library"));

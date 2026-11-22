@@ -267,7 +267,8 @@ public sealed record LibraryIndexJobPayload(
     int PageSize = 200);
 
 public sealed class LibraryIndexJobHandler(IDbContextFactory<AllstarrDbContext> factory,
-    BackendLibraryCatalogScannerResolver scanners, IPlatformClock clock, LibraryIndexDiagnostics? diagnostics = null) : IDurableJobHandler
+    BackendLibraryCatalogScannerResolver scanners, IPlatformClock clock, LibraryIndexDiagnostics? diagnostics = null,
+    LibraryGoneTracks? goneTracks = null) : IDurableJobHandler
 {
     private readonly LibraryIndexDiagnostics _diagnostics = diagnostics ?? new(factory, clock,
         Microsoft.Extensions.Logging.Abstractions.NullLogger<LibraryIndexDiagnostics>.Instance);
@@ -312,10 +313,17 @@ public sealed class LibraryIndexJobHandler(IDbContextFactory<AllstarrDbContext> 
         var execution = LibraryIndexExecution.Create(identity, payload.CredentialReferenceId, context.Claim.CorrelationId, clock, cancellationToken);
         try
         {
+            var started = clock.UtcNow;
             var result = await scanners.Resolve(protocol).ScanAsync(
                 execution,
                 new(payload.BackendLibraryId, payload.CredentialReferenceId, payload.PageSize),
                 cancellationToken);
+            if (goneTracks != null && protocol == ProtocolKind.Jellyfin)
+            {
+                // The listing is complete; a song it did not show is asked about. A server that cannot say leaves it.
+                try { await goneTracks.SweepAsync(execution, started, cancellationToken); }
+                catch (HttpRequestException) { }
+            }
             await using var summaryDb = await factory.CreateDbContextAsync(cancellationToken);
             summaryDb.AuditEvents.Add(new AuditEventRecord
             {
@@ -523,6 +531,7 @@ public static class BackendLibraryIndexingRegistration
         services.AddSingleton<IBackendLibraryCatalogScanner, JellyfinLibraryCatalogScanner>();
         services.AddSingleton<IBackendLibraryCatalogScanner, SubsonicLibraryCatalogScanner>();
         services.AddSingleton<BackendLibraryCatalogScannerResolver>();
+        services.AddSingleton<LibraryGoneTracks>();
         services.AddSingleton<LibraryIndexDiagnostics>();
         services.AddSingleton<IDurableJobHandler, LibraryIndexJobHandler>();
         services.AddHostedService<LibraryIndexMaintenanceService>();

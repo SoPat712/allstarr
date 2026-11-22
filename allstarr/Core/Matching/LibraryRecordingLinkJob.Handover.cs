@@ -24,9 +24,10 @@ public sealed partial class LibraryRecordingLinkJobHandler
             .Select(item => new { item.Id, item.BackendItemId, item.IndexedAt }).ToArrayAsync(token);
         var unseen = copies.Where(item => item.IndexedAt < scanned).ToArray();
         if (unseen.Length == 0) return true;
-        var missing = await scanners!.Resolve(ProtocolKind.Jellyfin).GoneAsync(viewer, libraryId,
-            unseen.Select(item => item.BackendItemId).ToArray(), token);
-        var gone = unseen.Where(item => missing.Contains(item.BackendItemId)).ToArray();
+        // A copy already found gone needs no second word from the media server.
+        var asked = unseen.Where(item => !LibraryTrackRecord.IsGone(item.IndexedAt)).Select(item => item.BackendItemId).ToArray();
+        var missing = asked.Length == 0 ? new HashSet<string>() : await scanners!.Resolve(ProtocolKind.Jellyfin).GoneAsync(viewer, libraryId, asked, token);
+        var gone = unseen.Where(item => LibraryTrackRecord.IsGone(item.IndexedAt) || missing.Contains(item.BackendItemId)).ToArray();
         if (gone.Length == 0) return true;
         var replacement = Guid.Empty;
         if (!string.IsNullOrWhiteSpace(placed))

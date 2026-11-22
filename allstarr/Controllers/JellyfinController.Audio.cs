@@ -26,6 +26,7 @@ public partial class JellyfinController
 
         var (isExternal, provider, externalId) = _localLibraryService.ParseSongId(itemId);
         var query = Request.QueryString.Value ?? "";
+        var requested = itemId;
         if (isExternal && await ResolvePlayableNativeTrackAsync(itemId) is { } nativeId)
         {
             itemId = nativeId;
@@ -40,7 +41,8 @@ public partial class JellyfinController
                 : "Download";
             var fullPath = $"Items/{itemId}/{endpoint}{query}";
 
-            return await ProxyJellyfinStream(fullPath, itemId);
+            return await ProxyJellyfinStream(fullPath, itemId, provider == null ? null :
+                () => StreamExternalContent(provider, externalId!, requested, originalDownload: true, retainOriginalMedia: true));
         }
 
         return await StreamExternalContent(provider!, externalId!, itemId, originalDownload: true, retainOriginalMedia: true);
@@ -63,6 +65,7 @@ public partial class JellyfinController
 
         var (isExternal, provider, externalId) = _localLibraryService.ParseSongId(itemId);
         var query = Request.QueryString.Value ?? "";
+        var requested = itemId;
         if (isExternal && await ResolvePlayableNativeTrackAsync(itemId) is { } nativeId)
         {
             itemId = nativeId;
@@ -70,16 +73,17 @@ public partial class JellyfinController
             query = NativeQuery(nativeId);
         }
 
+        var delivery = ProviderAudioDeliveryRequests.Jellyfin(Request.Query, container: container);
         if (!isExternal)
         {
             var fullPath = string.IsNullOrEmpty(container)
                 ? $"Audio/{itemId}/stream"
                 : $"Audio/{itemId}/stream.{container}";
 
-            return await ProxyJellyfinStream(fullPath + query, itemId);
+            return await ProxyJellyfinStream(fullPath + query, itemId, provider == null ? null :
+                () => StreamExternalContent(provider, externalId!, requested, delivery: delivery));
         }
 
-        var delivery = ProviderAudioDeliveryRequests.Jellyfin(Request.Query, container: container);
         return await StreamExternalContent(provider!, externalId!, itemId, delivery: delivery);
     }
 
@@ -112,7 +116,9 @@ public partial class JellyfinController
         });
     }
 
-    private async Task<IActionResult> ProxyJellyfinStream(string path, string itemId)
+    // A service song played from its library copy goes back to the service when the media server no longer has the
+    // copy; the one item is asked about at once, so the copy is not chosen again either.
+    private async Task<IActionResult> ProxyJellyfinStream(string path, string itemId, Func<Task<IActionResult>>? instead = null)
     {
         if (!await HttpContext.RequestServices.GetRequiredService<CleanOnlyProtocolContent>().AllowsAsync(HttpContext, itemId))
             return StatusCode(StatusCodes.Status403Forbidden, new { error = CleanOnlyProtocolContent.UnavailableMessage });
@@ -139,6 +145,10 @@ public partial class JellyfinController
                 _logger.LogError("Jellyfin stream failed: {StatusCode} for {ItemId}", response.StatusCode, itemId);
                 var statusCode = (int)response.StatusCode;
                 response.Dispose();
+                if (statusCode == StatusCodes.Status404NotFound && HttpContext.RequestServices.GetService<allstarr.Core.Matching.LibraryGoneTracks>() is { } goneTracks &&
+                    HttpContext.Items[ProtocolExecutionContextFactory.HttpContextItemKey] is ProtocolExecutionContext context &&
+                    await goneTracks.CheckAsync(context, itemId, HttpContext.RequestAborted) && instead != null)
+                    return await instead();
                 return StatusCode(statusCode);
             }
             return await _streamingResponseAdapter.CreateAsync(
@@ -292,6 +302,7 @@ public partial class JellyfinController
 
         var (isExternal, provider, externalId) = _localLibraryService.ParseSongId(itemId);
         var query = Request.QueryString.Value ?? "";
+        var requested = itemId;
         if (isExternal && await ResolvePlayableNativeTrackAsync(itemId) is { } nativeId)
         {
             itemId = nativeId;
@@ -299,14 +310,15 @@ public partial class JellyfinController
             query = NativeQuery(nativeId);
         }
 
+        var delivery = ProviderAudioDeliveryRequests.Jellyfin(Request.Query, universal: true);
         if (!isExternal)
         {
             var fullPath = $"Audio/{itemId}/universal{query}";
 
-            return await ProxyJellyfinStream(fullPath, itemId);
+            return await ProxyJellyfinStream(fullPath, itemId, provider == null ? null :
+                () => StreamExternalContent(provider, externalId!, requested, delivery: delivery));
         }
 
-        var delivery = ProviderAudioDeliveryRequests.Jellyfin(Request.Query, universal: true);
         return await StreamExternalContent(provider!, externalId!, itemId, delivery: delivery);
     }
 

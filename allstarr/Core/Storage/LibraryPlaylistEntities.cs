@@ -42,6 +42,12 @@ public sealed class LibraryTrackRecord
     public DateTimeOffset SourceModifiedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
     public long Revision { get; set; }
+
+    // A song the media server says it no longer has keeps its row, so what pointed at it can move to the copy that
+    // replaces it when the song is added again. It reads as last indexed at the start of time, nothing takes it for a
+    // song in the library, and the next listing that shows it again indexes it as usual.
+    public static readonly DateTimeOffset Gone = DateTimeOffset.UnixEpoch;
+    public static bool IsGone(DateTimeOffset indexedAt) => indexedAt == Gone;
 }
 
 public sealed class ExternalMetadataSnapshotRecord

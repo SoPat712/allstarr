@@ -161,7 +161,14 @@ public sealed class V2PlaybackReader(V2TrackReader tracks, ProviderStreamOpener 
         var response = await jellyfin.OpenAudioSourceAsync(ticket.Item, HttpMethods.IsHead(http.Request.Method),
             conversion == null ? http.Request.Headers : null, http.RequestAborted);
         if (!response.IsSuccessStatusCode)
-        { var status = (int)response.StatusCode; response.Dispose(); return new StatusCodeResult(status); }
+        {
+            var status = (int)response.StatusCode;
+            response.Dispose();
+            // A library song the media server no longer has is asked about at once, so the next resolve plays it from a service.
+            if (status == StatusCodes.Status404NotFound && http.RequestServices.GetService<allstarr.Core.Matching.LibraryGoneTracks>() is { } goneTracks)
+                await goneTracks.CheckAsync(execution, ticket.Item, http.RequestAborted);
+            return new StatusCodeResult(status);
+        }
         try
         {
             if (conversion != null)
