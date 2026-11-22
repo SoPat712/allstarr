@@ -68,6 +68,21 @@ internal static class TrackMatchRuleSet
         candidate = candidate with { IsExplicit = TrackMatchSignals.Explicitness(candidate) };
         if ((source.IsExplicit == false || allstarr.Core.Music.CleanRecordingPolicy.RequiresCleanVersion(source.Title)) && candidate.IsExplicit == true)
             return Reject("explicit_edit_of_clean", "The candidate is explicit and the request requires a clean recording.", "explicitContent");
+        var rawTitles = (source.Title, candidate.Title);
+        (source, candidate) = TrackMatchSignals.WithTitleCredits(source, candidate);
+        var outcome = EvaluateRules(source, candidate, policy, singleAlbumAgreement, allowVocalSourceAlbumMarkers);
+        return rawTitles != (source.Title, candidate.Title) && !outcome.Reasons.Contains("title_decorators_ignored")
+            ? outcome with { Reasons = outcome.Reasons.Append("title_decorators_ignored").ToArray() }
+            : outcome;
+    }
+
+    private static TrackMatchRuleOutcome EvaluateRules(
+        ExternalTrackMatchSnapshot source,
+        LocalTrackMatchCandidate candidate,
+        TrackMatchPolicy policy,
+        bool singleAlbumAgreement,
+        bool allowVocalSourceAlbumMarkers)
+    {
         foreach (var rule in Default)
         {
             var outcome = rule.Evaluate(source, candidate, policy);
@@ -338,8 +353,8 @@ internal sealed class FieldScoreRule : ITrackMatchRule
         var title = FuzzyMatcher.CalculateTitleSimilarity(sourceTitle, candidateTitle, source.Title, candidate.Title) / 100d;
         var seriesContext = source.Title + " | " + candidate.Title;
         var artist = TrackMatchSignals.ArtistSimilarity(
-            FuzzyMatcher.ArtistWithoutSeriesCredits(seriesContext, source.Artist),
-            FuzzyMatcher.ArtistWithoutSeriesCredits(seriesContext, candidate.Artist));
+            TrackMatchSignals.ArtistsWithTitleCredits(FuzzyMatcher.ArtistWithoutSeriesCredits(seriesContext, source.Artist), source.Title),
+            TrackMatchSignals.ArtistsWithTitleCredits(FuzzyMatcher.ArtistWithoutSeriesCredits(seriesContext, candidate.Artist), candidate.Title));
         var album = TrackMatchSignals.ComparableSimilarity(source.Album, candidate.Album);
         var albumArtist = TrackMatchSignals.ComparableSimilarity(source.AlbumArtist, candidate.AlbumArtist);
         var duration = source.DurationMilliseconds is > 0 && candidate.DurationMilliseconds is > 0
@@ -364,6 +379,13 @@ internal sealed class FieldScoreRule : ITrackMatchRule
         TrackMatchSignals.AddReason(reasons, "title", title);
         if (TrackMatchSignals.TitleComparisonReason(source.Title, candidate.Title, source.Artist, candidate.Artist) is { } titleReason)
             reasons.Add(titleReason);
+        if (TrackMatchSignals.LibraryCopyArtistFloor(source, candidate, sourceTitle == candidateTitle) is { } artistFloor &&
+            artist < artistFloor.Score)
+        {
+            artist = artistFloor.Score;
+            components["artist"] = artistFloor.Score;
+            reasons.Add(artistFloor.Reason);
+        }
         TrackMatchSignals.AddReason(reasons, "artist", artist);
         var weakDuration = TrackMatchSignals.DurationMismatch(source, candidate, policy.DurationToleranceSeconds) &&
                            TrackMatchSignals.WeakDurationIdentityMatches(source, candidate);
@@ -580,12 +602,129 @@ internal static class TrackMatchSignals
             ? null
             : Similarity(left, right);
 
+    // Apple prints the artists as one line and the featured ones in the title; a library file lists them all as
+    // artists. Both copies get the title's performers, and the title loses notes that are not a version of the song.
+    public static (ExternalTrackMatchSnapshot Source, LocalTrackMatchCandidate Candidate) WithTitleCredits(
+        ExternalTrackMatchSnapshot source, LocalTrackMatchCandidate candidate)
+    {
+        static string WithCredits(string artist, string title) => ArtistsWithTitleCredits(artist, title);
+        // Two different guests ("feat. SZA" and "feat. Khalid") are two different recordings.
+        var sourceCredits = FuzzyMatcher.TitleCreditNames(source.Title).Select(FuzzyMatcher.NormalizeForMatching).ToHashSet(StringComparer.Ordinal);
+        var candidateCredits = FuzzyMatcher.TitleCreditNames(candidate.Title).Select(FuzzyMatcher.NormalizeForMatching).ToHashSet(StringComparer.Ordinal);
+        if (sourceCredits.Count > 0 && candidateCredits.Count > 0 &&
+            !sourceCredits.IsSubsetOf(candidateCredits) && !candidateCredits.IsSubsetOf(sourceCredits)) return (source, candidate);
+        var title = SharedBareTitle(source, candidate) ?? LibrarySpellingOfTitle(source, candidate);
+        return title == null
+            ? (source, candidate)
+            : (source with { Artist = WithCredits(source.Artist, source.Title), Title = title },
+                candidate with { Artist = WithCredits(candidate.Artist, candidate.Title), Title = title });
+    }
+
+    /// <summary>The artists plus the performers the title credits, for comparing a copy's credits as one set.</summary>
+    public static string ArtistsWithTitleCredits(string artist, string title)
+    {
+        var known = FuzzyMatcher.SplitCredits(artist).Select(FuzzyMatcher.NormalizeForMatching).ToHashSet(StringComparer.Ordinal);
+        var extra = FuzzyMatcher.TitleCreditNames(title).Where(name => known.Add(FuzzyMatcher.NormalizeForMatching(name))).ToArray();
+        return extra.Length == 0 || string.IsNullOrWhiteSpace(artist) ? artist : string.Join(", ", extra.Prepend(artist));
+    }
+
+    private static string? SharedBareTitle(ExternalTrackMatchSnapshot sourceTrack, LocalTrackMatchCandidate candidateTrack)
+    {
+        var (source, candidate) = (sourceTrack.Title, candidateTrack.Title);
+        // Titles that already normalize alike keep the existing comparison and its explanations.
+        if (string.IsNullOrWhiteSpace(source) || string.IsNullOrWhiteSpace(candidate) ||
+            FuzzyMatcher.NormalizeForMatching(source) == FuzzyMatcher.NormalizeForMatching(candidate)) return null;
+        var left = FuzzyMatcher.WithoutCreditNotes(source);
+        var right = FuzzyMatcher.WithoutCreditNotes(candidate);
+        if (FuzzyMatcher.TitlesEqualAllowingCensoring(left, right)) return right.Contains('*') ? left : right;
+        // A film after a dash or a subtitle only one copy prints, on a copy of the same length.
+        if (!DurationsMatch(sourceTrack, candidateTrack, 2)) return null;
+        if (FuzzyMatcher.WithoutTrailingNote(left, sourceTrack.Album, candidateTrack.Album) is { } shorterLeft &&
+            FuzzyMatcher.TitlesEqualAllowingCensoring(shorterLeft, right))
+            return right;
+        return FuzzyMatcher.WithoutTrailingNote(right, sourceTrack.Album, candidateTrack.Album) is { } shorterRight &&
+               FuzzyMatcher.TitlesEqualAllowingCensoring(left, shorterRight)
+            ? left
+            : null;
+    }
+
+    // A library file spelled a letter or two differently ("Kamakazi" for "Kamikaze") by the same main artist and of
+    // the same length is the same song. Streaming results stay strict, since a search returns many near titles.
+    private static string? LibrarySpellingOfTitle(ExternalTrackMatchSnapshot source, LocalTrackMatchCandidate candidate)
+    {
+        if (!candidate.IsLocal || source.DurationMilliseconds is not > 0 || candidate.DurationMilliseconds is not > 0 ||
+            Math.Abs(source.DurationMilliseconds.Value - candidate.DurationMilliseconds.Value) > 1500 ||
+            !SameName(FuzzyMatcher.SplitCredits(source.Artist).FirstOrDefault(), FuzzyMatcher.SplitCredits(candidate.Artist).FirstOrDefault()))
+            return null;
+        var left = FuzzyMatcher.NormalizeForMatching(FuzzyMatcher.WithoutCreditNotes(source.Title));
+        var right = FuzzyMatcher.NormalizeForMatching(FuzzyMatcher.WithoutCreditNotes(candidate.Title));
+        if (left.Length == 0 || right.Length == 0 || left == right ||
+            FuzzyMatcher.RecordingVersionTags(left).Count > 0 || FuzzyMatcher.RecordingVersionTags(right).Count > 0) return null;
+        var letters = Math.Min(left.Count(char.IsLetterOrDigit), right.Count(char.IsLetterOrDigit));
+        var edits = FuzzyMatcher.EditDistance(left, right);
+        // About a fifth of the letters, so short titles ("A Sng", "Fade") stay strict.
+        return letters >= 5 && edits <= Math.Min(2, Math.Round(letters / 5d, MidpointRounding.AwayFromZero))
+            ? FuzzyMatcher.WithoutCreditNotes(candidate.Title)
+            : null;
+    }
+
+    // A library file with the exact title and length is held back only by its artists being written in another
+    // script ("סטילה, נס" for "Ness & Stilla", "전정국" for "Jung Kook"): that says nothing either way.
+    public static (double Score, string Reason)? LibraryCopyArtistFloor(
+        ExternalTrackMatchSnapshot source, LocalTrackMatchCandidate candidate, bool exactTitle)
+    {
+        if (!candidate.IsLocal || !exactTitle || source.DurationMilliseconds is not > 0 || candidate.DurationMilliseconds is not > 0)
+            return null;
+        return Math.Abs(source.DurationMilliseconds.Value - candidate.DurationMilliseconds.Value) <= 1500 &&
+               IsLatinScript(source.Artist) is { } sourceLatin && IsLatinScript(candidate.Artist) is { } candidateLatin &&
+               sourceLatin != candidateLatin
+            ? (0.88, "artist_script_differs")
+            : null;
+    }
+
+    private static bool? IsLatinScript(string? value)
+    {
+        var letters = (value ?? "").Where(char.IsLetter).ToArray();
+        if (letters.Length == 0) return null;
+        static bool Latin(char c) => c < '\u0250' || c is >= '\u1E00' and <= '\u1EFF';
+        var latin = letters.Count(Latin);
+        return latin == letters.Length ? true : latin == 0 ? false : null;
+    }
+
+    private static bool SameName(string? left, string? right) =>
+        !string.IsNullOrWhiteSpace(left) && !string.IsNullOrWhiteSpace(right) &&
+        (WithoutArticle(left) == WithoutArticle(right) || FuzzyMatcher.CalculateSimilarityAggressive(left, right) >= 95);
+
+    private static string WithoutArticle(string value)
+    {
+        var normalized = FuzzyMatcher.NormalizeForMatching(value);
+        return normalized.StartsWith("the ", StringComparison.Ordinal) ? normalized[4..] : normalized;
+    }
+
+    // "Simon & Garfunkel" stays one name when the other copy credits it that way.
+    private static IReadOnlyList<string> CreditNames(string value, string other)
+    {
+        var otherNames = other.Split([',', ';'], StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
+            .Append(other).Select(FuzzyMatcher.NormalizeForMatching).ToHashSet(StringComparer.Ordinal);
+        if (otherNames.Contains(FuzzyMatcher.NormalizeForMatching(value))) return [value.Trim()];
+        return value.Split([',', ';'], StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
+            .SelectMany(part => otherNames.Contains(FuzzyMatcher.NormalizeForMatching(part)) ? [part] : FuzzyMatcher.SplitCredits(part))
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
     public static double ArtistSimilarity(string? left, string? right)
     {
-        var sourceArtists = FuzzyMatcher.SplitCredits(left);
-        var candidateArtists = FuzzyMatcher.SplitCredits(right);
+        if (string.IsNullOrWhiteSpace(left) || string.IsNullOrWhiteSpace(right)) return 0;
+        var sourceArtists = CreditNames(left, right);
+        var candidateArtists = CreditNames(right, left);
         if (sourceArtists.Count == 0 || candidateArtists.Count == 0)
             return 0;
+        // Every name on the shorter list is credited on the other: the same people, one copy names more of them.
+        // The copy that names them all still ranks a little higher.
+        var (fewer, more) = sourceArtists.Count <= candidateArtists.Count
+            ? (sourceArtists, candidateArtists) : (candidateArtists, sourceArtists);
+        if (fewer.All(name => more.Any(other => SameName(name, other))))
+            return more.All(name => fewer.Any(other => SameName(name, other))) ? 1 : 0.97;
 
         static double BestScore(string artist, IReadOnlyList<string> candidates) =>
             candidates.Max(candidate =>

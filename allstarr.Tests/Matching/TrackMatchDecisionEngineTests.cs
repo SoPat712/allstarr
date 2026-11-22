@@ -1228,7 +1228,7 @@ public sealed class TrackMatchDecisionEngineTests(ITestOutputHelper output)
         var score = Assert.Single(result.Candidates);
 
         Assert.Equal(TrackMatchReviewState.Accepted, result.State);
-        Assert.Equal(0.955, score.Confidence);
+        Assert.Equal(1, score.Confidence);
         Assert.Equal(1, score.Components!["title"]);
         Assert.Equal("song", score.NormalizedSourceTitle);
         Assert.Equal(score.NormalizedSourceTitle, score.NormalizedCandidateTitle);
@@ -1678,7 +1678,7 @@ public sealed class TrackMatchDecisionEngineTests(ITestOutputHelper output)
     [InlineData("Live")]
     [InlineData("Remix")]
     [InlineData("Sped Up")]
-    [InlineData("Extended")]
+    [InlineData("Extended Mix")]
     [InlineData("Demo")]
     public void AutomaticStreamingPriorityCannotPromoteAVersionMarkedOnlyOnTheAlbum(string version)
     {
@@ -1738,7 +1738,7 @@ public sealed class TrackMatchDecisionEngineTests(ITestOutputHelper output)
 
         Assert.Equal(TrackMatchReviewState.Accepted, decision.State);
         Assert.Equal(apple.LibraryTrackId, decision.SelectedLibraryTrackId);
-        Assert.Equal(new[] { apple.LibraryTrackId, deezer.LibraryTrackId, extended.LibraryTrackId },
+        Assert.Equal(new[] { apple.LibraryTrackId, extended.LibraryTrackId, deezer.LibraryTrackId },
             decision.Candidates.Select(candidate => candidate.LibraryTrackId));
         Assert.Equal(.9909, decision.Confidence);
     }

@@ -505,7 +505,8 @@ public sealed class TrackMatchesProviderSearchTests : IAsyncLifetime
         var tracks = await SearchAsync("Power Trip", source);
 
         Assert.Equal(new[] { "z-deluxe", "a-standard", "deezer", "amazon" }, tracks.Select(item => item.GetProperty("externalId").GetString()));
-        Assert.All(tracks, item => Assert.Equal(.9545, item.GetProperty("confidence").GetDouble()));
+        // The copy without "feat. Miguel" credits one name fewer, so it scores a little lower but keeps its place.
+        Assert.All(tracks, item => Assert.InRange(item.GetProperty("confidence").GetDouble(), .98, .992));
         Assert.Equal(1, tracks[0].GetProperty("routingPriority").GetInt32());
         Assert.Equal(1, tracks[0].GetProperty("components").GetProperty("routingPriority").GetInt32());
         Assert.True(tracks[0].GetProperty("matchesSourceAlbum").GetBoolean());
@@ -531,7 +532,7 @@ public sealed class TrackMatchesProviderSearchTests : IAsyncLifetime
         var tracks = await SearchAsync("Power Trip", source);
 
         Assert.Equal(new[] { "detailed", "sparse" }, tracks.Select(item => item.GetProperty("externalId").GetString()));
-        Assert.Equal(.9545, tracks[0].GetProperty("confidence").GetDouble());
+        Assert.Equal(.992, tracks[0].GetProperty("confidence").GetDouble());
         Assert.Equal(.94, tracks[1].GetProperty("confidence").GetDouble());
         Assert.Contains(tracks[1].GetProperty("warnings").EnumerateArray(), item => item.GetString() == "limited_recording_metadata");
         Assert.False(tracks[1].GetProperty("components").TryGetProperty("duration", out _));

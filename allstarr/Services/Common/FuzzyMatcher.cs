@@ -118,13 +118,14 @@ public static partial class FuzzyMatcher
         return tags;
     }
 
+    // "The Forever Story (Extended Version)" is a longer edition of the album, not a longer cut of each song on it.
     private static IEnumerable<string> AlbumRecordingTags(string? album) =>
         BracketedTitlePartRegex().Matches(album ?? string.Empty)
             .Concat(DashTitlePartRegex().Matches(album ?? string.Empty))
             .SelectMany(match => RecordingVersionTags("(" + match.Groups[1].Value + ")")
                 .Concat(LocalizedLiveRegex().IsMatch(match.Groups[1].Value) ? new[] { "live" } : []))
             .Concat(LocalizedLiveRegex().IsMatch(album ?? string.Empty) ? new[] { "live" } : [])
-            .Where(tag => tag is not ("clean" or "explicit"));
+            .Where(tag => tag is not ("clean" or "explicit" or "extended" or "extended version"));
 
     internal static bool? AlbumExplicitness(string? album)
     {
@@ -190,6 +191,64 @@ public static partial class FuzzyMatcher
         !string.IsNullOrWhiteSpace(right) &&
         left.Replace("-", string.Empty, StringComparison.Ordinal)
             .Equals(right.Replace("-", string.Empty, StringComparison.Ordinal), StringComparison.OrdinalIgnoreCase);
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"\s*[\(\[]\s*(?<kind>feat(?:uring)?\.?|ft\.?|with|prod(?:uced)?\.?(?:\s+by)?)\s+(?<names>[^\(\)\[\]]+)[\)\]]", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
+    private static partial System.Text.RegularExpressions.Regex CreditNoteRegex();
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"\b\w+\s+by\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
+    private static partial System.Text.RegularExpressions.Regex RoleByRegex();
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"\b(?:version|re-?recorded|reprise|interlude|intro|outro|skit|pt|part|vol|session|sessions|take|demo|from|remaster(?:ed)?|edition|mono|stereo)\b|\d", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
+    private static partial System.Text.RegularExpressions.Regex VersionLikeNoteRegex();
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"(?:\s+[-–—]\s+(?<note>[^\(\)\[\]]+?)|\s*[\(\[](?<note>[^\(\)\[\]]+)[\)\]])\s*$")]
+    private static partial System.Text.RegularExpressions.Regex TrailingNoteRegex();
+
+    // "(feat. A & B)", "[with C]" and "(Prod. D)" credit people; "(with instrumental by E)" credits a part, not a version.
+    private static bool IsCreditNote(System.Text.RegularExpressions.Match match) =>
+        RecordingVersionTags(RoleByRegex().Replace(match.Groups["names"].Value, " ")).Count == 0;
+
+    /// <summary>The performers a title credits in "(feat. …)" or "(with …)" notes.</summary>
+    public static IReadOnlyList<string> TitleCreditNames(string? title) =>
+        CreditNoteRegex().Matches(title ?? string.Empty)
+            .Where(match => IsCreditNote(match) && !RoleByRegex().IsMatch(match.Groups["names"].Value) &&
+                !match.Groups["kind"].Value.StartsWith("prod", StringComparison.OrdinalIgnoreCase))
+            .SelectMany(match => SplitCredits(match.Groups["names"].Value))
+            .ToList();
+
+    public static string WithoutCreditNotes(string title) =>
+        WhitespaceRegex().Replace(CreditNoteRegex().Replace(title, match => IsCreditNote(match) ? " " : match.Value), " ").Trim();
+
+    /// <summary>The title without a last " - note" or "(note)" that names no version, or null when it ends in none.</summary>
+    // A bracketed note an album names ("Self Love (Spider-Man: …)") is the album's business: WithoutAlbumAnnotation
+    // drops it only when the album backs it up.
+    public static string? WithoutTrailingNote(string title, params string?[] albums)
+    {
+        var match = TrailingNoteRegex().Match(title);
+        if (!match.Success || match.Index == 0) return null;
+        var note = match.Groups["note"].Value;
+        var normalized = " " + NormalizeForMatching(note) + " ";
+        var bracketed = match.Value.TrimEnd().EndsWith(')') || match.Value.TrimEnd().EndsWith(']');
+        return RecordingVersionTags(note).Count > 0 || VersionLikeNoteRegex().IsMatch(note) || RemasterTag(note).Length > 0 ||
+               BackingRecordingTags(note).Count > 0 || HasCoverRecordingLabel(note) || HasCleanRecordingLabel(note) ||
+               MixedRegex().IsMatch(note) || ContinuousMixRegex().IsMatch(note) || normalized.Trim().Length == 0 ||
+               bracketed && albums.Any(album => (" " + NormalizeForMatching(album ?? "") + " ").Contains(normalized, StringComparison.Ordinal))
+            ? null
+            : title[..match.Index].Trim();
+    }
+
+    // Services print "F**k" where the file says "Fuck"; each star stands for one letter.
+    public static bool TitlesEqualAllowingCensoring(string left, string right)
+    {
+        static string Fold(string value) => WhitespaceRegex().Replace(
+            System.Text.RegularExpressions.Regex.Replace(
+                RemoveDiacritics(value).ToLowerInvariant().Replace("&", " and ", StringComparison.Ordinal).Replace('$', 's'),
+                @"[^\w\s*]", " "), " ").Trim();
+        static bool Fits(string pattern, string text) => pattern.Contains('*') && System.Text.RegularExpressions.Regex.IsMatch(
+            text, "^" + System.Text.RegularExpressions.Regex.Escape(pattern).Replace(@"\*", @"\w", StringComparison.Ordinal) + "$");
+        var (a, b) = (Fold(left), Fold(right));
+        return a.Length > 0 && (a == b || Fits(a, b) || Fits(b, a));
+    }
 
     public static IReadOnlyList<string> SplitCredits(string? value)
     {
@@ -664,6 +723,8 @@ public static partial class FuzzyMatcher
 
         return stringBuilder.ToString().Normalize(System.Text.NormalizationForm.FormC);
     }
+
+    public static int EditDistance(string source, string target) => LevenshteinDistance(source, target);
 
     private static int LevenshteinDistance(string source, string target, CancellationToken cancellationToken = default)
     {

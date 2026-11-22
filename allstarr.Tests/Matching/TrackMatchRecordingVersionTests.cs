@@ -44,7 +44,7 @@ public sealed class TrackMatchRecordingVersionTests
         var sparseScore = Assert.Single(scores, item => item.LibraryTrackId == sparse.LibraryTrackId);
         var detailedScore = Assert.Single(scores, item => item.LibraryTrackId == detailed.LibraryTrackId);
         Assert.Equal(.94, sparseScore.Confidence);
-        Assert.Equal(.9545, detailedScore.Confidence);
+        Assert.Equal(.992, detailedScore.Confidence);
         Assert.Contains("limited_recording_metadata", sparseScore.Warnings);
         Assert.DoesNotContain("limited_recording_metadata", detailedScore.Warnings);
         Assert.Equal(1, sparseScore.Components!["title"]);

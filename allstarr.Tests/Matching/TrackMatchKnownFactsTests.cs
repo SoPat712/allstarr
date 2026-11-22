@@ -68,7 +68,7 @@ public sealed class TrackMatchKnownFactsTests
     [InlineData("Slowed + Reverb")]
     [InlineData("Nightcore")]
     [InlineData("Demo")]
-    [InlineData("Extended")]
+    [InlineData("Extended Mix")]
     [InlineData("Cover")]
     public void RecordingMarkersGuardLocalAndExactIdentityPaths(string marker)
     {
