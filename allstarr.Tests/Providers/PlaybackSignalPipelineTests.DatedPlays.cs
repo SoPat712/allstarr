@@ -72,6 +72,29 @@ public sealed partial class PlaybackSignalPipelineTests
     }
 
     [Fact]
+    public async Task DatedPlayFinishesAPlayThatOnlyStartedLive()
+    {
+        // The start reached the server, then the line dropped; the stop arrives later as a dated play.
+        var pipeline = new PlaybackSignalPipeline(jobs);
+        var start = Signal(PlaybackTransition.Start, "track-1", 0);
+        Assert.True(await pipeline.RecordAsync(start));
+        await RunPlaybackJobsAsync(new Lyrics(), new Target("lastfm", true));
+        var play = new V2DatedPlay("track-1", start.ObservedAt, 100, start.PlaySessionId!);
+
+        var (results, _, target) = await RecordDatedAsync([play]);
+        var (again, _, _) = await RecordDatedAsync([play]);
+
+        Assert.Equal("counted", Assert.Single(results).State);
+        Assert.Equal("duplicate", Assert.Single(again).State);
+        Assert.Equal(1, target.Successes);
+        await using var verify = await factory.CreateDbContextAsync();
+        var row = await verify.ListeningEvents.AsNoTracking().SingleAsync();
+        Assert.Equal(ListeningEventState.Completed, row.State);
+        Assert.Equal(start.ObservedAt.ToUnixTimeMilliseconds(), row.StartedAt!.Value.ToUnixTimeMilliseconds());
+        Assert.Equal(TimeSpan.FromSeconds(100).Ticks, row.PositionTicks);
+    }
+
+    [Fact]
     public async Task DatedPlayUnderThirtySecondsIsTooShortAndKeepsNothing()
     {
         var (results, _, _) = await RecordDatedAsync([new("track-1", clock.UtcNow.AddHours(-1), 20, "offline-short")]);

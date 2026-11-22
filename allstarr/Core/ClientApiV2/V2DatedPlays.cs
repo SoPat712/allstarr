@@ -1,3 +1,4 @@
+using allstarr.Core.Intelligence;
 using allstarr.Core.Playback;
 using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
@@ -60,9 +61,11 @@ public sealed class V2DatedPlays(V2TrackReader tracks, IPlaybackSignalPipeline s
                 var signal = new PlaybackSignalRequest(execution, PlaybackTransition.Stop, item, null, play.PlaySessionId, heard,
                     play.StartedAt.ToUniversalTime() + TimeSpan.FromTicks(heard), Dated: true,
                     DurationMilliseconds: play.DurationSeconds is > 0 and <= MaximumSeconds ? (long)(play.DurationSeconds.Value * 1000) : null);
-                // A play the app also reported live, or sent here before, already has its occurrence.
+                // A play sent here before, or one whose end the app also reported live, is already settled. One that only
+                // started live (the line dropped before its stop) is finished by this report.
                 var key = PlaybackSignalPipeline.OccurrenceKey(signal);
-                state = await db.ListeningEvents.AsNoTracking().AnyAsync(row => row.OwnerUserId == owner && row.OccurrenceKey == key, token) ||
+                state = await db.ListeningEvents.AsNoTracking().AnyAsync(row => row.OwnerUserId == owner && row.OccurrenceKey == key &&
+                        (row.State == ListeningEventState.Completed || row.State == ListeningEventState.Skipped), token) ||
                     !await signals.RecordAsync(signal, token) ? "duplicate" : "counted";
             }
             results.Add(new(play.PlaySessionId, state));
