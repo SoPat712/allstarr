@@ -52,7 +52,8 @@ public sealed partial class LibraryRecordingLinkJobHandler(ITrackIdentityService
     IDbContextFactory<AllstarrDbContext> factory, IPlatformClock clock, RecordingKeptFiles? kept = null,
     IBackendLibraryAccessResolver? libraryAccess = null, BackendLibraryCatalogScannerResolver? scanners = null,
     allstarr.Core.Playlists.IBackendPlaylistTargetResolver? targets = null,
-    allstarr.Core.Enrichment.LibraryPromotionService? promotions = null, ILibraryIndexService? index = null) : IDurableJobHandler
+    allstarr.Core.Enrichment.LibraryPromotionService? promotions = null, ILibraryIndexService? index = null,
+    allstarr.Core.Music.AddedSongLyrics? lyrics = null) : IDurableJobHandler
 {
     public string JobType => LibraryRecordingLinkQueue.JobType;
 
@@ -136,6 +137,9 @@ public sealed partial class LibraryRecordingLinkJobHandler(ITrackIdentityService
                         CreatedAt = clock.UtcNow
                     });
                     await db.SaveChangesAsync(cancellationToken);
+                    if (lyrics != null && await accessible.AsNoTracking().Where(item => item.Id == linked)
+                            .Select(item => new { item.BackendItemId, item.FilePath }).SingleOrDefaultAsync(cancellationToken) is { } song)
+                        await lyrics.HandOverAsync(song.BackendItemId, song.FilePath, cancellationToken);
                     if (promotions != null) await promotions.PublishLinkedAdditionsAsync(user, recordingId, cancellationToken);
                 }
                 if (!await HandoverAsync(recording.Id, listener, payload.BackendLibraryId, execution, payload.RemoveKeptCopy, favorites, cancellationToken))

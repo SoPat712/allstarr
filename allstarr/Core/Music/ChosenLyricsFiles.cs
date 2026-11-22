@@ -58,6 +58,32 @@ public sealed class JellyfinItemLyrics
 }
 
 /// <summary>
+/// Hands the media server the word-by-word lyrics an added song's file holds. It reads the line-by-line tag on its own
+/// and would give its apps only those.
+/// </summary>
+public sealed class AddedSongLyrics(LibraryFileLyrics files, JellyfinItemLyrics jellyfin, ILogger<AddedSongLyrics> logger)
+{
+    public async Task HandOverAsync(string backendItemId, string? backendPath, CancellationToken token)
+    {
+        var local = await files.LocalPathAsync(backendPath, token);
+        // A lyrics file beside the song is read by the media server itself, words and all.
+        if (local == null || File.Exists(Path.ChangeExtension(local, ".lrc"))) return;
+        try
+        {
+            var words = await Task.Run(() => File.Exists(local) ? TagLibManagedTagFileMutator.ReadWordLyrics(local) : null, token);
+            if (string.IsNullOrWhiteSpace(words) || !LyricsTiming.HasWordTimes(words)) return;
+            await jellyfin.ReplaceAsync(backendItemId, words, token);
+        }
+        // The song is added either way; its line-by-line lyrics stay.
+        catch (Exception error) when (error is HttpRequestException or InvalidOperationException or IOException or UnauthorizedAccessException
+            or TagLib.CorruptFileException or TagLib.UnsupportedFormatException)
+        {
+            logger.LogWarning("The media server did not take an added song's word-by-word lyrics ({ErrorType})", error.GetType().Name);
+        }
+    }
+}
+
+/// <summary>
 /// Puts the lyrics version an administrator chose for a library song into the song's own file, in the tags an added
 /// song gets, and hands the media server the same lines, so every listener and every other app gets that version.
 /// Only when the household turned this on.
@@ -69,6 +95,12 @@ public sealed class ChosenLyricsFiles(IDurableRuntimeSettings settings, IDbConte
     public const string JobType = "lyrics.write-file";
     public const string SettingKey = "Lyrics:WriteChosenToFile";
     string IDurableJobHandler.JobType => JobType;
+
+    /// <summary>Whether a version this listener chooses for the song at this path would also go into its file.</summary>
+    public async Task<bool> WritesAsync(ProtocolExecutionContext execution, string? backendPath) =>
+        execution.Principal is { IsAdministrator: true } && !string.IsNullOrWhiteSpace(backendPath) &&
+        (bool)(await settings.GetAsync(SettingKey, execution.CancellationToken)).Value &&
+        await library.LocalPathAsync(backendPath, execution.CancellationToken) != null;
 
     public async Task RequestAsync(ProtocolExecutionContext execution, string backendItemId, string? backendPath, Guid recordingId,
         string sourceId, LyricsInfo lyrics, long? durationMs)
@@ -140,7 +172,8 @@ public sealed class ChosenLyricsFiles(IDurableRuntimeSettings settings, IDbConte
         }
         if (user.BackendType == "jellyfin")
         {
-            try { await jellyfin.ReplaceAsync(payload.BackendItemId, LyricsTiming.TagContent(payload.Lyrics), cancellationToken); }
+            // Word times where the version has them: the media server passes them on to its own apps.
+            try { await jellyfin.ReplaceAsync(payload.BackendItemId, Tags(payload.Lyrics) is var tags && tags["wordlyrics"].Length > 0 ? tags["wordlyrics"] : tags["lyrics"], cancellationToken); }
             catch (Exception error) when (error is HttpRequestException or InvalidOperationException)
             {
                 logger.LogWarning("The media server did not take the chosen lyrics ({ErrorType})", error.GetType().Name);

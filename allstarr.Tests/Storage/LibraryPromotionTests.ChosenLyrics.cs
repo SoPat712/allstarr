@@ -31,9 +31,10 @@ public sealed partial class LibraryPromotionTests
 
         using (var file = TagLib.File.Create(song)) Assert.Equal(ChosenLines, file.Tag.Lyrics);
         Assert.StartsWith("[00:00.100]<00:00.100>I'm <00:00.200>a ", TagLibManagedTagFileMutator.ReadWordLyrics(song));
-        // The media server gets the lines as the tag holds them, in place of the ones it took from the file earlier.
+        // The media server gets the word times too, in place of the lines it took from the file earlier.
         var sent = Assert.Single(server.Requests);
-        Assert.Equal((HttpMethod.Post, "/Audio/item-1/Lyrics?fileName=lyrics.lrc", ChosenLines), (sent.Method, sent.PathAndQuery, sent.Body));
+        Assert.Equal((HttpMethod.Post, "/Audio/item-1/Lyrics?fileName=lyrics.lrc", TagLibManagedTagFileMutator.ReadWordLyrics(song)),
+            (sent.Method, sent.PathAndQuery, sent.Body));
         Assert.Contains("Token=\"key\"", sent.Authorization);
         // What the file held is kept, and nothing is left beside the song.
         var kept = Assert.Single(Directory.GetFiles(Path.Combine(directory, "data", "replaced-lyrics")));
@@ -78,6 +79,12 @@ public sealed partial class LibraryPromotionTests
 
         using (var file = TagLib.File.Create(song)) Assert.Equal("[00:02.00]Old line", file.Tag.Lyrics);
         Assert.Empty(server.Requests);
+
+        // The page where a version is chosen says beforehand whether the file will be written.
+        Assert.True(await allowed.WritesAsync(administrator, song));
+        Assert.False(await allowed.WritesAsync(listener, song));
+        Assert.False(await allowed.WritesAsync(administrator, Path.Combine(directory, "source.wav")));
+        Assert.False(await ChosenFiles(server, enabled: false).WritesAsync(administrator, song));
     }
 
     [Fact]
@@ -108,6 +115,47 @@ public sealed partial class LibraryPromotionTests
             .ReplaceAsync("item-1", "First line\nSecond line", default);
         Assert.Equal(new[] { (HttpMethod.Delete, "/base/Audio/item-1/Lyrics"), (HttpMethod.Post, "/base/Audio/item-1/Lyrics?fileName=lyrics.txt") },
             server.Requests.Select(request => (request.Method, request.PathAndQuery)).ToArray());
+    }
+
+    [Fact]
+    public async Task ChosenLyrics_ALineTimedVersionGoesToTheMediaServerAsItsLines()
+    {
+        var administrator = await AddPromotionUserAsync(true);
+        var song = await LibrarySongAsync("[00:02.00]Old line");
+        var server = new MediaServer();
+        var files = ChosenFiles(server, enabled: true);
+
+        await files.RequestAsync(administrator, "item-1", song, recordingId, "lrclib:1", new LyricsInfo { SyncedLyrics = ChosenLines }, 1000);
+        Assert.Equal(DurableJobCompletionKind.Succeeded, (await RunChosenAsync(files))!.Kind);
+        Assert.Equal(ChosenLines, Assert.Single(server.Requests).Body);
+    }
+
+    [Fact]
+    public async Task AddedSong_TheMediaServerIsHandedTheWordsItsFileHolds()
+    {
+        var song = await LibrarySongAsync("[00:00.10]I'm a working bitch\n[00:00.80]Last line");
+        var server = new MediaServer();
+        var added = new AddedSongLyrics(new LibraryFileLyrics(roots),
+            new JellyfinItemLyrics(new HttpClient(server), new JellyfinSettings { Url = "http://media.invalid", ApiKey = "key" }), NullLogger<AddedSongLyrics>.Instance);
+
+        // Line times only: the media server reads those from the file on its own.
+        await added.HandOverAsync("item-1", song, default);
+        Assert.Empty(server.Requests);
+
+        var words = ChosenLyricsFiles.Tags(LyricsTiming.SidecarContent(WordTimed(), 1000)!)["wordlyrics"];
+        new TagLibManagedTagFileMutator().Apply(song, new Dictionary<string, string> { ["wordlyrics"] = words }, default);
+        await added.HandOverAsync("item-1", song, default);
+        var sent = Assert.Single(server.Requests);
+        Assert.Equal((HttpMethod.Post, "/Audio/item-1/Lyrics?fileName=lyrics.lrc", words), (sent.Method, sent.PathAndQuery, sent.Body));
+        Assert.Contains("<00:00.200>a ", words);
+
+        // A media server that is away does not stop the add, and a lyrics file beside the song is the media server's to read.
+        server.Status = HttpStatusCode.ServiceUnavailable;
+        await added.HandOverAsync("item-1", song, default);
+        await File.WriteAllTextAsync(Path.ChangeExtension(song, ".lrc"), words);
+        await added.HandOverAsync("item-1", song, default);
+        await added.HandOverAsync("item-1", Path.Combine(directory, "source.wav"), default);
+        Assert.Equal(2, server.Requests.Count);
     }
 
     private ChosenLyricsFiles ChosenFiles(MediaServer server, bool enabled)

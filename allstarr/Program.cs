@@ -118,6 +118,7 @@ builder.Services.AddProviderDownloadArtifacts(builder.Configuration);
 builder.Services.AddSingleton<PromotionRoots>();
 builder.Services.AddSingleton<allstarr.Core.Music.LibraryFileLyrics>();
 builder.Services.AddSingleton<allstarr.Core.Music.JellyfinItemLyrics>();
+builder.Services.AddSingleton<allstarr.Core.Music.AddedSongLyrics>();
 builder.Services.AddSingleton<allstarr.Core.Music.ChosenLyricsFiles>();
 builder.Services.AddSingleton<IDurableJobHandler>(provider => provider.GetRequiredService<allstarr.Core.Music.ChosenLyricsFiles>());
 builder.Services.AddSingleton<PromotionLibraryFolders>();
