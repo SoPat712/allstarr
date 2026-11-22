@@ -80,6 +80,33 @@ public sealed partial class PlaybackSignalPipelineTests
         Assert.Equal(ListeningEventState.Abandoned, (await db.ListeningEvents.SingleAsync()).State);
     }
 
+    [Fact]
+    public async Task ASecondStartOfAPlayUnderWayIsProgress()
+    {
+        var pipeline = new PlaybackSignalPipeline(jobs);
+        var handler = new PlaybackSignalJobHandler(new Writer(), new Scrobbles(), new Lyrics(), factory, playbackTracks);
+        var start = Signal(PlaybackTransition.Start, "track-1", 0);
+        // The song is reloaded ten seconds in and skipped five seconds later.
+        var requests = new[]
+        {
+            start,
+            start with { PositionTicks = TimeSpan.FromSeconds(10).Ticks, ObservedAt = clock.UtcNow.AddSeconds(10) },
+            start with { Transition = PlaybackTransition.Stop, PositionTicks = TimeSpan.FromSeconds(15).Ticks, ObservedAt = clock.UtcNow.AddSeconds(15) }
+        };
+        var states = new List<ListeningEventState>();
+        foreach (var request in requests)
+        {
+            await pipeline.RecordAsync(request);
+            var claim = await jobs.ClaimNextAsync("reload", [PlaybackSignalPipeline.JobType]);
+            var result = await handler.ExecuteAsync(new(claim!, EmptyServices.Instance), default);
+            Assert.Equal(DurableJobCompletionKind.Succeeded, result.Kind);
+            await jobs.CompleteAsync(claim!, result);
+            await using var db = await factory.CreateDbContextAsync();
+            states.Add((await db.ListeningEvents.SingleAsync()).State);
+        }
+        Assert.Equal([ListeningEventState.Playing, ListeningEventState.Playing, ListeningEventState.Skipped], states);
+    }
+
     [Theory]
     [InlineData(0)]
     [InlineData(30)]

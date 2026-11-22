@@ -301,6 +301,10 @@ public sealed class PlaybackSignalJobHandler(IRecommendationSignalWriter signals
     private static void Apply(ListeningEventRecord record, PlaybackSignalPayload payload,
         PlaybackTrackSnapshot? track, bool added, bool enrichWithMusicBrainz)
     {
+        // An app that reloads a song mid-play, at another quality say, may report its start again. For a play already
+        // under way that is progress: taken as a start it would read as a play begun mid-song and given up.
+        if (!added && payload.Transition == PlaybackTransition.Start && record.State == ListeningEventState.Playing && record.StartedAt != null)
+            payload = payload with { Transition = PlaybackTransition.Progress };
         var latest = added || payload.ObservedAt >= record.UpdatedAt;
         var next = Classify(Listened(record, payload, added), track, !added && record.State == ListeningEventState.Playing &&
             record.StartedAt != null && payload.ObservedAt >= record.UpdatedAt &&
