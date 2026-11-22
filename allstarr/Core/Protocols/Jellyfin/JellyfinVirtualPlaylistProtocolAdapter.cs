@@ -90,7 +90,8 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
     IApplicationCache? readCache = null,
     ApplicationCacheRequestCoalescer? readCoalescer = null,
     IBackendLibraryAccessResolver? readAccess = null,
-    IPlatformClock? readClock = null)
+    IPlatformClock? readClock = null,
+    LibraryGoneTracks? goneTracks = null)
 {
     private readonly ApplicationCacheRequestCoalescer _readCoalescer = readCoalescer ?? new(new());
     private sealed record PlaylistSongCacheEntry(Song Song, long? DurationTicks);
@@ -513,7 +514,8 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
         if (playlist != null) playlist = await ProjectAsync(playlist, context);
         if (playlist == null) return null;
         return await CreateItemsResponseAsync(
-            context, playlist, id, clientHeaders, clientQuery);
+            context, playlist, id, clientHeaders, clientQuery, async () =>
+                await ReadViewAsync(context, id, cancellationToken) is { } again ? await ProjectAsync(again, context) : null);
     }
 
     public async Task<IActionResult?> ReadItemsBySourceAsync(
@@ -533,7 +535,9 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
         return playlist == null
             ? null
             : await CreateItemsResponseAsync(
-                context, playlist, responsePlaylistId, clientHeaders, clientQuery);
+                context, playlist, responsePlaylistId, clientHeaders, clientQuery, async () =>
+                    await playlists.ReadBySourceAsync(context, sourceProviderId, sourcePlaylistId, cancellationToken) is { } again
+                        ? await ProjectAsync(again, context) : null);
     }
 
     private async Task<IActionResult> CreateItemsResponseAsync(
@@ -541,7 +545,8 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
         VirtualPlaylistReadModel playlist,
         string responsePlaylistId,
         IHeaderDictionary? clientHeaders,
-        IQueryCollection? clientQuery)
+        IQueryCollection? clientQuery,
+        Func<Task<VirtualPlaylistReadModel?>>? readAgain = null)
     {
         using var building = RequestTiming.Current?.Stage("build");
         clientQuery ??= httpContexts?.HttpContext?.Request.Query;
@@ -556,6 +561,17 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
             ? null
             : await ReadOriginalItemsAsync(context, tracks, clientHeaders, clientQuery);
         var externalSongs = await externalSongsTask;
+        // A matched library song the media server no longer returns would show as unplayable. A few of them are asked
+        // about; once one is found gone the playlist is read again and the entry plays from its service copy.
+        if (readAgain != null && goneTracks != null && originals != null && playlist.ProjectionMode == PlaylistProjectionMode.Resolved)
+        {
+            var found = false;
+            foreach (var missing in tracks.Where(track => track.RouteKind == TrackRouteKind.Local && !originals.ContainsKey(track.BackendItemId))
+                         .Select(track => track.BackendItemId).Distinct(StringComparer.Ordinal).Take(5).ToArray())
+                found |= await goneTracks.CheckAsync(context, missing, context.CancellationToken);
+            if (found && await readAgain() is { } again)
+                return await CreateItemsResponseAsync(context, again, responsePlaylistId, clientHeaders, clientQuery);
+        }
         var hasSyntheticItems = playlist.ProjectionMode == PlaylistProjectionMode.Source || tracks.Any(track =>
             track.RouteKind != TrackRouteKind.Local || originals?.ContainsKey(track.BackendItemId) != true);
         if (hasSyntheticItems && originals != null && proxyService != null)
