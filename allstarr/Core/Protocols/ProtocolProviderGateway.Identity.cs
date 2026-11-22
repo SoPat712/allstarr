@@ -227,13 +227,22 @@ public sealed partial class ProtocolProviderGateway
         if (identities == null) return;
         try
         {
-            await identities.RememberSourceAsync(context, track, requestedItemId,
-                context.Account != null && !IsPublicMetadataProvider(context.ProviderId)
-                    ? ProviderIdentityScope.Account : ProviderIdentityScope.Catalog,
-                cancellationToken: context.CancellationToken);
             var retained = await ReadPlaybackMetadataAsync(context, track);
-            if (retained != null && !retained.IsLocal && NormalizeProvider(retained.ExternalProvider) == track.ProviderId &&
-                retained.ExternalId == track.Value)
+            if (retained != null && (retained.IsLocal || NormalizeProvider(retained.ExternalProvider) != track.ProviderId ||
+                    retained.ExternalId != track.Value)) retained = null;
+            var scope = context.Account != null && !IsPublicMetadataProvider(context.ProviderId)
+                ? ProviderIdentityScope.Account : ProviderIdentityScope.Catalog;
+            // The song's ISRC joins it to the recording that already carries it. Without it every service copy of one
+            // song played started a recording of its own.
+            var isrc = NormalizeIsrc(retained?.Isrc);
+            try { await identities.RememberSourceAsync(context, track, requestedItemId, scope, isrc, context.CancellationToken); }
+            catch (Exception error) when (isrc != null && error is RecordingMergeConflictException or ArgumentException)
+            {
+                // A copy whose ISRC disagrees with its recording's, or isn't a valid one, is still remembered as before.
+                await identities.RememberSourceAsync(context, track, requestedItemId, scope,
+                    cancellationToken: context.CancellationToken);
+            }
+            if (retained != null)
                 await identities.RememberPlaybackMetadataAsync(context, track, retained, context.CancellationToken);
         }
         catch (Exception error)

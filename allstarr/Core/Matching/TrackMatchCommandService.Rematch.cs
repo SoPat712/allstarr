@@ -314,10 +314,20 @@ public sealed partial class TrackMatchCommandService
             {
                 if (source == null)
                 {
-                    var canonical = TrackIdentityService.CreateProvisionalRecording(actor.UserId, clock.UtcNow, payload.Isrc);
-                    db.CanonicalRecordings.Add(canonical);
+                    // A source whose ISRC a recording already carries is that recording, not a second one beside it.
+                    var code = string.IsNullOrWhiteSpace(payload.Isrc) ? null
+                        : payload.Isrc.Trim().Replace("-", "", StringComparison.Ordinal).ToUpperInvariant();
+                    var known = code == null ? null : await db.CanonicalRecordings.Where(item => item.MergedIntoId == null &&
+                            item.Identifiers.Any(identifier => identifier.Kind == RecordingIdentifierKinds.Isrc && identifier.Value == code))
+                        .Select(item => (Guid?)item.Id).FirstOrDefaultAsync(cancellationToken);
+                    if (known == null)
+                    {
+                        var canonical = TrackIdentityService.CreateProvisionalRecording(actor.UserId, clock.UtcNow, payload.Isrc);
+                        db.CanonicalRecordings.Add(canonical);
+                        known = canonical.Id;
+                    }
                     source = await AddSourceSnapshotIdentityAsync(
-                        db, catalogActor, snapshot, canonical.Id, latestVersion + 1,
+                        db, catalogActor, snapshot, known.Value, latestVersion + 1,
                         clock.UtcNow, cancellationToken);
                 }
                 canonicalRecordingId = await LinkExternalIdentitiesAsync(

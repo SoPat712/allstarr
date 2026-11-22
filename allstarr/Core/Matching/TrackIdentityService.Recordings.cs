@@ -54,7 +54,12 @@ public sealed partial class TrackIdentityService
         var account = await ValidateExecutionContextAsync(db, execution, cancellationToken);
         var existing = await ResolveCoreAsync(db, externalId, account?.Id, cancellationToken);
         // A use never changes an existing manual or suggested association.
-        if (existing != null) return existing.CanonicalRecordingId;
+        if (existing != null)
+        {
+            await LearnSourceIsrcAsync(db, existing, normalizedIsrc, execution, cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+            return existing.CanonicalRecordingId;
+        }
         var recording = await FindCanonicalByExactSignalsAsync(db, normalizedIsrc, null, cancellationToken);
         var previous = await FindRecordingByPublicIdAsync(db, execution.Actor, publicId, cancellationToken);
         if (recording != null && previous != null && recording.Id != previous.Id)
@@ -169,12 +174,12 @@ public sealed partial class TrackIdentityService
     // The caller saves this unit of work, including any new source identity and match decision.
     internal static async Task<CanonicalRecordingRecord> MergeRecordsAsync(
         AllstarrDbContext context, CanonicalRecordingRecord first, CanonicalRecordingRecord second,
-        ProviderActorContext actor, string correlationId, DateTimeOffset now, CancellationToken cancellationToken)
+        ProviderActorContext actor, string correlationId, DateTimeOffset now, CancellationToken cancellationToken,
+        bool keepFirst = false)
     {
         if (first.Id == second.Id) return first;
-        var ordered = new[] { first, second }.OrderBy(item => item.CreatedAt).ThenBy(item => item.Id).ToArray();
-        var winner = ordered[0];
-        var loser = ordered[1];
+        var winner = keepFirst ? first : new[] { first, second }.OrderBy(item => item.CreatedAt).ThenBy(item => item.Id).First();
+        var loser = ReferenceEquals(winner, first) ? second : first;
         var musicBrainzIds = winner.Identifiers.Concat(loser.Identifiers)
             .Where(item => item.Kind == RecordingIdentifierKinds.MusicBrainz)
             .Select(item => item.Value).Distinct(StringComparer.Ordinal).ToArray();

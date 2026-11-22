@@ -39,6 +39,9 @@ public static class TrackIdentityRegistration
         services.TryAddSingleton<LibraryRecordingLinkQueue>();
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IDurableJobHandler, LibraryRecordingLinkJobHandler>());
         services.AddHostedService<LibraryRecordingLinkDiscoveryService>();
+        services.TryAddSingleton<IsrcRecordingMergeQueue>();
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<IDurableJobHandler, IsrcRecordingMergeJobHandler>());
+        services.AddHostedService<IsrcRecordingMergeDiscoveryService>();
         services.AddSingleton<Enrichment.SharedTagStore>();
         services.AddSingleton<Enrichment.SharedTagSources>();
         services.AddSingleton<Enrichment.SharedTagQueue>();

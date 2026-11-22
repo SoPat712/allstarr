@@ -228,6 +228,7 @@ public sealed class AuditEventRetentionService(
             (audit.Category != CatalogIdentityMaintenance.Category ||
              audit.Action != CatalogIdentityMaintenance.CompletionAction && audit.Action != CatalogIdentityMaintenance.LegacyCompletionAction) &&
             audit.Action != LibraryRecordingLinkQueue.CompletionAction &&
+            audit.Action != IsrcRecordingMergeQueue.CompletionAction &&
             !database.LegacyEnvImports.Any(importRecord => importRecord.AuditEventId == audit.Id));
     }
 }

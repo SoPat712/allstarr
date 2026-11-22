@@ -151,6 +151,14 @@ public interface ITrackIdentityService
         ProviderActorContext actor, Guid firstId, Guid secondId, string correlationId,
         CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Merges recordings that share one ISRC into the kept one in a single step and records the ISRC on it. With no
+    /// recordings to merge it only records the ISRC, when no other recording carries it.
+    /// </summary>
+    Task<CanonicalRecordingIdentity> MergeRecordingsByIsrcAsync(ProviderActorContext actor, string isrc, Guid keepId,
+        IReadOnlyCollection<Guid> mergedIds, string correlationId, CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException("Merging recordings by ISRC is not available.");
+
     Task<Guid> RememberSourceAsync(ProviderExecutionContext context, ProviderExternalResourceId externalId,
         string publicId, ProviderIdentityScope scope, string? isrc = null, CancellationToken cancellationToken = default);
 
