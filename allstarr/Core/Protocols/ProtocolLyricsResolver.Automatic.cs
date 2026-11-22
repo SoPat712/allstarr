@@ -73,6 +73,7 @@ public sealed partial class ProtocolLyricsResolver
         string? preferred, long? recordingDurationMs, Func<ProtocolExecutionContext, DateTimeOffset, IReadOnlyList<AutomaticSource>> build,
         bool cacheOnlyRequested = false)
     {
+        AutomaticLookup lookup;
         lock (_automaticGate)
         {
             if (_automatic.TryGetValue(key, out var existing)) return existing;
@@ -85,12 +86,14 @@ public sealed partial class ProtocolLyricsResolver
             var timer = new CancellationTokenSource(deadline - now, LyricsClock);
             var cancellation = CancellationTokenSource.CreateLinkedTokenSource(timer.Token, _automaticShutdown.Token);
             var owned = WithLyricsToken(protocol, cancellation.Token, deadline);
-            var lookup = new AutomaticLookup(key, deadline, timer, cancellation, owned, song, householdOnly,
+            lookup = new AutomaticLookup(key, deadline, timer, cancellation, owned, song, householdOnly,
                 preferred, recordingDurationMs, build(owned, deadline), cacheOnly);
             if (!cacheOnly) _automatic.Add(key, lookup);
-            _ = PopulateAutomaticAsync(lookup);
-            return lookup;
         }
+        // Started outside the gate: sources that answer from what is stored run to their end at once, and under the gate
+        // every other song's lookup waited for them.
+        _ = PopulateAutomaticAsync(lookup);
+        return lookup;
     }
 
     private async Task PopulateAutomaticAsync(AutomaticLookup lookup)
