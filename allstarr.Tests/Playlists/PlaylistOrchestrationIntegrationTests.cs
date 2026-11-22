@@ -640,7 +640,7 @@ public sealed partial class PlaylistOrchestrationIntegrationTests(ITestOutputHel
         {
             var suggestedCandidate = Local(suggestedId, "suggested", "unused-1", "Suggestion");
             suggestedCandidate.ProviderIdsJson = "{}";
-            suggestedCandidate.Title = "Suggestion (Alternate Title)";
+            suggestedCandidate.Title = "A Suggestion About Our Journey";
             suggestedCandidate.Album = null;
             suggestedCandidate.DurationMilliseconds = 180_000;
             var ambiguousOne = Local(ambiguousOneId, "ambiguous-1", "unused-2", "Ambiguous");
@@ -653,7 +653,7 @@ public sealed partial class PlaylistOrchestrationIntegrationTests(ITestOutputHel
         }
         _source.Snapshot = Snapshot(
             "revision-states",
-            Entry(0, "entry-suggested", "source-suggested", "Suggestion"),
+            Entry(0, "entry-suggested", "source-suggested", "A Suggestion About The Journey Home"),
             Entry(1, "entry-ambiguous", "source-ambiguous", "Ambiguous"),
             Entry(2, "entry-unresolved", "source-unresolved", "No Candidate"));
 

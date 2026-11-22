@@ -109,11 +109,11 @@
     "case": "blinding-lights/featured-artist",
     "state": "Accepted",
     "selected": "match",
-    "confidence": 0.955,
+    "confidence": 1,
     "decisionReasons": [
       "album_artist_strong",
       "album_exact",
-      "artist_strong",
+      "artist_exact",
       "duration_close",
       "title_decorators_ignored",
       "title_exact"
@@ -121,7 +121,7 @@
     "selectedReasons": [
       "album_artist_strong",
       "album_exact",
-      "artist_strong",
+      "artist_exact",
       "duration_close",
       "title_decorators_ignored",
       "title_exact"
@@ -350,11 +350,11 @@
     "case": "bohemian-rhapsody/featured-artist",
     "state": "Accepted",
     "selected": "match",
-    "confidence": 0.955,
+    "confidence": 1,
     "decisionReasons": [
       "album_artist_strong",
       "album_exact",
-      "artist_strong",
+      "artist_exact",
       "duration_close",
       "title_decorators_ignored",
       "title_exact"
@@ -362,7 +362,7 @@
     "selectedReasons": [
       "album_artist_strong",
       "album_exact",
-      "artist_strong",
+      "artist_exact",
       "duration_close",
       "title_decorators_ignored",
       "title_exact"
@@ -599,11 +599,11 @@
     "case": "halo/featured-artist",
     "state": "Accepted",
     "selected": "match",
-    "confidence": 0.955,
+    "confidence": 1,
     "decisionReasons": [
       "album_artist_strong",
       "album_exact",
-      "artist_strong",
+      "artist_exact",
       "duration_close",
       "title_decorators_ignored",
       "title_exact"
@@ -611,7 +611,7 @@
     "selectedReasons": [
       "album_artist_strong",
       "album_exact",
-      "artist_strong",
+      "artist_exact",
       "duration_close",
       "title_decorators_ignored",
       "title_exact"
@@ -842,11 +842,11 @@
     "case": "dreams/featured-artist",
     "state": "Accepted",
     "selected": "match",
-    "confidence": 0.955,
+    "confidence": 1,
     "decisionReasons": [
       "album_artist_strong",
       "album_exact",
-      "artist_strong",
+      "artist_exact",
       "duration_close",
       "title_decorators_ignored",
       "title_exact"
@@ -854,7 +854,7 @@
     "selectedReasons": [
       "album_artist_strong",
       "album_exact",
-      "artist_strong",
+      "artist_exact",
       "duration_close",
       "title_decorators_ignored",
       "title_exact"
@@ -1082,11 +1082,11 @@
     "case": "levitating/featured-artist",
     "state": "Accepted",
     "selected": "match",
-    "confidence": 0.955,
+    "confidence": 1,
     "decisionReasons": [
       "album_artist_strong",
       "album_exact",
-      "artist_strong",
+      "artist_exact",
       "duration_close",
       "title_decorators_ignored",
       "title_exact"
@@ -1094,7 +1094,7 @@
     "selectedReasons": [
       "album_artist_strong",
       "album_exact",
-      "artist_strong",
+      "artist_exact",
       "duration_close",
       "title_decorators_ignored",
       "title_exact"
@@ -1323,11 +1323,11 @@
     "case": "rolling-in-the-deep/featured-artist",
     "state": "Accepted",
     "selected": "match",
-    "confidence": 0.955,
+    "confidence": 1,
     "decisionReasons": [
       "album_artist_strong",
       "album_exact",
-      "artist_strong",
+      "artist_exact",
       "duration_close",
       "title_decorators_ignored",
       "title_exact"
@@ -1335,7 +1335,7 @@
     "selectedReasons": [
       "album_artist_strong",
       "album_exact",
-      "artist_strong",
+      "artist_exact",
       "duration_close",
       "title_decorators_ignored",
       "title_exact"
@@ -1564,11 +1564,11 @@
     "case": "get-lucky/featured-artist",
     "state": "Accepted",
     "selected": "match",
-    "confidence": 0.955,
+    "confidence": 1,
     "decisionReasons": [
       "album_artist_strong",
       "album_exact",
-      "artist_strong",
+      "artist_exact",
       "duration_close",
       "title_decorators_ignored",
       "title_exact"
@@ -1576,7 +1576,7 @@
     "selectedReasons": [
       "album_artist_strong",
       "album_exact",
-      "artist_strong",
+      "artist_exact",
       "duration_close",
       "title_decorators_ignored",
       "title_exact"
@@ -1804,11 +1804,11 @@
     "case": "sanguine-paradise/featured-artist",
     "state": "Accepted",
     "selected": "match",
-    "confidence": 0.955,
+    "confidence": 1,
     "decisionReasons": [
       "album_artist_strong",
       "album_exact",
-      "artist_strong",
+      "artist_exact",
       "duration_close",
       "title_decorators_ignored",
       "title_exact"
@@ -1816,7 +1816,7 @@
     "selectedReasons": [
       "album_artist_strong",
       "album_exact",
-      "artist_strong",
+      "artist_exact",
       "duration_close",
       "title_decorators_ignored",
       "title_exact"
@@ -2044,11 +2044,11 @@
     "case": "cheek-to-cheek/featured-artist",
     "state": "Accepted",
     "selected": "match",
-    "confidence": 0.9355,
+    "confidence": 1,
     "decisionReasons": [
       "album_artist_strong",
       "album_exact",
-      "artist_partial",
+      "artist_exact",
       "duration_close",
       "title_decorators_ignored",
       "title_exact"
@@ -2056,7 +2056,7 @@
     "selectedReasons": [
       "album_artist_strong",
       "album_exact",
-      "artist_partial",
+      "artist_exact",
       "duration_close",
       "title_decorators_ignored",
       "title_exact"
@@ -2284,11 +2284,11 @@
     "case": "gurenge/featured-artist",
     "state": "Accepted",
     "selected": "match",
-    "confidence": 0.955,
+    "confidence": 1,
     "decisionReasons": [
       "album_artist_strong",
       "album_exact",
-      "artist_strong",
+      "artist_exact",
       "duration_close",
       "title_decorators_ignored",
       "title_exact"
@@ -2296,7 +2296,7 @@
     "selectedReasons": [
       "album_artist_strong",
       "album_exact",
-      "artist_strong",
+      "artist_exact",
       "duration_close",
       "title_decorators_ignored",
       "title_exact"
@@ -2524,11 +2524,11 @@
     "case": "despacito/featured-artist",
     "state": "Accepted",
     "selected": "match",
-    "confidence": 0.955,
+    "confidence": 1,
     "decisionReasons": [
       "album_artist_strong",
       "album_exact",
-      "artist_strong",
+      "artist_exact",
       "duration_close",
       "title_decorators_ignored",
       "title_exact"
@@ -2536,7 +2536,7 @@
     "selectedReasons": [
       "album_artist_strong",
       "album_exact",
-      "artist_strong",
+      "artist_exact",
       "duration_close",
       "title_decorators_ignored",
       "title_exact"
@@ -2764,11 +2764,11 @@
     "case": "smells-like-teen-spirit/featured-artist",
     "state": "Accepted",
     "selected": "match",
-    "confidence": 0.955,
+    "confidence": 1,
     "decisionReasons": [
       "album_artist_strong",
       "album_exact",
-      "artist_strong",
+      "artist_exact",
       "duration_close",
       "title_decorators_ignored",
       "title_exact"
@@ -2776,7 +2776,7 @@
     "selectedReasons": [
       "album_artist_strong",
       "album_exact",
-      "artist_strong",
+      "artist_exact",
       "duration_close",
       "title_decorators_ignored",
       "title_exact"
