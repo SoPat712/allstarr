@@ -178,6 +178,8 @@ public sealed class PlaylistPersistenceService : IPlaylistPersistenceService
                 TargetPlaylistId = null,
                 TargetCredentialReferenceId = null
             };
+        if (existing != null && await PlaylistUnlink.FindAsync(db, existing, cancellationToken) is { } unlinked)
+            return await PlaylistUnlink.RelinkAsync(db, context, existing.Id, unlinked, input, _clock.UtcNow, cancellationToken);
         if (existing != null)
         {
             if (existing.ImportMode == PlaylistImportMode.Linked && input.ImportMode == PlaylistImportMode.Linked &&

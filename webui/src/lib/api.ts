@@ -2564,6 +2564,12 @@ export const playlistLinks = {
     }
     return json<{ playlists: Array<{ id: string; name: string }> }>(`/api/admin/playlist-links/membership?${query}`, { signal });
   },
+  unlink: (id: string) =>
+    json<{ unlinked: true; playlistName: string; keptSongs: number; revision: number }>(`/api/admin/playlist-links/${encodeURIComponent(id)}/unlink`, { method: "POST" }),
+  libraryAdditions: (id: string, signal?: AbortSignal) =>
+    json<{ count: number; songs: Array<{ title: string; artist: string; album: string | null; itemId: string }> }>(`/api/admin/playlist-links/${encodeURIComponent(id)}/library-additions`, { signal }),
+  addToLibrary: (id: string) =>
+    json<{ queued: number; alreadyThere: number; skipped: number; jobId: string | null }>(`/api/admin/playlist-links/${encodeURIComponent(id)}/library-additions`, { method: "POST" }),
   removeFromApps: (id: string, expectedRevision: number) =>
     json<{ inApps: false; revision: number }>(`/api/admin/playlist-links/${encodeURIComponent(id)}/in-apps`, {
       method: "DELETE",

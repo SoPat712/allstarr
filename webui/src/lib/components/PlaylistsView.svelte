@@ -78,6 +78,40 @@
   let playlists = $state<PlaylistLink[]>([]);
   let consent = $state<PlaylistConsentStatus | null>(null);
   let removingMix = $state<{ id: string; name: string } | null>(null);
+  // Stop syncing and keep the playlist as it is, and adding a playlist's streaming-only songs to the library.
+  let unlinking = $state<{ id: string; name: string } | null>(null), unlinkError = $state(""), unlinkBusy = $state(false);
+  let adding = $state<{ id: string; name: string; count: number | null; songs: Array<{ title: string; artist: string }> } | null>(null), addError = $state(""), addBusy = $state(false);
+  async function unlink() {
+    const target = unlinking;
+    if (!target || unlinkBusy) return;
+    unlinkBusy = true; unlinkError = "";
+    try {
+      const done = await playlistLinks.unlink(target.id);
+      unlinking = null;
+      if (selectedId === target.id) detailOpen = false;
+      toast.success(`${done.playlistName} is no longer synced. Its ${countLabel(done.keptSongs, "song")} stay in your media server.`);
+      await refresh();
+    } catch (cause) { unlinkError = cause instanceof Error ? cause.message : "Syncing could not be stopped."; }
+    finally { unlinkBusy = false; }
+  }
+  async function previewAdditions(target: { id: string; name: string }) {
+    adding = { ...target, count: null, songs: [] }; addError = "";
+    try {
+      const found = await playlistLinks.libraryAdditions(target.id);
+      if (adding?.id === target.id) adding = { ...target, count: found.count, songs: found.songs };
+    } catch (cause) { if (adding?.id === target.id) { adding = { ...target, count: 0, songs: [] }; addError = cause instanceof Error ? cause.message : "The songs could not be listed."; } }
+  }
+  async function addStreamingSongs() {
+    const target = adding;
+    if (!target || addBusy || !target.count) return;
+    addBusy = true; addError = "";
+    try {
+      const done = await playlistLinks.addToLibrary(target.id);
+      adding = null;
+      toast.success(done.queued ? `Adding ${countLabel(done.queued, "song")} to your library, one at a time. Watch them in Activity.` : "Those songs are already being added.");
+    } catch (cause) { addError = cause instanceof Error ? cause.message : "The songs could not be added."; }
+    finally { addBusy = false; }
+  }
   let removingPlaylist = $state<PlaylistLink | null>(null);
   let removalPreview = $state<PlaylistRemovalPreview | null>(null);
   let removalPreviewLoading = $state(false), removalPreviewError = $state("");
@@ -737,8 +771,10 @@
               <DropdownMenu.Separator />
               <DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action) || !details?.unresolvedCount} onSelect={() => void exportMissingSongs("csv")}>Export missing songs as CSV</DropdownMenu.Item>
               <DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action) || !details?.unresolvedCount} onSelect={() => void exportMissingSongs("json")}>Export missing songs as JSON</DropdownMenu.Item>
+              {#if selected.importMode === "linked" && selected.enabled}<DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => void previewAdditions({ id: selected.id, name: selected.name })}>Add streaming songs to library…</DropdownMenu.Item>{/if}
               <DropdownMenu.Separator />
               <DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => settingsOpen = true}>Edit settings</DropdownMenu.Item>
+              {#if selected.importMode === "linked" && selected.targetPlaylistId}<DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => { unlinkError = ""; unlinking = { id: selected.id, name: selected.name }; }}>Stop syncing, keep playlist…</DropdownMenu.Item>{/if}
               <DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => void run("toggle")}>{selected.enabled ? "Pause" : "Resume"}</DropdownMenu.Item>
             </DropdownMenu.Content>
           </DropdownMenu.Portal>
@@ -1063,6 +1099,17 @@
   />
 {/if}
 
+<ConfirmDialog bind:open={() => Boolean(unlinking), value => { if (!value && !unlinkBusy) unlinking = null; }} title={`Stop syncing ${unlinking?.name ?? "this playlist"}?`}
+  description="Allstarr stops following the source. The playlist stays in your media server exactly as it is now and becomes an ordinary playlist you add to yourself. Streaming-only songs, which were never stored in it, no longer show in it."
+  safe="Nothing is removed from your media server, and your matches are kept. You can link the source to this playlist again later."
+  confirmLabel={unlinkBusy ? "Stopping…" : "Stop syncing"} confirmVariant="default" disabled={unlinkBusy} closeOnConfirm={false} error={unlinkError} onConfirm={unlink} />
+<ConfirmDialog bind:open={() => Boolean(adding), value => { if (!value && !addBusy) adding = null; }} title={adding?.count == null ? "Looking for streaming-only songs…" : adding.count ? `Add ${countLabel(adding.count, "song")} to your library?` : "Nothing to add"}
+  description={adding?.count == null ? `Checking ${adding?.name ?? "this playlist"}.` : adding.count ? `These songs in ${adding.name} play from a streaming service and have no copy in your library. Each is downloaded, tagged and placed like a song you add yourself, one at a time.` : `Every song in ${adding?.name ?? "this playlist"} that can be added is already in your library.`}
+  safe={adding?.count ? "Check the list first: a song listed here that you already own was matched wrongly, and belongs in Matches instead." : ""}
+  confirmLabel={addBusy ? "Starting…" : adding?.count ? `Add ${countLabel(adding.count, "song")}` : "Close"} confirmVariant="default" disabled={addBusy} confirmDisabled={adding?.count == null} closeOnConfirm={false} error={addError}
+  onConfirm={() => adding?.count ? addStreamingSongs() : (adding = null)}>
+  {#if adding?.songs.length}<ul class="addition-preview">{#each adding.songs.slice(0, 60) as song}<li><strong>{song.title}</strong> <small>{song.artist}</small></li>{/each}{#if adding.songs.length > 60}<li><small>and {adding.songs.length - 60} more</small></li>{/if}</ul>{/if}
+</ConfirmDialog>
 <ConfirmDialog bind:open={() => Boolean(removingMix), value => { if (!value) removingMix = null; }} title={`Remove ${removingMix?.name ?? "this playlist"} from your apps?`} description={`${removingMix?.name ?? "This playlist"} leaves your apps for you. Its source is unchanged. Saved matches stay, so adding it back is quick.`} confirmLabel="Remove from apps" disabled={removing} closeOnConfirm={false} error={removeError} onConfirm={removeMix} />
 <PlaylistRemovalDialog
   bind:open={() => Boolean(removingPlaylist), value => { if (!value) { removingPlaylist = null; removalPreview = null; removalPreviewError = ""; removalPreviewRequest++; removalPreviewLoading = false; } }}
@@ -1114,4 +1161,7 @@
   @media (max-width: 899px) { .playlist-group { padding-inline: var(--space-3); }.library-search { flex-wrap: wrap; }.library-search > :global(:first-child) { flex-basis: 100%; }:global(.playlist-more) :global(.review-filter-button), :global(.playlist-more) :global(.schedule-edit-button), :global(.playlist-more) :global(.track-menu-trigger) { min-width: 44px; min-height: 44px; } }
   @media (max-width: 380px) { .playlist-panel-footer :global([data-slot="button"]) { padding-inline: var(--space-1); font-size: .6875rem; } }
 
+  .addition-preview { max-height: 14rem; margin: 0 var(--space-4); padding: 0; overflow: auto; list-style: none; font-size: var(--text-sm); }
+  .addition-preview li { padding: var(--space-1) 0; border-bottom: 1px solid var(--color-edge); }
+  .addition-preview small { color: var(--color-ink-muted); }
 </style>

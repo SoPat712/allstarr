@@ -540,6 +540,11 @@ public sealed partial class PlaylistLinksController(
                 .Where(item => item.OwnerUserId == session.AllstarrUserId || session.IsAdministrator)
                 .Select(item => item.ExternalIdHash).ToArrayAsync(cancellationToken);
             var removedKeys = removed.ToHashSet(StringComparer.Ordinal);
+            // An unlinked playlist is an ordinary media-server playlist now, so it leaves this list.
+            var unlinked = (await PlaylistUnlink.Rows(db).AsNoTracking()
+                .Where(item => item.OwnerUserId == session.AllstarrUserId || session.IsAdministrator)
+                .Select(item => item.ExternalIdHash).ToArrayAsync(cancellationToken)).ToHashSet(StringComparer.Ordinal);
+            links = links.Where(link => !unlinked.Contains(PlaylistAppRemoval.Key(link.Id))).ToArray();
             var sharedIds = (await PlaylistAppRemoval.SharedDestinations(db).Select(item => item.Id)
                 .ToArrayAsync(cancellationToken)).ToHashSet();
             var projectionsByLink = await projections.ReadByLinkIdsAsync(
@@ -690,6 +695,7 @@ public sealed partial class PlaylistLinksController(
                 request.TargetCredentialReferenceId, request.MirrorStaleEntries, request.PreserveManualEntries,
                 request.SyncName, request.SyncDescription, request.SyncArtwork, projectionMode, importMode,
                 trackRetention), cancellationToken);
+            int relinked;
             await using (var db = await contextFactory.CreateDbContextAsync(cancellationToken))
             {
                 if (await PlaylistAppRemoval.FindAsync(db, record, cancellationToken) != null)
@@ -697,10 +703,11 @@ public sealed partial class PlaylistLinksController(
                     var restored = await orchestration.RestoreToAppsAsync(context, record.Id, record.Revision, cancellationToken);
                     return Ok(ToDto(restored.Link, restored.JobId, skippedItemCount: restored.SkippedItemCount, restoredToApps: true));
                 }
+                relinked = await PlaylistUnlink.RelinkCountAsync(db, record, cancellationToken);
             }
-            var generation = Math.Max(1, record.CreatedAt.UtcTicks);
+            var generation = relinked == 0 ? Math.Max(1, record.CreatedAt.UtcTicks) : Math.Max(record.CreatedAt.UtcTicks, record.UpdatedAt.UtcTicks);
             var initial = await jobs.EnqueueAsync(new DurableJobEnqueueRequest<PlaylistMaterializationJobPayload>(
-                "playlist.materialize", $"initial-import:{record.Id:N}",
+                "playlist.materialize", relinked == 0 ? $"initial-import:{record.Id:N}" : $"initial-import:{record.Id:N}:{relinked}",
                 new PlaylistMaterializationJobPayload(record.Id, generation),
                 record.OwnerUserId, ProviderAccountId: record.ProviderAccountId, Capability: "playlist",
                 CorrelationId: HttpContext.TraceIdentifier), cancellationToken);
@@ -795,6 +802,8 @@ public sealed partial class PlaylistLinksController(
                 item.Id == id && item.OwnerUserId == existing.OwnerUserId, cancellationToken);
             if (await PlaylistAppRemoval.FindAsync(db, tracked, cancellationToken) != null)
                 return Conflict(new { error = "Add this playlist back to your apps before changing its sync settings." });
+            if (await PlaylistUnlink.FindAsync(db, tracked, cancellationToken) != null)
+                return Conflict(new { error = "This playlist is no longer linked. Link its source again to sync it." });
             if (tracked.Revision != request.ExpectedRevision)
                 throw new DbUpdateConcurrencyException("The playlist changed before its state could be updated.");
             tracked.Enabled = request.Enabled;

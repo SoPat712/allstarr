@@ -14,6 +14,7 @@ public static class DurableJobRegistration
         options.TypeConcurrencyLimits[allstarr.Core.Matching.IsrcRecordingMergeQueue.JobType] = 1;
         options.TypeConcurrencyLimits[allstarr.Core.Matching.LibraryArtistReviewJob.Type] = 1;
         options.TypeConcurrencyLimits[allstarr.Core.Music.LyricsRefreshService.Type] = 1;
+        options.TypeConcurrencyLimits[allstarr.Core.Playlists.PlaylistLibraryAdditions.Type] = 1;
         options.Validate();
         services.AddSingleton(options);
         services.AddSingleton<JobPayloadPolicy>();

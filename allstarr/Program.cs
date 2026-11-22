@@ -553,6 +553,8 @@ builder.Services.AddScoped<V2SearchEndpoints>();
 builder.Services.AddScoped<V2ServiceLyricsSearch>();
 builder.Services.AddScoped<ClientListeningHistory>();
 builder.Services.AddSingleton<ClientLibraryAdditions>();
+builder.Services.AddSingleton<allstarr.Core.Playlists.PlaylistLibraryAdditions>();
+builder.Services.AddSingleton<IDurableJobHandler>(services => services.GetRequiredService<allstarr.Core.Playlists.PlaylistLibraryAdditions>());
 builder.Services.AddScoped<ItemLyricsReader>();
 builder.Services.AddScoped<LyricsSearchOrder>();
 builder.Services.AddScoped<LyricsSearchReader>();
