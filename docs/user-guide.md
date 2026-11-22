@@ -148,6 +148,7 @@ You can start an addition with **Add to library…** in a mix song's menu (admin
 
 - Open a mix and turn on **Show in my apps** to see it as a playlist in your music apps. **✓ In your apps** confirms it. **Manage in Playlists** removes it. "Your admin hasn't allowed adding mixes" means an administrator turned this off for the household.
 - **Update now** refreshes a mix. Its last songs stay available while it refreshes, and a failed refresh keeps them.
+- Playlists a connected service suggests appear under **From your services** before you add them. Allstarr looks for their songs on your services in the background, a few at a time, so a newly suggested one can take a while to fill.
 - **Start a mix** builds your own mix around a song or artist. It appears under **Your mixes**.
 - Each song's menu has **More like this**, **Not for me**, **Don't play this artist** and **Add to library…**.
 - **How this mix is made** explains the recipe: which plays it used, how many songs it looked at, how many it kept, and how many came from your music versus your services.
@@ -215,7 +216,7 @@ Open your name in the sidebar, or **More → Listening settings** on a phone. Th
 - **Mark external songs** shows **[A]**; **Mark explicit songs** shows **[E]**. Both are on by default.
 - **Playback start:** **Fast start** prefers the quickest lossless source, **Balanced** (the default) favors quality when songs still start within about three seconds, **Best quality** always prefers the highest quality. Between services of the same quality, the one that has been starting soonest goes first; your household's service order decides when none has been timed yet.
 - **Quality limit** can be lower than the household's limit, not higher. It applies to everything you play, your own library included.
-- **Your music libraries**, shown when there are several, picks the libraries your mixes and autoplay draw from.
+- **Your music libraries**, shown when there are several, picks the libraries your mixes, autoplay and search draw from, in every app. A streaming song whose only copy in your library sits in a library you left out shows as the streaming song.
 - **Reset to household defaults** drops your choices.
 
 Reload search results, playlists or queues in your app to see changes.
@@ -372,13 +373,13 @@ The rest of the page is a profile: the **Household default**, which listeners fo
 - **How added files are named**: **Autodetect** reads the chosen folder and resets the pattern to what it finds, but only when at least five songs are sampled and all of them match. Otherwise your pattern stays and you choose one yourself. Review the examples, then **Use this naming pattern**. Changing the folder or pattern needs this confirmation again.
 - **Quality of added songs** and **Tags and extras** set the lowest quality to add, the hi-res ceiling, lossy fallback, MusicBrainz tags, cover art, synced lyrics and ReplayGain.
 
-With **MusicBrainz tags** on, Allstarr finds the song's release on MusicBrainz by its ISRC, or by its title, artist and length when the service gives no ISRC or MusicBrainz does not know it, and tags the file from it, the way a music tagger does: the MusicBrainz ids, sort names, label, barcode, release country, status and type, original date, and the album's name as MusicBrainz writes it (a service's "- EP" or "- Single" is dropped). The release must agree with the service's album on name, track number and track count. When none does, or MusicBrainz doesn't answer within a few seconds, the service's own tags are used.
+With **MusicBrainz tags** on, Allstarr finds the song's release on MusicBrainz by its ISRC, or by its title, artist and length when the service gives no ISRC or MusicBrainz does not know it, and tags the file from it, the way a music tagger does: the MusicBrainz ids, sort names, label, barcode, release country, status and type, original date, and the album's name as MusicBrainz writes it (a service's "- EP" or "- Single" is dropped). The release must agree with the service's album on name, track number and track count. When none does, the service's own tags are used. When MusicBrainz doesn't answer at all, the add waits at its tagging step and asks again every few minutes; after about ten minutes it uses the service's own tags.
 
 An added file gets the song's real cover or none; a service's logo is never written as one. **Embedded cover size** sets how large the copy inside the file may be: 1,000 pixels a side unless you change it, or **Full size** to keep the service's own. `cover.jpg`, when you ask for one, is always full size.
 
 Lyrics inside a song file go in twice. The tag every player and media server reads as lyrics holds them line by line, the form all of them understand. Word-by-word timing goes in a tag of its own (`WORDLYRICS`), which Allstarr reads back from the file for its own apps, and in the `.lrc` file when you ask for one. Word times are kept out of the usual tag because a media server that meets them there serves the lines mangled (Jellyfin drops the spaces between words). Once Jellyfin shows the new song, Allstarr hands it the word-by-word version directly, so apps connected straight to Jellyfin can show it too. Nothing extra is written to your music folder; a full metadata refresh of the song in Jellyfin goes back to the line-by-line lyrics from the file.
 
-A song you deleted from your media server can be added again. The new file takes over the plays and matches of the one that is gone; the heart on the deleted copy goes with it, so heart the song again.
+A song you deleted from your media server can be added again. The new file takes over the plays and matches of the one that is gone; the heart on the deleted copy goes with it, so heart the song again. Until then, a song deleted from Jellyfin stops counting as in your library within about a quarter of an hour, or at once when it fails to play, and plays from your services where they have it.
 
 Before adding, Allstarr checks the destination again:
 
@@ -401,7 +402,7 @@ Neither folder is in the database backup. Back up kept and downloaded music your
 
 ### Backups and health
 
-**Backups.** **Settings → Backups and health** shows the last verified backup, its size and the next run. Daily backups are on by default at **03:00 UTC**, keeping 14 daily, 8 weekly and 10 manual copies. Change **Backup time (UTC)**, **Daily copies**, **Weekly copies**, the **Backup folder** and **Manual copies** in **Backup schedule**. **Back up now** makes a snapshot in the background; wait for it to finish before you **Download** it.
+**Backups.** **Settings → Backups and health** shows the last verified backup, its size and the next run. Daily backups are on by default at **03:00 UTC**, keeping 14 daily, 8 weekly and 10 manual copies. Change **Backup time (UTC)**, **Daily copies**, **Weekly copies**, the **Backup folder** and **Manual copies** in **Backup schedule**. **Back up now** makes a snapshot in the background; wait for it to finish before you **Download** it. A saved backup's **More** menu has **Restore…** and **Remove…**; removing deletes that backup's file from the backup folder.
 
 A backup holds the database and encryption keys, so keep downloaded ZIP files private. Audio, kept songs, the track cache and installed extensions are not included; back them up separately. A different backup folder must already exist inside the container; mount synchronized storage first.
 
