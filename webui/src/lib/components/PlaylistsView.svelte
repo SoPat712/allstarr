@@ -1107,7 +1107,7 @@
   description={adding?.count == null ? `Checking ${adding?.name ?? "this playlist"}.` : adding.count ? `These songs in ${adding.name} play from a streaming service and have no copy in your library. Each is downloaded, tagged and placed like a song you add yourself, one at a time.` : `Every song in ${adding?.name ?? "this playlist"} that can be added is already in your library.`}
   safe={adding?.count ? "Check the list first: a song listed here that you already own was matched wrongly, and belongs in Matches instead." : ""}
   confirmLabel={addBusy ? "Starting…" : adding?.count ? `Add ${countLabel(adding.count, "song")}` : "Close"} confirmVariant="default" disabled={addBusy} confirmDisabled={adding?.count == null} closeOnConfirm={false} error={addError}
-  onConfirm={() => adding?.count ? addStreamingSongs() : (adding = null)}>
+  onConfirm={() => { if (adding?.count) return addStreamingSongs(); adding = null; }}>
   {#if adding?.songs.length}<ul class="addition-preview">{#each adding.songs.slice(0, 60) as song}<li><strong>{song.title}</strong> <small>{song.artist}</small></li>{/each}{#if adding.songs.length > 60}<li><small>and {adding.songs.length - 60} more</small></li>{/if}</ul>{/if}
 </ConfirmDialog>
 <ConfirmDialog bind:open={() => Boolean(removingMix), value => { if (!value) removingMix = null; }} title={`Remove ${removingMix?.name ?? "this playlist"} from your apps?`} description={`${removingMix?.name ?? "This playlist"} leaves your apps for you. Its source is unchanged. Saved matches stay, so adding it back is quick.`} confirmLabel="Remove from apps" disabled={removing} closeOnConfirm={false} error={removeError} onConfirm={removeMix} />

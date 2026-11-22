@@ -26,7 +26,6 @@
   let saveTimer: ReturnType<typeof setTimeout>;
   function scheduleSave() { clearTimeout(saveTimer); saveTimer = setTimeout(() => { if (form?.checkValidity()) void save(); }, 150); }
   let removing = $state<StorageBackup[]>([]), removeError = $state(""), picked = $state<string[]>([]);
-  const pickedBackups = $derived((data?.backups ?? []).filter(backup => picked.includes(backup.id)));
   function pick(id: string, on: boolean) { picked = on ? [...picked.filter(item => item !== id), id] : picked.filter(item => item !== id); }
   async function remove() {
     const backups = removing;
@@ -55,6 +54,7 @@
 
   let { administrator }: { administrator: boolean } = $props();
   let data = $state<StorageOverview | null>(null);
+  const pickedBackups = $derived((data?.backups ?? []).filter(backup => picked.includes(backup.id)));
   let saved = $state<BackupPolicy | null>(null);
   let draft = $state<BackupPolicyInput | null>(null);
   let refreshing = $state(false);
