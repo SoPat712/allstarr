@@ -591,11 +591,13 @@ public sealed class DurablePlaylistProjectionReader(
             ExternalSnapshotId = group.Key,
             DecisionVersion = group.Max(item => item.DecisionVersion)
         });
-        return await (from decision in decisions
-                      join version in versions
-                          on new { decision.ExternalSnapshotId, decision.DecisionVersion }
-                          equals new { version.ExternalSnapshotId, version.DecisionVersion }
-                      select decision).ToDictionaryAsync(item => item.ExternalSnapshotId, cancellationToken);
+        var latest = from decision in decisions
+                     join version in versions
+                         on new { decision.ExternalSnapshotId, decision.DecisionVersion }
+                         equals new { version.ExternalSnapshotId, version.DecisionVersion }
+                     select decision;
+        return await PlaylistMatchReads.WithoutCandidates(latest)
+            .ToDictionaryAsync(item => item.ExternalSnapshotId, cancellationToken);
     }
 
     private sealed record RetentionSourceIdentityIndex(

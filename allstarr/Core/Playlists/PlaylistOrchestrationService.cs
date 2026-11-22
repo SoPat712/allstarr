@@ -727,6 +727,7 @@ public sealed partial class PlaylistOrchestrationService : IPlaylistOrchestratio
         var matchIds = decisionIds.Values.Select(item => item!.Value).Distinct().ToArray();
         var matches = await db.TrackMatches.AsNoTracking()
             .Where(item => item.OwnerUserId == link.OwnerUserId && matchIds.Contains(item.Id))
+            .Select(item => new { item.Id, item.ExternalSnapshotId, item.State })
             .ToDictionaryAsync(item => item.Id, cancellationToken);
         if (matches.Count != matchIds.Length ||
             entries.Any(item =>
@@ -1093,7 +1094,7 @@ public sealed partial class PlaylistOrchestrationService : IPlaylistOrchestratio
             join version in latestCandidateVersions
                 on new { decision.ExternalSnapshotId, decision.DecisionVersion }
                 equals new { version.ExternalSnapshotId, version.DecisionVersion }
-            select decision;
+            select new { decision.State, decision.DecidedAt, decision.LibraryTrackId, decision.CanonicalRecordingId };
         var priorAccepted = (await latestCandidateDecisions.ToListAsync(cancellationToken))
             .Where(item => item.State is TrackMatchState.Accepted or TrackMatchState.Pinned)
             .OrderByDescending(item => item.DecidedAt)

@@ -77,8 +77,8 @@ public sealed class PlaylistRematchService(
         var snapshots = await db.ExternalMetadataSnapshots.AsNoTracking()
             .Where(item => externalIds.Contains(item.Id))
             .ToDictionaryAsync(item => item.Id, cancellationToken);
-        var latest = await LatestDecisions(db.TrackMatches.AsNoTracking()
-                .Where(item => externalIds.Contains(item.ExternalSnapshotId)))
+        var latest = await PlaylistMatchReads.WithoutCandidates(LatestDecisions(db.TrackMatches.AsNoTracking()
+                .Where(item => externalIds.Contains(item.ExternalSnapshotId))))
             .ToDictionaryAsync(item => item.ExternalSnapshotId, cancellationToken);
         var overrideRecords = await ManualTrackOverrides.LoadAsync(
             db, ownerUserId, snapshots.Values.ToArray(), cancellationToken);
