@@ -238,6 +238,7 @@ public sealed partial class ProtocolRouteFixtureTests
                 TargetBackendInstanceId = "primary",
                 TargetPlaylistId = spotifyAlias ? null : id,
                 Mode = spotifyAlias ? PlaylistLinkMode.Virtual : PlaylistLinkMode.Materialized,
+                DestinationMode = PlaylistDestinationMode.New,
                 Enabled = true
             };
             db.PlaylistLinks.Add(link);

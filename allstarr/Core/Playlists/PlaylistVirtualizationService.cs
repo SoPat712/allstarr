@@ -439,9 +439,18 @@ public sealed class PlaylistVirtualizationService(
         {
             static string Key(string id) => id.Replace("-", "", StringComparison.Ordinal).ToLowerInvariant();
             var shown = tracks.Where(item => item.RouteKind == TrackRouteKind.Local).Select(item => Key(item.BackendItemId)).ToHashSet(StringComparer.Ordinal);
-            var added = ToTargetVirtualTracks(authorizedTarget).Where(item => shown.Add(Key(item.BackendItemId)))
-                .Select((item, index) => item with { SourcePosition = tracks.Count + index }).ToArray();
-            if (added.Length > 0) tracks = tracks.Concat(added).ToArray();
+            var added = ToTargetVirtualTracks(authorizedTarget).Where(item => shown.Add(Key(item.BackendItemId))).ToArray();
+            if (added.Length > 0)
+            {
+                // A song the media server no longer has may linger in its playlist; it is not a song to show.
+                var gone = LibraryTrackRecord.Gone;
+                var missing = (await db.LibraryTracks.AsNoTracking()
+                    .Where(item => item.BackendInstanceId == link.TargetBackendInstanceId && item.IndexedAt == gone)
+                    .Select(item => item.BackendItemId).Distinct().ToListAsync(cancellationToken)).Select(Key).ToHashSet(StringComparer.Ordinal);
+                var next = tracks.Count;
+                tracks = tracks.Concat(added.Where(item => !missing.Contains(Key(item.BackendItemId)))
+                    .Select((item, index) => item with { SourcePosition = next + index })).ToArray();
+            }
         }
         var name = targetSnapshot != null ? targetSnapshot.Name : own && authorizedTarget != null ? authorizedTarget.Name : projection.Name;
         var description = targetSnapshot == null ? projection.Description : targetSnapshot.Description;

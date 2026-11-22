@@ -417,7 +417,8 @@ public sealed partial class PlaylistOrchestrationIntegrationTests
         await SetLink(mode: mode);
         await using (var db = await _factory.CreateDbContextAsync())
         {
-            (await db.PlaylistLinks.SingleAsync()).TargetPlaylistId = targetId;
+            var link = await db.PlaylistLinks.SingleAsync();
+            (link.TargetPlaylistId, link.DestinationMode) = (targetId, PlaylistDestinationMode.New);
             await db.SaveChangesAsync();
         }
         _target.Seed(targetId, ["local-2"]);
