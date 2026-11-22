@@ -262,6 +262,43 @@ for (const width of [1280, 390]) test(`A saved backup's menu opens as a menu and
   expect(mock.writes.filter(write => "removed" in write)).toHaveLength(2);
 });
 
+for (const width of [1280, 390]) test(`Old backups can be selected and removed together, keeping the newest three, at ${width}`, async ({ page }) => {
+  await page.setViewportSize({ width, height: 900 });
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  const mock = await mockBackups(page);
+  const all = [5, 4, 3, 2, 1].map(day => ({ ...artifact, id: `1111111${day}-1111-4111-8111-111111111111`,
+    fileName: `allstarr-backup-2026102${day}.zip`, createdAt: `2026-10-2${day}T03:00:00Z`, origin: "scheduled", retentionBuckets: ["daily"] }));
+  const removed: string[] = [];
+  await page.route("**/api/admin/storage", route => reply(route, {
+    storage: { provider: "Sqlite", readiness: "Ready" }, restorePending: false, backupPolicy: mock.state.policy,
+    backupStatus: { state: "idle", directoryState: "ready", activeJobId: null, lastSuccessAt: all[0].createdAt, nextRunAt: null, lastBytes: all[0].bytes, lastFailure: null },
+    backups: all.filter(item => !removed.includes(item.id)),
+  }));
+  await page.route("**/api/admin/storage/backups/*", route => {
+    if (route.request().method() !== "DELETE") return route.fallback();
+    const id = new URL(route.request().url()).pathname.split("/").pop()!;
+    removed.push(id);
+    // The oldest one was already removed in another tab: that still counts as removed.
+    return id === all[4].id ? reply(route, { error: "backup_not_found" }, 404) : route.fulfill({ status: 204 });
+  });
+  await page.goto("/#/settings/backups");
+  const saved = page.getByRole("article", { name: "Saved backups" });
+  await expect(saved.locator("tbody tr")).toHaveCount(5);
+  await saved.getByRole("button", { name: "Select all but the newest 3", exact: true }).click();
+  await expect(saved.getByRole("checkbox", { checked: true })).toHaveCount(2);
+  await page.screenshot({ path: `test-results/backup-select-${width}.png` });
+  await saved.getByRole("button", { name: "Remove 2 selected…", exact: true }).click();
+  const confirm = page.getByRole("alertdialog", { name: "Remove 2 backups?" });
+  await expect(confirm).toContainText("4 MB");
+  await page.screenshot({ path: `test-results/backup-remove-many-${width}.png` });
+  await confirm.getByRole("button", { name: "Remove 2 backups", exact: true }).click();
+  await expect(confirm).toHaveCount(0);
+  await expect(saved.locator("tbody tr")).toHaveCount(3);
+  expect(removed.sort()).toEqual([all[3].id, all[4].id].sort());
+  await expect(saved.getByRole("button", { name: /selected/ })).toHaveCount(0);
+  await expectContainedMobileGeometry(page);
+});
+
 for (const width of [1280, 390]) test(`Unknown backup facts stay neutral and changed archives cannot be downloaded at ${width}`, async ({ page }) => {
   await page.setViewportSize({ width, height: 900 });
   const mock = await mockBackups(page);

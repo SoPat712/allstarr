@@ -45,7 +45,7 @@
       <AlertDialog.Description>{description}</AlertDialog.Description>
       {#if safe}<p class="notice-error notice-safe" style="margin-inline: var(--space-4)">✓ {safe}</p>{/if}
       {@render children?.()}
-      {#if error}<p class="notice-error" role="alert">{error}</p>{/if}
+      {#if error}<p class="notice-error" role="alert" style="margin-inline: var(--space-4)">{error}</p>{/if}
       <footer class="dialog-actions">
         <AlertDialog.Cancel type="button" class={buttonVariants({ variant: "text" })} {disabled}>{cancelLabel}</AlertDialog.Cancel>
         {#if closeOnConfirm}

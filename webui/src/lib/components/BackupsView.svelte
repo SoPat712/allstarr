@@ -25,18 +25,31 @@
   let form = $state<HTMLFormElement>();
   let saveTimer: ReturnType<typeof setTimeout>;
   function scheduleSave() { clearTimeout(saveTimer); saveTimer = setTimeout(() => { if (form?.checkValidity()) void save(); }, 150); }
-  let removing = $state<StorageBackup | null>(null), removeError = $state("");
+  let removing = $state<StorageBackup[]>([]), removeError = $state(""), picked = $state<string[]>([]);
+  const pickedBackups = $derived((data?.backups ?? []).filter(backup => picked.includes(backup.id)));
+  function pick(id: string, on: boolean) { picked = on ? [...picked.filter(item => item !== id), id] : picked.filter(item => item !== id); }
   async function remove() {
-    const backup = removing;
-    if (!backup || action) return;
+    const backups = removing;
+    if (!backups.length || action) return;
     action = "remove"; removeError = "";
-    try {
-      await settings.removeBackup(backup.id);
-      removing = null;
-      toast.success("Backup removed.");
-      await refresh();
-    } catch (cause) { removeError = message(cause, "The backup could not be removed."); }
-    finally { action = ""; }
+    const gone: string[] = [];
+    let failure: unknown;
+    for (const backup of backups) {
+      try { await settings.removeBackup(backup.id); gone.push(backup.id); }
+      catch (cause) {
+        // Already removed, here or in another tab: that is what was asked for.
+        if (cause instanceof ApiError && cause.status === 404) gone.push(backup.id);
+        else { failure = cause; break; }
+      }
+    }
+    // The list drops what is gone at once; the next read confirms it.
+    if (data && gone.length) data = { ...data, backups: data.backups.filter(backup => !gone.includes(backup.id)) };
+    picked = picked.filter(id => !gone.includes(id));
+    removing = failure ? backups.filter(backup => !gone.includes(backup.id)) : [];
+    if (failure) removeError = message(failure, gone.length ? `${gone.length} removed; the next one could not be removed.` : "The backup could not be removed.");
+    else toast.success(gone.length === 1 ? "Backup removed." : `${gone.length} backups removed.`);
+    action = "";
+    await refresh();
   }
   function openRestore(backup: StorageBackup | null = null) { selectedBackup = backup; restoreText = ""; backupFirst = true; restoreError = ""; restoreOpen = true; }
 
@@ -213,11 +226,15 @@
           </fieldset>
         </form>
       {/if}
-      <article class="settings-card" aria-label="Saved backups"><header><h3>Saved backups</h3></header>
+      <article class="settings-card" aria-label="Saved backups"><header class="saved-backups-head"><h3>Saved backups</h3>
+          {#if ready && data.backups.length > 1}<div class="backup-actions">
+            {#if data.backups.length > 3}<Button variant="text" size="sm" disabled={Boolean(action)} onclick={() => picked = data!.backups.slice(3).map(backup => backup.id)}>Select all but the newest 3</Button>{/if}
+            {#if picked.length}<Button variant="text" size="sm" disabled={Boolean(action)} onclick={() => picked = []}>Clear</Button><Button variant="destructive" size="sm" disabled={Boolean(action) || active} onclick={() => { removeError = ""; removing = pickedBackups; }}>Remove {picked.length} selected…</Button>{/if}
+          </div>{/if}</header>
         {#if !ready}<p class="settings-impact" role="status">The backup list is unavailable until durable storage is ready.</p>
         {:else if data.backups.length}
-          <table class="settings-table"><thead><tr><th>Made</th><th>Size</th><th>State</th><th></th></tr></thead><tbody>
-            {#each data.backups as backup (backup.id)}<tr title={backup.fileName}><td>{date(backup.createdAt)}<small>{backup.origin === "scheduled" ? "Scheduled" : backup.origin === "manual" ? "Manual" : "Existing backup"}{backup.retentionBuckets?.length ? ` · ${backup.retentionBuckets.join(", ")}` : ""}{#if backup.bytes != null}<span class="phone-backup-size">{size(backup.bytes)}</span>{/if}</small></td><td class="number">{size(backup.bytes)}</td><td><StatePill tone={backup.status === "verified" ? "ok" : backup.status === "changed" || backup.status === "invalid" ? "warn" : "neutral"} text={backup.status === "verified" ? "Verified" : backup.status === "changed" ? "File changed" : backup.status === "invalid" ? "Verification failed" : "Verify on download"} /></td><td><div class="backup-actions"><Button variant="text" size="sm" disabled={backup.status === "changed" || backup.status === "invalid"} href={settings.backupDownloadUrl(backup.id)} download={backup.fileName}>Download</Button><DropdownMenu.Root><DropdownMenu.Trigger class="icon-button" aria-label={`More actions for ${date(backup.createdAt)}`}><MoreHorizontal size={18} /></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content preventScroll={false} align="end" class="bits-menu"><DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action) || pending || active || backup.status === "changed" || backup.status === "invalid"} onSelect={() => openRestore(backup)}>Restore…</DropdownMenu.Item><DropdownMenu.Item class="bits-menu-item danger-item" disabled={Boolean(action) || active} onSelect={() => { removeError = ""; removing = backup; }}>Remove…</DropdownMenu.Item></DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root></div></td></tr>{/each}
+          <table class="settings-table backups-table"><thead><tr><th><Checkbox aria-label="Select every backup" checked={picked.length === data.backups.length} indeterminate={picked.length > 0 && picked.length < data.backups.length} disabled={Boolean(action)} onCheckedChange={on => picked = on ? data!.backups.map(backup => backup.id) : []} /></th><th>Made</th><th>Size</th><th>State</th><th></th></tr></thead><tbody>
+            {#each data.backups as backup (backup.id)}<tr title={backup.fileName}><td><Checkbox aria-label={`Select the ${date(backup.createdAt)} backup`} checked={picked.includes(backup.id)} disabled={Boolean(action)} onCheckedChange={on => pick(backup.id, on)} /></td><td>{date(backup.createdAt)}<small>{backup.origin === "scheduled" ? "Scheduled" : backup.origin === "manual" ? "Manual" : "Existing backup"}{backup.retentionBuckets?.length ? ` · ${backup.retentionBuckets.join(", ")}` : ""}{#if backup.bytes != null}<span class="phone-backup-size">{size(backup.bytes)}</span>{/if}</small></td><td class="number">{size(backup.bytes)}</td><td><StatePill tone={backup.status === "verified" ? "ok" : backup.status === "changed" || backup.status === "invalid" ? "warn" : "neutral"} text={backup.status === "verified" ? "Verified" : backup.status === "changed" ? "File changed" : backup.status === "invalid" ? "Verification failed" : "Verify on download"} /></td><td><div class="backup-actions"><Button variant="text" size="sm" disabled={backup.status === "changed" || backup.status === "invalid"} href={settings.backupDownloadUrl(backup.id)} download={backup.fileName}>Download</Button><DropdownMenu.Root><DropdownMenu.Trigger class="icon-button" aria-label={`More actions for ${date(backup.createdAt)}`}><MoreHorizontal size={18} /></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content preventScroll={false} align="end" class="bits-menu"><DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action) || pending || active || backup.status === "changed" || backup.status === "invalid"} onSelect={() => openRestore(backup)}>Restore…</DropdownMenu.Item><DropdownMenu.Item class="bits-menu-item danger-item" disabled={Boolean(action) || active} onSelect={() => { removeError = ""; removing = [backup]; }}>Remove…</DropdownMenu.Item></DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root></div></td></tr>{/each}
           </tbody></table>
         {:else}<EmptyState title="No backups yet" description="Back up now to save your settings, accounts and history.">{#snippet icon()}<Archive size={24} />{/snippet}</EmptyState>{/if}
         <footer class="restore-upload" class:has-file={Boolean(restoreFile)}><div class="settings-row"><div><strong>Restore from a file</strong> <small>Choose a backup ZIP. Saved sign-ins are included; audio and caches need separate backups.</small></div>{#key pickerRevision}<FilePicker label="Backup ZIP file" accept=".zip,application/zip" buttonLabel="Choose a backup ZIP" disabled={Boolean(action) || pending || active} onselect={files => { restoreFile = files[0] ?? null; if (restoreFile) openRestore(); }} />{/key}</div></footer>
@@ -237,13 +254,17 @@
       </form>
     </Dialog.Content></Dialog.Portal>
   </Dialog.Root>
-  <ConfirmDialog bind:open={() => Boolean(removing), value => { if (!value && action !== "remove") removing = null; }} title={removing ? `Remove the ${date(removing.createdAt)} backup?` : "Remove this backup?"}
-    description={removing ? `${removing.bytes != null ? `${size(removing.bytes)}. ` : ""}Its file is deleted from the backup folder and can't be brought back.` : ""}
-    safe="Your other backups and everything in Allstarr stay as they are." confirmLabel={action === "remove" ? "Removing…" : "Remove backup"}
+  <ConfirmDialog bind:open={() => removing.length > 0, value => { if (!value && action !== "remove") removing = []; }}
+    title={removing.length === 1 ? `Remove the ${date(removing[0].createdAt)} backup?` : `Remove ${removing.length} backups?`}
+    description={`${removing.every(backup => backup.bytes != null) ? `${size(removing.reduce((sum, backup) => sum + (backup.bytes ?? 0), 0))}. ` : ""}${removing.length === 1 ? "Its file is" : "Their files are"} deleted from the backup folder and can't be brought back.`}
+    safe={removing.length === 1 ? "Your other backups and everything in Allstarr stay as they are." : "The backups you did not select and everything in Allstarr stay as they are."}
+    confirmLabel={action === "remove" ? "Removing…" : removing.length === 1 ? "Remove backup" : `Remove ${removing.length} backups`}
     disabled={action === "remove"} closeOnConfirm={false} error={removeError} onConfirm={remove} />
 {/if}
 <style>
   .phone-backup-size { display: none; }
+  .saved-backups-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2); }
+  .backups-table :is(td, th):first-child { width: 1%; padding-right: 0; }
   .restore-upload .settings-row { padding: 0; width: 100%; }
   .restore-upload:not(.has-file) :global(.file-picker-name) { display: none; }
 
@@ -254,5 +275,5 @@
   .restore-columns h3 { margin: 0; font-size: var(--text-sm); }
   .restore-columns ul { margin: var(--space-2) 0 0; padding-left: var(--space-4); color: var(--color-ink-muted); font-size: var(--text-sm); line-height: 1.7; }
   .backup-first { display: flex; align-items: center; gap: var(--space-3); min-height: 44px; font-size: var(--text-sm); }
-  @media (max-width: 650px) { .phone-backup-size { display: inline; margin-left: var(--space-2); } .restore-columns { grid-template-columns: minmax(0, 1fr); } .settings-table :is(td, th):nth-child(2) { display: none; } .backup-actions { gap: var(--space-1); } }
+  @media (max-width: 650px) { .phone-backup-size { display: inline; margin-left: var(--space-2); } .restore-columns { grid-template-columns: minmax(0, 1fr); } .settings-table :is(td, th):nth-child(3) { display: none; } .backup-actions { gap: var(--space-1); } }
 </style>

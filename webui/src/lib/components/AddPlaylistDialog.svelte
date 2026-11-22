@@ -3,7 +3,7 @@
   import { Checkbox } from "$lib/components/ui/checkbox";
   import { Dialog } from "$lib/components/ui/dialog";
   import { Button, buttonVariants } from "$lib/components/ui/button";
-  import { Check, Info, Link, X } from "@lucide/svelte";
+  import { Check, ChevronDown, Info, Link, X } from "@lucide/svelte";
   import {
     playlistLinks,
     json,
@@ -101,6 +101,8 @@
   let accountId = $state("");
   let sourcePlaylistId = $state("");
   let sourceQuery = $state("");
+  // With several accounts the lists get long, so each account folds; a search opens them all.
+  let foldedAccounts = $state<Record<string, boolean>>({});
   let sourcePlaylists = $state<PlaylistDiscoveryItem[]>([]);
   let sourceCursor = $state("");
   let importMode = $state<ImportMode>("oneTime");
@@ -513,9 +515,10 @@
           trackRetention,
           mirrorStaleEntries: true,
           preserveManualEntries: true,
-          syncName: true,
-          syncDescription: true,
-          syncArtwork: true,
+          // A playlist you already had keeps its own name, description and cover.
+          syncName: targetMode !== "existing",
+          syncDescription: targetMode !== "existing",
+          syncArtwork: targetMode !== "existing",
         });
         skippedItemCount += link.skippedItemCount ?? 0;
         if (link.restoredToApps) restored++;
@@ -640,17 +643,25 @@
               <section class="account-playlists" aria-label="Playlists from your accounts">
                 <SearchField bind:value={sourceQuery} label="Filter account playlists" placeholder="Search playlists" hiddenLabel />
                 {#each orderedAccounts.filter(item => item.providerId.toLowerCase() !== "lastfm") as account}
+                  {@const listed = (groupedPlaylists[account.id] ?? []).filter(item => !sourceQuery || item.name.toLocaleLowerCase().includes(sourceQuery.toLocaleLowerCase()))}
+                  {@const open = Boolean(sourceQuery) || !foldedAccounts[account.id]}
                   <section class="account-playlist-group" aria-label={`${accountTitle(account)} · ${account.displayName}`}>
-                    <h3>{accountTitle(account)} · {accountDetail(account) || account.displayName}</h3>
-                    {#each (groupedPlaylists[account.id] ?? []).filter(item => !sourceQuery || item.name.toLocaleLowerCase().includes(sourceQuery.toLocaleLowerCase())) as playlist}
+                    <h3><button type="button" class="account-group-toggle" aria-expanded={open} onclick={() => foldedAccounts = { ...foldedAccounts, [account.id]: open }}>
+                      <span>{accountTitle(account)} · {accountDetail(account) || account.displayName}</span>
+                      <small>{listed.length ? `${countLabel(listed.length, "playlist")}${groupCursors[account.id] ? " so far" : ""}` : ""}</small>
+                      <ChevronDown size={18} aria-hidden="true" />
+                    </button></h3>
+                    {#if open}
+                    {#each listed as playlist}
                       {@const added = existingPlaylists.some(item => item.enabled && item.providerAccountId === account.id && item.sourcePlaylistId === playlist.id)}
                       <label class="account-playlist-choice">
                         <MediaArtwork class="playlist-art" url={playlist.artworkUrl} fallback="♫" />
-                        <span><strong>{playlist.name}</strong> <small>{playlist.trackCount == null ? "Song count unavailable" : countLabel(playlist.trackCount, "song")}{added ? " · Already in your apps" : ""}</small></span>
+                        <span><strong>{playlist.name}</strong> <small>{[playlist.trackCount == null ? "" : countLabel(playlist.trackCount, "song"), added ? "Already in your apps" : ""].filter(Boolean).join(" · ")}</small></span>
                         <Checkbox checked={chosenPlaylists.some(item => item.account.id === account.id && item.playlist.id === playlist.id)} disabled={added} aria-label={`${playlist.name}${added ? ", already in your apps" : ""}`} onCheckedChange={checked => togglePlaylist(account, playlist, checked === true)} />
                       </label>
                     {:else}<p class="pl-help">{loading ? "Loading playlists…" : groupErrors.includes(account.id) ? "Playlists could not be loaded. Reopen to try again." : "No playlists found."}</p>{/each}
                     {#if groupCursors[account.id]}<Button variant="text" size="sm" disabled={loading} onclick={() => void moreAccountPlaylists(account)}>Show more playlists</Button>{/if}
+                    {/if}
                   </section>
                 {/each}
                 {#if chosenPlaylists.length}<p class="pl-help" role="status">{countLabel(chosenPlaylists.length, "playlist")} selected{sourceCount == null ? "" : ` · ${countLabel(sourceCount, "song")}`}</p>{/if}
@@ -863,7 +874,12 @@
 <style>
   .account-playlists { display: grid; gap: var(--space-3); }
   .account-playlist-group { border: 1px solid var(--color-edge); border-radius: var(--radius-lg); overflow: hidden; }
-  .account-playlist-group h3 { padding: var(--space-3); background: var(--color-panel-raised); font-size: var(--text-sm); font-weight: 600; }
+  .account-playlist-group h3 { background: var(--color-panel-raised); font-size: var(--text-sm); font-weight: 600; }
+  .account-group-toggle { display: flex; align-items: center; gap: var(--space-2); width: 100%; min-height: 44px; padding: var(--space-3); border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+  .account-group-toggle span { flex: 1; min-width: 0; }
+  .account-group-toggle small { color: var(--color-ink-muted); font-weight: 400; }
+  .account-group-toggle :global(svg) { flex: none; transition: transform 120ms; }
+  .account-group-toggle[aria-expanded="false"] :global(svg) { transform: rotate(-90deg); }
   .account-playlist-choice { display: flex; align-items: center; gap: var(--space-3); min-height: 64px; padding: var(--space-3); border-top: 1px solid var(--color-edge); cursor: pointer; }
   .account-playlist-choice :global([data-slot="checkbox"]) { flex: none; min-height: 20px; width: 20px; height: 20px; }
   .account-playlist-choice > span { min-width: 0; flex: 1; }
