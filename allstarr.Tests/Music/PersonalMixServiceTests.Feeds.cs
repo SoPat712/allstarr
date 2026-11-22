@@ -66,7 +66,8 @@ public sealed partial class PersonalMixServiceTests
     }
 
     private async Task<(Mock<IProviderPlaylistCapability> Capability, Guid Account)> FeedAccount(string provider = "spotify", Guid? listener = null,
-        ILibraryIndexService? local = null, ITrackIdentityService? identities = null, IPlaylistPersistenceService? store = null, DurableJobQueue? queue = null, MixCoverImageService? covers = null)
+        ILibraryIndexService? local = null, ITrackIdentityService? identities = null, IPlaylistPersistenceService? store = null, DurableJobQueue? queue = null, MixCoverImageService? covers = null,
+        TrackMatchPlayableSearch? search = null)
     {
         var account = new ProviderAccountRecord
         {
@@ -91,7 +92,8 @@ public sealed partial class PersonalMixServiceTests
         registry.Setup(item => item.TryGetCapability(provider, ProviderCapabilityKind.Playlist, out implementation)).Returns(true);
         registry.Setup(item => item.GetRequiredCapability<IProviderPlaylistCapability>(provider, ProviderCapabilityKind.Playlist)).Returns(capability.Object);
         service = new(factory, clock, tags, taste, new(gateway.Object, timeProvider: clock), gateway.Object,
-            NewReleaseService(), settings.Object, policies.Object, access.Object, registry: registry.Object, libraryIndex: local, identities: identities, playlistStore: store, jobQueue: queue, coverImages: covers);
+            NewReleaseService(), settings.Object, policies.Object, access.Object, registry: registry.Object, libraryIndex: local, identities: identities, playlistStore: store, jobQueue: queue, coverImages: covers, feedSearch: search);
+        service.feedSearchGap = TimeSpan.Zero;
         return (capability, account.Id);
     }
 

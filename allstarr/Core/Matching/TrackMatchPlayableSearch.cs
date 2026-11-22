@@ -30,7 +30,8 @@ public sealed class TrackMatchPlayableSearch(
         IReadOnlyList<LocalTrackMatchCandidate> localCandidates,
         ScopedTrackMatchOverride? manualOverride,
         CancellationToken cancellationToken,
-        bool allowIncompleteSearch = false)
+        bool allowIncompleteSearch = false,
+        Func<CancellationToken, Task>? beforeSearch = null)
     {
         var queries = SearchQueries(source);
         var (providerOrder, effectiveMatcher) = await MatchingPolicyAsync(context, cancellationToken);
@@ -46,7 +47,11 @@ public sealed class TrackMatchPlayableSearch(
             !IsExplicitFallback(source, primaryMatch, localCandidates) && CanSettle(primaryMatch))
             return primaryMatch;
 
-        var fallbackResults = await Task.WhenAll(queries.Skip(1).Select(SearchAsync));
+        // A paced caller waits before each search, so its fallback searches go one at a time, and only the two most
+        // telling ones: it searches for every song of every feed, where the rest rarely find what these did not.
+        var fallbackResults = new List<MatchingSongSearchResult>();
+        if (beforeSearch == null) fallbackResults.AddRange(await Task.WhenAll(queries.Skip(1).Select(SearchAsync)));
+        else foreach (var query in queries.Skip(1).Take(2)) fallbackResults.Add(await SearchAsync(query));
         incompleteProviders.UnionWith(fallbackResults.SelectMany(result => result.IncompleteProviderIds));
         var songs = primarySongs.Concat(fallbackResults.SelectMany(result => result.Songs))
             .DistinctBy(song => $"{song.ExternalProvider}:{song.ExternalId}", StringComparer.OrdinalIgnoreCase)
@@ -59,6 +64,7 @@ public sealed class TrackMatchPlayableSearch(
         async Task<MatchingSongSearchResult> SearchAsync(string query)
         {
             MatchingSongSearchResult result;
+            if (beforeSearch != null) await beforeSearch(cancellationToken);
             try
             {
                 result = await gateway.SearchMatchingSongsAsync(context, query, 15) ?? new([], []);

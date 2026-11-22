@@ -214,7 +214,7 @@ public sealed partial class PersonalMixService
             mix.Source, mix.SourcePlaylistId ?? mix.Id.ToString())).ToArray();
     }
 
-    private async Task<PersonalMix> ServiceFeedSongsAsync(UserRecord user, PersonalMix card, CancellationToken token)
+    private async Task<PersonalMix> ServiceFeedSongsAsync(UserRecord user, PersonalMix card, FeedSearchPass pass, CancellationToken token)
     {
         await using var db = await factory.CreateDbContextAsync(token);
         var account = await db.ProviderAccounts.AsNoTracking().SingleAsync(item => item.Id == card.ProviderAccountId && item.OwnerUserId == user.Id && item.Enabled, token);
@@ -289,9 +289,23 @@ public sealed partial class PersonalMixService
         var projected = (await PreferLocalCopiesAsync(user.Id, [card with { Songs = songs.Select(song => new PersonalMixItem(card.Id, 1, song, account.ProviderId, "From your service playlist", 0)).ToArray() }], token)).Single();
         projected = await MatchServiceFeedLibraryAsync(user, projected, context, token);
         var blocked = await taste.BlockedSongsAsync(user.Id, projected.Songs.Select(item => item.Song).ToArray(), token);
+        var remembered = await FeedMatchesAsync(user, account, projected.Songs.Select(item => item.Song), token);
         var playable = new List<PersonalMixItem>();
         foreach (var item in projected.Songs)
-            if (!blocked.Contains(item.Song) && context.Policy!.Includes(item.Song) && (item.Song.IsLocal || await providers.CanPlaySongAsync(context, item.Song)))
+        {
+            if (blocked.Contains(item.Song) || !context.Policy!.Includes(item.Song)) continue;
+            if (!item.Song.IsLocal && remembered.TryGetValue(FeedSongKey(item.Song), out var known))
+            {
+                if (known.Match.Song is { ExternalProvider: { } provider } found && context.Policy.IsEnabled(provider) && context.Policy.Includes(found))
+                {
+                    playable.Add(item with { Song = found });
+                    continue;
+                }
+                if (known.Match.Song == null && clock.UtcNow - known.At < (known.Match.Unsure ? FeedUnsureMissKept : FeedMissKept)) continue;
+            }
+            // Searches are paced, so a long feed outlasts one context's time limit.
+            if (context.Deadline - clock.UtcNow < TimeSpan.FromMinutes(2)) context = await ContextAsync(user, token);
+            if (item.Song.IsLocal || await providers.CanPlaySongAsync(context, item.Song))
             {
                 if (!item.Song.IsLocal && item.Song.CanonicalRecordingId is { } recording && recording != Guid.Empty)
                 {
@@ -301,6 +315,9 @@ public sealed partial class PersonalMixService
                 }
                 playable.Add(item);
             }
+            else if (await SearchServiceFeedSongAsync(user, account, context, item.Song, pass, token) is { } matched)
+                playable.Add(item with { Song = matched });
+        }
         return projected with
         {
             Songs = playable,
