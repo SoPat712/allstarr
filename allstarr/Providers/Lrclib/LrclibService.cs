@@ -144,7 +144,8 @@ public class LrclibService
                         }
                     }
                 }
-
+                // A busy or failing service has not said the song has no lyrics.
+                else if (searchResponse.StatusCode != System.Net.HttpStatusCode.NotFound) searchResponse.EnsureSuccessStatusCode();
             }
             token.ThrowIfCancellationRequested();
             var exactUrl = $"{BaseUrl}/get?" +
@@ -186,7 +187,7 @@ public class LrclibService
         catch (HttpRequestException ex)
         {
             _logger.LogError(ex, "Failed to fetch lyrics from LRCLIB for {Artist} - {Track}", artistName, trackName);
-            return null;
+            throw;
         }
         catch (Exception ex)
         {

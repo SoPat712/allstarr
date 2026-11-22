@@ -897,7 +897,7 @@ public sealed partial class ProtocolLyricsAutomaticTests
         internal long AccountRevision = 1;
         internal bool UseAccount;
         internal readonly Guid Account = Guid.NewGuid();
-        internal readonly ProtocolExecutionContext Protocol;
+        internal ProtocolExecutionContext Protocol;
         internal readonly ProtocolProviderGateway Gateway;
         internal readonly ProviderRuntimeHealth Health;
         internal readonly ConcurrentQueue<allstarr.Core.ClientEvents.ClientEvent> Events = new();
@@ -911,8 +911,10 @@ public sealed partial class ProtocolLyricsAutomaticTests
             : this(new ManualTimeProvider(DateTimeOffset.UtcNow), null, null, sources, searchIndex) { }
         internal Fixture(ITrackIdentityService identities, ICrossProviderLinkResolver links, params IProviderLyricsCapability[] sources)
             : this(new ManualTimeProvider(DateTimeOffset.UtcNow), links, identities, sources) { }
+        internal Fixture(IApplicationCache cache, ManualTimeProvider clock, params IProviderLyricsCapability[] sources)
+            : this(clock, null, null, sources, null, cache) { }
         private Fixture(ManualTimeProvider clock, ICrossProviderLinkResolver? links, ITrackIdentityService? identities,
-            IProviderLyricsCapability[] sources, LyricsSearchIndex? searchIndex = null)
+            IProviderLyricsCapability[] sources, LyricsSearchIndex? searchIndex = null, IApplicationCache? cache = null)
         {
             Clock = clock;
             _sources = sources;
@@ -954,7 +956,7 @@ public sealed partial class ProtocolLyricsAutomaticTests
                     Preferred == null ? null : new(Guid.NewGuid(), recording, context.Principal!.UserId, Preferred, 1), null)));
             Resolver = new(gateway, NullLogger<ProtocolLyricsResolver>.Instance, crossLinks: links, effectivePolicies: policies.Object,
                 timeProvider: Clock, identities: identities, searchIndex: searchIndex, clientUpdates: updates,
-                choices: choices.Object, lookupOptions: LookupOptions);
+                choices: choices.Object, lookupOptions: LookupOptions, applicationCache: cache);
             Protocol = new(ProtocolKind.Jellyfin, "fixture", "listener", new AllstarrPrincipal(Guid.NewGuid(), "jellyfin", "fixture", "listener", "Listener", false),
                 "lyrics", Clock.GetUtcNow().AddMinutes(1), default);
         }
@@ -965,10 +967,14 @@ public sealed partial class ProtocolLyricsAutomaticTests
             updates.Dispose();
         }
         internal Task<allstarr.Models.Lyrics.LyricsInfo?> FindAsync(ProtocolLyricsSources? sources = null, CancellationToken token = default, TimeSpan? deadline = null, string resourceKey = "recording") => Resolver.FindAsync(
+            Read(token, deadline), FixtureSong(), resourceKey, sources ?? new ProtocolLyricsSources());
+        internal Task<IReadOnlyList<ProtocolLyricsCandidate>> FindAllAsync(ProtocolLyricsSources? sources = null) =>
+            Resolver.FindAllAsync(Read(default, TimeSpan.FromMinutes(1)), FixtureSong(), "recording", sources);
+        private ProtocolExecutionContext Read(CancellationToken token, TimeSpan? deadline) =>
             new(Protocol.Protocol, Protocol.BackendInstanceId, Protocol.VerifiedBackendPrincipalId, Protocol.Principal, Protocol.CorrelationId,
                 deadline.HasValue ? Clock.GetUtcNow().Add(deadline.Value) : Protocol.Deadline, token)
-            { RequestedItemId = "ext-deezer-song-fixture" },
-            new Song { Title = "Fixture", Artist = "Artist", Artists = ["Artist"], Album = "Album", Isrc = "USFIX0000001", CanonicalRecordingId = Recording, ExternalProvider = ExternalProvider, ExternalId = ExternalId, SpotifyId = SpotifyId }, resourceKey, sources ?? new ProtocolLyricsSources());
+            { RequestedItemId = "ext-deezer-song-fixture" };
+        private Song FixtureSong() => new() { Title = "Fixture", Artist = "Artist", Artists = ["Artist"], Album = "Album", Isrc = "USFIX0000001", CanonicalRecordingId = Recording, ExternalProvider = ExternalProvider, ExternalId = ExternalId, SpotifyId = SpotifyId };
     }
     private sealed class WaitingHandler : HttpMessageHandler
     {

@@ -54,6 +54,19 @@ public class LrclibServiceTests
         Assert.Single(result!.Versions!);
     }
 
+    [Theory]
+    [InlineData(HttpStatusCode.ServiceUnavailable)]
+    [InlineData(HttpStatusCode.TooManyRequests)]
+    public async Task AServiceThatDidNotAnswerIsNotASongWithoutLyrics(HttpStatusCode status)
+    {
+        _handler.Protected().Setup<Task<HttpResponseMessage>>("SendAsync", ItExpr.IsAny<HttpRequestMessage>(),
+            ItExpr.IsAny<CancellationToken>()).ReturnsAsync(() => new HttpResponseMessage(status));
+        await Assert.ThrowsAsync<HttpRequestException>(() => CreateService().GetLyricsAsync("Track", ["Artist"], "Album", 180, CancellationToken.None));
+        _handler.Protected().Setup<Task<HttpResponseMessage>>("SendAsync", ItExpr.IsAny<HttpRequestMessage>(),
+            ItExpr.IsAny<CancellationToken>()).ReturnsAsync(() => new HttpResponseMessage(HttpStatusCode.NotFound));
+        Assert.Null(await CreateService().GetLyricsAsync("Track", ["Artist"], "Album", 180, CancellationToken.None));
+    }
+
     [Fact]
     public async Task GetLyricsAsync_WithMissingTrack_DoesNotCallProvider()
     {

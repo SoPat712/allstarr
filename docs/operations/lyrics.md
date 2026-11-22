@@ -27,7 +27,7 @@ Lyrics extensions you install join the end of the list. Drag sources to reorder 
 
 ## How a source is chosen
 
-A version a listener picked for a song wins. Otherwise Allstarr tries sources in order. Only sources set to **On** in Sources → Services are tried automatically; **Manual only** sources answer only when someone picks them. A source that fails or has no lyrics doesn't stop the rest.
+A version a listener picked for a song wins. Otherwise Allstarr tries sources in order. Only sources set to **On** in Sources → Services are tried automatically; **Manual only** sources answer only when someone picks them. A source that fails or has no lyrics doesn't stop the rest. When every source has answered and none has lyrics for a song, Allstarr doesn't ask them again for that song for a day; a source that was down or busy doesn't count as an answer, and looking at a song's versions or **Wrong lyrics?** always asks again.
 
 Order beats timing: an earlier source with plain lyrics wins over a later one with timed lyrics. Between equal sources, word timing beats line timing, and line timing beats plain text. Allstarr never invents timestamps.
 

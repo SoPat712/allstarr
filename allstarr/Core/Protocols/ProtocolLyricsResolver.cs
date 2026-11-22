@@ -69,7 +69,8 @@ public sealed partial class ProtocolLyricsResolver(
     TimeProvider? timeProvider = null, IHostApplicationLifetime? lifetime = null,
     allstarr.Core.ClientEvents.ClientLyricsUpdates? clientUpdates = null,
     LyricsSearchIndex? searchIndex = null, LyricsSearchChanges? searchChanges = null,
-    LyricsLookupOptions? lookupOptions = null, LyricsRefreshStore? refreshStore = null) : IProtocolLyricsResolver, IHostedService
+    LyricsLookupOptions? lookupOptions = null, LyricsRefreshStore? refreshStore = null,
+    allstarr.Core.Caching.IApplicationCache? applicationCache = null) : IProtocolLyricsResolver, IHostedService
 {
     public async Task<RichLyrics?> GetRichLyricsAsync(ProtocolExecutionContext context, Song song, string resourceKey,
         ProtocolLyricsSources? sources = null) => RichLyricsMapper.Map(await FindAsync(
@@ -350,6 +351,11 @@ public sealed partial class ProtocolLyricsResolver(
             enabledOrder = order;
         }
         IReadOnlyList<CrossProviderLinkCandidate>? resolvedLinks = null;
+        // The same song for the same listener and sources whichever way it is asked for, so a look the listener asks
+        // for clears what an automatic read remembered.
+        var missKey = protocol.Actor == null ? null : "lyrics:miss:v1:" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
+            System.Text.Json.JsonSerializer.Serialize(new
+            { Owner = protocol.Actor.EffectiveUserId, resourceKey, householdOnly, cleanOnly, automaticOrder, preferredSourceId }))));
 
         if (automaticLookup && preferredSourceId != null && order.Contains(preferredProvider!, StringComparer.Ordinal))
             order = new[] { preferredProvider! }.Concat(order).Distinct(StringComparer.Ordinal).ToArray();
@@ -368,8 +374,13 @@ public sealed partial class ProtocolLyricsResolver(
         if (sources?.OnlySourceId == null && sources?.ForPermanentSidecar != true &&
             providers is IProtocolLyricsExecutionGateway executionGateway && protocol.Actor != null)
         {
+            // A song every source recently had nothing for is read from what is stored only; a look the listener asks
+            // for, a refresh or a chosen source always asks the sources again.
+            var remembered = automaticLookup && sources?.CacheOnly != true && !protocol.RefreshLyrics && missKey != null &&
+                applicationCache?.IsEnabled == true && await applicationCache.ExistsAsync(missKey);
             var key = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(System.Text.Json.JsonSerializer.Serialize(new
             {
+                Remembered = remembered,
                 protocol.BackendInstanceId,
                 protocol.VerifiedBackendPrincipalId,
                 Owner = protocol.Actor.EffectiveUserId,
@@ -398,19 +409,21 @@ public sealed partial class ProtocolLyricsResolver(
             var lookup = EnterAutomatic(key, protocol, song, householdOnly, preferredSourceId, recordingDurationMs, (owned, deadline) =>
             {
                 protocol = owned;
-                return order.Where(id => localSources.ContainsKey(id) || id is not ("backend" or "kept"))
+                return order.Where(id => localSources.ContainsKey(id) || id is not ("backend" or "kept") && !remembered)
                     .Select(id => localSources.TryGetValue(id, out var local)
                     ? new AutomaticSource(id, null, local, automaticOrder.Contains(id, StringComparer.Ordinal))
-                    : new AutomaticSource(id, async token =>
+                    : new AutomaticSource(id, async (self, token) =>
                     {
-                        var spec = await PrepareSpecAsync(id, deadline, false, token);
-                        var read = spec == null ? null : await executionGateway.PrepareAsync(spec, token);
+                        var first = await PrepareSpecAsync(id, deadline, false, token);
+                        var read = first == null ? null : await executionGateway.PrepareAsync(first, token);
                         if (read != null) return read;
                         if (sources?.CacheOnly == true) return null;
-                        spec = await PrepareSpecAsync(id, deadline, true, token);
-                        return spec == null ? null : await executionGateway.PrepareAsync(spec, token);
+                        var spec = await PrepareSpecAsync(id, deadline, true, token);
+                        // Nothing to look the song up by is this source's answer; a route that is not open is not.
+                        if (spec == null) { self.Answered = first == null; return null; }
+                        return await executionGateway.PrepareAsync(spec, token);
                     }, null, automaticOrder.Contains(id, StringComparer.Ordinal))).ToArray();
-            }, sources?.CacheOnly == true);
+            }, sources?.CacheOnly == true, missKey, automaticLookup && !remembered && sources?.CacheOnly != true && !protocol.RefreshLyrics);
             if (lookup != null)
                 foreach (var candidate in await WaitAutomaticAsync(lookup, !automaticLookup, callerToken,
                     responseDeadline ?? LyricsClock.GetUtcNow().Add(LookupOptions.ResponseBudget), sources?.UntilChosen == true))
@@ -646,6 +659,7 @@ public sealed partial class ProtocolLyricsResolver(
                 readProtocol.CancellationToken.ThrowIfCancellationRequested();
                 if (lyrics == null || string.IsNullOrWhiteSpace(lyrics.SyncedLyrics) && string.IsNullOrWhiteSpace(lyrics.PlainLyrics) && lyrics.Versions?.Count is not > 0)
                     return null;
+                if (!automaticLookup && missKey != null) await ForgetMissAsync(missKey);
                 return lyrics;
             }
             catch (Exception exception) when (exception is not OperationCanceledException)

@@ -9,18 +9,21 @@ namespace allstarr.Core.Protocols;
 
 public sealed partial class ProtocolLyricsResolver
 {
-    private sealed class AutomaticSource(string id, Func<CancellationToken, Task<PreparedLyricsRead?>>? prepare,
+    private sealed class AutomaticSource(string id, Func<AutomaticSource, CancellationToken, Task<PreparedLyricsRead?>>? prepare,
         Func<CancellationToken, Task<LyricsInfo?>>? local, bool automaticEligible)
     {
         internal string Id => id;
         internal bool AutomaticEligible => automaticEligible;
-        internal Func<CancellationToken, Task<PreparedLyricsRead?>>? Prepare => prepare;
+        internal Func<AutomaticSource, CancellationToken, Task<PreparedLyricsRead?>>? Prepare => prepare;
         internal Func<CancellationToken, Task<LyricsInfo?>>? Local => local;
         internal PreparedLyricsRead? Read { get; set; }
         internal LyricsInfo? Lyrics { get; set; }
         internal bool Known { get; set; }
         internal bool Finished { get; set; }
         internal bool Deferred { get; set; }
+        // The source gave an answer for this song, lyrics or none; one that failed, timed out or was skipped while
+        // cooling down has not.
+        internal bool Answered { get; set; }
     }
 
     private sealed class AutomaticLookup(string key, DateTimeOffset deadline, CancellationTokenSource timer,
@@ -40,6 +43,9 @@ public sealed partial class ProtocolLyricsResolver
         internal object Gate { get; } = new();
         internal TaskCompletionSource Changed { get; set; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal TaskCompletionSource Completion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal string? MissKey { get; init; }
+        internal bool RecordsMiss { get; init; }
+        internal bool MissCleared { get; set; }
         internal bool Observed { get; set; }
         internal bool VersionsAnnounced { get; set; }
         internal void Pulse()
@@ -52,6 +58,9 @@ public sealed partial class ProtocolLyricsResolver
     }
 
     private readonly ConcurrentDictionary<(string Lookup, string Source), DateTimeOffset> _localMisses = new();
+    // A song no source has lyrics for is not asked about again for a day; asking on every play found nothing new.
+    // It is kept with the stored lyrics so it holds across a restart.
+    internal static readonly TimeSpan MissRememberedFor = TimeSpan.FromHours(24);
     private readonly object _automaticGate = new();
     private readonly Dictionary<string, AutomaticLookup> _automatic = new(StringComparer.Ordinal);
     private readonly CancellationTokenSource _automaticShutdown = CancellationTokenSource.CreateLinkedTokenSource(lifetime?.ApplicationStopping ?? default);
@@ -71,7 +80,7 @@ public sealed partial class ProtocolLyricsResolver
 
     private AutomaticLookup? EnterAutomatic(string key, ProtocolExecutionContext protocol, Song song, bool householdOnly,
         string? preferred, long? recordingDurationMs, Func<ProtocolExecutionContext, DateTimeOffset, IReadOnlyList<AutomaticSource>> build,
-        bool cacheOnlyRequested = false)
+        bool cacheOnlyRequested = false, string? missKey = null, bool recordsMiss = false)
     {
         AutomaticLookup lookup;
         lock (_automaticGate)
@@ -87,7 +96,8 @@ public sealed partial class ProtocolLyricsResolver
             var cancellation = CancellationTokenSource.CreateLinkedTokenSource(timer.Token, _automaticShutdown.Token);
             var owned = WithLyricsToken(protocol, cancellation.Token, deadline);
             lookup = new AutomaticLookup(key, deadline, timer, cancellation, owned, song, householdOnly,
-                preferred, recordingDurationMs, build(owned, deadline), cacheOnly);
+                preferred, recordingDurationMs, build(owned, deadline), cacheOnly)
+            { MissKey = missKey, RecordsMiss = recordsMiss };
             if (!cacheOnly) _automatic.Add(key, lookup);
         }
         // Started outside the gate: sources that answer from what is stored run to their end at once, and under the gate
@@ -111,10 +121,18 @@ public sealed partial class ProtocolLyricsResolver
         }
         finally
         {
+            bool missed;
             lock (lookup.Gate)
             {
+                missed = lookup.RecordsMiss && !lookup.CacheOnly && lookup.Sources.Count > 0 &&
+                    lookup.Sources.All(source => source.Answered) && BestAutomatic(lookup) == null;
                 foreach (var source in lookup.Sources) source.Finished = true;
                 lookup.Pulse();
+            }
+            if (missed && applicationCache?.IsEnabled == true)
+            {
+                try { await applicationCache.SetStringAsync(lookup.MissKey!, "1", MissRememberedFor); }
+                catch (Exception exception) { logger.LogWarning("A song without lyrics was not remembered ({ErrorType})", exception.GetType().Name); }
             }
             if (!lookup.CacheOnly)
                 lock (_automaticGate) _automatic.Remove(lookup.Key);
@@ -129,10 +147,12 @@ public sealed partial class ProtocolLyricsResolver
                 if (source.Local != null)
                 {
                     var key = (lookup.Key, source.Id);
-                    if (!lookup.Protocol.RefreshLyrics && _localMisses.TryGetValue(key, out var expires) && expires > LyricsClock.GetUtcNow()) return;
+                    if (!lookup.Protocol.RefreshLyrics && _localMisses.TryGetValue(key, out var expires) && expires > LyricsClock.GetUtcNow())
+                    { source.Answered = true; return; }
                     using var timer = new CancellationTokenSource(LookupOptions.SourceTimeout, LyricsClock);
                     using var attempt = CancellationTokenSource.CreateLinkedTokenSource(lookup.Token, timer.Token);
                     var local = await source.Local(attempt.Token).WaitAsync(attempt.Token);
+                    source.Answered = true;
                     if (local != null) { local.Source = source.Id; _localMisses.TryRemove(key, out _); }
                     else if (source.Id != "kept")
                     {
@@ -150,15 +170,17 @@ public sealed partial class ProtocolLyricsResolver
                     using var timer = new CancellationTokenSource(LookupOptions.SourceTimeout, LyricsClock);
                     using var attempt = CancellationTokenSource.CreateLinkedTokenSource(lookup.Token, timer.Token);
                     using (allstarr.Core.Operations.RequestTiming.Current?.Stage("resolve"))
-                        source.Read = source.Prepare == null ? null : await source.Prepare(attempt.Token).WaitAsync(attempt.Token);
+                        source.Read = source.Prepare == null ? null : await source.Prepare(source, attempt.Token).WaitAsync(attempt.Token);
                     if (source.Read == null) { source.Deferred = false; return; }
+                    // Another source already asks this service for the song and answers for both.
                     lock (bindings)
-                        if (!bindings.Add(source.Read.Binding.ProviderId)) return;
+                        if (!bindings.Add(source.Read.Binding.ProviderId)) { source.Answered = true; return; }
                     allstarr.Core.Capabilities.ProviderLyricsResult? cached;
                     using (allstarr.Core.Operations.RequestTiming.Current?.Stage("fetch"))
                         cached = await gateway.ExecuteAsync(source.Read, LyricsCompletionMode.CacheOnly, attempt.Token).WaitAsync(attempt.Token);
                     if (HasLyrics(cached))
                     {
+                        source.Answered = true;
                         source.Deferred = false;
                         await AcceptAsync(source, Map(cached!, source), true);
                         return;
@@ -172,6 +194,7 @@ public sealed partial class ProtocolLyricsResolver
                     using var timer = new CancellationTokenSource(LookupOptions.SourceTimeout, LyricsClock);
                     using var attempt = CancellationTokenSource.CreateLinkedTokenSource(lookup.Token, timer.Token);
                     var result = await gateway.ExecuteAsync(source.Read!, LyricsCompletionMode.OwnedAutomatic, attempt.Token).WaitAsync(attempt.Token);
+                    source.Answered = result != null && !attempt.IsCancellationRequested;
                     if (HasLyrics(result) && !attempt.IsCancellationRequested)
                         await AcceptAsync(source, Map(result!, source), false);
                 }
@@ -202,6 +225,11 @@ public sealed partial class ProtocolLyricsResolver
                 if (lookup.Observed) ObserveAutomatic(lookup, BestAutomatic(lookup));
                 lookup.Pulse();
             }
+            if (lyrics != null && !lookup.RecordsMiss && !lookup.MissCleared && lookup.MissKey != null)
+            {
+                lookup.MissCleared = true;
+                await ForgetMissAsync(lookup.MissKey);
+            }
             if (lyrics != null && !lookup.HouseholdOnly && !lookup.Protocol.IsReadOnly)
             {
                 if (lyrics.Versions == null) await IndexAsync(lookup.Protocol, lookup.Song, lyrics);
@@ -219,6 +247,13 @@ public sealed partial class ProtocolLyricsResolver
                 }
             }
         }
+    }
+
+    private async Task ForgetMissAsync(string key)
+    {
+        if (applicationCache?.IsEnabled != true) return;
+        try { await applicationCache.DeleteAsync(key); }
+        catch (Exception exception) { logger.LogWarning("A remembered lyrics miss was not cleared ({ErrorType})", exception.GetType().Name); }
     }
 
     private static bool HasLyrics(allstarr.Core.Capabilities.ProviderLyricsResult? result) =>

@@ -39,7 +39,9 @@ public sealed partial class ProtocolProviderGateway : IProtocolLyricsExecutionGa
         var now = (timeProvider ?? TimeProvider.System).GetUtcNow();
         var key = CanonicalCatalogKeys.Hash(JsonSerializer.Serialize(new
         { prepared.Spec.Actor, prepared.Binding, prepared.Source.ConfigurationId, Request = request }));
-        if (!cached && !request.Refresh && _lyricsMisses.TryGetValue(key, out var expires) && expires > now) return null;
+        // A source's recent "no lyrics" is still its answer, so the caller can tell it from a source that did not answer.
+        if (!cached && !request.Refresh && _lyricsMisses.TryGetValue(key, out var expires) && expires > now)
+            return new(ProviderLyricsAvailabilityState.Unavailable, candidate.Context.ProviderId);
         if (!cached && !request.Refresh && outcomes is ProviderRuntimeHealth health)
         {
             var statusKey = candidate.Context.Account is { } account
@@ -61,7 +63,7 @@ public sealed partial class ProtocolProviderGateway : IProtocolLyricsExecutionGa
             if (_lyricsMisses.Count >= 512) _lyricsMisses.Clear();
             _lyricsMisses[key] = now.AddHours(6);
         }
-        if (result.Availability != ProviderLyricsAvailabilityState.Available) return null;
+        if (result.Availability != ProviderLyricsAvailabilityState.Available) return cached ? null : result;
         if (completion == LyricsCompletionMode.OwnedAutomatic && prepared.Spec.Actor.EffectiveUserId is { } user)
             lyricsChanges?.RecordingChanged(user, request.CanonicalRecordingId);
         return result;
