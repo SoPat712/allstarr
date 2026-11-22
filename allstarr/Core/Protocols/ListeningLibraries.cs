@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
 using allstarr.Core.Matching;
+using allstarr.Core.Music;
 using allstarr.Core.Settings;
 using allstarr.Core.Storage;
 using Microsoft.EntityFrameworkCore;
@@ -11,7 +12,7 @@ namespace allstarr.Core.Protocols;
 public sealed record ListeningLibraryChoice(IReadOnlyList<string>? Selected, IReadOnlyList<BackendMusicLibrary> Available, long Revision);
 
 /// <summary>
-/// Library access narrowed to the music libraries a listener chose, for picking songs: mixes, Made for you and autoplay.
+/// Library access narrowed to the music libraries a listener chose, for picking songs (mixes, Made for you, autoplay) and for search.
 /// Indexing, matching and permissions keep using the full access, so other libraries stay known and reachable.
 /// </summary>
 public sealed class ListeningLibraries(
@@ -55,28 +56,59 @@ public sealed class ListeningLibraries(
     }
 
     /// <summary>The chosen libraries when they are fewer than the listener can open; null when every library is in use.</summary>
-    public async Task<IReadOnlyList<string>?> NarrowedAsync(ProtocolExecutionContext context, CancellationToken cancellationToken = default)
+    public Task<IReadOnlyList<string>?> NarrowedAsync(ProtocolExecutionContext context, CancellationToken cancellationToken = default) =>
+        SearchedAsync(context, null, cancellationToken);
+
+    /// <summary>
+    /// The libraries a search may show library items from; null when every library is in use. An app's own pick of one
+    /// of the listener's libraries stays when it is chosen and leaves none when it is not; any other pick, such as a
+    /// folder, keeps the chosen libraries.
+    /// </summary>
+    public async Task<IReadOnlyList<string>?> SearchedAsync(ProtocolExecutionContext context, string? picked,
+        CancellationToken cancellationToken = default)
     {
         if (await SelectedAsync(Owner(context), cancellationToken) is not { Count: > 0 } selected) return null;
         var access = await inner.ResolveAsync(context, cancellationToken);
         if (!access.Succeeded) return null;
         var kept = access.LibraryIds.Where(id => selected.Contains(id, StringComparer.Ordinal)).ToArray();
-        return kept.Length == 0 || kept.Length == access.LibraryIds.Length ? null : kept;
+        if (kept.Length == 0 || kept.Length == access.LibraryIds.Length) return null;
+        if (string.IsNullOrWhiteSpace(picked) || access.LibraryIds.FirstOrDefault(id => SameId(id, picked)) is not { } library) return kept;
+        return kept.Contains(library, StringComparer.Ordinal) ? [library] : [];
     }
 
     /// <summary>Keeps service songs and library songs from the chosen libraries, in order; without a choice every id stays.</summary>
     public async Task<IReadOnlyList<string>> KeepChosenAsync(ProtocolExecutionContext context, IReadOnlyList<string> ids,
         CancellationToken cancellationToken = default)
     {
-        if (ids.Count == 0 || await SelectedAsync(Owner(context), cancellationToken) == null) return ids;
+        if (ids.Count == 0 || await SelectedAsync(Owner(context), cancellationToken) == null ||
+            ids.All(id => id.StartsWith("ext-", StringComparison.Ordinal))) return ids;
+        return await KeepAsync(context, ids, await ResolveAsync(context, cancellationToken), cancellationToken);
+    }
+
+    /// <summary>Keeps service songs and library songs from these libraries, in order.</summary>
+    public Task<IReadOnlyList<string>> KeepInAsync(ProtocolExecutionContext context, IReadOnlyList<string> ids,
+        IReadOnlyList<string> libraries, CancellationToken cancellationToken = default) =>
+        KeepAsync(context, ids, new(true, libraries.ToArray()), cancellationToken);
+
+    private async Task<IReadOnlyList<string>> KeepAsync(ProtocolExecutionContext context, IReadOnlyList<string> ids,
+        BackendLibraryAccess access, CancellationToken cancellationToken)
+    {
         var native = ids.Where(id => !id.StartsWith("ext-", StringComparison.Ordinal)).Distinct(StringComparer.Ordinal).ToArray();
         if (native.Length == 0) return ids;
-        var access = await ResolveAsync(context, cancellationToken);
-        await using var db = await factory.CreateDbContextAsync(cancellationToken);
-        var kept = (await LibraryTrackAccess.Query(db, context, access).Where(track => native.Contains(track.BackendItemId))
-            .Select(track => track.BackendItemId).ToArrayAsync(cancellationToken)).ToHashSet(StringComparer.Ordinal);
+        var kept = new HashSet<string>(StringComparer.Ordinal);
+        if (access.LibraryIds.Length > 0)
+        {
+            await using var db = await factory.CreateDbContextAsync(cancellationToken);
+            kept.UnionWith(await LibraryTrackAccess.Query(db, context, access).Where(track => native.Contains(track.BackendItemId))
+                .Select(track => track.BackendItemId).ToArrayAsync(cancellationToken));
+        }
         return ids.Where(id => id.StartsWith("ext-", StringComparison.Ordinal) || kept.Contains(id)).ToArray();
     }
+
+    // Apps may spell a library id in another case or with dashes.
+    private static bool SameId(string left, string right) =>
+        string.Equals(left.Replace("-", "", StringComparison.Ordinal), right.Trim().Replace("-", "", StringComparison.Ordinal),
+            StringComparison.OrdinalIgnoreCase);
 
     public async Task<ListeningLibraryChoice?> ReadAsync(ProtocolExecutionContext context, CancellationToken cancellationToken = default)
     {
@@ -154,4 +186,31 @@ public sealed class ListeningLibraries(
     }
 
     private static Guid? Owner(ProtocolExecutionContext context) => context.Actor?.EffectiveUserId ?? context.Principal?.UserId;
+}
+
+/// <summary>
+/// A library search whose copies of service songs come only from the libraries searched, so a service song stays a
+/// service song when the listener's copy is in a library the search leaves out.
+/// </summary>
+public sealed class SearchedLibraryCopies<TPayload>(INativeMusicSearch<TPayload> inner, ListeningLibraries libraries,
+    ProtocolExecutionContext context, IReadOnlyList<string> searched) : INativeMusicSearch<TPayload>
+{
+    public Task<IReadOnlyList<NativeMusicItem<TPayload>>> SearchAsync(CancellationToken cancellationToken) => inner.SearchAsync(cancellationToken);
+
+    public async Task<NativeMusicItem<TPayload>?> GetSongAsync(string id, CancellationToken cancellationToken) =>
+        (await KeepAsync([id], cancellationToken)).Count == 0 ? null : await inner.GetSongAsync(id, cancellationToken);
+
+    public async Task<IReadOnlyList<NativeMusicItem<TPayload>>> GetSongsAsync(IReadOnlyList<string> ids, CancellationToken cancellationToken) =>
+        await KeepAsync(ids, cancellationToken) is { Count: > 0 } kept ? await inner.GetSongsAsync(kept, cancellationToken) : [];
+
+    private async Task<IReadOnlyList<string>> KeepAsync(IReadOnlyList<string> ids, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return (await libraries.KeepInAsync(context, ids, searched, cancellationToken))
+                .Where(id => !id.StartsWith("ext-", StringComparison.Ordinal)).ToArray();
+        }
+        // Without proof that a copy is in a searched library, the service song is shown.
+        catch (Exception error) when (error is not OperationCanceledException || !cancellationToken.IsCancellationRequested) { return []; }
+    }
 }

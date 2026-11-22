@@ -442,7 +442,7 @@ public partial class JellyfinController : ControllerBase
             endpoint,
             ToSafeQueryStringForLogs(queryParams));
 
-        return await _proxyService.GetJsonAsync(endpoint, queryParams, Request.Headers);
+        return await ReadSearchedLibrariesAsync(endpoint, queryParams, "Items", default);
     }
 
     // This lower-priority route must not shadow /Artists/AlbumArtists.

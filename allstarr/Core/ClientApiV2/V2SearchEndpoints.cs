@@ -12,7 +12,7 @@ namespace allstarr.Core.ClientApiV2;
 
 /// <summary>Listener-scoped search reads using the shared ranked stream and stored lyrics index.</summary>
 public sealed class V2SearchEndpoints(V2SearchStream stream, V2TrackReader tracks, LyricsSearchReader lyrics,
-    ILogger<V2SearchEndpoints>? logger = null)
+    ILogger<V2SearchEndpoints>? logger = null, ListeningLibraries? libraries = null)
 {
     private static readonly IReadOnlySet<string> Types = new HashSet<string>(StringComparer.Ordinal) { "songs", "albums", "artists", "playlists" };
 
@@ -31,6 +31,13 @@ public sealed class V2SearchEndpoints(V2SearchStream stream, V2TrackReader track
         var read = new Dictionary<string, V2Track?>(StringComparer.Ordinal);
         var started = Stopwatch.GetTimestamp();
         var untimed = true;
+        // A service song reads as the listener's own copy only when that copy is in a library they chose.
+        Func<IReadOnlyList<string>, CancellationToken, Task<IReadOnlyList<string>>>? keepCopies = libraries == null ? null :
+            async (copies, token) =>
+            {
+                try { return await libraries.KeepChosenAsync(execution, copies, token); }
+                catch (Exception error) when (error is not OperationCanceledException || !token.IsCancellationRequested) { return []; }
+            };
         return await stream.StreamAsync(http, execution, query, limit, requested, true, async (batch, token) =>
         {
             var rows = batch.Sections.Values.SelectMany(rows => rows).Concat(batch.Items)
@@ -44,7 +51,7 @@ public sealed class V2SearchEndpoints(V2SearchStream stream, V2TrackReader track
                 { Policy = execution.Policy };
                 // The first read is timed on its own, apart from the services still answering beside it.
                 using var timing = untimed ? RequestTiming.Begin() : null;
-                var result = await tracks.ReadWithSourcesAsync(http, current, songs.Select(Id).ToArray(), false, metadata);
+                var result = await tracks.ReadWithSourcesAsync(http, current, songs.Select(Id).ToArray(), false, metadata, keepCopies);
                 var byId = Index(result.Response.Tracks);
                 foreach (var row in songs) read[Id(row)] = byId.GetValueOrDefault(Id(row));
                 if (timing?.Snapshot("search") is { } took)

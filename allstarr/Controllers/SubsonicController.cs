@@ -211,11 +211,20 @@ public partial class SubsonicController : ControllerBase
             nativeParameters = nativeParameters.SetValue("albumOffset", "0").SetValue("albumCount", window.AlbumFetchCount.ToString());
         if (window.ArtistOffset > 0 && window.ArtistCount > 0)
             nativeParameters = nativeParameters.SetValue("artistOffset", "0").SetValue("artistCount", window.ArtistFetchCount.ToString());
-        var native = new SubsonicNativeMusicSearch(_proxyService, _modelMapper, _responseBuilder, nativeParameters, format, method);
+        var context = CurrentProtocolContext;
+        // Library results come from the music folders the listener chose; an app that names one folder keeps its pick within them.
+        var libraries = HttpContext.RequestServices.GetService<ListeningLibraries>();
+        var picked = parameters.GetValueOrDefault("musicFolderId");
+        IReadOnlyList<string>? searched = null;
+        if (libraries != null)
+            try { searched = await libraries.SearchedAsync(context, picked, HttpContext.RequestAborted); }
+            // Search never fails over the choice; it searches every folder instead.
+            catch (Exception error) when (error is not OperationCanceledException || !HttpContext.RequestAborted.IsCancellationRequested) { }
+        var native = new SubsonicNativeMusicSearch(_proxyService, _modelMapper, _responseBuilder, nativeParameters, format, method,
+            searched == null || searched.Count > 0 && !string.IsNullOrWhiteSpace(picked) ? null : searched);
         var playlists = _subsonicSettings.EnableExternalPlaylists && window.AlbumCount > 0
             ? new MusicSearchWindow(window.AlbumFetchCount, Take: window.AlbumOffset == 0 ? window.AlbumCount : null)
             : MusicSearchWindow.None;
-        var context = CurrentProtocolContext;
         var merged = await _musicSearch.SearchAsync(
             context,
             new MusicSearchRequest(
@@ -225,7 +234,7 @@ public partial class SubsonicController : ControllerBase
                 new MusicSearchWindow(window.ArtistCount > 0 ? window.ArtistFetchCount : 0, Take: window.ArtistOffset == 0 ? window.ArtistCount : null),
                 playlists,
                 HideLinkedProviderArtists: true),
-            native,
+            searched == null ? (INativeMusicSearch<object>)native : new SearchedLibraryCopies<object>(native, libraries!, context, searched),
             HttpContext.RequestAborted);
         var paginationScope = System.Text.Json.JsonSerializer.Serialize(new { Method = method, native.IsJson, MusicFolderId = parameters.GetValueOrDefault("musicFolderId") });
         merged = new(

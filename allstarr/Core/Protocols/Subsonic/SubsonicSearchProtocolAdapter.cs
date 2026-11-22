@@ -91,7 +91,8 @@ public sealed class SubsonicSearchProtocolAdapter
 
 /// <summary>
 /// The backend half of a Subsonic integrated search: the client's own search2 or search3 request
-/// and single-song lookups, kept in whatever format the backend answered with.
+/// and single-song lookups, kept in whatever format the backend answered with. Given music folders, the search is
+/// asked once per folder and the rows joined; no folders find nothing.
 /// </summary>
 public sealed class SubsonicNativeMusicSearch(
     SubsonicProxyService proxy,
@@ -99,13 +100,21 @@ public sealed class SubsonicNativeMusicSearch(
     SubsonicResponseBuilder responses,
     SubsonicRequestParameters parameters,
     string format,
-    string method = SubsonicSearchProtocolAdapter.Search3) : INativeMusicSearch<object>
+    string method = SubsonicSearchProtocolAdapter.Search3,
+    IReadOnlyList<string>? folders = null) : INativeMusicSearch<object>
 {
     public bool IsJson { get; private set; } = format == "json";
 
     public async Task<IReadOnlyList<NativeMusicItem<object>>> SearchAsync(CancellationToken cancellationToken)
     {
-        var response = await proxy.RelaySafeAsync($"rest/{method}", parameters, cancellationToken);
+        if (folders == null) return await SearchAsync(parameters, cancellationToken);
+        var found = await Task.WhenAll(folders.Select(folder => SearchAsync(parameters.SetValue("musicFolderId", folder), cancellationToken)));
+        return found.SelectMany(rows => rows).DistinctBy(item => (item.Kind, item.Id)).ToList();
+    }
+
+    private async Task<IReadOnlyList<NativeMusicItem<object>>> SearchAsync(SubsonicRequestParameters asked, CancellationToken cancellationToken)
+    {
+        var response = await proxy.RelaySafeAsync($"rest/{method}", asked, cancellationToken);
         IsJson = format == "json" || response.ContentType?.Contains("json") == true;
         if (!response.Success || response.Body == null) return [];
         var (songs, albums, artists) = mapper.ParseSearchResponse(

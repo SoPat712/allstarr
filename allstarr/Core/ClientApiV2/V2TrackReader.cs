@@ -32,10 +32,14 @@ public sealed class V2TrackReader(
     public async Task<V2TracksResponse> ReadAsync(HttpContext http, ProtocolExecutionContext execution, IReadOnlyList<string> ids,
         bool includeAlbums) => (await ReadWithSourcesAsync(http, execution, ids, includeAlbums)).Response;
 
-    /// <summary>Also returns, for each returned track id, the library or service item it was read from.</summary>
+    /// <summary>
+    /// Also returns, for each returned track id, the library or service item it was read from. A service song reads as
+    /// a library copy only when <paramref name="keepCopies"/>, when given, keeps that copy.
+    /// </summary>
     internal async Task<(V2TracksResponse Response, IReadOnlyDictionary<string, string> Sources)> ReadWithSourcesAsync(HttpContext http,
         ProtocolExecutionContext execution, IReadOnlyList<string> ids, bool includeAlbums,
-        IReadOnlyDictionary<string, Song>? searchSongs = null)
+        IReadOnlyDictionary<string, Song>? searchSongs = null,
+        Func<IReadOnlyList<string>, CancellationToken, Task<IReadOnlyList<string>>>? keepCopies = null)
     {
         var token = execution.CancellationToken;
         var requested = ids.Distinct(StringComparer.Ordinal).ToArray();
@@ -65,7 +69,7 @@ public sealed class V2TrackReader(
             }).ToArray();
             if (lookups.Length > 0)
                 using (RequestTiming.Current?.Stage("owned"))
-                    foreach (var pair in await libraryIndex.FindKnownRecordingTracksAsync(execution, lookups, token)) copies[pair.Key] = pair.Value;
+                    foreach (var pair in await KeptAsync(await libraryIndex.FindKnownRecordingTracksAsync(execution, lookups, token))) copies[pair.Key] = pair.Value;
         }
         var targets = sources.ToDictionary(pair => pair.Key, pair => copies.GetValueOrDefault(pair.Value) ?? pair.Value, StringComparer.Ordinal);
         var targetIds = targets.Values.Distinct(StringComparer.Ordinal).ToArray();
@@ -85,7 +89,7 @@ public sealed class V2TrackReader(
         {
             IReadOnlyDictionary<string, string> owned;
             using (RequestTiming.Current?.Stage("owned"))
-                owned = await libraryIndex.FindKnownRecordingTracksAsync(execution, unowned, token);
+                owned = await KeptAsync(await libraryIndex.FindKnownRecordingTracksAsync(execution, unowned, token));
             if (owned.Count > 0)
             {
                 targets = targets.ToDictionary(pair => pair.Key, pair => owned.GetValueOrDefault(pair.Value) ?? pair.Value, StringComparer.Ordinal);
@@ -138,6 +142,13 @@ public sealed class V2TrackReader(
             using (RequestTiming.Current?.Stage("linked"))
                 linked = await libraryArtists.LinkAsync(http, execution, tracks);
         return (new(linked, missing) { Albums = albums }, readFrom);
+
+        async Task<IReadOnlyDictionary<string, string>> KeptAsync(IReadOnlyDictionary<string, string> found)
+        {
+            if (keepCopies == null || found.Count == 0) return found;
+            var kept = (await keepCopies(found.Values.Distinct(StringComparer.Ordinal).ToArray(), token)).ToHashSet(StringComparer.Ordinal);
+            return found.Where(pair => kept.Contains(pair.Value)).ToDictionary(StringComparer.Ordinal);
+        }
     }
 
     private static bool IsExternal(string id) => id.StartsWith("ext-", StringComparison.Ordinal);

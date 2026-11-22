@@ -40,9 +40,11 @@ public partial class JellyfinController
             !string.IsNullOrWhiteSpace(GetEffectiveSearchTerm(searchTerm, Request.QueryString.Value)))
         {
             using var libraryTiming = allstarr.Core.Operations.RequestTiming.Current?.Stage("library");
-            var query = string.Join('&', (Request.QueryString.Value ?? "").TrimStart('?').Split('&')
-                .Where(part => !Uri.UnescapeDataString(part.Split('=', 2)[0]).Equals("allstarrScope", StringComparison.OrdinalIgnoreCase)));
-            var endpoint = Request.Path.Value!.TrimStart('/') + "?" + query;
+            var parts = (Request.QueryString.Value ?? "").TrimStart('?').Split('&')
+                .Where(part => !Uri.UnescapeDataString(part.Split('=', 2)[0]).Equals("allstarrScope", StringComparison.OrdinalIgnoreCase)).ToArray();
+            if (await ReadLibraryScopeAsync(Request.Path.Value!.TrimStart('/'), parts,
+                    GetEffectiveSearchTerm(searchTerm, Request.QueryString.Value)!.Trim().Trim('"')) is { } narrowed) return narrowed;
+            var endpoint = Request.Path.Value!.TrimStart('/') + "?" + string.Join('&', parts);
             var (body, status) = await _proxyService.GetJsonAsync(endpoint, null, Request.Headers, HttpContext.RequestAborted);
             return HandleProxyResponse(body, status);
         }
@@ -298,6 +300,26 @@ public partial class JellyfinController
             externalSearchLimits.ArtistLimit);
 
         var context = HttpContext.RequireProtocolExecutionContext();
+        var nativeSearch = new JellyfinNativeMusicSearch(
+            cancellationToken => GetLocalSearchResultForCurrentRequest(
+                cleanQuery, includeItemTypes, artistSearch ? int.MaxValue : integratedFetchLimit, recursive, userId, cancellationToken),
+            (id, cancellationToken) => _proxyService.GetJsonAsync(
+                $"Users/{Uri.EscapeDataString(context.VerifiedBackendPrincipalId)}/Items/{Uri.EscapeDataString(id)}",
+                null, Request.Headers, cancellationToken), CaptureNativeQueryRows,
+            (ids, cancellationToken) => _proxyService.GetJsonAsync($"Users/{Uri.EscapeDataString(context.VerifiedBackendPrincipalId)}/Items",
+                new()
+                {
+                    ["Ids"] = string.Join(',', ids),
+                    ["Limit"] = ids.Count.ToString(CultureInfo.InvariantCulture),
+                    ["IncludeItemTypes"] = "Audio"
+                }, Request.Headers, cancellationToken),
+            // "cybersex" finds "Cyber Sex": the library's own spelling, when it differs, is searched as well.
+            HttpContext.RequestServices.GetService<ILibrarySpellings>() is { } spellings
+                ? async cancellationToken => await spellings.RespellAsync(context, cleanQuery, cancellationToken) is { } spelled
+                    ? await GetLocalSearchResultForCurrentRequest(spelled, includeItemTypes,
+                        artistSearch ? int.MaxValue : integratedFetchLimit, recursive, userId, cancellationToken)
+                    : (null, 200)
+                : null);
         var merged = await _musicSearch.SearchAsync(
             context,
             new MusicSearchRequest(
@@ -308,26 +330,7 @@ public partial class JellyfinController
                 _settings.EnableExternalPlaylists && externalSearchLimits.AlbumLimit > 0 && !artistSearch ? new MusicSearchWindow(integratedFetchLimit) : MusicSearchWindow.None,
                 IncludeProviders: !favoritesOnlyRequest,
                 HideLinkedProviderArtists: true),
-            new JellyfinNativeMusicSearch(
-                cancellationToken => GetLocalSearchResultForCurrentRequest(
-                    cleanQuery, includeItemTypes, artistSearch ? int.MaxValue : integratedFetchLimit, recursive, userId, cancellationToken),
-                (id, cancellationToken) => _proxyService.GetJsonAsync(
-                    $"Users/{Uri.EscapeDataString(context.VerifiedBackendPrincipalId)}/Items/{Uri.EscapeDataString(id)}",
-                    null, Request.Headers, cancellationToken), CaptureNativeQueryRows,
-                (ids, cancellationToken) => _proxyService.GetJsonAsync($"Users/{Uri.EscapeDataString(context.VerifiedBackendPrincipalId)}/Items",
-                    new()
-                    {
-                        ["Ids"] = string.Join(',', ids),
-                        ["Limit"] = ids.Count.ToString(CultureInfo.InvariantCulture),
-                        ["IncludeItemTypes"] = "Audio"
-                    }, Request.Headers, cancellationToken),
-                // "cybersex" finds "Cyber Sex": the library's own spelling, when it differs, is searched as well.
-                HttpContext.RequestServices.GetService<ILibrarySpellings>() is { } spellings
-                    ? async cancellationToken => await spellings.RespellAsync(context, cleanQuery, cancellationToken) is { } spelled
-                        ? await GetLocalSearchResultForCurrentRequest(spelled, includeItemTypes,
-                            artistSearch ? int.MaxValue : integratedFetchLimit, recursive, userId, cancellationToken)
-                        : (null, 200)
-                    : null),
+            await SearchedCopiesAsync(nativeSearch, HttpContext.RequestAborted),
             HttpContext.RequestAborted);
 
         await ArtistArtworkCache.PrepareSearchAsync(_cache, context,
@@ -573,7 +576,7 @@ public partial class JellyfinController
             endpoint,
             ToSafeQueryStringForLogs(queryParams));
 
-        return await _proxyService.GetJsonAsync(endpoint, queryParams, Request.Headers, cancellationToken);
+        return await ReadSearchedLibrariesAsync(endpoint, queryParams, "Items", cancellationToken);
     }
 
     [HttpGet("Search/Hints", Order = 1)]
@@ -623,7 +626,7 @@ public partial class JellyfinController
                 new MusicSearchWindow(externalSearchLimits.ArtistLimit, Take: externalSearchLimits.ArtistLimit),
                 MusicSearchWindow.None,
                 HideLinkedProviderArtists: true),
-            native,
+            await SearchedCopiesAsync(native, HttpContext.RequestAborted),
             HttpContext.RequestAborted);
 
         await ArtistArtworkCache.PrepareSearchAsync(_cache, context,
@@ -763,7 +766,7 @@ public partial class JellyfinController
             endpoint,
             ToSafeQueryStringForLogs(queryParams));
 
-        return await _proxyService.GetJsonAsync(endpoint, queryParams, Request.Headers);
+        return await ReadSearchedLibrariesAsync(endpoint, queryParams, "SearchHints", default);
     }
 
     private static string ToSafeQueryStringForLogs(IReadOnlyDictionary<string, string> queryParams)
