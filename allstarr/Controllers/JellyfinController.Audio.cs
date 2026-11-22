@@ -59,6 +59,8 @@ public partial class JellyfinController
             return BadRequest(new { error = "Missing item ID" });
         }
 
+        NoteAudioRequest(itemId, string.IsNullOrEmpty(container) ? "stream" : "stream." + container);
+
         var (isExternal, provider, externalId) = _localLibraryService.ParseSongId(itemId);
         var query = Request.QueryString.Value ?? "";
         if (isExternal && await ResolvePlayableNativeTrackAsync(itemId) is { } nativeId)
@@ -79,6 +81,35 @@ public partial class JellyfinController
 
         var delivery = ProviderAudioDeliveryRequests.Jellyfin(Request.Query, container: container);
         return await StreamExternalContent(provider!, externalId!, itemId, delivery: delivery);
+    }
+
+    /// <summary>
+    /// Notes each audio request once it has ended: what the app asked for and how much of it went out. On a poor
+    /// connection the questions are what quality the app was pulling, whether it came back for the rest, and whether it
+    /// left early; nothing else records that for a song played through these routes.
+    /// </summary>
+    private void NoteAudioRequest(string itemId, string shape)
+    {
+        var query = Request.Query;
+        var device = (HttpContext.Items[ProtocolExecutionContextFactory.HttpContextItemKey] as ProtocolExecutionContext)?.Client.DeviceId ??
+            query["DeviceId"].FirstOrDefault();
+        var asked = string.Equals(query["static"], "true", StringComparison.OrdinalIgnoreCase) ? "as it is"
+            : $"{query["AudioCodec"].FirstOrDefault() ?? "any codec"} at {query["AudioBitRate"].FirstOrDefault() ?? query["MaxStreamingBitrate"].FirstOrDefault() ?? "any"} bit/s";
+        var from = long.TryParse(query["StartTimeTicks"], out var ticks) ? ticks / TimeSpan.TicksPerSecond : 0;
+        var range = Request.Headers.Range.ToString();
+        var http = HttpContext;
+        var started = System.Diagnostics.Stopwatch.GetTimestamp();
+        var body = new CountedResponseBody(http.Response.Body);
+        http.Response.Body = body;
+        http.Response.OnCompleted(() =>
+        {
+            _logger.LogInformation(
+                "Audio request ended: {Method} {Shape} of {ItemId} for device {DeviceId}, {Asked}, from {StartSeconds} s, range {Range}; answered {StatusCode}, sent {SentBytes} of {LengthBytes} bytes, client left {ClientLeft}, {ElapsedMs} ms",
+                http.Request.Method, shape, itemId, device ?? "unknown", asked, from, range.Length == 0 ? "none" : range.Length > 80 ? range[..80] : range,
+                http.Response.StatusCode, body.Sent, http.Response.ContentLength, http.RequestAborted.IsCancellationRequested,
+                (long)System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds);
+            return Task.CompletedTask;
+        });
     }
 
     private async Task<IActionResult> ProxyJellyfinStream(string path, string itemId)
@@ -256,6 +287,8 @@ public partial class JellyfinController
         {
             return BadRequest(new { error = "Missing item ID" });
         }
+
+        NoteAudioRequest(itemId, "universal");
 
         var (isExternal, provider, externalId) = _localLibraryService.ParseSongId(itemId);
         var query = Request.QueryString.Value ?? "";
