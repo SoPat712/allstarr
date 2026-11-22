@@ -26,6 +26,7 @@ public sealed partial class PlaylistOrchestrationIntegrationTests
         await using (var db = await _factory.CreateDbContextAsync())
         {
             var link = await db.PlaylistLinks.SingleAsync();
+            link.DestinationMode = PlaylistDestinationMode.New;
             link.SyncName = syncMetadata;
             link.SyncDescription = syncMetadata;
             link.SyncArtwork = syncMetadata;

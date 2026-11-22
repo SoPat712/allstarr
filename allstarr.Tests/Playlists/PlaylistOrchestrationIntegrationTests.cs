@@ -212,6 +212,8 @@ public sealed partial class PlaylistOrchestrationIntegrationTests(ITestOutputHel
         {
             var link = await db.PlaylistLinks.SingleAsync();
             link.TargetPlaylistId = "manual-target";
+            // A playlist made for the link: one the listener already had never takes the source's name.
+            link.DestinationMode = PlaylistDestinationMode.New;
             link.SyncName = syncName;
             link.SyncDescription = syncDescription;
             link.SyncArtwork = false;

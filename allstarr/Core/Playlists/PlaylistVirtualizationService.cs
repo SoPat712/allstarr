@@ -362,6 +362,18 @@ public sealed class PlaylistVirtualizationService(
             link.OwnerUserId, link.Id, cancellationToken, actor.EffectiveUserId, includeHistory: false);
         if (projection == null) return null;
         var selectedMode = projectionMode ?? link.ProjectionMode;
+        // A playlist the listener already had is still theirs: it keeps the name they gave it, and the songs they put
+        // in it themselves stay in view after the source's songs.
+        var own = selectedMode == PlaylistProjectionMode.Resolved && link.DestinationMode == PlaylistDestinationMode.Existing &&
+            link.PreserveManualEntries && !string.IsNullOrWhiteSpace(link.TargetPlaylistId) &&
+            !allstarr.Core.Music.PersonalMixService.IsExternalLink(link);
+        if (own && authorizedTarget == null && targets != null)
+        {
+            var mine = await targets.Resolve(link.TargetProtocol).ReadAsync(
+                new BackendPlaylistTargetContext(link.TargetBackendInstanceId, context.VerifiedBackendPrincipalId,
+                    link.OwnerUserId == actor.EffectiveUserId ? link.TargetCredentialReferenceId?.ToString() : null), link.TargetPlaylistId!, cancellationToken);
+            if (mine.IsSuccess) authorizedTarget = mine.Value;
+        }
         var snapshot = await db.PlaylistSourceSnapshots.AsNoTracking()
             .SingleAsync(item => item.Id == projection.SnapshotId, cancellationToken);
         var targetSnapshot = selectedMode == PlaylistProjectionMode.Target ? authorizedTarget : null;
@@ -423,7 +435,15 @@ public sealed class PlaylistVirtualizationService(
             resolvedTracks,
             targetTracks);
         if (tracks == null) return null;
-        var name = targetSnapshot == null ? projection.Name : targetSnapshot.Name;
+        if (own && authorizedTarget != null)
+        {
+            static string Key(string id) => id.Replace("-", "", StringComparison.Ordinal).ToLowerInvariant();
+            var shown = tracks.Where(item => item.RouteKind == TrackRouteKind.Local).Select(item => Key(item.BackendItemId)).ToHashSet(StringComparer.Ordinal);
+            var added = ToTargetVirtualTracks(authorizedTarget).Where(item => shown.Add(Key(item.BackendItemId)))
+                .Select((item, index) => item with { SourcePosition = tracks.Count + index }).ToArray();
+            if (added.Length > 0) tracks = tracks.Concat(added).ToArray();
+        }
+        var name = targetSnapshot != null ? targetSnapshot.Name : own && authorizedTarget != null ? authorizedTarget.Name : projection.Name;
         var description = targetSnapshot == null ? projection.Description : targetSnapshot.Description;
         var artwork = targetSnapshot == null
             ? projection.ArtworkReferenceKey
