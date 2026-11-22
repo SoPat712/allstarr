@@ -21,6 +21,7 @@ public sealed record BackupArtifact(
 }
 
 public sealed class BackupVerificationException(string message) : InvalidOperationException(message);
+public sealed class BackupInUseException() : InvalidOperationException("The backup is being downloaded.");
 
 public sealed partial class DurableBackupService(
     IDbContextFactory<AllstarrDbContext> contextFactory,

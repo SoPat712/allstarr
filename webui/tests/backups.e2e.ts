@@ -16,7 +16,7 @@ async function mockBackups(page: Page, administrator = true) {
   const writes: Array<Record<string, unknown>> = [];
   const state = {
     storageReads: 0, creations: 0, mode: "idle", polls: 0, restorePending: false, ready: true, conflict: false,
-    directoryState: "ready", executionFailure: false,
+    directoryState: "ready", executionFailure: false, removeFailure: false,
     policy: { enabled: true, timeUtc: "03:00", timeZone: "UTC", directory: "", dailyRetentionCount: 14,
       weeklyRetentionCount: 8, manualRetentionCount: 10, revision: "first" },
   };
@@ -37,6 +37,12 @@ async function mockBackups(page: Page, administrator = true) {
       if (state.conflict) return reply(route, { error: "backup_configuration_changed", message: "Backup settings changed. Reload them before saving." }, 409);
       state.policy = { ...state.policy, ...input, revision: "second" };
       return reply(route, { backupPolicy: state.policy, backupStatus: status() });
+    }
+    if (path === `/api/admin/storage/backups/${artifact.id}` && route.request().method() === "DELETE") {
+      writes.push({ removed: artifact.id });
+      if (state.removeFailure) return reply(route, { error: "backup_unavailable", message: "The backup could not be removed. Check the backup folder's permissions." }, 503);
+      state.mode = "idle";
+      return route.fulfill({ status: 204 });
     }
     if (path === "/api/admin/storage/backups") {
       state.creations++;
@@ -224,6 +230,36 @@ test("An accepted job can fail without appearing as a completed backup", async (
   await expect(page.locator(`tr[title="${artifact.fileName}"]`)).toHaveCount(0);
   await expect(page.getByText("Backup completed.", { exact: true })).toHaveCount(0);
   await expect(run).toBeEnabled();
+});
+
+for (const width of [1280, 390]) test(`A saved backup's menu opens as a menu and removes the backup after a confirmation at ${width}`, async ({ page }) => {
+  await page.setViewportSize({ width, height: 900 });
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  const mock = await mockBackups(page);
+  mock.state.mode = "complete";
+  await page.goto("/#/settings/backups");
+  await page.getByRole("button", { name: /^More actions for / }).click();
+  const menu = page.getByRole("menu");
+  await expect(menu.getByRole("menuitem")).toHaveText(["Restore…", "Remove…"]);
+  // The menu is a raised surface with room around its items, not loose text under the button.
+  const surface = await menu.evaluate(element => { const style = getComputedStyle(element); return { background: style.backgroundColor, padding: parseFloat(style.paddingTop), width: element.getBoundingClientRect().width }; });
+  expect(surface.background).not.toBe("rgba(0, 0, 0, 0)");
+  expect(surface.padding).toBeGreaterThan(0);
+  expect(surface.width).toBeGreaterThanOrEqual(120);
+  expect((await menu.getByRole("menuitem", { name: "Remove…" }).boundingBox())!.height).toBeGreaterThanOrEqual(width < 700 ? 44 : 32);
+  await page.screenshot({ path: `test-results/backup-menu-${width}.png` });
+  await menu.getByRole("menuitem", { name: "Remove…" }).click();
+  const confirm = page.getByRole("alertdialog");
+  await expect(confirm).toContainText("can't be brought back");
+  await page.screenshot({ path: `test-results/backup-remove-${width}.png` });
+  mock.state.removeFailure = true;
+  await confirm.getByRole("button", { name: "Remove backup", exact: true }).click();
+  await expect(confirm.getByRole("alert")).toContainText("could not be removed");
+  mock.state.removeFailure = false;
+  await confirm.getByRole("button", { name: "Remove backup", exact: true }).click();
+  await expect(confirm).toHaveCount(0);
+  await expect(page.getByText("No backups yet")).toBeVisible();
+  expect(mock.writes.filter(write => "removed" in write)).toHaveLength(2);
 });
 
 for (const width of [1280, 390]) test(`Unknown backup facts stay neutral and changed archives cannot be downloaded at ${width}`, async ({ page }) => {

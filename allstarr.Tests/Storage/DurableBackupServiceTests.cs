@@ -178,6 +178,35 @@ public sealed partial class DurableBackupServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Removal_TakesTheChosenBackupAndLeavesTheOthers()
+    {
+        var service = Service();
+        var first = await service.CreateAsync();
+        var second = await service.CreateAsync();
+        var unrelated = Path.Combine(_options.BackupDirectory, "keep.zip");
+        await File.WriteAllTextAsync(unrelated, "operator-owned");
+
+        // A backup being downloaded stays until the download ends.
+        var download = await service.OpenVerifiedAsync(first.Id);
+        await Assert.ThrowsAsync<BackupInUseException>(() => service.RemoveAsync(first.Id));
+        await download.Stream.DisposeAsync();
+        await service.RemoveAsync(first.Id);
+
+        Assert.Equal(new[] { second.Id }, (await service.ListAsync()).Select(item => item.Id));
+        Assert.False(File.Exists(Path.Combine(_options.BackupDirectory, first.FileName)));
+        Assert.True(File.Exists(Path.Combine(_options.BackupDirectory, second.FileName)));
+        Assert.True(File.Exists(unrelated));
+        await Assert.ThrowsAsync<FileNotFoundException>(() => service.RemoveAsync(first.Id));
+        await Assert.ThrowsAsync<FileNotFoundException>(() => service.RemoveAsync(Guid.NewGuid()));
+
+        // One whose file changed since it was made is of no use, and goes too.
+        await RewriteEntryAsync(second, "allstarr.db", Encoding.UTF8.GetBytes("damaged"));
+        await service.RemoveAsync(second.Id);
+        Assert.Empty(await service.ListAsync());
+        Assert.Equal(new[] { unrelated }, Directory.GetFiles(_options.BackupDirectory));
+    }
+
+    [Fact]
     public async Task Retention_PreservesOwnedArchiveIfItsPayloadIsDamaged()
     {
         _options.BackupRetentionCount = 1;

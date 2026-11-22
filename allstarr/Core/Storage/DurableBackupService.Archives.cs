@@ -201,6 +201,36 @@ public sealed partial class DurableBackupService
         return artifacts.Values.OrderByDescending(item => item.CreatedAt).ThenByDescending(item => item.Id).ToArray();
     }
 
+    /// <summary>
+    /// Removes one listed backup because an administrator asked for it: its file, and its record when Allstarr made it.
+    /// Unlike rotation this also takes a file that changed since it was made, which is of no use as a backup.
+    /// </summary>
+    public async Task RemoveAsync(Guid id, CancellationToken cancellationToken = default)
+    {
+        await _gate.WaitAsync(cancellationToken);
+        try
+        {
+            lock (pinGate) if (readers.GetValueOrDefault(id) != 0) throw new BackupInUseException();
+            await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
+            var artifact = (await ListAsync(cancellationToken)).SingleOrDefault(item => item.Id == id)
+                ?? throw new FileNotFoundException("The backup is unavailable.");
+            var row = await db.BackupArtifacts.SingleOrDefaultAsync(item => item.Id == id && item.RemovedAt == null, cancellationToken);
+            var directories = row != null ? new[] { row.Directory } : new[] { options.BackupDirectory, ResolveDirectory(await ReadPolicyAsync(db, cancellationToken)) };
+            foreach (var directory in directories.Distinct(StringComparer.Ordinal))
+            {
+                var path = Path.Combine(directory, artifact.FileName);
+                if (!File.Exists(path)) continue;
+                RejectLinkedPath(path);
+                File.Delete(path);
+            }
+            if (row == null) return;
+            row.RemovedAt = backupClock.UtcNow;
+            row.Revision++;
+            await db.SaveChangesAsync(cancellationToken);
+        }
+        finally { _gate.Release(); }
+    }
+
     public async Task<(Stream Stream, string FileName)> OpenVerifiedAsync(Guid id, CancellationToken cancellationToken = default)
     {
         await _gate.WaitAsync(cancellationToken);

@@ -113,6 +113,22 @@ public sealed class StorageController(DurableStorageState storageState, DurableB
         }
     }
 
+    [HttpDelete("backups/{id:guid}")]
+    public async Task<IActionResult> RemoveBackup(Guid id, CancellationToken cancellationToken = default)
+    {
+        if (RequireAdministrator() is { } error) return error;
+        try
+        {
+            await backupService.RemoveAsync(id, cancellationToken);
+            return NoContent();
+        }
+        catch (FileNotFoundException) { return NotFound(new { error = "backup_not_found" }); }
+        catch (BackupInUseException)
+        { return Conflict(new { error = "backup_in_use", message = "This backup is being downloaded. Try again when the download ends." }); }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or BackupVerificationException or SqliteException)
+        { return StatusCode(StatusCodes.Status503ServiceUnavailable, new { error = "backup_unavailable", message = "The backup could not be removed. Check the backup folder's permissions." }); }
+    }
+
     [HttpPost("restore")]
     [RequestSizeLimit(DurableBackupService.MaximumArchiveBytes + 64 * 1024)]
     [RequestFormLimits(MultipartBodyLengthLimit = DurableBackupService.MaximumArchiveBytes)]

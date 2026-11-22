@@ -2072,6 +2072,7 @@ export const settings = {
     body.append("backup", file);
     return json<{ restartRequired: true; message: string }>("/api/admin/storage/restore", { method: "POST", body });
   },
+  removeBackup: (id: string) => json<void>(`/api/admin/storage/backups/${encodeURIComponent(id)}`, { method: "DELETE" }),
   backupDownloadUrl: (id: string) =>
     adminUrl(`/api/admin/storage/backups/${encodeURIComponent(id)}/download`),
   cache: () => json<CacheDiagnostics>("/api/admin/cache"),

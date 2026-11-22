@@ -8,6 +8,7 @@
   import { toast } from "$lib/toasts";
   import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
   import FilePicker from "$lib/components/FilePicker.svelte";
+  import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
   import { Button, buttonVariants } from "$lib/components/ui/button";
   import { Switch } from "$lib/components/ui/switch";
   import { Checkbox } from "$lib/components/ui/checkbox";
@@ -24,6 +25,19 @@
   let form = $state<HTMLFormElement>();
   let saveTimer: ReturnType<typeof setTimeout>;
   function scheduleSave() { clearTimeout(saveTimer); saveTimer = setTimeout(() => { if (form?.checkValidity()) void save(); }, 150); }
+  let removing = $state<StorageBackup | null>(null), removeError = $state("");
+  async function remove() {
+    const backup = removing;
+    if (!backup || action) return;
+    action = "remove"; removeError = "";
+    try {
+      await settings.removeBackup(backup.id);
+      removing = null;
+      toast.success("Backup removed.");
+      await refresh();
+    } catch (cause) { removeError = message(cause, "The backup could not be removed."); }
+    finally { action = ""; }
+  }
   function openRestore(backup: StorageBackup | null = null) { selectedBackup = backup; restoreText = ""; backupFirst = true; restoreError = ""; restoreOpen = true; }
 
   let { administrator }: { administrator: boolean } = $props();
@@ -203,7 +217,7 @@
         {#if !ready}<p class="settings-impact" role="status">The backup list is unavailable until durable storage is ready.</p>
         {:else if data.backups.length}
           <table class="settings-table"><thead><tr><th>Made</th><th>Size</th><th>State</th><th></th></tr></thead><tbody>
-            {#each data.backups as backup (backup.id)}<tr title={backup.fileName}><td>{date(backup.createdAt)}<small>{backup.origin === "scheduled" ? "Scheduled" : backup.origin === "manual" ? "Manual" : "Existing backup"}{backup.retentionBuckets?.length ? ` · ${backup.retentionBuckets.join(", ")}` : ""}{#if backup.bytes != null}<span class="phone-backup-size">{size(backup.bytes)}</span>{/if}</small></td><td class="number">{size(backup.bytes)}</td><td><StatePill tone={backup.status === "verified" ? "ok" : backup.status === "changed" || backup.status === "invalid" ? "warn" : "neutral"} text={backup.status === "verified" ? "Verified" : backup.status === "changed" ? "File changed" : backup.status === "invalid" ? "Verification failed" : "Verify on download"} /></td><td><div class="backup-actions"><Button variant="text" size="sm" disabled={backup.status === "changed" || backup.status === "invalid"} href={settings.backupDownloadUrl(backup.id)} download={backup.fileName}>Download</Button><DropdownMenu.Root><DropdownMenu.Trigger class="icon-button" aria-label={`More actions for ${date(backup.createdAt)}`}><MoreHorizontal size={18} /></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content preventScroll={false} class="menu-content"><DropdownMenu.Item class="menu-item settings-danger" disabled={Boolean(action) || pending || active || backup.status === "changed" || backup.status === "invalid"} onSelect={() => openRestore(backup)}>Restore…</DropdownMenu.Item></DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root></div></td></tr>{/each}
+            {#each data.backups as backup (backup.id)}<tr title={backup.fileName}><td>{date(backup.createdAt)}<small>{backup.origin === "scheduled" ? "Scheduled" : backup.origin === "manual" ? "Manual" : "Existing backup"}{backup.retentionBuckets?.length ? ` · ${backup.retentionBuckets.join(", ")}` : ""}{#if backup.bytes != null}<span class="phone-backup-size">{size(backup.bytes)}</span>{/if}</small></td><td class="number">{size(backup.bytes)}</td><td><StatePill tone={backup.status === "verified" ? "ok" : backup.status === "changed" || backup.status === "invalid" ? "warn" : "neutral"} text={backup.status === "verified" ? "Verified" : backup.status === "changed" ? "File changed" : backup.status === "invalid" ? "Verification failed" : "Verify on download"} /></td><td><div class="backup-actions"><Button variant="text" size="sm" disabled={backup.status === "changed" || backup.status === "invalid"} href={settings.backupDownloadUrl(backup.id)} download={backup.fileName}>Download</Button><DropdownMenu.Root><DropdownMenu.Trigger class="icon-button" aria-label={`More actions for ${date(backup.createdAt)}`}><MoreHorizontal size={18} /></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content preventScroll={false} align="end" class="bits-menu"><DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action) || pending || active || backup.status === "changed" || backup.status === "invalid"} onSelect={() => openRestore(backup)}>Restore…</DropdownMenu.Item><DropdownMenu.Item class="bits-menu-item danger-item" disabled={Boolean(action) || active} onSelect={() => { removeError = ""; removing = backup; }}>Remove…</DropdownMenu.Item></DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root></div></td></tr>{/each}
           </tbody></table>
         {:else}<EmptyState title="No backups yet" description="Back up now to save your settings, accounts and history.">{#snippet icon()}<Archive size={24} />{/snippet}</EmptyState>{/if}
         <footer class="restore-upload" class:has-file={Boolean(restoreFile)}><div class="settings-row"><div><strong>Restore from a file</strong> <small>Choose a backup ZIP. Saved sign-ins are included; audio and caches need separate backups.</small></div>{#key pickerRevision}<FilePicker label="Backup ZIP file" accept=".zip,application/zip" buttonLabel="Choose a backup ZIP" disabled={Boolean(action) || pending || active} onselect={files => { restoreFile = files[0] ?? null; if (restoreFile) openRestore(); }} />{/key}</div></footer>
@@ -223,6 +237,10 @@
       </form>
     </Dialog.Content></Dialog.Portal>
   </Dialog.Root>
+  <ConfirmDialog bind:open={() => Boolean(removing), value => { if (!value && action !== "remove") removing = null; }} title={removing ? `Remove the ${date(removing.createdAt)} backup?` : "Remove this backup?"}
+    description={removing ? `${removing.bytes != null ? `${size(removing.bytes)}. ` : ""}Its file is deleted from the backup folder and can't be brought back.` : ""}
+    safe="Your other backups and everything in Allstarr stay as they are." confirmLabel={action === "remove" ? "Removing…" : "Remove backup"}
+    disabled={action === "remove"} closeOnConfirm={false} error={removeError} onConfirm={remove} />
 {/if}
 <style>
   .phone-backup-size { display: none; }
