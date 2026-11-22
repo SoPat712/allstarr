@@ -647,7 +647,8 @@ public sealed partial class LibraryPromotionTests
 
     private LibraryPromotionService BatchService(IPromotionCatalog catalog, IPromotionAcquisition acquisition, IManagedMetadataWriter? writer = null,
         IProtocolLyricsResolver? lyricsResolver = null, ITrackIdentityService? identityService = null, PromotionRoots? promotionRoots = null,
-        allstarr.Core.ClientEvents.IClientEventPublisher? clientEvents = null, BackendLibraryCatalogScannerResolver? catalogScanners = null)
+        allstarr.Core.ClientEvents.IClientEventPublisher? clientEvents = null, BackendLibraryCatalogScannerResolver? catalogScanners = null,
+        TimeProvider? clock = null)
     {
         var options = new ProviderDownloadWorkspaceOptions { RootPath = Path.Combine(directory, "workspaces") };
         var resolver = new ProviderDownloadArtifactResolver(new EfProviderDownloadArtifactStore(factory), options);
@@ -656,6 +657,6 @@ public sealed partial class LibraryPromotionTests
         return new(factory, queue, promotionRoots ?? roots, resolver, options, services.GetRequiredService<IServiceScopeFactory>(),
             writer ?? new TagLibManagedMetadataWriter(new TagLibManagedTagFileMutator(), new PhysicalManagedFileOperations()), new allstarr.Core.Playback.AudioQualityAnalyzer(cache), new TestBackendLibraryAccess(factory, "music"),
             identities: identityService, promotionCatalog: catalog, promotionAcquisition: acquisition, lyrics: lyricsResolver, events: clientEvents,
-            scanners: catalogScanners);
+            scanners: catalogScanners, time: clock);
     }
 }

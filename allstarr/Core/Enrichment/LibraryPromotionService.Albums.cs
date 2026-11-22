@@ -203,7 +203,11 @@ public sealed partial class LibraryPromotionService
                 RequestKey = request.RequestKey,
                 RequestJson = json,
                 RootPath = root.Path,
-                PlanJson = JsonSerializer.Serialize(new PromotionAlbumPlan(profile, tracks)),
+                PlanJson = JsonSerializer.Serialize(new PromotionAlbumPlan(profile, tracks)
+                {
+                    MusicBrainzUnansweredAt = profile.MusicBrainzTags && PromotionCatalog.MusicBrainzUnanswered(songs)
+                        ? (time ?? TimeProvider.System).GetUtcNow() : null
+                }),
                 CreatedAt = DateTimeOffset.UtcNow,
                 Step = "Acquire",
                 Reason = "Waiting to acquire the release tracks.",
@@ -440,9 +444,14 @@ public sealed partial class LibraryPromotionService
                     }, Persist, token, lyricsStep);
                     await Step(track, lyricsStep.Name, lyricsStep.Outcome, lyricsStep.Reason);
                 }
-                if (!track.Steps.Any(item => item.Name == "Tags"))
+                if (!track.Steps.Any(item => item.Name == "Tags" && item.Outcome != "Running"))
                 {
                     track.Step = "Tags";
+                    if (await AwaitMusicBrainzAsync(access.Context, request, album, Persist, token))
+                    {
+                        await Step(track, "Tags", "Running", MusicBrainzWaitReason);
+                        continue;
+                    }
                     var tags = TrackTags(track, album.Profile);
                     byte[]? coverBytes = null;
                     if (artwork != null && album.Profile.CoverMode != "none" && track.Song.ExternalProvider != null && track.Song.ExternalId != null)
@@ -571,10 +580,14 @@ public sealed partial class LibraryPromotionService
         run.ManagedFileId = album.Tracks.FirstOrDefault(item => item.ManagedFileId != null)?.ManagedFileId;
         if (album.Tracks.Any(item => item.Outcome == "Queued"))
         {
+            var naming = album.MusicBrainzUnansweredAt != null &&
+                album.Tracks.Where(item => item.Outcome == "Queued").All(item => item.Step == "Tags");
             run.Outcome = "Running";
-            run.Reason = "Ready songs were placed; waiting for the remaining managed downloads.";
+            if (naming) run.Step = "Tags";
+            run.Reason = naming ? MusicBrainzWaitReason : "Ready songs were placed; waiting for the remaining managed downloads.";
             await Persist();
-            return DurableJobCompletion.Defer("promotion_download_pending", run.Reason, TimeSpan.FromSeconds(10));
+            return naming ? DurableJobCompletion.Defer("promotion_musicbrainz_pending", run.Reason, MusicBrainzAskEvery)
+                : DurableJobCompletion.Defer("promotion_download_pending", run.Reason, TimeSpan.FromSeconds(10));
         }
         if (album.Tracks.Any(item => item.Outcome == "Needs review"))
         {
@@ -589,6 +602,33 @@ public sealed partial class LibraryPromotionService
         await Persist();
         Cleanup(run.Id);
         return DurableJobCompletion.Success();
+    }
+
+    // MusicBrainz did not answer when the add started. It is asked again a few times over about ten minutes before the
+    // service's own names are written; an answer that it has no such release ends the wait at once. True while waiting.
+    private const string MusicBrainzWaitReason = "MusicBrainz did not answer; asking it again before the tags are written.";
+    internal static readonly TimeSpan MusicBrainzWait = TimeSpan.FromMinutes(10), MusicBrainzAskEvery = TimeSpan.FromMinutes(3);
+
+    private async Task<bool> AwaitMusicBrainzAsync(ProtocolExecutionContext context, PromoteSongRequest request, PromotionAlbumPlan album,
+        Func<Task> persist, CancellationToken token)
+    {
+        if (album.MusicBrainzUnansweredAt is not { } since || promotionCatalog == null) return false;
+        var clock = time ?? TimeProvider.System;
+        if (album.MusicBrainzAskedAt is { } asked && clock.GetUtcNow() - asked < MusicBrainzAskEvery && clock.GetUtcNow() - since < MusicBrainzWait)
+            return true;
+        IReadOnlyList<Song>? named = null;
+        try { named = await promotionCatalog.ResolveAsync(context, request.RecordingId, Unit(request, album.Profile), token); }
+        catch (Exception error) when (error is PromotionException or InvalidOperationException or KeyNotFoundException or HttpRequestException) { }
+        album.MusicBrainzAskedAt = clock.GetUtcNow();
+        if (named != null && !PromotionCatalog.MusicBrainzUnanswered(named))
+        {
+            foreach (var track in album.Tracks)
+                if (named.FirstOrDefault(song => song.CanonicalRecordingId == track.RecordingId) is { } song) PromotionCatalog.TakeNames(track.Song, song);
+            album.MusicBrainzUnansweredAt = null;
+        }
+        else if (clock.GetUtcNow() - since >= MusicBrainzWait) album.MusicBrainzUnansweredAt = null;
+        await persist();
+        return album.MusicBrainzUnansweredAt != null;
     }
 
     private string TrackWorkspace(Guid runId, PromotionTrack track) => Path.Combine(Workspace(runId), $"{track.RecordingId:N}-{track.SourceAttempt}");

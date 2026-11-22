@@ -19,7 +19,40 @@ public interface IPromotionCatalog
 public sealed class PromotionCatalog(IDbContextFactory<AllstarrDbContext> factory, ITrackIdentityService identities,
     IProtocolProviderGateway providers, IMusicBrainzCatalogClient musicBrainz) : IPromotionCatalog
 {
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<Song, object> Unanswered = new();
+
+    // Songs named while MusicBrainz did not answer, as opposed to answering that it has no such release, so the add
+    // can ask it again before the tags are written.
+    internal static bool MusicBrainzUnanswered(IEnumerable<Song> songs) => songs.Any(song => Unanswered.TryGetValue(song, out _));
+
+    // The names and identities MusicBrainz gave a song asked about again, onto the song the add holds.
+    internal static void TakeNames(Song target, Song named)
+    {
+        if (!named.ProviderIds.ContainsKey("musicbrainz_releaseid")) return;
+        target.Title = named.Title;
+        target.Album = named.Album;
+        target.Track = named.Track;
+        target.TotalTracks = named.TotalTracks;
+        target.DiscNumber = named.DiscNumber;
+        target.TotalDiscs = named.TotalDiscs;
+        target.ReleaseDate = named.ReleaseDate;
+        target.Year = named.Year;
+        foreach (var pair in named.ProviderIds) target.ProviderIds[pair.Key] = pair.Value;
+    }
+
     public async Task<IReadOnlyList<Song>> ResolveAsync(ProtocolExecutionContext context, Guid recordingId, string unit, CancellationToken token)
+    {
+        var unanswered = new System.Runtime.CompilerServices.StrongBox<bool>();
+        var songs = await ResolveCoreAsync(context, recordingId, unit, unanswered, token);
+        // A service may hand back the same song object again, so a later answer clears what an earlier silence marked.
+        foreach (var song in songs)
+            if (unanswered.Value) Unanswered.AddOrUpdate(song, unanswered);
+            else Unanswered.Remove(song);
+        return songs;
+    }
+
+    private async Task<IReadOnlyList<Song>> ResolveCoreAsync(ProtocolExecutionContext context, Guid recordingId, string unit,
+        System.Runtime.CompilerServices.StrongBox<bool> unanswered, CancellationToken token)
     {
         var recording = await identities.ResolveRecordingAsync(context.RequireActor(), recordingId.ToString("D"), token)
             ?? throw new KeyNotFoundException("The recording is unavailable.");
@@ -71,7 +104,7 @@ public sealed class PromotionCatalog(IDbContextFactory<AllstarrDbContext> factor
         // Without a release named for the song, its ISRC names the recording on MusicBrainz, and the one release of that
         // recording that agrees with the album the service gave is tagged from. The songs stay the service's own, with
         // the ids that play them; they take the release's names, places and identities.
-        var found = releaseId == null ? await FindReleaseAsync(song, providerAlbum, token) : null;
+        var found = releaseId == null ? await FindReleaseAsync(song, providerAlbum, unanswered, token) : null;
         if (Guid.TryParse(releaseId, out var parsed))
         {
             var release = await musicBrainz.LookupReleaseByMbidAsync(parsed.ToString("D"), token)
@@ -176,7 +209,8 @@ public sealed class PromotionCatalog(IDbContextFactory<AllstarrDbContext> factor
 
     private sealed record FoundRelease(MusicBrainzRelease Release, string RecordingId, MusicBrainzMedium Disc, MusicBrainzReleaseTrack Track);
 
-    private async Task<FoundRelease?> FindReleaseAsync(Song song, Album? providerAlbum, CancellationToken token)
+    private async Task<FoundRelease?> FindReleaseAsync(Song song, Album? providerAlbum, System.Runtime.CompilerServices.StrongBox<bool> unanswered,
+        CancellationToken token)
     {
         var album = FuzzyMatcher.NormalizeAlbumForMatching(song.Album);
         if (album.Length == 0) return null;
@@ -201,10 +235,12 @@ public sealed class PromotionCatalog(IDbContextFactory<AllstarrDbContext> factor
             var byName = (await NamedRecordingsAsync(song, limited.Token)).Where(recording => byCode.All(tried => tried.Id != recording.Id)).ToArray();
             return await ReleaseOfAsync(song, byName, album, total, limited.Token);
         }
-        // MusicBrainz not answering, or not in time, leaves the service's own tags; it never stops an add.
+        // MusicBrainz not answering, or not in time, leaves the service's own tags; it never stops an add. Busy, down or
+        // slow is told apart from an answer it could not read, so the add can ask again later.
         catch (Exception error) when (error is MusicBrainzLookupException or HttpRequestException or System.Text.Json.JsonException ||
             error is OperationCanceledException && !token.IsCancellationRequested)
         {
+            unanswered.Value = error is not System.Text.Json.JsonException && (error is not MusicBrainzLookupException lookup || lookup.Retryable);
         }
         return null;
     }

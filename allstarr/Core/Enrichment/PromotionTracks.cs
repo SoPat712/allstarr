@@ -44,4 +44,9 @@ internal sealed record PromotionAlbumPlan(PromotionProfile Profile, List<Promoti
     public Guid? RefreshJobId { get; set; }
     public bool ReplayGainComplete { get; set; }
     public Dictionary<Guid, Dictionary<string, string>>? ReplayGainTags { get; set; }
+    /// <summary>When MusicBrainz did not answer as the add started; cleared once it answers or the wait ends.</summary>
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public DateTimeOffset? MusicBrainzUnansweredAt { get; set; }
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public DateTimeOffset? MusicBrainzAskedAt { get; set; }
 }
