@@ -352,9 +352,10 @@ internal sealed class FieldScoreRule : ITrackMatchRule
         var candidateTitle = FuzzyMatcher.NormalizeTitleForMatching(candidate.Title, candidate.Artist, source.Artist);
         var title = FuzzyMatcher.CalculateTitleSimilarity(sourceTitle, candidateTitle, source.Title, candidate.Title) / 100d;
         var seriesContext = source.Title + " | " + candidate.Title;
-        var artist = TrackMatchSignals.ArtistSimilarity(
-            TrackMatchSignals.ArtistsWithTitleCredits(FuzzyMatcher.ArtistWithoutSeriesCredits(seriesContext, source.Artist), source.Title),
-            TrackMatchSignals.ArtistsWithTitleCredits(FuzzyMatcher.ArtistWithoutSeriesCredits(seriesContext, candidate.Artist), candidate.Title));
+        var (sourceArtist, candidateArtist) = (FuzzyMatcher.ArtistWithoutSeriesCredits(seriesContext, source.Artist),
+            FuzzyMatcher.ArtistWithoutSeriesCredits(seriesContext, candidate.Artist));
+        var artist = Math.Max(TrackMatchSignals.ArtistSimilarity(sourceArtist, candidateArtist), TrackMatchSignals.ArtistSimilarity(
+            TrackMatchSignals.ArtistsWithTitleCredits(sourceArtist, source.Title), TrackMatchSignals.ArtistsWithTitleCredits(candidateArtist, candidate.Title)));
         var album = TrackMatchSignals.ComparableSimilarity(source.Album, candidate.Album);
         var albumArtist = TrackMatchSignals.ComparableSimilarity(source.AlbumArtist, candidate.AlbumArtist);
         var duration = source.DurationMilliseconds is > 0 && candidate.DurationMilliseconds is > 0
@@ -614,10 +615,13 @@ internal static class TrackMatchSignals
         if (sourceCredits.Count > 0 && candidateCredits.Count > 0 &&
             !sourceCredits.IsSubsetOf(candidateCredits) && !candidateCredits.IsSubsetOf(sourceCredits)) return (source, candidate);
         var title = SharedBareTitle(source, candidate) ?? LibrarySpellingOfTitle(source, candidate);
-        return title == null
-            ? (source, candidate)
-            : (source with { Artist = WithCredits(source.Artist, source.Title), Title = title },
-                candidate with { Artist = WithCredits(candidate.Artist, candidate.Title), Title = title });
+        if (title == null) return (source, candidate);
+        // A title's credits can only help. A guest one copy names under another alias ("Quasimoto", "Lord Quas") must
+        // not undo the match the artists alone make.
+        var (sourceArtists, candidateArtists) = (WithCredits(source.Artist, source.Title), WithCredits(candidate.Artist, candidate.Title));
+        var helps = ArtistSimilarity(sourceArtists, candidateArtists) >= ArtistSimilarity(source.Artist, candidate.Artist);
+        return (source with { Artist = helps ? sourceArtists : source.Artist, Title = title },
+            candidate with { Artist = helps ? candidateArtists : candidate.Artist, Title = title });
     }
 
     /// <summary>The artists plus the performers the title credits, for comparing a copy's credits as one set.</summary>

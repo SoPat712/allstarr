@@ -34,7 +34,11 @@ public sealed class TrackMatchLibraryFirstTests
         { "Kamikaze", "Lil Mosey", "Northsbest (Extended)", 139_400, "Kamakazi", "Lil Mosey", "Northsbest", 139_300 },
         { "Guinnesses (feat. Angelika & 4ize)", "MF DOOM", "MM..FOOD", 281_200, "Guinesses", "MF DOOM", "MM..FOOD", 281_100 },
         { "Ni**as in Paris", "JAŸ-Z & Kanye West", "Watch the Throne (Deluxe)", 219_300,
-          "Niggas in Paris", "Jay‐Z, Kanye West", "Watch the Throne", 219_200 }
+          "Niggas in Paris", "Jay‐Z, Kanye West", "Watch the Throne", 219_200 },
+        // A guest one copy names under another alias must not undo the match the artists alone make.
+        { "America's Most Blunted (feat. Quasimoto)", "Madvillain", "Madvillainy", 234_040,
+          "America’s Most Blunted", "Madvillain, Lord Quas", "Madvillainy", 234_106 },
+        { "Rover (feat. Lil Tecca)", "S1mba", "Rover (feat. Lil Tecca) - Single", 166_806, "Rover", "S1MBA, DTG", "Rover", 167_916 }
     };
 
     [Theory]
