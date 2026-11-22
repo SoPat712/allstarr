@@ -359,15 +359,22 @@ public sealed class PlaybackSignalJobHandler(IRecommendationSignalWriter signals
         record.Revision++;
     }
 
-    // A stop can't count more of the song than the time since it started: an app that jumps straight to the end
+    // A play can't count more of the song than the time since it started: an app that jumps straight to the end
     // (a broken local copy, a seek to the last second) would otherwise record a full listen in a fraction of a second.
+    // A play first heard of at a position started that long before, so its start already allows for it.
+    // An app queues a start for up to ten seconds and its request may take fifteen more on a weak line, so a play may
+    // have been sounding that long before it was first heard of.
+    private static readonly TimeSpan LateStart = TimeSpan.FromSeconds(30);
+
     private static PlaybackSignalPayload Listened(ListeningEventRecord record, PlaybackSignalPayload payload, bool added)
     {
         if (added || record.StartedAt is not { } startedAt || payload.PositionTicks is not { } reported ||
             payload.Transition is not (PlaybackTransition.Stop or PlaybackTransition.InferredStop or PlaybackTransition.Progress)) return payload;
-        var possible = (record.ResumePositionTicks ?? 0) + Math.Max(0, (payload.ObservedAt - startedAt).Ticks) + TimeSpan.FromSeconds(10).Ticks;
+        var possible = Math.Max(0, (payload.ObservedAt - startedAt).Ticks) + LateStart.Ticks;
         return reported > possible ? payload with { PositionTicks = possible } : payload;
     }
+
+    private static readonly TimeSpan StartsAtTheStart = TimeSpan.FromSeconds(3);
 
     internal static ListeningEventState Classify(PlaybackSignalPayload payload, PlaybackTrackSnapshot? track, bool started = false) =>
         payload.Transition switch
@@ -383,7 +390,9 @@ public sealed class PlaybackSignalJobHandler(IRecommendationSignalWriter signals
             PlaybackTransition.Stop when started && track != null && !payload.Failed && payload.StreamSource?.RejectionReason == null
                 => ListeningEventState.Skipped,
             PlaybackTransition.Stop or PlaybackTransition.InferredStop => ListeningEventState.Abandoned,
-            PlaybackTransition.Start or PlaybackTransition.InferredStart when payload.PositionTicks is > 0 => ListeningEventState.Abandoned,
+            // A play first heard of well into the song is not a listen from its start. A song handed over from the one
+            // before it starts a moment in, which is still its start.
+            PlaybackTransition.Start or PlaybackTransition.InferredStart when payload.PositionTicks > StartsAtTheStart.Ticks => ListeningEventState.Abandoned,
             _ when payload.Failed || payload.StreamSource?.RejectionReason != null => ListeningEventState.Abandoned,
             _ => ListeningEventState.Playing
         };

@@ -789,6 +789,48 @@ public sealed partial class PlaybackSignalPipelineTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task AJumpToTheEndReportedOnTheWayIsNotAFullListen()
+    {
+        var startedAt = clock.UtcNow;
+        var pipeline = new PlaybackSignalPipeline(jobs);
+        Assert.True(await pipeline.RecordAsync(Signal(PlaybackTransition.Start, "track-1", 0)));
+        clock.UtcNow = startedAt.AddMilliseconds(300);
+        Assert.True(await pipeline.RecordAsync(Signal(PlaybackTransition.Progress, "track-1", TimeSpan.FromSeconds(110).Ticks)));
+        clock.UtcNow = startedAt.AddMilliseconds(600);
+        Assert.True(await pipeline.RecordAsync(Signal(PlaybackTransition.Stop, "track-1", TimeSpan.FromSeconds(120).Ticks)));
+
+        var handler = new PlaybackSignalJobHandler(
+            new Writer(), new Scrobbles(), new Lyrics(), factory, new PlaybackTrackResolver(factory, new TestBackendLibraryAccess(factory, "music")));
+        while (await jobs.ClaimNextAsync("worker", [PlaybackSignalPipeline.JobType]) is { } claim)
+            Assert.Equal(DurableJobCompletionKind.Succeeded, (await handler.ExecuteAsync(new(claim, EmptyServices.Instance), default)).Kind);
+
+        await using var db = await factory.CreateDbContextAsync();
+        var occurrence = Assert.Single(await db.ListeningEvents.AsNoTracking().ToListAsync());
+        Assert.NotEqual(ListeningEventState.Completed, occurrence.State);
+    }
+
+    [Fact]
+    public async Task APlayFirstHeardOfMidSongCountsWhatWasHeardBeforeIt()
+    {
+        // The app could not reach the server when the song began, and says where the song is once it can.
+        var reachedAt = clock.UtcNow;
+        var pipeline = new PlaybackSignalPipeline(jobs);
+        Assert.True(await pipeline.RecordAsync(Signal(PlaybackTransition.Start, "track-1", TimeSpan.FromSeconds(100).Ticks)));
+        clock.UtcNow = reachedAt.AddSeconds(15);
+        Assert.True(await pipeline.RecordAsync(Signal(PlaybackTransition.Stop, "track-1", TimeSpan.FromSeconds(115).Ticks)));
+
+        var handler = new PlaybackSignalJobHandler(
+            new Writer(), new Scrobbles(), new Lyrics(), factory, new PlaybackTrackResolver(factory, new TestBackendLibraryAccess(factory, "music")));
+        while (await jobs.ClaimNextAsync("worker", [PlaybackSignalPipeline.JobType]) is { } claim)
+            Assert.Equal(DurableJobCompletionKind.Succeeded, (await handler.ExecuteAsync(new(claim, EmptyServices.Instance), default)).Kind);
+
+        await using var db = await factory.CreateDbContextAsync();
+        var occurrence = Assert.Single(await db.ListeningEvents.AsNoTracking().ToListAsync());
+        Assert.Equal(ListeningEventState.Completed, occurrence.State);
+        Assert.Equal(reachedAt.AddSeconds(-100), occurrence.StartedAt);
+    }
+
+    [Fact]
     public async Task StartProgressAndStopUpdateOneDurableOccurrence()
     {
         var startedAt = clock.UtcNow;

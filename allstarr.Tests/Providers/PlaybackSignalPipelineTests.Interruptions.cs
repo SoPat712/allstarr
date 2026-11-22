@@ -81,6 +81,27 @@ public sealed partial class PlaybackSignalPipelineTests
     }
 
     [Fact]
+    public async Task ASongThatStartsAMomentInIsStillPlayedFromItsStart()
+    {
+        var pipeline = new PlaybackSignalPipeline(jobs);
+        var handler = new PlaybackSignalJobHandler(new Writer(), new Scrobbles(), new Lyrics(), factory, playbackTracks);
+        // Handed over from the song before it, the song reports its start a tenth of a second in; it is skipped later.
+        var start = Signal(PlaybackTransition.Start, "track-1", TimeSpan.FromMilliseconds(100).Ticks);
+        var states = new List<ListeningEventState>();
+        foreach (var request in new[] { start, start with { Transition = PlaybackTransition.Stop, PositionTicks = TimeSpan.FromSeconds(8).Ticks, ObservedAt = clock.UtcNow.AddSeconds(8) } })
+        {
+            await pipeline.RecordAsync(request);
+            var claim = await jobs.ClaimNextAsync("handover", [PlaybackSignalPipeline.JobType]);
+            var result = await handler.ExecuteAsync(new(claim!, EmptyServices.Instance), default);
+            Assert.Equal(DurableJobCompletionKind.Succeeded, result.Kind);
+            await jobs.CompleteAsync(claim!, result);
+            await using var db = await factory.CreateDbContextAsync();
+            states.Add((await db.ListeningEvents.SingleAsync()).State);
+        }
+        Assert.Equal([ListeningEventState.Playing, ListeningEventState.Skipped], states);
+    }
+
+    [Fact]
     public async Task ASecondStartOfAPlayUnderWayIsProgress()
     {
         var pipeline = new PlaybackSignalPipeline(jobs);
