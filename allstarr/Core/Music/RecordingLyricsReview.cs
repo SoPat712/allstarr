@@ -43,7 +43,11 @@ public sealed record RecordingLyricsReviewResult(
     string Scope,
     RecordingLyricsReviewSong Song,
     RecordingLyricsChoiceLayers Choices,
-    IReadOnlyList<RecordingLyricsReviewSource> Sources);
+    IReadOnlyList<RecordingLyricsReviewSource> Sources)
+{
+    /// <summary>A source chosen here is also written into the song's own file.</summary>
+    public bool SavesToFile { get; init; }
+}
 
 public interface IRecordingLyricsReview
 {
@@ -219,7 +223,9 @@ public sealed class RecordingLyricsReview : IRecordingLyricsReview
             ScopeName(reviewScope),
             reviewSong,
             choices,
-            sources), native, assessed, recording.DurationMilliseconds);
+            sources)
+        { SavesToFile = _chosenFiles != null && native != null && await _chosenFiles.WritesAsync(context, native.FilePath) },
+            native, assessed, recording.DurationMilliseconds);
     }
 
     public async Task<RecordingLyricsChoiceLayers> ChooseAsync(

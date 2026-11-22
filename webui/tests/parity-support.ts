@@ -1020,7 +1020,7 @@ async function expectRecordingLyricsGeometry(page: Page, picker: Locator, width:
 
 const lyricsRecordingId = "11111111-1111-4111-8111-111111111111";
 
-async function mockRecordingLyrics(page: Page, options: { administrator?: boolean; conflict?: boolean; failFirst?: boolean } = {}) {
+async function mockRecordingLyrics(page: Page, options: { administrator?: boolean; conflict?: boolean; failFirst?: boolean; savesToFile?: boolean } = {}) {
   await mockApi(page);
   const administrator = options.administrator ?? true;
   if (!administrator) await page.route("**/api/admin/auth/me", route => route.fulfill({ json: {
@@ -1056,7 +1056,7 @@ async function mockRecordingLyrics(page: Page, options: { administrator?: boolea
       const scope = new URL(route.request().url()).searchParams.get("scope") ?? "personal";
       return route.fulfill({ json: {
         recordingId: lyricsRecordingId, scope, song: { title: "Fixture song", artist: "Artist", album: "Album", durationSeconds: 180 },
-        choices: layers(), sources: [
+        savesToFile: options.savesToFile === true, choices: layers(), sources: [
           { sourceId: "spotify", available: false, preview: null, previewRevision: null, format: null, truncated: false, score: null, rank: null, reasons: null },
           { sourceId: "lrclib", available: true, preview: scope === "household" ? "Shared plain words" : "Personal plain words <script>inert</script>",
             previewRevision: `sha256:${scope}-plain-${reads}`, format: "plain", truncated: false, score: 0.8, rank: 2, reasons: ["plain_text"] },

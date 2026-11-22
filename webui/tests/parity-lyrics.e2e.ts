@@ -186,6 +186,16 @@ test("Recording lyrics conflict reloads the preview without repeating a write", 
   expect(fixture.writes[1].body).toMatchObject({ expectedRevision: { personal: { id: "personal-choice", revision: 8 } }, previewRevision: "sha256:personal-plain-2" });
 });
 
+test("Recording lyrics say when a chosen source is also written into the song's file", async ({ page }) => {
+  await mockRecordingLyrics(page, { savesToFile: true });
+  await page.goto("#/library/mappings?review=snapshot");
+  await page.getByRole("button", { name: "More", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Wrong lyrics?", exact: true }).click();
+  const picker = page.getByRole("region", { name: "Lyrics sources" });
+  await expect(picker.getByText("is also written into this song's file")).toBeVisible();
+  await page.screenshot({ path: "/tmp/allstarr-lyrics-picker-file.png" });
+});
+
 test("Recording lyrics unavailable sources can be reloaded", async ({ page }) => {
   const fixture = await mockRecordingLyrics(page, { failFirst: true });
   await page.goto("#/library/mappings?review=snapshot");

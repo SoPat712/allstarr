@@ -2149,6 +2149,7 @@ export type RecordingLyricsReview = {
   song: { title: string; artist: string; album: string; durationSeconds: number | null };
   choices: RecordingLyricsChoiceLayers;
   sources: RecordingLyricsSource[];
+  savesToFile?: boolean;
 };
 const recordingLyricsPath = (id: string) => `/api/admin/recordings/${encodeURIComponent(id)}/lyrics`;
 export const recordingLyrics = {

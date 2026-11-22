@@ -96,6 +96,7 @@
     <Button variant="secondary" onclick={() => refresh++}>Reload sources</Button>
   {:else if snapshot}
     <p class="lyrics-help">{#if savedChoice}Saved source: {sourceName(savedChoice.sourceId)}.{:else if scope === "personal" && snapshot.choices.household}Following household source: {sourceName(snapshot.choices.household.sourceId)}.{:else}Following automatic lyrics selection.{/if} A saved source falls back automatically when unavailable.</p>
+    {#if snapshot.savesToFile}<p class="lyrics-help">A source you choose here is also written into this song's file, in place of the lyrics it holds, so every app gets it. The replaced lyrics are kept on the server.</p>{/if}
     <div class="lyrics-comparison">
       <div class="lyrics-source-list" aria-label="Available lyric sources">
         {#each sources as source (source.sourceId)}
