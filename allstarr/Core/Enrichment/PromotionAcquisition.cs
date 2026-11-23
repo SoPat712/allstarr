@@ -4,6 +4,7 @@ using allstarr.Core.Downloads;
 using allstarr.Core.Jobs;
 using allstarr.Core.Matching;
 using allstarr.Core.ManagedFiles;
+using allstarr.Core.Settings;
 using allstarr.Core.Storage;
 using allstarr.Models.Domain;
 using Microsoft.EntityFrameworkCore;
@@ -15,14 +16,17 @@ public interface IPromotionAcquisition
 {
     Task<PromotionAcquisitionResult> AcquireAsync(Guid owner, Guid runId, PromotionTrack track, PromotionProfile profile, CancellationToken token);
 }
-internal sealed record PromotionDownloadSource(string ProviderId, string ExternalId, string? Codec, int? BitDepth, int? SampleRate, int? Bitrate)
+// A recording source names a service only; the download router finds the recording's own song on it, as playback does.
+internal sealed record PromotionDownloadSource(string ProviderId, string ExternalId, string? Codec, int? BitDepth, int? SampleRate, int? Bitrate,
+    bool Recording = false)
 {
     public Song ToSong() => new() { Codec = Codec, BitDepth = BitDepth, SampleRate = SampleRate, Bitrate = Bitrate };
 }
 internal sealed record PromotionDownloadPayload(Guid RunId, Guid RecordingId, PromotionDownloadSource[] Sources, PromotionProfile Profile);
 
 public sealed class PromotionAcquisition(IDbContextFactory<AllstarrDbContext> factory, DurableJobQueue jobs,
-    ITrackIdentityService identities, ProviderDownloadArtifactResolver artifacts, RecordingKeptFiles? kept = null) : IPromotionAcquisition
+    ITrackIdentityService identities, ProviderDownloadArtifactResolver artifacts, RecordingKeptFiles? kept = null,
+    IProviderRegistry? registry = null, IEffectiveProviderPolicyResolver? policies = null) : IPromotionAcquisition
 {
     public const string JobType = "library.promote.acquire";
     public async Task<PromotionAcquisitionResult> AcquireAsync(Guid owner, Guid runId, PromotionTrack track, PromotionProfile profile, CancellationToken token)
@@ -36,13 +40,14 @@ public sealed class PromotionAcquisition(IDbContextFactory<AllstarrDbContext> fa
                 await kept.FindPromotionSourceAsync(actor, track.RecordingId, profile, token) is { } local)
                 return new(local, false, "Reused the verified kept copy meeting the saved quality floor.");
             var songs = await identities.GetStoredSongsAsync(actor, track.RecordingId.ToString("D"), token);
-            var sources = PromotionQuality.Order(profile, songs.Append(track.Song)
-                .Where(song => !song.IsLocal && !string.IsNullOrWhiteSpace(song.ExternalProvider) && !string.IsNullOrWhiteSpace(song.ExternalId) &&
-                    !track.RejectedProviders.Contains(song.ExternalProvider)).DistinctBy(song => (song.ExternalProvider, song.ExternalId))).ToArray();
+            var available = registry?.FindByCapability(ProviderCapabilityKind.Download, includeNonOperational: true)
+                .Select(item => item.Id).ToArray() ?? [];
+            var order = policies == null ? available
+                : (await policies.ResolveForUserAsync(owner, token)).ApplyProviderAvailability(ProviderCapabilityKind.Download, available);
+            var sources = Sources(profile, track, songs, order);
             if (sources.Length == 0) return new(null, false, "No authorized download identity remains for this recording.");
             var queued = await jobs.EnqueueAsync(new DurableJobEnqueueRequest<PromotionDownloadPayload>(JobType,
-                $"promotion:{runId:N}:{track.RecordingId:N}:{track.SourceAttempt}", new(runId, track.RecordingId,
-                    sources.Select(song => new PromotionDownloadSource(song.ExternalProvider!, song.ExternalId!, song.Codec, song.BitDepth, song.SampleRate, song.Bitrate)).ToArray(), profile), owner,
+                $"promotion:{runId:N}:{track.RecordingId:N}:{track.SourceAttempt}", new(runId, track.RecordingId, sources, profile), owner,
                 MaxAttempts: 3), token);
             track.AcquisitionJobId = queued.JobId;
             return new(null, true, "Waiting for the managed download.");
@@ -61,6 +66,29 @@ public sealed class PromotionAcquisition(IDbContextFactory<AllstarrDbContext> fa
         }
         return new(null, false, "No measured download meets the quality floor.");
     }
+
+    // Every download service the listener uses is tried, not only the copies whose song is stored: a recording can hold
+    // one stored service copy while playback finds it on others. Copies said to meet the floor go first, then those that
+    // say nothing of their quality in the listener's order, and copies said to fall short last.
+    internal static PromotionDownloadSource[] Sources(PromotionProfile profile, PromotionTrack track, IEnumerable<Song> stored,
+        IReadOnlyList<string> downloadOrder)
+    {
+        var copies = PromotionQuality.Order(profile, stored.Append(track.Song)
+                .Where(song => !song.IsLocal && !string.IsNullOrWhiteSpace(song.ExternalProvider) && !string.IsNullOrWhiteSpace(song.ExternalId) &&
+                    !track.RejectedProviders.Contains(song.ExternalProvider)).DistinctBy(song => (song.ExternalProvider, song.ExternalId)))
+            .Select(song => new PromotionDownloadSource(song.ExternalProvider!, song.ExternalId!, song.Codec, song.BitDepth, song.SampleRate, song.Bitrate))
+            .ToArray();
+        var ranks = downloadOrder.Select((provider, index) => (provider, index)).DistinctBy(item => item.provider)
+            .ToDictionary(item => item.provider, item => item.index);
+        var routes = downloadOrder.Distinct().Where(provider => provider != "allstarr" && !track.RejectedProviders.Contains(provider) &&
+                copies.All(copy => copy.ProviderId != provider))
+            .Select(provider => new PromotionDownloadSource(provider, track.RecordingId.ToString("D"), null, null, null, null, Recording: true));
+        bool Known(PromotionDownloadSource copy) => !string.IsNullOrWhiteSpace(copy.Codec);
+        bool Meets(PromotionDownloadSource copy) => PromotionQuality.Accepts(profile, copy.Codec, copy.BitDepth, copy.SampleRate);
+        return [.. copies.Where(copy => Known(copy) && Meets(copy)),
+            .. copies.Where(copy => !Known(copy)).Concat(routes).OrderBy(copy => ranks.GetValueOrDefault(copy.ProviderId, int.MaxValue)),
+            .. copies.Where(copy => Known(copy) && !Meets(copy))];
+    }
 }
 
 public sealed class PromotionDownloadJobHandler(IDbContextFactory<AllstarrDbContext> factory,
@@ -75,19 +103,34 @@ public sealed class PromotionDownloadJobHandler(IDbContextFactory<AllstarrDbCont
         await using var db = await factory.CreateDbContextAsync(token);
         if (!await db.Set<PromotionRunRecord>().AnyAsync(item => item.Id == payload.RunId && item.OwnerUserId == owner && item.Outcome != "Cancelled", token))
             return DurableJobCompletion.Cancelled();
+        return await RunAsync(payload, source => downloads.ExecuteAsync(Command(payload, source, owner, execution.Claim.JobId,
+            execution.Claim.CorrelationId, execution.Claim.AttemptNumber), token));
+    }
+
+    // A recording source asks the router for the recording's song on that one service, the way playback finds it.
+    internal static ManagedTrackDownloadCommand Command(PromotionDownloadPayload payload, PromotionDownloadSource source, Guid owner,
+        Guid jobId, string correlationId, int attempt) =>
+        new(owner, jobId, source.Recording ? "allstarr" : source.ProviderId, source.ExternalId, correlationId, $"promotion:{jobId:N}",
+            attempt, "library-promotion")
+        {
+            RequestedQuality = ProviderAudioQuality.HighResolution,
+            ProviderPriority = [source.ProviderId],
+            AcceptArtifact = artifact => PromotionQuality.Accepts(payload.Profile, artifact.Codec, artifact.BitDepth, artifact.SampleRate)
+        };
+
+    // Each source is tried in turn: one whose file falls below the floor, or that fails, passes the add to the next, and
+    // the add gives up only once every source was tried. A source that may answer later makes the job wait and try again.
+    internal static async Task<DurableJobCompletion> RunAsync(PromotionDownloadPayload payload,
+        Func<PromotionDownloadSource, Task<ManagedTrackDownloadResult>> download)
+    {
         ManagedTrackDownloadResult? temporaryFailure = null;
         VerifiedProviderDownloadArtifact? best = null;
         foreach (var source in payload.Sources)
         {
             if (best != null && !PromotionQuality.CanImprove(payload.Profile, source.ToSong(), best.Codec, best.BitDepth, best.SampleRate, best.Bitrate)) continue;
-            var result = await downloads.ExecuteAsync(new(owner, execution.Claim.JobId, source.ProviderId, source.ExternalId,
-                execution.Claim.CorrelationId, $"promotion:{execution.Claim.JobId:N}", execution.Claim.AttemptNumber, "library-promotion")
-            {
-                RequestedQuality = ProviderAudioQuality.HighResolution,
-                ProviderPriority = [source.ProviderId],
-                AcceptArtifact = artifact => PromotionQuality.Accepts(payload.Profile, artifact.Codec, artifact.BitDepth, artifact.SampleRate)
-            }, token);
-            if (result.Succeeded && result.Artifact is { } candidate && (best == null || PromotionQuality.CanImprove(payload.Profile,
+            var result = await download(source);
+            if (result.Succeeded && result.Artifact is { } candidate &&
+                PromotionQuality.Accepts(payload.Profile, candidate.Codec, candidate.BitDepth, candidate.SampleRate) && (best == null || PromotionQuality.CanImprove(payload.Profile,
                     new Song { Codec = candidate.Codec, BitDepth = candidate.BitDepth, SampleRate = candidate.SampleRate, Bitrate = candidate.Bitrate },
                     best.Codec, best.BitDepth, best.SampleRate, best.Bitrate))) best = candidate;
             if (result.Retryable) temporaryFailure = result;

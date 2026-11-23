@@ -77,6 +77,32 @@ public sealed class ManagedTrackDownloadBindingTests
         Assert.Equal("managed_download_route_exhausted", result.ErrorCode);
     }
 
+    [Theory]
+    [InlineData("circuit-open", true)]
+    [InlineData("verified-identity-required", false)]
+    public async Task Promotion_WaitsForAServicePausedAfterRecentFailures(string reason, bool retry)
+    {
+        await using var fixture = await ProviderDownloadArtifactBindingTests.BindingFixture.CreateAsync(accountBound: true);
+        var track = Track(fixture.ProviderId, "paused-track");
+        var full = Plan(fixture, new RecordingDownloadCapability(fixture.Resolver), track, track, Account(fixture, 0));
+        var empty = new ProviderRoutePlan<IProviderDownloadCapability>(full.Request, [], full.Decision with
+        {
+            SelectedProviderId = null,
+            SelectedProviderAccountId = null,
+            Candidates = [new(fixture.ProviderId, fixture.AccountId, ProviderRouteDecisionStatus.Rejected, reason, 0)]
+        });
+        var router = new Mock<IProviderRouter>(MockBehavior.Strict);
+        router.Setup(item => item.PlanAsync<IProviderDownloadCapability>(It.IsAny<ProviderRouteRequest>())).ReturnsAsync(empty);
+        var providers = new Mock<IProviderRegistry>(MockBehavior.Strict);
+        providers.Setup(item => item.FindByCapability(ProviderCapabilityKind.Download, true)).Returns([Descriptor(fixture.ProviderId, true)]);
+        var service = new ManagedTrackDownloadService(router.Object, providers.Object, fixture.Resolver, TestClock.Instance,
+            NullLogger<ManagedTrackDownloadService>.Instance);
+        var result = await service.ExecuteAsync(Command(fixture, "library-promotion", track.Value) with { ProviderPriority = [fixture.ProviderId] });
+        Assert.False(result.Succeeded);
+        Assert.Equal(retry, result.Retryable);
+        Assert.Equal(retry ? "managed_download_provider_paused" : "managed_download_route_unavailable", result.ErrorCode);
+    }
+
     [Fact]
     public async Task Execute_PersistsTheTranslatedCandidateTrackAndAccountRevision()
     {

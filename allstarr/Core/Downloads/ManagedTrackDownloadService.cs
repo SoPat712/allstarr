@@ -159,6 +159,11 @@ public sealed class ManagedTrackDownloadService(
                 ProviderRouteOutcomeStatus.Stopped,
                 "no-authorized-candidate",
                 nextProviderId: null);
+            // A service paused after recent failures answers again once its pause ends, so the job waits for it.
+            if (plan.Decision.Candidates.Any(item => item.ReasonCode == "circuit-open"))
+                return ManagedTrackDownloadResult.Retry(
+                    "managed_download_provider_paused",
+                    "The download service is paused after recent failures. The download will retry.");
             return ManagedTrackDownloadResult.Failure(
                 "managed_download_route_unavailable",
                 "No authorized managed download route is available.");
